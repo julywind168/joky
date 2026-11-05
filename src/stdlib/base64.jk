@@ -1,9 +1,21 @@
+import joky/show.{type Show}
 import joky/array.{ type Array }
 import joky/slice.{ type Slice }
 import joky/string
 import joky/result.{ type Result, Ok, Err }
 
 pub enum DecodeError { InvalidLength, InvalidByte(UInt64), InvalidPadding(UInt64), NonCanonical(UInt64) }
+impl Show for DecodeError {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        match self {
+            InvalidLength => output.push_str("invalid base64 length")
+            InvalidByte(offset) => { output.push_str("invalid base64 character at byte "); offset.show(output) }
+            InvalidPadding(offset) => { output.push_str("invalid base64 padding at byte "); offset.show(output) }
+            NonCanonical(offset) => { output.push_str("non-canonical base64 at byte "); offset.show(output) }
+        }
+    }
+}
+
 pub struct Encoding { url: Bool, padding: Bool }
 pub fn standard() -> Encoding { Encoding { url: false, padding: true } }
 pub fn standard_no_pad() -> Encoding { Encoding { url: false, padding: false } }

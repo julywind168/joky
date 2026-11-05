@@ -1,6 +1,6 @@
 # 后端开发易用性审查：语法、命名与标准库
 
-状态：审查意见与改进建议，2026-11-04。本文不是现行规范，所列目标写法均**未实现**；
+状态：审查意见与改进建议，2026-11-04。本文不是现行规范，已落地项在对应章节标注，其余目标写法尚未实现；
 当前规则以 [language.md](language.md) 为准。上一轮容器与借用易用性工作见
 [syntax.md §13](syntax.md#13-标准库与示例易用性优化清单)，本文不重复其已完成项。
 
@@ -27,7 +27,7 @@
 | `let x = 3` 与 `UInt64` 相加 | 拒绝：`Int32 and UInt64`；`for i in 0 .. n`（n: UInt64）可以 |
 | 同模块期望类型下的裸变体 `let c: Color = Green` | 可以 |
 | 跨模块期望类型下的裸变体 `[IntValue(n)]`（`Array<postgres.Value>`） | 拒绝：`Undeclared function IntValue` |
-| `println(p)`（普通 struct）、`println(task.Failure.Io)` | 拒绝：不满足 Show |
+| `println(p)`（未实现 Show 的普通 struct） | 拒绝：不满足 Show；`task.Failure` 已在后续修复中补齐 |
 | 未导入时用 `Array<T>` 写类型标注 | 默认 prelude 已支持 |
 
 ## 2. 总体判断
@@ -52,7 +52,8 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 | --- | --- | --- |
 | 已完成 | 经 `&mut` 替换拥有型字段 | §4.2 |
 | P0 | String 基础方法：trim / split_once / contains / strip_prefix / replace / lines / 大小写 / parse | §6.1 |
-| P0 | `#derive(Show, Eq, Hash)`，标准库错误与枚举实现 Show | §4.4 |
+| 已完成 | 标准库公开错误与无载荷枚举实现 Show | §4.4 |
+| 待设计 | 调试输出派生、Eq／Hash 派生及运算符接入 | §4.4 |
 | P0 | PostgreSQL 参数与结果：`ToSql`/`FromSql` 协议、按列名读取、`#derive(FromRow)`、更多类型 | §8 |
 | P0 | HTTP：路由、标头/查询查询、响应构造助手、`Status` 命名 | §7 |
 | 已完成 | prelude 补齐 `Array`/`Map`/`Set` 类型名 | §4.3 |
@@ -87,21 +88,27 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 跨模块枚举的裸变体查找降为 P2。订单示例用 `import joky/postgres.{IntValue, TextValue}` 声明所需变体，SQL 参数列表即可写成 `[IntValue(customer), TextValue(key)]`。表达式中的裸构造器须在作用域内唯一；即使是本地枚举，也不会按期望类型消除歧义。以后若扩展这条规则，需同时确定与同名函数、显式导入和泛型推导的优先关系。[订单示例](../examples/postgres_orders.jk)
 
-### 4.4 派生与 Show【已验证】
+### 4.4 派生与 Show【标准库 Show 已补齐】
 
-现状：可派生 `Clone`、`ToJson`、`FromJson`；没有 `Show`、`Eq`、`Hash`、`Ord`、`Default`。
-`task.Failure` 不实现 Show，于是 [chat/main.jk:40](../examples/chat/main.jk) 用 12 行把
-7 个变体映射成文字。普通 struct 不能 `println`，调试只能手写 Show 实现。
+Show 是面向用户的显示协议，对应 Rust Display：String 原样输出，普通 struct／enum
+仍需手写实现。标准库公开错误与无载荷枚举已补齐 Show，包括 `task.Failure`、HTTP、
+TCP／TLS、JSON／typed、编码、状态域与 VM 错误；原有文件 I/O、数值解析、日志和 PostgreSQL
+错误的输出保持不变。[聊天室](../examples/chat/main.jk) 已直接使用
+`eprintln("connection {id}: {failure}")`，不再手写七种失败类别的映射。
 
-建议：
+错误显示保留底层原因、字节偏移、JSON Pointer、路径及可用的诊断区间；仅借用错误，
+显示后仍可检查字段或再次匹配。格式示例与具体约定见 [Show 参考](language.md#showprint--println-与字符串插值)。
+共享行为用例见 [standard_error_show.jk](../tests/fixtures/standard_error_show.jk)，
+CLI 回归在关闭 prelude 时覆盖 JIT、解释器、独立 AOT，并检查 stderr 输出。
 
-1. `#derive(Show)`：输出 `Name { field: value }` / `Variant(payload)` 的调试形式，字符串加引号。
-2. `#derive(Eq, Hash)`：使记录可作为 Map key、可用 `==`；与现有 `BorrowEq`/`BorrowHash` 协议对接。
-3. 标准库所有公开错误与无载荷枚举实现 Show（`task.Failure`、`fs.IoError`、`http.ServeError`、
-   `http.ClientError`、`json.DecodeError`、`typed.CodecError`、`tcp.EndpointError` 等），
-   让 `eprintln("connection {id}: {failure}")` 成为默认写法。
-4. `#derive(Default)` 与 `Options { max_connections: 4, ..http.Options.default() }` 式结构更新，
-   取代现在"`var options = http.defaults(); options.max_connections = 4`"。
+以下事项分开设计，尚未实现：
+
+1. 当前仅能派生 `Clone`、`ToJson`、`FromJson`。原建议的类型名、字段名及带引号字符串
+   属于 Debug 风格，不直接混入 Show；调试协议及其派生另议。
+2. Eq／Hash 按值接收参数；Copy 类型通过 blanket impl 获得 BorrowEq／BorrowHash，
+   拥有型记录需考虑直接派生借用协议。实现 Eq 不会自动启用记录的 `==`，运算符接入须独立设计。
+3. 标准 Default trait、Default 派生和 `Options { field: value, ..base }` 结构更新均未实现。
+   普通 `Type.default()` 可手写，业务配置的非零默认值不应被逐字段默认派生替代。
 
 ## 5. 关键词与语法手感
 
@@ -420,14 +427,14 @@ fn main() @suspends -> Int32 {
 
 ## 12. 建议实施顺序
 
-1. **低成本先行**（不改语义）：标准库错误与枚举实现 Show；String 基础方法；Option/Result 补方法；
+1. **低成本先行**（不改语义）：标准库错误与无载荷枚举实现 Show（已完成）；String 基础方法；Option/Result 补方法；
    Array any/all/find/retain；
    清理标准库内过时写法（`uint64(0) ..`）。
 2. **HTTP 便利层**：header/query/path 访问、响应助手、Status 改名、Method 枚举、Router、`http.run`、
    `shutdown.with_signals`。均为标准库源码改动，不涉及编译器。
 3. **PostgreSQL 便利层**：Value 变体改名、按列名读取、`get::<T>`、timestamptz/uuid/jsonb、
    `pool.transaction`、Options。
-4. **语言特性**：`#derive(Show, Eq, Hash, Default)`、字符串字面量模式与守卫、
+4. **语言特性**：调试协议及派生、Eq／Hash／Default 派生、字符串字面量模式与守卫、
    `ToSql` 隐式装箱、结构更新语法、非 pub 函数 `@suspends` 推导。
    每项按 AGENTS.md 的跨模块语义改动要求单独设计与验证。
 5. **关键词与命名迁移**（`when`→`atomic`、`alias`→`same`、`branch`→`spawn`、`var`/`mut` 统一、

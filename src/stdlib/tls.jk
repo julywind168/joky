@@ -1,4 +1,6 @@
 // The record engine never owns the socket. All network waits use the TCP reactor.
+import joky/string.{type StringBuilder}
+import joky/show.{type Show}
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
@@ -17,6 +19,21 @@ extern fn __tls_handshaking(session: &mut tls.SessionOwner) @suspends -> UInt64
 extern fn __tls_notify(session: &mut tls.SessionOwner) @suspends -> UInt64
 
 pub enum TlsError { InvalidConfig, InvalidName, Certificate, Protocol, Limit, Io(IoError), UnexpectedEof, Unusable }
+impl Show for TlsError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self {
+            InvalidConfig => output.push_str("invalid TLS configuration")
+            InvalidName => output.push_str("invalid TLS server name")
+            Certificate => output.push_str("TLS certificate verification failed")
+            Protocol => output.push_str("TLS protocol error")
+            Limit => output.push_str("TLS limit exceeded")
+            Io(error) => error.show(output)
+            UnexpectedEof => output.push_str("unexpected TLS EOF")
+            Unusable => output.push_str("TLS stream unusable")
+        }
+    }
+}
+
 pub struct ClientConfig { storage: tls.ClientOwner }
 pub struct ServerConfig { storage: tls.ServerOwner }
 pub struct TlsStream { socket: TcpStream, session: tls.SessionOwner, usable: Bool }

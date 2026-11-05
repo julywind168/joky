@@ -1,3 +1,5 @@
+import joky/string.{type StringBuilder}
+import joky/show.{type Show}
 import joky/array.{ type Array }
 import joky/internal/buffer
 import joky/result.{ type Result, Ok, Err }
@@ -5,6 +7,13 @@ import joky/option.{ type Option, Some, None }
 import joky/check
 
 pub enum RandomError { Unavailable }
+impl Show for RandomError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Unavailable => "secure randomness unavailable"
+        })
+    }
+}
 
 // OS entropy only. No partially filled array escapes a failed request.
 pub fn secure_bytes(length: UInt64) -> Result<Array<UInt8>, RandomError> {

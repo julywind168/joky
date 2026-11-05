@@ -1,8 +1,9 @@
 // A VM owns its registry entry; shared borrows allow calls during hot reload.
+import joky/show.{type Show}
 import joky/internal/buffer.{type Buffer}
 import joky/fs
 import joky/result.{type Result, Ok, Err}
-import joky/string.{type Utf8Error}
+import joky/string.{type StringBuilder, type Utf8Error}
 import joky/iter.{range}
 
 extern fn __vm_create(mode: UInt64) -> vm.Owner
@@ -75,6 +76,16 @@ fn pack<T>(value: T) -> Packet
 fn unpack<T>(packet: &Packet) -> T
 extern fn __vm_call(owner: &vm.Owner, name: String, input_schema: String, result_schema: String, packet: &mut Buffer<UInt64>, checked: Bool) @suspends -> Int32
 pub enum CallError { Unavailable, Incompatible, Failed }
+impl Show for CallError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Unavailable => "script entry unavailable"
+            Incompatible => "incompatible script entry"
+            Failed => "script call failed"
+        })
+    }
+}
+
 impl Vm {
     pub fn call<A, R>(&self, name: String, input: A) @suspends -> R {
         var packet = pack(input)
@@ -95,11 +106,43 @@ impl Vm {
 }
 
 pub struct Diagnostic { pub message: String, pub has_span: Bool, pub start: UInt64, pub end: UInt64 }
+impl Show for Diagnostic {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(&self.message)
+        if self.has_span {
+            output.push_str(" at bytes ")
+            self.start.show(output)
+            output.push_str("..")
+            self.end.show(output)
+        }
+    }
+}
+
 pub enum LoadErrorKind {
     Io(fs.IoError), Utf8(Utf8Error), Compile(Diagnostic), Incompatible(Diagnostic),
     Conflict(Diagnostic), Runtime(Diagnostic)
 }
+impl Show for LoadErrorKind {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self {
+            Io(error) => error.show(output)
+            Utf8(error) => error.show(output)
+            Compile(error) => { output.push_str("script compilation failed: "); error.show(output) }
+            Incompatible(error) => { output.push_str("incompatible script: "); error.show(output) }
+            Conflict(error) => { output.push_str("script publication conflict: "); error.show(output) }
+            Runtime(error) => { output.push_str("script runtime failure: "); error.show(output) }
+        }
+    }
+}
+
 pub struct LoadError { pub path: String, pub kind: LoadErrorKind }
+impl Show for LoadError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        if !self.path.is_empty() { output.push_str(&self.path); output.push_str(": ") }
+        self.kind.show(output)
+    }
+}
+
 extern fn __vm_source(owner: &vm.Owner, name: String, source: String, mode: UInt64, packet: &mut Buffer<UInt64>) @suspends -> String
 
 fn source_result(value: &Vm, path: String, source: String, mode: UInt64) @suspends -> Result<UInt64, LoadError> {
@@ -210,7 +253,27 @@ impl LoadError {
 // One owning session reserves the VM's migration slot until it is dropped.
 pub struct Migration { owner: vm.MigrationOwner }
 pub enum MigrationErrorKind { Compile, Incompatible, Conflict, Runtime, Busy, Unavailable }
+impl Show for MigrationErrorKind {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Compile => "migration compilation failed"
+            Incompatible => "incompatible migration"
+            Conflict => "migration conflict"
+            Runtime => "migration runtime failure"
+            Busy => "migration busy"
+            Unavailable => "migration unavailable"
+        })
+    }
+}
+
 pub struct MigrationError { pub kind: MigrationErrorKind, pub diagnostic: Diagnostic }
+impl Show for MigrationError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        self.kind.show(output)
+        if !self.diagnostic.message.is_empty() { output.push_str(": "); self.diagnostic.show(output) }
+    }
+}
+
 extern fn __vm_migration_open(owner: &vm.Owner) @suspends -> vm.MigrationOwner
 extern fn __vm_migration_command(owner: &mut vm.MigrationOwner, operation: UInt64, number: UInt64,
     source: String, start: String, advance: String, packet: &mut Buffer<UInt64>) @suspends -> UInt64

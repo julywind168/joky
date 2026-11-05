@@ -1,3 +1,5 @@
+import joky/string.{type StringBuilder}
+import joky/show.{type Show}
 import joky/result.{ type Result, Ok, Err }
 import joky/time.{ type Duration, type Instant }
 
@@ -9,6 +11,12 @@ fn sleep_ms(milliseconds: UInt64) @suspends { __joky_public_task_sleep_ms(millis
 
 // A timeout is distinct from the operation's own result or runtime failure.
 pub struct Timeout {}
+impl Show for Timeout {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str("operation timed out")
+    }
+}
+
 pub fn sleep_until(deadline: Instant) @suspends { time.sleep_until(deadline) }
 pub fn sleep(duration: Duration) @suspends { __joky_public_task_sleep_ns(duration.as_nanos()) }
 pub fn timeout<T, F: FnOnce() @suspends -> T>(duration: Duration, operation: F) @suspends -> Result<T, Timeout> {
@@ -20,6 +28,19 @@ pub fn timeout<T, F: FnOnce() @suspends -> T>(duration: Duration, operation: F) 
 
 // Fixed-size failure categories: constructing an isolated failure needs no heap storage.
 enum Failure { Runtime, ResourceLimit, Host, Io, InvalidState, InvalidArgument, Other }
+impl Show for Failure {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Runtime => "runtime failure"
+            ResourceLimit => "resource limit"
+            Host => "host failure"
+            Io => "I/O failure"
+            InvalidState => "invalid state"
+            InvalidArgument => "invalid argument"
+            Other => "task failure"
+        })
+    }
+}
 
 fn __isolate_success<T>(value: T) -> Result<T, Failure> { Ok(value) }
 fn __isolate_failure<T>(code: UInt64) -> Result<T, Failure> {

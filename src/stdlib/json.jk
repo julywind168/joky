@@ -1,4 +1,5 @@
 // Owned JSON values and strict bounded codecs.
+import joky/show.{type Show}
 import joky/array
 import joky/map
 import joky/result.{type Result, Ok, Err}
@@ -20,16 +21,67 @@ pub enum Value {
 }
 
 pub enum NumberErrorKind { InvalidSyntax, NotInteger, OutOfRange, NonFinite, NumberLimit }
+impl Show for NumberErrorKind {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        output.push_str(match self {
+            InvalidSyntax => "invalid JSON number"
+            NotInteger => "JSON number is not an integer"
+            OutOfRange => "JSON number out of range"
+            NonFinite => "non-finite JSON number"
+            NumberLimit => "JSON number limit exceeded"
+        })
+    }
+}
 
 pub enum DecodeErrorKind {
     UnexpectedEof, UnexpectedToken, InvalidEscape, InvalidUnicode, InvalidUtf8,
     InvalidNumber, DuplicateKey, TrailingData, InputLimit, DepthLimit, NodeLimit,
     StringLimit, NumberLimit, InvalidLimits,
 }
+impl Show for DecodeErrorKind {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        output.push_str(match self {
+            UnexpectedEof => "unexpected end of JSON input"
+            UnexpectedToken => "unexpected JSON token"
+            InvalidEscape => "invalid JSON escape"
+            InvalidUnicode => "invalid JSON Unicode escape"
+            InvalidUtf8 => "invalid UTF-8 in JSON"
+            InvalidNumber => "invalid JSON number"
+            DuplicateKey => "duplicate JSON key"
+            TrailingData => "trailing JSON data"
+            InputLimit => "JSON input limit exceeded"
+            DepthLimit => "JSON depth limit exceeded"
+            NodeLimit => "JSON node limit exceeded"
+            StringLimit => "JSON string limit exceeded"
+            NumberLimit => "JSON number limit exceeded"
+            InvalidLimits => "invalid JSON limits"
+        })
+    }
+}
 
 pub enum EncodeError { InvalidLimits, OutputLimit, DepthLimit, NodeLimit, StringLimit, NumberLimit }
+impl Show for EncodeError {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        output.push_str(match self {
+            InvalidLimits => "invalid JSON limits"
+            OutputLimit => "JSON output limit exceeded"
+            DepthLimit => "JSON depth limit exceeded"
+            NodeLimit => "JSON node limit exceeded"
+            StringLimit => "JSON string limit exceeded"
+            NumberLimit => "JSON number limit exceeded"
+        })
+    }
+}
 
 pub struct NumberError { pub kind: NumberErrorKind, pub offset: UInt64 }
+impl Show for NumberError {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        self.kind.show(output)
+        output.push_str(" at byte ")
+        self.offset.show(output)
+    }
+}
+
 pub struct Number { text: String }
 
 fn error(kind: NumberErrorKind, offset: UInt64) -> NumberError {
@@ -181,6 +233,14 @@ fn valid_limits(limits: Limits) -> Bool {
     limits.max_string_bytes <= 262144 && limits.max_number_bytes <= 1024
 }
 pub struct DecodeError { pub kind: DecodeErrorKind, pub offset: UInt64 }
+impl Show for DecodeError {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        self.kind.show(output)
+        output.push_str(" at byte ")
+        self.offset.show(output)
+    }
+}
+
 fn decode_error(kind: DecodeErrorKind, offset: UInt64) -> DecodeError {
     DecodeError { kind: kind, offset: offset }
 }

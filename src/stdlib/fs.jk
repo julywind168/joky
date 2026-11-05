@@ -58,6 +58,17 @@ impl OpenOptions {
 }
 pub enum SeekFrom { Start(UInt64), Current(Int64), End(Int64) }
 pub enum FileKind { Regular, Directory, Symlink, Other }
+impl Show for FileKind {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Regular => "regular file"
+            Directory => "directory"
+            Symlink => "symbolic link"
+            Other => "other"
+        })
+    }
+}
+
 pub struct Metadata { pub kind: FileKind, pub size: UInt64 }
 pub struct File { owner: fs.FileOwner }
 extern fn __io_stdin() @suspends -> fs.OutcomeOwner

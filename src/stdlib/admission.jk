@@ -1,3 +1,5 @@
+import joky/string.{type StringBuilder}
+import joky/show.{type Show}
 import joky/result.{type Result, Ok, Err}
 import joky/mem
 
@@ -12,6 +14,15 @@ pub struct Pool { storage:admission.PoolOwner }
 pub struct Handle { token:admission.Token }
 pub struct Permit { storage:admission.PermitOwner }
 pub enum AcquireError { Full, Closed, WaitLimit }
+impl Show for AcquireError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Full => "admission full"
+            Closed => "admission closed"
+            WaitLimit => "admission wait limit exceeded"
+        })
+    }
+}
 
 // Pool ownership closes admission; handles neither own nor keep the pool open.
 pub fn create(capacity:UInt64, max_waiters:UInt64) @suspends -> Pool {

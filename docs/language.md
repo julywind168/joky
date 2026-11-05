@@ -6624,6 +6624,18 @@ Map 为 `{k: v, ...}`，顺序沿用其无序容器契约。Show 是显示文本
 文件 I/O 错误显示类别名及非空的宿主消息，如 `PermissionDenied: access denied`；
 包装读取错误沿用底层原因，完整写入失败另显示已确认写入的字节数。程序分支可继续匹配原错误类型与字段。
 
+标准库公开错误与无载荷枚举也实现 Show：任务失败／超时、准入／停机、状态域／outbox、
+TCP／TLS／HTTP、JSON／typed、base64／hex／UUID、随机数／密码以及 VM 加载／迁移错误。
+无载荷状态枚举显示简短名称；HTTP Method 使用 `GET`／`POST` 等大写方法名，日志级别使用
+`DEBUG`／`INFO`／`WARN`／`ERROR`。`http.Status` 含 Other 载荷，不在此无载荷枚举范围内。
+
+错误以可读原因显示，包装错误保留底层原因。例如 `task.Failure.Io` 为 `I/O failure`，
+HTTP 连接错误添加 `HTTP connection failed: `；TCP I/O 错误在存在 OS 错误码时追加
+` (OS error N)`。JSON 数值／解码错误保留从零开始的字节偏移，typed 映射错误追加
+JSON Pointer（`~`／`/` 转义），空路径显示 `at root`。VM 加载错误保留非空路径，
+诊断在有区间时追加 `at bytes start..end`。格式化仅借用错误及其拥有型字段，可重复显示或继续匹配。
+显示文本不是结构化序列化格式，程序分支仍应匹配类型与变体。
+
 `joky/show` 的 `to_text(&value) -> String` 生成拥有型文本，
 `append(&value, &mut output)` 向既有 builder 追加。
 默认 prelude 导入 `joky/io` 的 `print` / `println` 和 `eprint` / `eprintln`；关闭 prelude 时可显式

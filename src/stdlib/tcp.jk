@@ -1,9 +1,10 @@
 // Numeric endpoints and bounded TCP byte/text reads.
+import joky/show.{type Show}
 import joky/array.{type Array}
 import joky/slice.{type Slice}
 import joky/result.{type Result, Ok, Err}
 import joky/option.{type Option, Some, None}
-import joky/string.{type Utf8Error}
+import joky/string.{type StringBuilder, type Utf8Error}
 import joky/internal/resolve
 import joky/internal/buffer
 
@@ -27,7 +28,38 @@ impl Address {
 }
 
 pub enum ErrorKind { ConnectionRefused, ConnectionReset, ConnectionAborted, NotConnected, AddrInUse, AddrNotAvailable, BrokenPipe, PermissionDenied, InvalidInput, TimedOut, WriteZero, Other }
+impl Show for ErrorKind {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            ConnectionRefused => "connection refused"
+            ConnectionReset => "connection reset"
+            ConnectionAborted => "connection aborted"
+            NotConnected => "not connected"
+            AddrInUse => "address in use"
+            AddrNotAvailable => "address not available"
+            BrokenPipe => "broken pipe"
+            PermissionDenied => "permission denied"
+            InvalidInput => "invalid input"
+            TimedOut => "timed out"
+            WriteZero => "write returned zero"
+            Other => "other I/O error"
+        })
+    }
+}
+
 pub struct IoError { code: UInt64 }
+impl Show for IoError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        (*self).kind().show(output)
+        let code = (*self).os_code()
+        if code != 0 {
+            output.push_str(" (OS error ")
+            code.show(output)
+            output.push(')')
+        }
+    }
+}
+
 impl IoError {
     pub fn kind(self) -> ErrorKind {
         let code = self.code & 0xffffffff
@@ -47,6 +79,16 @@ impl IoError {
     pub fn os_code(self) -> UInt32 { uint32(self.code >> 32) }
 }
 pub enum Shutdown { Read, Write, Both }
+impl Show for Shutdown {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Read => "read"
+            Write => "write"
+            Both => "both"
+        })
+    }
+}
+
 pub struct TcpStream { owner: tcp.StreamOwner }
 pub struct TcpListener { owner: tcp.ListenerOwner }
 pub struct TcpReader { owner: tcp.ReaderOwner }
@@ -54,6 +96,12 @@ pub struct TcpWriter { owner: tcp.WriterOwner }
 
 // Host endpoints resolve once and try candidates in system order.
 pub enum EndpointError { Resolve(resolve.ResolveError), Io(IoError) }
+impl Show for EndpointError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self { Resolve(error) => error.show(output), Io(error) => error.show(output) }
+    }
+}
+
 fn resolved_address(high: UInt64, low: UInt64, endpoint: UInt64) -> Address {
     Address { high, low, endpoint }
 }
@@ -87,6 +135,18 @@ pub fn connect(host: String, port: UInt16) @suspends -> Result<TcpStream, Endpoi
 }
 
 pub enum ReadError { InvalidLimit, Io(IoError), UnexpectedEof(UInt64), LimitExceeded, InvalidUtf8(Utf8Error) }
+impl Show for ReadError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self {
+            InvalidLimit => output.push_str("invalid TCP read limit")
+            Io(error) => error.show(output)
+            UnexpectedEof(count) => { output.push_str("unexpected TCP EOF after "); count.show(output); output.push_str(" bytes") }
+            LimitExceeded => output.push_str("TCP read limit exceeded")
+            InvalidUtf8(error) => error.show(output)
+        }
+    }
+}
+
 enum ReadState { Open, Eof, Failed(IoError) }
 // The synchronous framing state machine is shared by both concrete transports.
 enum ReadMode { Partial, Exact, Until(UInt8) }

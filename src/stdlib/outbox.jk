@@ -1,3 +1,5 @@
+import joky/string.{type StringBuilder}
+import joky/show.{type Show}
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
@@ -25,6 +27,15 @@ impl Handle {
 }
 pub type Batch = outbox.BatchOwner
 pub enum StageError { Full, Closed }
+impl Show for StageError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Full => "outbox full"
+            Closed => "outbox closed"
+        })
+    }
+}
+
 // Disconnect closes the independent Reject control mailbox after commit.
 pub enum Overflow { Reject, Disconnect(Handle) }
 

@@ -13,7 +13,24 @@ import joky/show.{ type Show }
 // Logical network-order halves, independent of native integer endianness.
 pub struct Uuid { high: UInt64, low: UInt64 }
 pub enum ParseError { InvalidLength, InvalidByte(UInt64) }
+impl Show for ParseError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self {
+            InvalidLength => output.push_str("invalid UUID length")
+            InvalidByte(offset) => { output.push_str("invalid UUID character at byte "); offset.show(output) }
+        }
+    }
+}
+
 pub enum V7Error { InvalidTimestamp, Random(RandomError) }
+impl Show for V7Error {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self {
+            InvalidTimestamp => output.push_str("timestamp outside UUID v7 range")
+            Random(error) => error.show(output)
+        }
+    }
+}
 
 fn nibble(byte: UInt8) -> UInt64 {
     if byte >= 48 && byte <= 57 { uint64(byte - 48) }

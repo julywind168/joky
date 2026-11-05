@@ -1,3 +1,5 @@
+import joky/string.{type StringBuilder}
+import joky/show.{type Show}
 import joky/internal/buffer.{type Buffer}
 import joky/option.{type Option, Some, None}
 import joky/outbox.{type Batch}
@@ -36,6 +38,23 @@ fn finish_current_value<A,R>(name:String,input:A) @suspends -> Result<R,DomainAc
 // In-place access rejects before entry; candidate operations may also reject
 // resource exhaustion after calculation without publishing state.
 pub enum DomainAccessError { Closed, DomainFailed, InvalidAccess, Incompatible, ResourceLimit, OutboxFull(UInt64), OutboxClosed(UInt64), Missing(UInt64), Aliased(UInt64), RetryLimit, DirectoryFull(UInt64) }
+impl Show for DomainAccessError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self {
+            Closed => output.push_str("domain closed")
+            DomainFailed => output.push_str("domain failed")
+            InvalidAccess => output.push_str("invalid domain access")
+            Incompatible => output.push_str("incompatible domain access")
+            ResourceLimit => output.push_str("resource limit")
+            OutboxFull(id) => { output.push_str("outbox full: "); id.show(output) }
+            OutboxClosed(id) => { output.push_str("outbox closed: "); id.show(output) }
+            Missing(id) => { output.push_str("missing domain entry: "); id.show(output) }
+            Aliased(id) => { output.push_str("aliased domain entry: "); id.show(output) }
+            RetryLimit => output.push_str("domain retry limit exceeded")
+            DirectoryFull(id) => { output.push_str("directory full: "); id.show(output) }
+        }
+    }
+}
 
 // Candidate operations distinguish business rejection from access/commit failure.
 pub enum Outcome<T, E> { Committed(T), Rejected(E), Failed(DomainAccessError) }
@@ -141,6 +160,18 @@ pub struct ReadHandle<S> { token: domain.Handle }
 pub struct WriteHandle<S> { token: domain.Handle }
 pub struct Snapshot<S, R> { storage: domain.SnapshotOwner }
 pub enum SnapshotStatus { Current, Conflict, Closed, DomainFailed, InvalidAccess }
+impl Show for SnapshotStatus {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Current => "current"
+            Conflict => "conflict"
+            Closed => "closed"
+            DomainFailed => "domain failed"
+            InvalidAccess => "invalid access"
+        })
+    }
+}
+
 impl<S, R> Snapshot<S, R> {
     pub fn value(&self) @suspends -> R { snapshot_value::<R>(&self.storage) }
     pub fn check(&self) @suspends -> SnapshotStatus {
@@ -157,6 +188,19 @@ pub fn snapshot_from<S, R>(handle: ReadHandle<S>, projection: fn(&S) -> R) @susp
     Snapshot::<S, R> { storage: __domain_snapshot(module(), handle.token, "") }
 }
 pub enum RequestError { Failed, Cancelled, Closed, ResourceLimit, InvalidAccess, DomainFailed }
+impl Show for RequestError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Failed => "request failed"
+            Cancelled => "request cancelled"
+            Closed => "request closed"
+            ResourceLimit => "resource limit"
+            InvalidAccess => "invalid access"
+            DomainFailed => "domain failed"
+        })
+    }
+}
+
 impl<S> Owner<S> {
     pub fn handle(&self) @suspends -> WriteHandle<S> { WriteHandle::<S> { token: __domain_handle(&self.value) } }
     pub fn read_handle(&self) @suspends -> ReadHandle<S> { self.handle().read_only() }
@@ -239,7 +283,33 @@ pub fn deadline_after(duration: Duration) @suspends -> CommitDeadline {
     CommitDeadline { storage: __domain_deadline_after(duration.as_nanos()) }
 }
 pub enum CommitError { Conflict, Closed, DomainFailed, InvalidAccess, Cancelled, ResourceLimit, Expired, OutboxFull, OutboxClosed }
+impl Show for CommitError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Conflict => "commit conflict"
+            Closed => "domain closed"
+            DomainFailed => "domain failed"
+            InvalidAccess => "invalid access"
+            Cancelled => "commit cancelled"
+            ResourceLimit => "resource limit"
+            Expired => "commit expired"
+            OutboxFull => "outbox full"
+            OutboxClosed => "outbox closed"
+        })
+    }
+}
+
 pub enum RevisionError { Pending, Failed(CommitError), InvalidAccess }
+impl Show for RevisionError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self {
+            Pending => output.push_str("revision pending")
+            Failed(error) => error.show(output)
+            InvalidAccess => output.push_str("invalid revision access")
+        }
+    }
+}
+
 fn commit_error(status:Int32)->CommitError {
     if status==1 { return CommitError.Conflict }
     if status==2 { return CommitError.Closed }
@@ -531,6 +601,19 @@ pub struct Directory { storage:domain.DirectoryOwner }
 // A flat, non-owning capability suitable for AOT/Script entry contracts.
 pub struct DirectoryHandle { identity:UInt64 }
 pub enum DirectoryError { Closed, Full, Occupied, InvalidTarget, Conflict, ResourceLimit }
+impl Show for DirectoryError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Closed => "directory closed"
+            Full => "directory full"
+            Occupied => "directory entry occupied"
+            InvalidTarget => "invalid directory target"
+            Conflict => "directory conflict"
+            ResourceLimit => "resource limit"
+        })
+    }
+}
+
 pub fn directory(capacity:UInt64) @suspends -> Directory {
     Directory { storage:__directory_create(capacity) }
 }
@@ -605,7 +688,34 @@ extern fn __timer_start(module:domain.Module, timer:UInt64, target:domain.Handle
 pub struct Timer { storage:domain.TimerOwner }
 pub struct TimerHandle { identity:UInt64 }
 pub enum TimerStatus { Idle, Active, Completed, Cancelled, Closed, InvalidAccess, ResourceLimit, Failed }
+impl Show for TimerStatus {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Idle => "idle"
+            Active => "active"
+            Completed => "completed"
+            Cancelled => "cancelled"
+            Closed => "closed"
+            InvalidAccess => "invalid access"
+            ResourceLimit => "resource limit"
+            Failed => "failed"
+        })
+    }
+}
+
 pub enum TimerError { Closed, Busy, InvalidDelay, InvalidAccess, ResourceLimit }
+impl Show for TimerError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Closed => "timer closed"
+            Busy => "timer busy"
+            InvalidDelay => "invalid timer delay"
+            InvalidAccess => "invalid access"
+            ResourceLimit => "resource limit"
+        })
+    }
+}
+
 pub fn timer() @suspends -> Timer { Timer{storage:__timer_create()} }
 pub fn periodic_status<S>(target:ReadHandle<S>,method:String) @suspends -> TimerStatus {
     timer_status(__domain_periodic_status(target.token,method))

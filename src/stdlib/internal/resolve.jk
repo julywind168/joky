@@ -1,11 +1,30 @@
 // System host lookup. Cancellation ends delivery; running OS lookups may continue.
+import joky/show.{type Show}
 import joky/array.{type Array}
 import joky/result.{type Result, Ok, Err}
 import joky/integer
 import joky/string
 
 pub enum ErrorKind { InvalidInput, Busy, NoAddresses, LimitExceeded, SystemFailure }
+impl Show for ErrorKind {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        output.push_str(match self {
+            InvalidInput => "invalid host name"
+            Busy => "resolver busy"
+            NoAddresses => "no addresses found"
+            LimitExceeded => "resolver limit exceeded"
+            SystemFailure => "name resolution failed"
+        })
+    }
+}
+
 pub struct ResolveError { pub kind: ErrorKind, pub message: String }
+impl Show for ResolveError {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        self.kind.show(output)
+        if !self.message.is_empty() { output.push_str(": "); output.push_str(&self.message) }
+    }
+}
 
 // Private bounded wire packet: address triples on success, UTF-8 on failure.
 extern fn __dns_lookup(host: String, port: UInt16, error: &mut UInt64) @suspends -> Array<UInt8>

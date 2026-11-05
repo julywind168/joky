@@ -16,8 +16,30 @@ extern fn __pg_count(owner: &postgres.Owner) @suspends -> UInt64
 extern fn __pg_data(owner: &postgres.Owner) @suspends -> Array<UInt8>
 
 pub enum Kind { Boolean, Integer, Text, Bytes }
+impl Show for Kind {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Boolean => "boolean"
+            Integer => "integer"
+            Text => "text"
+            Bytes => "bytes"
+        })
+    }
+}
+
 pub enum Value { Null(Kind), BoolValue(Bool), IntValue(Int64), TextValue(String), BytesValue(Array<UInt8>) }
 pub enum ReadFailure { UnsupportedType, ResultLimit, NoRows, MultipleRows }
+impl Show for ReadFailure {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            UnsupportedType => "query sent; unsupported result column"
+            ResultLimit => "query sent; result limit exceeded"
+            NoRows => "query returned no rows"
+            MultipleRows => "query returned multiple rows"
+        })
+    }
+}
+
 pub enum ColumnError { OutOfBounds(UInt64), TypeMismatch(UInt64), UnexpectedNull(UInt64) }
 pub enum DbError { Invalid, Unavailable, Closed, Limit, OutcomeUnknown, Database(String), ResultRead(ReadFailure), Connect(String), AcquireFailed, AcquireTimeout, Column(ColumnError) }
 impl Show for ColumnError {
@@ -45,12 +67,7 @@ impl Show for DbError {
             AcquireFailed => output.push_str("pool checkout failed"),
             AcquireTimeout => output.push_str("pool checkout timed out"),
             Column(reason) => reason.show(output),
-            ResultRead(reason) => match reason {
-                UnsupportedType => output.push_str("query sent; unsupported result column"),
-                ResultLimit => output.push_str("query sent; result limit exceeded"),
-                NoRows => output.push_str("query returned no rows"),
-                MultipleRows => output.push_str("query returned multiple rows")
-            }
+            ResultRead(reason) => reason.show(output)
         }
     }
 }

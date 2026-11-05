@@ -1,4 +1,5 @@
 // One HTTP/1.1 exchange per connection. Parse octets before decoding text.
+import joky/show.{type Show}
 import joky/log
 import joky/uuid
 import joky/admission
@@ -69,6 +70,16 @@ pub struct Options {
 }
 pub fn defaults() -> Options { Options { logger: log.Logger.new(log.Level.Debug), max_connections: 128, read_timeout: 10s, write_timeout: 10s, grace: 5s } }
 pub enum ServeError { InvalidOptions, AcceptFailed, Deadline }
+impl Show for ServeError {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        output.push_str(match self {
+            InvalidOptions => "invalid HTTP server options"
+            AcceptFailed => "HTTP accept failed"
+            Deadline => "HTTP shutdown deadline exceeded"
+        })
+    }
+}
+
 const HEAD_LIMIT: UInt64 = 16384
 const BODY_LIMIT: UInt64 = 1048576
 enum ReadFailure { Bad, Network, HeadLimit, BodyLimit, Timeout, Stopped, Unsupported, Expectation }
@@ -117,6 +128,12 @@ fn valid_media_type(value: &String) -> Bool {
     true
 }
 pub enum Method { Get, Head, Post, Put, Patch, Delete }
+impl Show for Method {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        output.push_str(method_name(*self))
+    }
+}
+
 fn method_name(method: Method) -> String {
     match method { Get => "GET", Head => "HEAD", Post => "POST", Put => "PUT", Patch => "PATCH", Delete => "DELETE" }
 }
@@ -392,6 +409,22 @@ pub fn serve_tls_with<S: Service>(listener: TcpListener, config: tls.ServerConfi
 
 // One origin per client. Each call opens a fresh connection and sends once.
 pub enum ClientError { InvalidRequest, Connect(tcp.EndpointError), Handshake(tls.TlsError), ConnectTimeout, ExchangeTimeout, Transport, InvalidResponse, SizeLimit, UnsupportedFraming }
+impl Show for ClientError {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        match self {
+            InvalidRequest => output.push_str("invalid HTTP request")
+            Connect(error) => { output.push_str("HTTP connection failed: "); error.show(output) }
+            Handshake(error) => { output.push_str("HTTP TLS handshake failed: "); error.show(output) }
+            ConnectTimeout => output.push_str("HTTP connection timed out")
+            ExchangeTimeout => output.push_str("HTTP exchange timed out")
+            Transport => output.push_str("HTTP transport failed")
+            InvalidResponse => output.push_str("invalid HTTP response")
+            SizeLimit => output.push_str("HTTP size limit exceeded")
+            UnsupportedFraming => output.push_str("unsupported HTTP framing")
+        }
+    }
+}
+
 pub struct ClientResponse { pub status: UInt16, pub headers: Array<Header>, pub body: Array<UInt8> }
 pub struct Client {
     host: String, port: UInt16, config: Option<tls.ClientConfig>,

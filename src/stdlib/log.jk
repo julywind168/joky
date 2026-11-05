@@ -20,7 +20,27 @@ impl Show for LogError {
     }
 }
 pub enum Level { Debug, Info, Warn, Error }
+impl Show for Level {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Debug => "DEBUG"
+            Info => "INFO"
+            Warn => "WARN"
+            Error => "ERROR"
+        })
+    }
+}
+
 pub enum Emission { Written, Filtered }
+impl Show for Emission {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Written => "written"
+            Filtered => "filtered"
+        })
+    }
+}
+
 pub struct Logger { pub minimum: Level }
 fn rank(level: Level) -> UInt8 {
     match level { Debug => 0, Info => 1, Warn => 2, Error => 3 }

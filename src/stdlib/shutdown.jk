@@ -1,3 +1,5 @@
+import joky/string.{type StringBuilder}
+import joky/show.{type Show}
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 
@@ -9,7 +11,27 @@ extern fn __shutdown_wait(owner: &shutdown.ControllerOwner) @suspends -> UInt64
 extern fn __shutdown_subscribe(owner: &shutdown.ControllerOwner, error: &mut UInt64) @suspends -> shutdown.SignalsOwner
 
 pub enum Reason { Requested, Interrupt, Terminate }
+impl Show for Reason {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Requested => "requested"
+            Interrupt => "interrupt"
+            Terminate => "terminate"
+        })
+    }
+}
+
 pub enum SignalError { Unsupported, Busy, Unavailable }
+impl Show for SignalError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            Unsupported => "signals unsupported"
+            Busy => "signal subscription busy"
+            Unavailable => "signals unavailable"
+        })
+    }
+}
+
 pub struct Controller { storage: shutdown.ControllerOwner }
 pub struct Signals { storage: shutdown.SignalsOwner }
 

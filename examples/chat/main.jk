@@ -37,18 +37,6 @@ fn connection(script: Script, host: Host, id: UInt64, stream: TcpStream, permit:
     }
     permit.release()
 }
-fn report_failure(id: UInt64, failure: &task.Failure) {
-    let reason = match failure {
-        Runtime => "runtime failure"
-        ResourceLimit => "resource limit"
-        Host => "host failure"
-        Io => "I/O failure"
-        InvalidState => "invalid state"
-        InvalidArgument => "invalid argument"
-        Other => "task failure"
-    }
-    println("connection {id}: {reason}")
-}
 // Each connection runs in its own failure boundary; one failing client never stops the rest.
 fn serve(script: &Script, host: Host, var listener: TcpListener, stop: &shutdown.Controller) @suspends -> Int32 {
     let admission = admission.create(host.config.max_clients, 0)
@@ -65,7 +53,7 @@ fn serve(script: &Script, host: Host, var listener: TcpListener, stop: &shutdown
             let connection_stop = stop.share()
             branch {
                 if let Err(failure) = isolate { connection(copy, host, id, stream, permit, connection_stop) } {
-                    report_failure(id, &failure)
+                    eprintln("connection {id}: {failure}")
                 }
             }
         }

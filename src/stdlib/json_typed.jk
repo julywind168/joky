@@ -1,4 +1,5 @@
 // Typed mapping is ordinary source code over the bounded JSON value codec.
+import joky/show.{type Show}
 import joky/json.{type Value, type Number, type Limits, type DecodeError, type EncodeError, type NumberError}
 import joky/array.{type Array}
 import joky/map.{type Map}
@@ -16,9 +17,47 @@ pub enum MappingErrorKind {
     MissingField, UnknownField, DuplicateField, NotInteger, OutOfRange, NonFinite,
     InvalidLimits, DepthLimit, NodeLimit, StringLimit, NumberLimit, CallLimit,
 }
+impl Show for MappingErrorKind {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(match self {
+            ExpectedNull => "expected null"
+            ExpectedBoolean => "expected boolean"
+            ExpectedNumber => "expected number"
+            ExpectedString => "expected string"
+            ExpectedArray => "expected array"
+            ExpectedObject => "expected object"
+            MissingField => "missing field"
+            UnknownField => "unknown field"
+            DuplicateField => "duplicate field"
+            NotInteger => "expected integer"
+            OutOfRange => "number out of range"
+            NonFinite => "non-finite number"
+            InvalidLimits => "invalid JSON limits"
+            DepthLimit => "JSON depth limit exceeded"
+            NodeLimit => "JSON node limit exceeded"
+            StringLimit => "JSON string limit exceeded"
+            NumberLimit => "JSON number limit exceeded"
+            CallLimit => "JSON call limit exceeded"
+        })
+    }
+}
+
 pub enum PathSegment { Field(String), Index(UInt64) }
 pub struct MappingError { pub kind: MappingErrorKind, pub path: Array<PathSegment> }
+impl Show for MappingError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        self.kind.show(output)
+        if self.path.is_empty() { output.push_str(" at root") }
+        else { output.push_str(" at "); output.push_str(self.pointer()) }
+    }
+}
+
 pub enum CodecError { Syntax(DecodeError), Mapping(MappingError), Encoding(EncodeError) }
+impl Show for CodecError {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        match self { Syntax(error) => error.show(output), Mapping(error) => error.show(output), Encoding(error) => error.show(output) }
+    }
+}
 
 impl MappingError {
     // Diagnostic JSON Pointer spelling: the root is empty, ~ and / are escaped.
