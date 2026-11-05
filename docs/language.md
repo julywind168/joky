@@ -7035,7 +7035,7 @@ Uuid 使用标准连字符文本。String 按值消费；需要保留原字符�
 `log.text`、`log.uint`、`log.integer`、`log.boolean` 仍分别接受 String、UInt64、Int64、Bool。
 Duration 显式选择单位，例如 `log.field("duration_ms", duration.as_millis())`。
 
-模块、Logger 和 HTTP RequestContext 均提供 `debug/info/warn/error(event: String, fields: Array<log.Field>) -> Unit`。
+模块、Logger 和 HTTP RequestLog 均提供 `debug/info/warn/error(event: String, fields: Array<log.Field>) -> Unit`。
 例如 `log.info("job.finished", [log.field("rows", 12)])`。
 快捷方法忽略日志校验或写入错误，需要检查结果时使用 `try_emit`；Logger 快捷方法遵循最低等级。
 实参始终先求值，过滤不会跳过字段构造；昂贵字段仍应先用 `enabled` 判断。
@@ -7067,15 +7067,15 @@ Duration 显式选择单位，例如 `log.field("duration_ms", duration.as_milli
 ## HTTP 服务端 joky/http
 
 `http.serve(listener, &stop, options, handler) @suspends -> Result<Unit, ServeError>` 消费已绑定的 TCP 监听器。
-处理函数的类型是 `fn(http.Request) @suspends -> http.Response`。Request 包含方法、原始请求目标（含查询串）、
+处理函数的类型是 `fn(http.Request<Unit>) @suspends -> http.Response`。Request 包含方法、原始请求目标（含查询串）、
 按接收顺序保存的标头数组（名字转小写，值去除两端的空格和制表符）及拥有的正文字节。
 `request.method: http.Method` 与客户端共用枚举，变体为 Get、Head、Post、Put、Patch、Delete、Options。
 Method 是 Copy 值，派生 Eq 并支持 `==`／`!=`，Show 输出对应的大写方法名。
 挂起 handler 可直接比较 `request.method == http.Method.Post`，比较不消费 Request。
-服务端在开始读取请求时创建 UUID v4，handler 通过 `request.context.request_id` 访问，
+服务端在开始读取请求时创建 UUID v4，handler 通过 `request.request_id` 访问，
 同一次响应的 `X-Request-Id` 标头返回这个 ID。客户端传来的同名标头不参与生成，重试会获得新 ID。
-`request.context` 的类型为 `http.RequestContext`，可显式传递并跨挂起使用。它的 `emit(level, event, fields)`
-会补上 `request_id` 后使用 Options.logger 的最低等级，默认 Debug。context.try_emit 区分 Written、Filtered 和错误，context.emit 在过滤时返回 true。`context.debug/info/warn/error` 同样补上 request_id 并遵循等级过滤，返回 Unit。这个字段占用 32 个字段中的一个名额，重复传入时拒绝整条事件。
+`request.log` 的类型为 `http.RequestLog`，可显式传递并跨挂起使用。它的 `emit(level, event, fields)`
+会补上 `request_id` 后使用 Options.logger 的最低等级，默认 Debug。request.log.try_emit 区分 Written、Filtered 和错误，request.log.emit 在过滤时返回 true。`request.log.debug/info/warn/error` 同样补上 request_id 并遵循等级过滤，返回 Unit。这个字段占用 32 个字段中的一个名额，重复传入时拒绝整条事件。
 
 `request.path() -> String` 返回第一个 `?` 之前的路径副本；无查询串时返回整个 target 的副本。
 保留百分号编码、重复斜线和点段，不做解码或规范化，`%2F` 不会成为路径分隔符。
@@ -7126,14 +7126,14 @@ HEAD 只发响应头。204、205、304 的正文必须为空，204 和 304 省�
 
 持有业务资源的服务可实现 `http.Service`，并调用 `http.serve_with(listener, &stop, options, service)`。
 `share(&self) @suspends -> Self` 在取得连接名额后调用一次，为连接分支提供独立拥有的上下文。该方法在接收循环中执行，适合复制轻量句柄。
-`handle(&self, request: http.Request) @suspends -> http.Response` 只在完整请求准入后调用。
+`handle(&self, request: http.Request<Unit>) @suspends -> http.Response` 只在完整请求准入后调用。
 例如 share 可通过 `pool.share()` 返回同一数据库池的新句柄。握手、排空及期限沿用同一套规则。
 HTTPS 对应入口为 `http.serve_tls_with(listener, config, &stop, options, service)`。
 
 `http.Router` 实现 Service，提供精确路径路由，可直接传给 serve_with / serve_tls_with。
 用 `Router.new()` 创建可变路由器，再用 `router.add(method, path, handler)` 注册；
 `get/head/post/put/patch/delete/options(path, handler)` 是对应方法的便捷入口。
-`http.Handler` 是 `fn(Request) @suspends -> Response` 的别名，本版注册普通函数 handler。
+`http.Handler<C>` 是 `fn(Request<C>) @suspends -> Response` 的别名，本版注册普通函数 handler。
 这些注册方法修改 Router，返回 `Result<Unit, RouteError>`；失败不修改已有路由。
 同一方法和路径重复注册返回 DuplicateRoute，不覆盖旧 handler。
 
@@ -7150,8 +7150,15 @@ Router 的分发规则如下：
   Allow 按 GET、HEAD、POST、PUT、PATCH、DELETE、OPTIONS 顺序列出允许方法，GET 隐含 HEAD，去除重复。
 - OPTIONS 使用显式注册的 handler，未注册时沿用 404/405 规则；不自动生成 CORS 策略。
 
-Router.share 为每个连接复制路径和函数入口，连接拥有独立路由表。静态小路由表可直接使用，
-带共享业务状态的服务仍通过自定义 Service 实现。完整用法见 [HTTP 示例](../examples/http_server.jk)。
+需要资源句柄时，调用 `http.with_context(source)`，返回 `ContextRouter<S, S.Context>`。
+资源来源 S 实现 `http.ContextSource`，通过关联类型 Context 指定 handler 的 `Request<C>` 中 `ctx` 的类型。
+路由器在以下两个位置使用来源：
+
+- 取得连接名额后，接收循环调用 `share(&self) @suspends @noescape -> Self`，为连接复制长期资源句柄和路由表。在此执行数据库查询或鉴权会阻塞下一次接纳。
+- 完整请求命中路由后，连接任务调用一次 `for_request(&self) @suspends @noescape -> Self.Context`。它可以分享池句柄，并将当前用户等局部字段初始化为空。解析失败及自动 404/405 跳过这一步。
+
+`Router.new()` 使用 Unit 作为来源及请求上下文。两种入口使用同一套路由规则。
+可对照[无状态 HTTP 服务](../examples/http_server.jk)和[使用 PostgreSQL 池的订单服务](../examples/postgres_orders_http.jk)。
 
 服务端在响应写入结束时记录 `http.request_finished`。其中 `status` 是服务端选定的 HTTP 状态码，
 `write_outcome` 为 `complete`、`failed` 或 `timeout`。例如状态码可以是 200，同时写入失败。

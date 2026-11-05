@@ -2,7 +2,7 @@
 import postgres_orders as orders
 import joky/log
 import joky/postgres
-import joky/http.{type Service}
+import joky/http.{type ContextSource}
 import joky/shutdown
 import joky/tcp
 
@@ -13,8 +13,15 @@ struct ErrorBody { error: String }
 #derive(ToJson)
 struct OrderBody { order_id: Int64 }
 pub struct Orders { pool: postgres.Pool }
-impl Orders {
-    pub fn new(pool: postgres.Pool) -> Self { Orders { pool } }
+impl ContextSource for Orders {
+    type Context = Orders
+    fn share(&self) @suspends @noescape -> Self { Orders { pool: self.pool.share() } }
+    fn for_request(&self) @suspends @noescape -> Orders { self.share() }
+}
+pub fn routes(pool: postgres.Pool) -> http.ContextRouter<Orders, Orders> {
+    var router = http.with_context(Orders { pool })
+    router.post("/orders", create_order)!
+    router
 }
 fn error_reply(status: http.Status, error: String) -> http.Response {
     let body = ErrorBody { error }
@@ -23,23 +30,19 @@ fn error_reply(status: http.Status, error: String) -> http.Response {
         Err(_) => http.empty(http.Status.InternalServerError)
     }
 }
-impl Service for Orders {
-    fn share(&self) @suspends -> Self { Orders { pool: self.pool.share() } }
-    fn handle(&self, request: http.Request) @suspends -> http.Response {
-        if request.method != http.Method.Post || request.path() != "/orders" { return error_reply(http.Status.NotFound, "not found") }
-        var keys = request.header_all("Idempotency-Key")
-        if keys.is_empty() { return error_reply(http.Status.BadRequest, "missing Idempotency-Key") }
-        if keys.len() != 1 { return error_reply(http.Status.BadRequest, "invalid Idempotency-Key") }
-        let key = keys.take_last()
-        if key.is_empty() || key.byte_length() > 128 { return error_reply(http.Status.BadRequest, "invalid Idempotency-Key") }
-        let input = match request.json::<Purchase>() {
-            Ok(input) => input, Err(_) => return error_reply(http.Status.BadRequest, "expected a positive integer qty")
-        }
-        if input.qty <= 0 { return error_reply(http.Status.BadRequest, "expected a positive integer qty") }
-        order_reply(request.context, orders.place(&self.pool, 1, key, input.qty))
+fn create_order(request: http.Request<Orders>) @suspends -> http.Response {
+    var keys = request.header_all("Idempotency-Key")
+    if keys.is_empty() { return error_reply(http.Status.BadRequest, "missing Idempotency-Key") }
+    if keys.len() != 1 { return error_reply(http.Status.BadRequest, "invalid Idempotency-Key") }
+    let key = keys.take_last()
+    if key.is_empty() || key.byte_length() > 128 { return error_reply(http.Status.BadRequest, "invalid Idempotency-Key") }
+    let input = match request.json::<Purchase>() {
+        Ok(input) => input, Err(_) => return error_reply(http.Status.BadRequest, "expected a positive integer qty")
     }
+    if input.qty <= 0 { return error_reply(http.Status.BadRequest, "expected a positive integer qty") }
+    order_reply(request.log, orders.place(&request.ctx.pool, 1, key, input.qty))
 }
-fn order_reply(context: http.RequestContext, result: Result<orders.Order, postgres.DbError>) -> http.Response {
+fn order_reply(context: http.RequestLog, result: Result<orders.Order, postgres.DbError>) -> http.Response {
     match result {
         Ok(Confirmed(id)) => {
             let body = OrderBody { order_id: id }
@@ -69,5 +72,5 @@ fn main() @suspends -> Int32 {
     let signals = stop.subscribe_unix()!
     var listener = tcp.listen("127.0.0.1", 0)!
     println("listening {listener.local_addr()!.port()}")
-    if http.serve_with(listener, &stop, options, Orders.new(pool)).is_ok() { 0 } else { 1 }
+    if http.serve_with(listener, &stop, options, routes(pool)).is_ok() { 0 } else { 1 }
 }

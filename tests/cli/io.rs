@@ -850,7 +850,7 @@ fn main() {
     logger.info("filtered", [])
     logger.warn("logger.warn", [])
     logger.error("logger.error", [])
-    let context = http.RequestContext { request_id: id, logger }
+    let context = http.RequestLog { request_id: id, logger }
     context.debug("filtered", [])
     context.info("filtered", [])
     context.warn("context.warn", [])

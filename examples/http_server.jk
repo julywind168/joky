@@ -6,11 +6,11 @@ import joky/tcp
 #derive(ToJson)
 struct Health { ok: Bool }
 
-fn health(request: http.Request) @suspends -> http.Response {
+fn health(request: http.Request<Unit>) @suspends -> http.Response {
     let body = Health { ok: true }
     http.json(http.Status.Ok, &body)!
 }
-fn echo(request: http.Request) @suspends -> http.Response {
+fn echo(request: http.Request<Unit>) @suspends -> http.Response {
     if let Ok(value) = json.decode_bytes(&request.body) {
         return http.Response { headers: [], status: http.Status.Ok, content_type: http.ContentType.Json, body: json.encode(&value)!.into_bytes() }
     }

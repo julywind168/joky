@@ -374,6 +374,17 @@ fn http_orders_replay_after_lost_response_and_concurrent_requests() {
     ] {
         fs::write(dir.join(name), src).unwrap();
     }
+    fs::write(
+        dir.join("pool_lifetime.jk"),
+        include_str!("fixtures/postgres_orders_pool_lifetime.jk"),
+    )
+    .unwrap();
+    bounded(
+        joky(dir)
+            .args(["run", "pool_lifetime.jk"])
+            .env("JOKY_POSTGRES_URL", &direct),
+        dir,
+    );
     checked(joky(dir).args(["build", "--task-workers", "2", "postgres_orders_http.jk"]));
     let mut cmd = joky(dir);
     cmd.args(["run", "pause.jk"])
@@ -462,7 +473,7 @@ fn http_orders_replay_after_lost_response_and_concurrent_requests() {
     // Bypass startup DDL on this single-connection fault proxy.
     fs::write(
         dir.join("lost_ack_http.jk"),
-        r#"import postgres_orders_http.{type Orders}
+        r#"import postgres_orders_http as api
 import joky/http import joky/postgres import joky/shutdown import joky/tcp
 fn main() @suspends {
     let pool=postgres.open(1)!
@@ -470,7 +481,7 @@ fn main() @suspends {
     let signals=stop.subscribe_unix()!
     var listener=tcp.listen("127.0.0.1",0)!
     println("listening {listener.local_addr()!.port()}")
-    http.serve_with(listener,&stop,http.Options.default(),Orders.new(pool))!
+    http.serve_with(listener,&stop,http.Options.default(),api.routes(pool))!
 }"#,
     )
     .unwrap();

@@ -301,7 +301,7 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 | JSON 错误体手写 | 订单示例已用 `http.json` 与派生 ToJson 的错误/订单结构体 | 编码失败显式返回空 500 响应 |
 | 状态码命名 | 已改为 `Status.Ok`、`InternalServerError`，补齐常用成功、重定向及错误码 | `from_code` 与原因短语同步；其他 200–599 保留 Other |
 | 请求体解码 | 已补 `request.json<T: FromJson>()`，订单示例已迁移 | 共享借用正文，结果独立拥有，可重复解码；解码错误原样返回 |
-| 函数 handler 不能带状态 | 有状态时实现 `Service.share/handle`；共享池通过 pool.share() 传递，route 回调已移除 | 采用下节的关联请求上下文与状态域句柄方案 |
+| 函数 handler 不能带状态 | 已提供 `with_context(source)` 注入资源句柄，订单示例已迁移 | 采用下节的关联请求上下文与状态域句柄方案 |
 | 连接模型 | 每连接一次请求、`Connection: close`、无 chunked | 记为已知限制即可，keep-alive 在压测和反向代理后会成为瓶颈，排入后续计划 |
 | 中间件 | 无 | 至少提供请求前后钩子：鉴权、请求日志已内置、CORS |
 
@@ -309,7 +309,7 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 
 ### 7.1 HTTP 应用状态与关联请求上下文设计
 
-2026-11-05：研究结论与目标接口，尚未实现。沿用 `#state` / `when`，不新增 Shared/Mutex
+2026-11-06：已实现 `Request<C>`、`ContextSource` 与 `with_context`。并行域和 `with_state` 是后续目标。沿用 `#state` / `when`，不新增 Shared/Mutex
 或另一套状态修改闭包 API。下列 `text` 代码块表示目标接口，不属于当前可执行标准库。
 
 应用有三种不同的状态来源：
@@ -324,43 +324,37 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 候选复制和回滚不能复制或撤销一个外部数据库连接池。pool 留在请求上下文中，SQL 在 when 外执行。
 when 提交与数据库事务不是同一事务；需要数据库一致性的订单数据继续交给 PostgreSQL 事务。
 
-**关联类型与 handler。** `Application` 只声明应用对应的上下文类型；创建上下文所需的
-分享行为由上下文类型实现。`share` 不是通用深复制，也不是数据库 checkout。
-可变的请求局部字段（例如当前用户）应在分享时重置；pool 等资源字段调用其原有 share 方法。
+**关联类型与 handler。** 已实现的 `ContextSource.Context` 由资源来源决定。两种类型可以不同：
+来源只保存跨请求资源，关联类型还可以包含每次请求重新初始化的字段。例如连接分享数据库池句柄，
+请求命中后才生成 `{ db, current_user: None }`。具体签名见[语言参考](language.md#http-服务端-jokyhttp)。
+
+拟议的 `Application.RequestContext` 进一步限定每种 App 对应一种上下文，注册路由时可检查 handler 的类型。
+若同一库存域需要给公网和管理接口提供不同资源，应在落地 `with_state` 前用该场景复核这一约束。
+下例使用内存库存，订单示例的库存仍在 PostgreSQL 中。
 
 ```text
-pub trait Context {
-    fn share(&self) @suspends @noescape -> Self
-}
 pub trait Application {
-    type RequestContext: Context
-}
-
-struct AppContext { db: postgres.Pool }
-impl http.Context for AppContext {
-    fn share(&self) @suspends @noescape -> Self {
-        AppContext { db: self.db.share() }
-    }
+    type RequestContext
 }
 #state
-struct App { hits: UInt64 }
+struct App { available: UInt64 }
 impl http.Application for App {
-    type RequestContext = AppContext
+    type RequestContext = Unit
 }
 
-fn health(app: domain.WriteHandle<App>, request: http.Request<AppContext>) @suspends -> http.Response {
-    let hits = match when (mut app) { app.hits += 1; app.hits } {
-        Ok(hits) => hits,
-        Err(_) => return http.empty(http.Status.ServiceUnavailable)
+fn reserve(app: domain.WriteHandle<App>, request: http.Request<Unit>) @suspends -> http.Response {
+    let reserved = when (mut app) {
+        if app.available == 0 { false } else {
+            app.available -= 1
+            true
+        }
     }
-    request.log.info("health.check_started", [log.field("hits", hits)])
-    let available = request.ctx.db.query_one("SELECT 1", []).is_ok()
-    if !available {
-        request.log.warn("health.database_unavailable", [])
+    request.log.info("inventory.reserve", [])
+    match reserved {
+        Ok(true) => http.empty(http.Status.Ok),
+        Ok(false) => http.empty(http.Status.Conflict),
+        Err(_) => http.empty(http.Status.ServiceUnavailable)
     }
-    let status = if available { http.Status.Ok } else { http.Status.ServiceUnavailable }
-    let request_id = request.request_id.to_text()
-    http.text(status, "healthy: {available}; request_id: {request_id}")
 }
 ```
 
@@ -374,25 +368,24 @@ fn health(app: domain.WriteHandle<App>, request: http.Request<AppContext>) @susp
 `request.log.info/warn/error` 等方法自动附加框架绑定的 request_id，业务无需重复传入；
 `request.request_id` 用于读取同一个 UUID，响应仍自动发送 X-Request-Id。
 method、target、headers、body 与现有辅助方法保持职责。
-关联类型建立 `App -> AppContext` 的对应关系，路由工厂据此检查 handler 的参数类型。
+拟议的状态路由用关联类型建立 `App -> AppContext` 的对应关系，注册时据此检查 handler 参数类型。
 使用 `Request<AppContext>`，不要求记录声明直接带 `A: Application` 约束或投影字段。
 业务模块可写 `type Request = http.Request<AppContext>` 缩短签名；同一个无泛型 `http.Request`
 不能依据另一个参数自动改变 ctx 的类型，不引入隐式类型映射或动态类型查询。
 
 无状态 `Router.new()` 和普通函数服务使用 `Request<Unit>`，Unit 提供空上下文的分享实现；
 已有示例相应更新显式类型。当前语言没有泛型类型默认实参，本方案不将其作为前置条件。
-只有资源上下文而没有内存事务状态的服务不需要创建空 App：提供 `http.with_context(ctx)`，
+只有资源上下文的服务直接使用 `http.with_context(source)`，
 注册 `fn(Request<C>) @suspends -> Response`，共享请求实现和路由匹配规则。
 
-**构造与生命周期。** 有状态入口为以下工厂，返回 `StateRouter<A, A.RequestContext>`；
-内部需要两个具体类型参数，调用方只明确应用类型。ContextRouter 与 StateRouter 复用现有
+**构造与生命周期。** 拟议的有状态入口为以下工厂，返回 `StateRouter<A, A.RequestContext>`；
+内部需要两个具体类型参数，调用方只明确应用类型。StateRouter 应复用现有
 路径校验、方法分发、HEAD、404/405/Allow 规则。
 
 ```text
 let owner = domain.create(new_app, {})
-var router = http.with_state::<App>(owner.handle(), AppContext { db: pool })
-router.get("/health", health)!
-router.post("/orders", create_order)!
+var router = http.with_state::<App>(owner.handle(), {})
+router.post("/reserve", reserve)!
 http.serve_with(listener, &stop, options, router)!
 owner.close()
 ```
@@ -405,7 +398,7 @@ Closed 错误，不悄悄创建新 App，也不保证请求一定成功。
 构造 `Request<C>`。Service.share 仍保证每个连接有独立拥有的资源包装，应用上下文分享和
 必要的池别名均是轻量句柄操作，不重新打开池。完整请求读取成功并匹配 handler 后才创建该请求的
 应用上下文；解析失败、自动 404/405 不创建请求级上下文，也不调用 handler 或状态操作。
-接纳连接阶段的 Service.share 仍可调用 Context.share，为连接复制资源句柄。
+接纳连接时调用来源的 share，只分享长期资源；命中 handler 后才调用来源的 for_request 构造请求值。
 上下文分享失败和取消沿已有任务清理通路处理，不允许部分初始化值逃逸。
 
 request_id、method、path 和计时起点由 HTTP 层在调用 handler 前固定；
@@ -428,14 +421,12 @@ request.log 的绑定和完成日志使用同一个原始 request_id；handler �
 - 首批覆盖构造、关闭、静态单域/多域 when 及已有状态方法转发；目录、动态路径等入口
   在没有接通前继续明确拒绝。绝不因引入 HTTP 适配器放宽未实现入口。
 
-**实施顺序与验收。** 先接通原生程序的直接并行域路径，再落地通用请求、上下文与路由适配器，
-最后迁移订单示例并以共享业务状态验证。单纯 pool 服务先用 with_context，不为演示而加入无用计数器。
-不把只有 Local 能运行的临时版本作为并行有状态 HTTP 的完成交付。
-验收复用现有 HTTP/域 fixture，覆盖三后端及 Parallel；验证跨请求共享同一 App、冲突操作不丢更新、
-不同域无额外全局互斥、读取/修改与业务回滚、关闭/取消、请求上下文独立与池正确清理。
-并行性使用同步探针验证，避免耗时阈值。按用户当前要求只做相关 Debug 检查，不跑全量或 Release。
+**实施顺序与验收。**
 
-**本次研究证据。** 临时探针已执行 JIT、解释器、独立 AOT：关联类型选择上下文，泛型请求
+1. 先交付 `with_context` 并迁移订单服务。复用路由 fixture 检查请求局部字段独立、自动 404/405 跳过初始化、隐式 HEAD 正常分发。真实 PostgreSQL 用例验证并发下单和丢失响应后的幂等重试；独立连接观察池会话，确认最后一个路由句柄释放后会话结束。
+2. 单独接通直接并行域路径，然后交付 `with_state`。用同步探针让两个请求争抢同一域的最后一件库存，断言恰有一个成功且最终库存为零。在 JIT、解释器与独立 AOT 验证 Parallel 路径，并覆盖不同域可并行、业务回滚、关闭与取消。
+
+**2026-11-05 设计探针。** 临时探针已执行 JIT、解释器、独立 AOT：关联类型选择上下文，泛型请求
 持有 `Option<postgres.Pool>` 与 String，适配现有 Service.share/handle，
 通过函数指针进入具名 handler，跨挂起并用 when 更新 App。
 探针的 pool 值为 None，只验证资源类型存储与类型组合，未声称验证数据库访问或 pool 生命周期。
@@ -564,7 +555,7 @@ chat 主文件中的 `serve` 循环（准入、计数 ID、复制脚本、isolat
 
 以下为采纳 §4、§7、§8 建议后的 `place()` 与 HTTP handler 草图，仅用于说明方向：
 
-```joky
+```text
 pub fn place(pool: &pg.Pool, customer: Int64, key: &String, qty: Int64) @suspends -> Result<Order, AppError> {
     if qty <= 0 || key.is_empty() { return Err(AppError.Invalid) }
     pool.transaction(|tx| {
@@ -578,13 +569,13 @@ pub fn place(pool: &pg.Pool, customer: Int64, key: &String, qty: Int64) @suspend
     })
 }
 
-fn create_order(state: &Orders, request: http.Request) @suspends -> http.Response {
-    let key = match request.header("idempotency-key") {
-        Some(k) if !k.is_empty() && k.byte_length() <= 128 => k.clone(),
-        _ => return http.json(Status.BadRequest, &ApiError.new("missing Idempotency-Key"))
-    }
+fn create_order(request: http.Request<Orders>) @suspends -> http.Response {
+    var keys = request.header_all("Idempotency-Key")
+    if keys.len() != 1 { return error_reply(Status.BadRequest, "expected one Idempotency-Key") }
+    let key = keys.take_last()
+    if key.is_empty() || key.byte_length() > 128 { return error_reply(Status.BadRequest, "invalid Idempotency-Key") }
     let input = match request.json::<Purchase>() { Ok(i) => i, Err(_) => return http.bad_request("expected qty") }
-    match orders.place(&state.pool, 1, &key, input.qty) {
+    match orders.place(&request.ctx.pool, 1, &key, input.qty) {
         Ok(Confirmed(id)) => http.json(Status.Ok, &OrderCreated { order_id: id }),
         ...
     }
@@ -592,12 +583,13 @@ fn create_order(state: &Orders, request: http.Request) @suspends -> http.Respons
 
 fn main() @suspends -> Int32 {
     let pool = pg.Pool.open(pg.Options { max_connections: 4, ..pg.Options.default() })!
-    let router = http.Router.with_state(Orders { pool }).post("/orders", create_order)
+    var router = http.with_context(Orders { pool })
+    router.post("/orders", create_order)!
     http.run("127.0.0.1:0", router)
 }
 ```
 
-注：`Some(k) if ...` 使用 §5.5 已实现的 match 守卫；`transaction` 闭包内 `return` 返回闭包本身，与现有闭包规则一致。
+注：`transaction` 闭包内 `return` 返回闭包本身，与现有闭包规则一致。
 
 ## 12. 建议实施顺序
 

@@ -16,8 +16,8 @@ import joky/string
 import joky/json/typed.{type ToJson, type FromJson}
 
 pub struct Header { pub name: String, pub value: String }
-pub struct RequestContext { pub request_id: uuid.Uuid, pub logger: log.Logger }
-impl RequestContext {
+pub struct RequestLog { pub request_id: uuid.Uuid, pub logger: log.Logger }
+impl RequestLog {
     pub fn try_emit(&self, level: log.Level, event: String, var fields: Array<log.Field>) -> Result<log.Emission, log.LogError> {
         if !self.logger.enabled(level) { return result.Ok(log.Emission.Filtered) }
         fields.push(log.field("request_id", self.request_id))
@@ -31,14 +31,16 @@ impl RequestContext {
     pub fn warn(&self, event: String, fields: Array<log.Field>) { self.try_emit(log.Level.Warn, event, fields); }
     pub fn error(&self, event: String, fields: Array<log.Field>) { self.try_emit(log.Level.Error, event, fields); }
 }
-pub struct Request {
-    pub context: RequestContext,
+pub struct Request<C> {
+    pub ctx: C,
+    pub log: RequestLog,
+    pub request_id: uuid.Uuid,
     pub method: Method,
     pub target: String,
     pub headers: Array<Header>,
     pub body: Array<UInt8>
 }
-impl Request {
+impl<C> Request<C> {
     pub fn json<T: FromJson>(&self) @noescape -> Result<T, typed.CodecError> {
         typed.decode_bytes::<T>(&self.body)
     }
@@ -349,7 +351,7 @@ fn valid_host(value: &String) -> Bool {
     }
     host_len > 0 && (!in_port || port_digits > 0)
 }
-fn read_request(stream: &mut Wire, context: RequestContext) @suspends -> Result<Request, ReadFailure> {
+fn read_request(stream: &mut Wire, context: RequestLog) @suspends -> Result<Request<Unit>, ReadFailure> {
     var remaining = HEAD_LIMIT
     let (method, target) = request_line(line(stream, &mut remaining)?)?
     var headers: Array<Header> = []
@@ -372,12 +374,12 @@ fn read_request(stream: &mut Wire, context: RequestContext) @suspends -> Result<
     }
     if !host { return Err(ReadFailure.Bad) }
     let body = stream.read_body(length.unwrap_or(0))?
-    result.Ok(Request { context, method, target, headers, body })
+    result.Ok(Request { ctx: {}, log: context, request_id: context.request_id, method, target, headers, body })
 }
-fn stop_read(stop: &shutdown.Controller) @suspends -> Result<Request, ReadFailure> { stop.wait(); Err(ReadFailure.Stopped) }
-fn read_timeout(timeout: Duration) @suspends -> Result<Request, ReadFailure> { task.sleep(timeout); Err(ReadFailure.Timeout) }
+fn stop_read(stop: &shutdown.Controller) @suspends -> Result<Request<Unit>, ReadFailure> { stop.wait(); Err(ReadFailure.Stopped) }
+fn read_timeout(timeout: Duration) @suspends -> Result<Request<Unit>, ReadFailure> { task.sleep(timeout); Err(ReadFailure.Timeout) }
 enum WriteOutcome { Complete, Failed, TimedOut }
-fn response_prefix(code: Int32, reason: String, media: String, fields: Array<Header>, size: UInt64, context: RequestContext) -> Option<String> {
+fn response_prefix(code: Int32, reason: String, media: String, fields: Array<Header>, size: UInt64, context: RequestLog) -> Option<String> {
     let no_content = code == 204 || code == 304
     if size > BODY_LIMIT || ((no_content || code == 205) && size != 0) { return None }
     if media.byte_length() > HEAD_LIMIT || fields.len() > 60 { return None }
@@ -403,7 +405,7 @@ fn send(var stream: Wire, prefix: String, body: Array<UInt8>, head: Bool) @suspe
     if stream.finish() { Complete } else { Failed }
 }
 fn write_timeout(duration: Duration) @suspends -> WriteOutcome { task.sleep(duration); TimedOut }
-fn respond(io: Wire, context: RequestContext, read_duration: Option<Duration>, started: Option<time.Instant>, request_info: Option<(Method, String)>, var code: Int32, reason: String, media: String, headers: Array<Header>, var body: Array<UInt8>, head: Bool, timeout: Duration) @suspends {
+fn respond(io: Wire, context: RequestLog, read_duration: Option<Duration>, started: Option<time.Instant>, request_info: Option<(Method, String)>, var code: Int32, reason: String, media: String, headers: Array<Header>, var body: Array<UInt8>, head: Bool, timeout: Duration) @suspends {
     let prefix = match response_prefix(code, reason, media, headers, body.len(), context) {
         Some(prefix) => prefix,
         None => {
@@ -435,9 +437,9 @@ fn handshake_timeout(timeout: Duration) @suspends -> Option<Wire> { task.sleep(t
 // Each admitted connection owns its service handle until the handler and write finish.
 pub trait Service {
     fn share(&self) @suspends -> Self
-    fn handle(&self, request: Request) @suspends -> Response
+    fn handle(&self, request: Request<Unit>) @suspends -> Response
 }
-pub type Handler = fn(Request) @suspends -> Response
+pub type Handler<C> = fn(Request<C>) @suspends -> Response
 pub enum RouteError { InvalidPath, DuplicateRoute }
 impl Show for RouteError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
@@ -447,8 +449,22 @@ impl Show for RouteError {
         })
     }
 }
-struct Route { method: Method, path: String, handler: Handler }
-pub struct Router { routes: Array<Route> }
+// share runs on the accept loop. for_request runs on the matched request task.
+pub trait ContextSource {
+    type Context
+    fn share(&self) @suspends @noescape -> Self
+    fn for_request(&self) @suspends @noescape -> Self.Context
+}
+impl ContextSource for Unit {
+    type Context = Unit
+    fn share(&self) @suspends @noescape -> Self { {} }
+    fn for_request(&self) @suspends @noescape -> Unit { {} }
+}
+struct Route<C> { method: Method, path: String, handler: Handler<C> }
+pub struct ContextRouter<S, C> { source: S, routes: Array<Route<C>> }
+pub fn with_context<S: ContextSource>(source: S) -> ContextRouter<S, S.Context> {
+    ContextRouter { source, routes: [] }
+}
 fn valid_route_path(path: &String) -> Bool {
     if !path.starts_with("/") || path.byte_length() > ROUTE_PATH_LIMIT { return false }
     for byte in path.bytes() {
@@ -456,28 +472,43 @@ fn valid_route_path(path: &String) -> Bool {
     }
     true
 }
+pub struct Router { inner: ContextRouter<Unit, Unit> }
 impl Router {
-    pub fn new() -> Self { Router { routes: [] } }
-    pub fn add(&mut self, method: Method, path: String, handler: Handler) -> Result<Unit, RouteError> {
+    pub fn new() -> Self { Router { inner: with_context({}) } }
+    pub fn add(&mut self, method: Method, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.add(method, path, handler) }
+    pub fn get(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.get(path, handler) }
+    pub fn head(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.head(path, handler) }
+    pub fn post(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.post(path, handler) }
+    pub fn put(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.put(path, handler) }
+    pub fn patch(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.patch(path, handler) }
+    pub fn delete(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.delete(path, handler) }
+    pub fn options(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.options(path, handler) }
+}
+impl Service for Router {
+    fn share(&self) @suspends -> Self { Router { inner: self.inner.share() } }
+    fn handle(&self, request: Request<Unit>) @suspends -> Response { self.inner.handle(request) }
+}
+impl<S, C> ContextRouter<S, C> {
+    pub fn add(&mut self, method: Method, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
         if !valid_route_path(&path) { return Err(RouteError.InvalidPath) }
         if self.find_handler(&path, method).is_some() { return Err(RouteError.DuplicateRoute) }
         self.routes.push(Route { method, path, handler })
         result.Ok({})
     }
-    pub fn get(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Get, path, handler) }
-    pub fn head(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Head, path, handler) }
-    pub fn post(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Post, path, handler) }
-    pub fn put(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Put, path, handler) }
-    pub fn patch(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Patch, path, handler) }
-    pub fn delete(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Delete, path, handler) }
-    pub fn options(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Options, path, handler) }
-    fn find_handler(&self, path: &String, method: Method) @noescape -> Option<Handler> {
+    pub fn get(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Get, path, handler) }
+    pub fn head(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Head, path, handler) }
+    pub fn post(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Post, path, handler) }
+    pub fn put(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Put, path, handler) }
+    pub fn patch(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Patch, path, handler) }
+    pub fn delete(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Delete, path, handler) }
+    pub fn options(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Options, path, handler) }
+    fn find_handler(&self, path: &String, method: Method) @noescape -> Option<Handler<C>> {
         for entry in &self.routes {
             if entry.path == path && entry.method == method { return Some(entry.handler) }
         }
         None
     }
-    fn select(&self, path: &String, method: Method) @noescape -> Option<Handler> {
+    fn select(&self, path: &String, method: Method) @noescape -> Option<Handler<C>> {
         let handler = self.find_handler(path, method)
         if handler.is_none() && method == Method.Head { self.find_handler(path, Method.Get) } else { handler }
     }
@@ -488,29 +519,33 @@ impl Router {
         }
         names.join(", ")
     }
-    fn copy_routes(&self) -> Self {
-        var routes: Array<Route> = []
+    fn copy_routes(&self) -> Array<Route<C>> {
+        var routes: Array<Route<C>> = []
         for entry in &self.routes {
             routes.push(Route { method: entry.method, path: entry.path.clone(), handler: entry.handler })
         }
-        Router { routes }
+        routes
     }
 }
-impl Service for Router {
-    fn share(&self) @suspends -> Self { self.copy_routes() }
-    fn handle(&self, request: Request) @suspends -> Response {
+impl<S: ContextSource<Context = C>, C> Service for ContextRouter<S, C> {
+    fn share(&self) @suspends -> Self { ContextRouter { source: self.source.share(), routes: self.copy_routes() } }
+    fn handle(&self, request: Request<Unit>) @suspends -> Response {
         let path = request.path()
-        if let Some(handler) = self.select(&path, request.method) { return handler(request) }
+        if let Some(handler) = self.select(&path, request.method) {
+            let ctx = self.source.for_request()
+            let Request { ctx: _, log, request_id, method, target, headers, body } = request
+            return handler(Request { ctx, log, request_id, method, target, headers, body })
+        }
         let allow = self.allowed(&path)
         if allow.is_empty() { text(Status.NotFound, "not found") } else {
             text(Status.MethodNotAllowed, "method not allowed").with_header("Allow", allow)
         }
     }
 }
-struct FunctionService { callback: fn(Request) @suspends -> Response }
+struct FunctionService { callback: fn(Request<Unit>) @suspends -> Response }
 impl Service for FunctionService {
     fn share(&self) @suspends -> Self { FunctionService { callback: self.callback } }
-    fn handle(&self, request: Request) @suspends -> Response { let call = self.callback; call(request) }
+    fn handle(&self, request: Request<Unit>) @suspends -> Response { let call = self.callback; call(request) }
 }
 fn connection<S: Service>(config: Option<tls.ServerConfig>, stream: TcpStream, stop: shutdown.Controller, options: Options, service: S, _permit: admission.Permit) @suspends {
     var io = match config {
@@ -519,7 +554,7 @@ fn connection<S: Service>(config: Option<tls.ServerConfig>, stream: TcpStream, s
             Some(wire) => wire, None => return
         }
     }
-    let context = RequestContext { request_id: uuid.v4()!, logger: options.logger }
+    let context = RequestLog { request_id: uuid.v4()!, logger: options.logger }
     let read_started = time.Instant.now()
     let input = race { read_request(&mut io, context), stop_read(&stop), read_timeout(options.read_timeout) }
     let read_finished = time.Instant.now()
@@ -577,10 +612,10 @@ fn run<S: Service>(config: Option<tls.ServerConfig>, listener: TcpListener, stop
     race { listen(config, listener, stop, options, service), deadline(stop, options.grace) }
 }
 
-pub fn serve(listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
+pub fn serve(listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request<Unit>) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
     serve_with(listener, stop, options, FunctionService { callback: handler })
 }
-pub fn serve_tls(listener: TcpListener, config: tls.ServerConfig, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
+pub fn serve_tls(listener: TcpListener, config: tls.ServerConfig, stop: &shutdown.Controller, options: Options, handler: fn(Request<Unit>) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
     serve_tls_with(listener, config, stop, options, FunctionService { callback: handler })
 }
 

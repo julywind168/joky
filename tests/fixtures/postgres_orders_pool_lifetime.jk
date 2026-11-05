@@ -1,0 +1,31 @@
+// Observe the last pool alias being dropped while the Joky process is still alive.
+import postgres_orders_http as api
+import joky/http.{type Service}
+import joky/log
+import joky/mem
+import joky/postgres
+import joky/task
+import joky/uuid
+
+fn scalar(pool: &postgres.Pool, sql: String) @suspends -> Int64 {
+    let row = pool.query_one(sql, [])!
+    postgres.get_i64(&row, 0)!!
+}
+fn main() @suspends {
+    let observer = postgres.open(1)!
+    let pool = postgres.open(1)!
+    let pid = scalar(&pool, "SELECT pg_backend_pid()")
+    let router = api.routes(pool)
+    let worker = router.share()
+    mem.drop(router)
+    let id = uuid.v4()!
+    let request = http.Request {
+        ctx: {}, request_id: id, log: http.RequestLog { request_id: id, logger: log.Logger.new(log.Level.Info) },
+        method: http.Method.Post, target: "/orders", headers: [], body: []
+    }
+    assert(match worker.handle(request).status { BadRequest => true, _ => false }, "order handler rejects missing key")
+    let sessions = "SELECT count(*) FROM pg_stat_activity WHERE pid={pid}"
+    assert(scalar(&observer, sessions.clone()) == 1, "worker still owns the pool")
+    mem.drop(worker)
+    while scalar(&observer, sessions.clone()) != 0 { task.sleep(5ms) }
+}

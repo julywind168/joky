@@ -29,7 +29,7 @@ fn http_request_and_response_helpers_preserve_boundaries() {
     let work = Workspace::new();
     work.write("url.jk", r##"
 import joky/url
-import joky/http.{type Service}
+import joky/http.{type ContextSource, type Service}
 import joky/log
 import joky/uuid
 import joky/mem
@@ -42,9 +42,10 @@ fn pairs(var actual: Array<(String, String)>, var expected: Array<(String, Strin
         assert(key == expected_key && value == expected_value, "pair order and content")
     }
 }
-fn request(target: String) -> http.Request {
+fn request(target: String) -> http.Request<Unit> {
+    let request_id = uuid.Uuid.parse("00112233-4455-6677-8899-aabbccddeeff")!
     http.Request {
-        context: http.RequestContext { request_id: uuid.Uuid.parse("00112233-4455-6677-8899-aabbccddeeff")!, logger: log.Logger.new(log.Level.Info) },
+        ctx: {}, request_id, log: http.RequestLog { request_id, logger: log.Logger.new(log.Level.Info) },
         method: http.Method.Get, target, headers: [], body: []
     }
 }
@@ -92,10 +93,10 @@ fn decoding() {
         headers: [http.Header { name: "X-Item", value: "kept" }],
         body: r#"{"error":"bad"}"#.into_bytes(), ..request("/decode?x=1")
     }
-    let id = value.context.request_id
+    let id = value.request_id
     let decoded = value.json::<ErrorBody>()!
     assert(value.json::<ErrorBody>()!.error == "bad" && value.body.len() == 15, "shared request supports repeated decoding")
-    assert(value.context.request_id == id && value.header("x-item")! == "kept"
+    assert(value.request_id == id && value.header("x-item")! == "kept"
         && value.path() == "/decode" && value.method == http.Method.Get, "decode preserves request metadata")
     mem.drop(value)
     assert(decoded.error == "bad", "decoded value outlives request")
@@ -134,12 +135,12 @@ fn helpers() {
     assert(payload.error == "quote\"\n", "JSON borrows input")
     assert(http.json(http.Status.Ok, Float64.NAN).is_err(), "encoding failure remains observable")
 }
-fn routed_request(method: http.Method, target: String) -> http.Request { http.Request { method, ..request(target) } }
-fn routed(request: http.Request) @suspends -> http.Response {
+fn routed_request(method: http.Method, target: String) -> http.Request<Unit> { http.Request { method, ..request(target) } }
+fn routed(request: http.Request<Unit>) @suspends -> http.Response {
     task.yield_now()
     http.text(http.Status.Ok, "{request.method} {request.target}")
 }
-fn alternate(request: http.Request) @suspends -> http.Response { http.empty(http.Status.Accepted) }
+fn alternate(request: http.Request<Unit>) @suspends -> http.Response { http.empty(http.Status.Accepted) }
 fn routing() @suspends {
     var router = http.Router.new()
     router.post("/item", routed)!
@@ -165,9 +166,38 @@ fn routing() @suspends {
     mem.drop(router)
     assert(String.from_utf8(shared.handle(routed_request(http.Method.Head, "/item")).body)! == "HEAD /item", "shared table owns routes and preserves method in GET fallback")
 }
-fn main() @suspends { components(); queries(); requests(); helpers(); decoding(); routing() }
+struct Source { tenant: String }
+struct Local { tenant: String, user: Option<String> }
+impl ContextSource for Source {
+    type Context = Local
+    fn share(&self) @suspends @noescape -> Self { Source { tenant: self.tenant.clone() } }
+    fn for_request(&self) @suspends @noescape -> Local {
+        println("context")
+        Local { tenant: self.tenant.clone(), user: None }
+    }
+}
+fn identify(var request: http.Request<Local>) @suspends -> http.Response {
+    assert(request.request_id == request.log.request_id, "log keeps the request ID")
+    assert(request.ctx.user.is_none(), "new request has no user")
+    request.ctx.user = Some("reader")
+    task.yield_now()
+    http.text(http.Status.Ok, "{request.ctx.tenant} {request.ctx.user!}")
+}
+fn contextual() @suspends {
+    var router = http.with_context(Source { tenant: "orders" })
+    router.get("/item", identify)!
+    let worker = router.share()
+    mem.drop(router)
+    assert(match worker.handle(request("/missing")).status { NotFound => true, _ => false }, "unknown path")
+    assert(match worker.handle(routed_request(http.Method.Post, "/item")).status { MethodNotAllowed => true, _ => false }, "wrong method")
+    for method in [http.Method.Get, http.Method.Head] {
+        let reply = worker.handle(routed_request(method, "/item"))
+        assert(String.from_utf8(reply.body)! == "orders reader", "context survives suspension")
+    }
+}
+fn main() @suspends { components(); queries(); requests(); helpers(); decoding(); routing(); contextual() }
 "##);
-    work.assert_all_backends("url.jk", &[], b"", 0);
+    work.assert_all_backends("url.jk", &[], b"context\ncontext\n", 0);
 }
 
 #[test]
@@ -319,7 +349,7 @@ import joky/process
 import joky/shutdown
 import joky/task
 import joky/tcp
-fn handle(request: http.Request) @suspends -> http.Response {
+fn handle(request: http.Request<Unit>) @suspends -> http.Response {
     if request.method == http.Method.Options {
         return http.text(http.Status.Ok, "{request.method}")
     }
@@ -330,7 +360,7 @@ fn handle(request: http.Request) @suspends -> http.Response {
         return http.empty(http.Status.Created).with_header("Location", "/items/42")
     }
     if request.target == "/empty" {
-        request.context.warn("app.empty", [])
+        request.log.warn("app.empty", [])
         return http.empty(http.Status.from_code(204)!)
     }
     if request.target == "/invalid" {
