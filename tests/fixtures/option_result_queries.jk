@@ -2,6 +2,7 @@ import joky/option as opt.{type Option as Maybe}
 import joky/result as res.{type Result as Outcome}
 import joky/array.{type Array}
 import joky/string
+import joky/check as checks.{assert}
 
 struct Cell { value: Int32 }
 struct Link { next: Maybe<&Cell> }
@@ -47,6 +48,20 @@ fn check() -> Int32 {
     let unit = Maybe.None::<Unit>.unwrap_or_else(|| {})
     let unit_error: Outcome<Unit, Unit> = Outcome.Err({})
     unit_error.unwrap_or_else(|error| { error })
+
+    let mapped = Maybe.Some(20).map_or(1, |value| { value + 1 })
+    let mapped_default = Maybe.None::<Int32>.map_or(21, |value| { value + 1 })
+    let filtered = Maybe.Some(4).filter(|value| { *value > 3 })
+    let rejected = Maybe.Some(2).filter(|value| { *value > 3 })
+    if mapped != 21 || mapped_default != 21 || filtered.unwrap_or(0) != 4 || rejected.is_some() { return 18 }
+    if !Maybe.Some(3).is_some_and(|value| { *value == 3 }) || Maybe.None::<Int32>.is_some_and(|value| { *value == 0 }) { return 19 }
+    let missing = Maybe.None::<Int32>.ok_or(7)
+    let lazy_missing = Maybe.None::<Int32>.ok_or_else(|| { 8 })
+    let present_result: Outcome<Int32, Int32> = Maybe.Some(9).ok_or(0)
+    if missing.err().unwrap_or(0) != 7 || lazy_missing.err().unwrap_or(0) != 8 || present_result.unwrap_or(0) != 9 { return 20 }
+    let inspected = Outcome.Err::<Int32, Int32>(11).inspect_err(|error| { checks.assert(*error == 11, "inspect_err") })
+    if inspected.err().unwrap_or(0) != 11 || Outcome.Ok::<Int32, Int32>(12).inspect_err(|error| { checks.assert(false, "unexpected inspect_err") }).unwrap_or(0) != 12 { return 21 }
+    if Maybe.Some(22).expect("present") != 22 || Outcome.Ok::<Int32, Int32>(23).expect("success") != 23 { return 22 }
 
     // Receiver and callback construction run once in order; only invocation is lazy.
     var order = 0

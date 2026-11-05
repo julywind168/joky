@@ -245,12 +245,13 @@ SharedPipeline 提供同名终结方法；支持拥有型累积值，按顺序�
 
 ### 6.3 Option / Result【P1】
 
-现有方法齐全度约为 Rust 的一半。后端代码中最常用而缺失的：
+已补 `Option.expect`、`Result.expect`、`Option.ok_or` / `ok_or_else`、`map_or`、`filter`、
+`is_some_and` 和 `Result.inspect_err`；回调均为同步 FnOnce，借用不会逃出调用。
 
-- `Option.ok_or(err)` / `ok_or_else`：把"找不到"转成业务错误，配合 `?`。
-- `expect("message")`：`!` 失败时没有上下文，日志里只看到"unwrap None"。建议 `expect` 或 `!` 支持附带消息。
-- `map_or` / `map_or_else`、`filter`、`is_some_and`、`unwrap_or_default`（依赖 Default）。
-- Result 已有 `map_err`，补 `inspect_err`、`transpose`、`flatten`。
+仍缺少的方法：
+
+- `map_or_else`、`unwrap_or_default`（依赖 Default）。
+- Result 已有 `map_err`；仍待 `transpose`、`flatten`。
 
 ### 6.4 配置与进程
 

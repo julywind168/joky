@@ -14,6 +14,13 @@ impl<T> Option<T> {
         }
     }
 
+    fn expect(self, message: &String) @noescape(message) -> T {
+        match self {
+            Some(value) => value
+            None => { check.panic(message) }
+        }
+    }
+
     fn take(&mut self) -> Option<T> { mem.replace(self, None) }
 
     fn map<U, F: FnOnce(T) -> U>(self, transform: F) -> Option<U> {
@@ -22,6 +29,21 @@ impl<T> Option<T> {
 
     fn and_then<U, F: FnOnce(T) -> Option<U>>(self, transform: F) -> Option<U> {
         match self { None => None, Some(value) => transform(value) }
+    }
+
+    fn map_or<U, F: FnOnce(T) -> U>(self, fallback: U, transform: F) @noescape(transform) -> U {
+        match self { Some(value) => transform(value), None => fallback }
+    }
+
+    fn filter<F: FnOnce(&T) @noescape -> Bool>(self, predicate: F) @noescape(predicate) -> Self {
+        match self {
+            Some(value) => if predicate(&value) { Some(value) } else { None }
+            None => None
+        }
+    }
+
+    fn is_some_and<F: FnOnce(&T) @noescape -> Bool>(self, predicate: F) @noescape(predicate) -> Bool {
+        match self { Some(value) => predicate(&value), None => false }
     }
 
     fn is_some(&self) -> Bool {
