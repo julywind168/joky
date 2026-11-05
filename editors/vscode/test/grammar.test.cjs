@@ -183,6 +183,16 @@ test('numeric literals, ranges and tuple indices remain separate', () => {
   const tuple = tokenize('nested.1.0');
   has(tuple, 0, '1', 'constant.numeric.integer');
   has(tuple, 0, '0', 'constant.numeric.integer');
+  for (const literal of ['1ns', '1us', '1ms', '1s', '2min', '1h', '1.5s', '1_000.000_001ms']) {
+    const duration = tokenize(literal);
+    has(duration, 0, literal, 'constant.numeric.duration');
+    has(duration, 0, literal.match(/[a-z]+$/)[0], 'constant.numeric.duration');
+  }
+  const boundaries = tokenize('timeout1ms 1ms_more 1m 1e3s');
+  assert.ok(boundaries.lines[0].tokens.every((token) => !token.scopes.includes('constant.numeric.duration.joky')));
+  const interpolation = tokenize('"delay={1.5s}"');
+  has(interpolation, 0, '1.5s', 'constant.numeric.duration');
+  closed(interpolation);
 });
 
 test('contextual concurrency forms preserve ordinary method calls', () => {

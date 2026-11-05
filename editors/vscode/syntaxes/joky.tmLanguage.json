@@ -275,6 +275,10 @@
           }
         },
         {
+          "match": "\\b[0-9](?:_?[0-9])*(?:\\.[0-9](?:_?[0-9])*)?(?:ns|us|ms|s|min|h)\\b",
+          "name": "constant.numeric.duration.joky"
+        },
+        {
           "match": "\\b[0-9](?:_?[0-9])*\\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9](?:_?[0-9])*)?\\b",
           "name": "constant.numeric.float.joky"
         },
