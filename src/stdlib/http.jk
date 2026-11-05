@@ -18,12 +18,16 @@ pub struct RequestContext { pub request_id: uuid.Uuid, pub logger: log.Logger }
 impl RequestContext {
     pub fn try_emit(&self, level: log.Level, event: String, var fields: Array<log.Field>) -> Result<log.Emission, log.LogError> {
         if !self.logger.enabled(level) { return Ok(log.Emission.Filtered) }
-        fields.push(log.text("request_id", self.request_id.to_text()))
+        fields.push(log.field("request_id", self.request_id))
         self.logger.try_emit(level, event, fields)
     }
     pub fn emit(&self, level: log.Level, event: String, fields: Array<log.Field>) -> Bool {
         self.try_emit(level, event, fields).is_ok()
     }
+    pub fn debug(&self, event: String, fields: Array<log.Field>) { self.try_emit(log.Level.Debug, event, fields); }
+    pub fn info(&self, event: String, fields: Array<log.Field>) { self.try_emit(log.Level.Info, event, fields); }
+    pub fn warn(&self, event: String, fields: Array<log.Field>) { self.try_emit(log.Level.Warn, event, fields); }
+    pub fn error(&self, event: String, fields: Array<log.Field>) { self.try_emit(log.Level.Error, event, fields); }
 }
 pub struct Request {
     pub context: RequestContext,
@@ -308,12 +312,12 @@ fn respond(io: Wire, context: RequestContext, started: time.Instant, route: Opti
     let outcome = race { send(io, prefix, body, head), write_timeout(timeout) }
     if !context.logger.enabled(log.Level.Info) { return }
     let label = match outcome { Complete => "complete", Failed => "failed", TimedOut => "timeout" }
-    var fields = [log.uint("status", uint64(code)), log.text("write_outcome", label)]
-    if let Some(duration) = started.elapsed() { fields.push(log.uint("duration_ms", duration.as_millis())) }
+    var fields = [log.field("status", code), log.field("write_outcome", label)]
+    if let Some(duration) = started.elapsed() { fields.push(log.field("duration_ms", duration.as_millis())) }
     if let Some(name) = route {
-        if !name.is_empty() && name.byte_length() <= 128 { fields.push(log.text("route", name)) }
+        if !name.is_empty() && name.byte_length() <= 128 { fields.push(log.field("route", name)) }
     }
-    context.emit(log.Level.Info, "http.request_finished", fields);
+    context.info("http.request_finished", fields)
 }
 fn secure(config: &tls.ServerConfig, stream: TcpStream) @suspends -> Option<Wire> {
     match config.accept(stream) { Ok(io) => Some(Secure(io)), Err(_) => None }

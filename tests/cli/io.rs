@@ -820,10 +820,12 @@ fn structured_log_preserves_types_and_rejects_invalid_fields() {
     work.write("events.jk", r#"
 import joky/log
 import joky/check
+import joky/uuid
+import joky/http
 fn main() {
     check.assert(log.emit(log.Level.Debug, "event\nname", [
-        log.text("detail", "quote\"\\\nline"), log.uint("count", 9),
-        log.integer("delta", -2), log.boolean("ready", true)
+        log.field("detail", "quote\"\\\nline"), log.field("count", 9),
+        log.field("delta", -2), log.field("ready", true)
     ]), "valid")
     check.assert(log.emit(log.Level.Info, "job.finished", [log.text("request_id", "queue-42")]), "application field")
     check.assert(!log.emit(log.Level.Info, "invalid", [log.uint("n", 1), log.uint("n", 2)]), "duplicate")
@@ -834,28 +836,90 @@ fn main() {
     check.assert(match logger.try_emit(log.Level.Info, "", []) { Ok(Filtered) => true, _ => false }, "skip before validation")
     check.assert(match logger.try_emit(log.Level.Warn, "alert", []) { Ok(Written) => true, _ => false }, "at threshold")
     check.assert(match log.try_emit(log.Level.Info, "", []) { Err(InvalidEvent) => true, _ => false }, "empty event")
+    let id = uuid.Uuid.parse("00112233-4455-6677-8899-aabbccddeeff")!
+    log.info("typed", [
+        log.field("i8", Int8.MIN), log.field("i16", Int16.MIN),
+        log.field("i64", Int64.MIN), log.field("u8", UInt8.MAX),
+        log.field("u16", UInt16.MAX), log.field("u32", UInt32.MAX),
+        log.field("u64", UInt64.MAX), log.field("id", id)
+    ])
+    log.debug("module.debug", [])
+    log.warn("module.warn", [])
+    log.error("module.error", [])
+    logger.debug("filtered", [])
+    logger.info("filtered", [])
+    logger.warn("logger.warn", [])
+    logger.error("logger.error", [])
+    let context = http.RequestContext { request_id: id, logger }
+    context.debug("filtered", [])
+    context.info("filtered", [])
+    context.warn("context.warn", [])
+    context.error("context.error", [])
+    context.warn("invalid", [log.field("request_id", "duplicate")])
 }
 "#);
-    let output = work.cli(&["run", "events.jk"]);
-    success(&output);
-    assert!(output.stdout.is_empty());
-    let text = std::str::from_utf8(&output.stderr).unwrap();
-    let mut records = text
-        .lines()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap());
-    let event = records.next().unwrap();
-    assert_eq!(event["level"], "debug");
-    assert_eq!(event["event"], "event\nname");
-    assert_eq!(event["detail"], "quote\"\\\nline");
-    assert_eq!(event["count"], 9);
-    assert_eq!(event["delta"], -2);
-    assert_eq!(event["ready"], true);
-    assert!(event.get("request_id").is_none());
-    let job = records.next().unwrap();
-    assert_eq!(job["event"], "job.finished");
-    assert_eq!(job["request_id"], "queue-42");
-    assert_eq!(records.next().unwrap()["event"], "alert");
-    assert!(records.next().is_none());
+    success(&work.cli(&["build", "events.jk"]));
+    for backend in ["jit", "interpreter", "aot"] {
+        let output = match backend {
+            "aot" => Command::new(work.path().join("events")).output().unwrap(),
+            "interpreter" => work.cli(&["run", "events.jk", "--interpreter"]),
+            _ => work.cli(&["run", "events.jk"]),
+        };
+        success(&output);
+        assert!(output.stdout.is_empty());
+        let text = std::str::from_utf8(&output.stderr).unwrap();
+        let mut records = text
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap());
+        let event = records.next().unwrap();
+        assert_eq!(event["level"], "debug");
+        assert_eq!(event["event"], "event\nname");
+        assert_eq!(event["detail"], "quote\"\\\nline");
+        assert_eq!(event["count"], 9);
+        assert_eq!(event["delta"], -2);
+        assert_eq!(event["ready"], true);
+        assert!(event.get("request_id").is_none());
+        let job = records.next().unwrap();
+        assert_eq!(job["event"], "job.finished");
+        assert_eq!(job["request_id"], "queue-42");
+        assert_eq!(records.next().unwrap()["event"], "alert");
+        let typed = records.next().unwrap();
+        assert_eq!(typed["level"], "info");
+        assert_eq!(typed["event"], "typed");
+        for (key, value) in [
+            ("i8", i8::MIN as i64),
+            ("i16", i16::MIN as i64),
+            ("i64", i64::MIN),
+        ] {
+            assert_eq!(typed[key].as_i64(), Some(value));
+        }
+        for (key, value) in [
+            ("u8", u8::MAX as u64),
+            ("u16", u16::MAX as u64),
+            ("u32", u32::MAX as u64),
+            ("u64", u64::MAX),
+        ] {
+            assert_eq!(typed[key].as_u64(), Some(value));
+        }
+        assert_eq!(typed["id"], "00112233-4455-6677-8899-aabbccddeeff");
+        for (name, level) in [
+            ("module.debug", "debug"),
+            ("module.warn", "warn"),
+            ("module.error", "error"),
+            ("logger.warn", "warn"),
+            ("logger.error", "error"),
+            ("context.warn", "warn"),
+            ("context.error", "error"),
+        ] {
+            let record = records.next().unwrap();
+            assert_eq!(record["event"], name);
+            assert_eq!(record["level"], level);
+            if name.starts_with("context.") {
+                assert_eq!(record["request_id"], typed["id"]);
+            }
+        }
+        assert!(records.next().is_none());
+    }
 }
 
 #[test]
@@ -866,6 +930,7 @@ fn structured_log_reports_closed_pipe_without_stopping_the_task() {
         fn main() @suspends {
             assert(match log.try_emit(log.Level.Info, "event", []) { Err(WriteFailed) => true, _ => false }, "broken pipe")
             assert(!log.emit(log.Level.Info, "event", []), "compatibility call reports failure")
+            log.error("ignored write failure", [])
             println("continued")
         }"#);
     success(&work.cli(&["build", "pipe.jk", "--parallel"]));

@@ -268,14 +268,14 @@ SharedPipeline 提供同名终结方法；支持拥有型累积值，按顺序�
 
 ### 6.5 日志
 
-现状：`context.emit(log.Level.Warn, "order.commit_unknown", [log.text("route", "/orders")]);`
-需要为每种值选一个构造函数（`log.text`/`uint`/`integer`/`boolean`），返回的 Bool 还要用 `;` 丢弃。
+已补 `log.ToField` 与 `log.field(name, value)`，覆盖八种整数、Bool、String、Uuid；
+整数和布尔值保留 JSON 类型。Duration 由调用者显式选择单位，例如
+`log.field("duration_ms", duration.as_millis())`。
 
-建议：
-
-- `log.ToField` 协议 + 泛型 `log.field(name, value)`，常见类型（整数、Bool、String、Uuid、Duration）实现。
-- 级别快捷方法：`context.warn("order.commit_unknown", [...])`、`log.info(...)`。
-- `emit` 默认不返回值（失败计数由 logger 维护），需要结果时用 `try_emit`。
+模块、Logger、RequestContext 均提供返回 Unit 的 `debug/info/warn/error`；
+Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成日志和订单示例已迁移。
+`emit` 保留 Bool，`try_emit` 保留具体错误和 Logger/Context 的 Written、Filtered 区分。
+快捷方法忽略日志错误；共享失败计数的归属和并发规则另行设计。
 
 ### 6.6 后端常用但缺失的模块
 

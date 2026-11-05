@@ -47,7 +47,7 @@ fn order_reply(context: http.RequestContext, result: Result<orders.Order, postgr
         Ok(Conflict) => reply(http.Status.Conflict, r#"{"error":"key already used with another quantity"}"#),
         Ok(Insufficient) => reply(http.Status.Conflict, r#"{"error":"insufficient stock"}"#),
         Err(OutcomeUnknown) => {
-            context.emit(log.Level.Warn, "order.commit_unknown", [log.text("route", "/orders")]);
+            context.warn("order.commit_unknown", [log.field("route", "/orders")])
             reply(http.Status.ServiceUnavailable, r#"{"error":"outcome unknown; retry with the same Idempotency-Key"}"#)
         },
         Err(AcquireFailed) => reply(http.Status.ServiceUnavailable, r#"{"error":"database checkout failed"}"#),

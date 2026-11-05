@@ -7027,9 +7027,17 @@ EOF、读取错误、空闲超时或 on_line 返回 false 也走这条排空路�
 `log.Logger.new(minimum)` 创建独立配置，`logger.enabled(level)` 可在构造昂贵字段前判断。
 `logger.try_emit` 返回 Result<Emission, LogError>，Written 表示写入成功，Filtered 表示低于阈值，直接跳过校验、编码和输出。
 
-字段通过 `log.text`、`log.uint`、`log.integer`、`log.boolean` 构造，分别接受 String、UInt64、
-Int64、Bool。字符串由 JSON 编码器转义，数字和布尔值保留原类型。例如后台任务完成后可记录
-`log.emit(log.Level.Info, "job.finished", [log.uint("rows", 12)])`。
+字段推荐通过 `log.field<T: log.ToField>(name: String, value: T) -> log.Field` 构造。
+标准实现覆盖八种整数、Bool、String 和 Uuid；整数和布尔值保留 JSON 类型，String 由 JSON 编码器转义，
+Uuid 使用标准连字符文本。String 按值消费；需要保留原字符串时显式 clone。
+自定义类型可实现 `log.ToField` 的 `to_field(self, name: String) -> log.Field`，组合已有字段构造函数。
+`log.text`、`log.uint`、`log.integer`、`log.boolean` 仍分别接受 String、UInt64、Int64、Bool。
+Duration 显式选择单位，例如 `log.field("duration_ms", duration.as_millis())`。
+
+模块、Logger 和 HTTP RequestContext 均提供 `debug/info/warn/error(event: String, fields: Array<log.Field>) -> Unit`。
+例如 `log.info("job.finished", [log.field("rows", 12)])`。
+快捷方法忽略日志校验或写入错误，需要检查结果时使用 `try_emit`；Logger 快捷方法遵循最低等级。
+实参始终先求值，过滤不会跳过字段构造；昂贵字段仍应先用 `enabled` 判断。
 
 每条记录最多 32 个业务字段。事件名限 1–128 字节，字段名限 1–64 字节，文本值最多 4096 字节。
 同一条记录内的字段名须唯一，且不能使用上述三个保留名。`try_emit(level, event, fields) -> Result<Unit, LogError>` 区分字段校验、Encoding 和 WriteFailed。断管返回 WriteFailed，调用方可以继续执行；底层写入中途失败时可能已经写出部分字节。`emit` 保留 Bool 接口，失败返回 false。
@@ -7043,7 +7051,7 @@ Int64、Bool。字符串由 JSON 编码器转义，数字和布尔值保留原�
 服务端在开始读取请求时创建 UUID v4，handler 通过 `request.context.request_id` 访问，
 同一次响应的 `X-Request-Id` 标头返回这个 ID。客户端传来的同名标头不参与生成，重试会获得新 ID。
 `request.context` 的类型为 `http.RequestContext`，可显式传递并跨挂起使用。它的 `emit(level, event, fields)`
-会补上 `request_id` 后使用 Options.logger 的最低等级，默认 Debug。context.try_emit 区分 Written、Filtered 和错误，context.emit 在过滤时返回 true。这个字段占用 32 个字段中的一个名额，重复传入时拒绝整条事件。
+会补上 `request_id` 后使用 Options.logger 的最低等级，默认 Debug。context.try_emit 区分 Written、Filtered 和错误，context.emit 在过滤时返回 true。`context.debug/info/warn/error` 同样补上 request_id 并遵循等级过滤，返回 Unit。这个字段占用 32 个字段中的一个名额，重复传入时拒绝整条事件。
 Response 提供 status、content_type、headers 和 body 字段。没有附加响应头时传 `headers: []`。
 可用 Status.Created、Status.NoContent 等预设状态，也可用 Status.from_code(code) 校验 200–599 的最终状态码。
 handler 可以提供 Location 等响应头。定界字段、Content-Type 和 X-Request-Id 由服务端生成。

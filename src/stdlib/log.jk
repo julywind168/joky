@@ -5,6 +5,7 @@ import joky/json
 import joky/string.{type StringBuilder}
 import joky/show.{type Show}
 import joky/time
+import joky/uuid.{type Uuid}
 import joky/result.{type Result, Ok, Err}
 extern fn __joky_try_write_stderr(text: &String) -> Int32
 pub enum LogError { InvalidEvent, TooManyFields, InvalidField, DuplicateField, ValueTooLong, Encoding(json.EncodeError), WriteFailed }
@@ -53,12 +54,33 @@ impl Logger {
         try_emit(level, event, fields)?
         Ok(Written)
     }
+    pub fn debug(&self, event: String, fields: Array<Field>) { self.try_emit(Level.Debug, event, fields); }
+    pub fn info(&self, event: String, fields: Array<Field>) { self.try_emit(Level.Info, event, fields); }
+    pub fn warn(&self, event: String, fields: Array<Field>) { self.try_emit(Level.Warn, event, fields); }
+    pub fn error(&self, event: String, fields: Array<Field>) { self.try_emit(Level.Error, event, fields); }
 }
 pub struct Field { name: String, value: json.Value }
 pub fn text(name: String, value: String) -> Field { Field { name, value: json.Value.Text(value) } }
 pub fn uint(name: String, value: UInt64) -> Field { Field { name, value: json.Value.Number(json.Number.from_u64(value)) } }
 pub fn integer(name: String, value: Int64) -> Field { Field { name, value: json.Value.Number(json.Number.from_i64(value)) } }
 pub fn boolean(name: String, value: Bool) -> Field { Field { name, value: json.Value.Boolean(value) } }
+
+// Conversion preserves JSON scalar types; callers choose duration units explicitly.
+pub trait ToField {
+    fn to_field(self, name: String) -> Field
+}
+pub fn field<T: ToField>(name: String, value: T) -> Field { value.to_field(name) }
+impl ToField for String { fn to_field(self, name: String) -> Field { text(name, self) } }
+impl ToField for Bool { fn to_field(self, name: String) -> Field { boolean(name, self) } }
+impl ToField for Uuid { fn to_field(self, name: String) -> Field { text(name, self.to_text()) } }
+impl ToField for Int8 { fn to_field(self, name: String) -> Field { integer(name, int64(self)) } }
+impl ToField for Int16 { fn to_field(self, name: String) -> Field { integer(name, int64(self)) } }
+impl ToField for Int32 { fn to_field(self, name: String) -> Field { integer(name, int64(self)) } }
+impl ToField for Int64 { fn to_field(self, name: String) -> Field { integer(name, self) } }
+impl ToField for UInt8 { fn to_field(self, name: String) -> Field { uint(name, uint64(self)) } }
+impl ToField for UInt16 { fn to_field(self, name: String) -> Field { uint(name, uint64(self)) } }
+impl ToField for UInt32 { fn to_field(self, name: String) -> Field { uint(name, uint64(self)) } }
+impl ToField for UInt64 { fn to_field(self, name: String) -> Field { uint(name, self) } }
 
 fn add(record: &mut Map<String, json.Value>, field: Field) -> Result<Unit, LogError> {
     let Field { name, value } = field
@@ -88,3 +110,8 @@ pub fn try_emit(level: Level, event: String, fields: Array<Field>) -> Result<Uni
 pub fn emit(level: Level, event: String, fields: Array<Field>) -> Bool {
     try_emit(level, event, fields).is_ok()
 }
+
+pub fn debug(event: String, fields: Array<Field>) { try_emit(Level.Debug, event, fields); }
+pub fn info(event: String, fields: Array<Field>) { try_emit(Level.Info, event, fields); }
+pub fn warn(event: String, fields: Array<Field>) { try_emit(Level.Warn, event, fields); }
+pub fn error(event: String, fields: Array<Field>) { try_emit(Level.Error, event, fields); }

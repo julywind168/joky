@@ -138,7 +138,7 @@ fn handle(request: http.Request) @suspends -> http.Response {
         return http.Response { headers: [http.Header { name: "Location", value: "/items/42" }], status: http.Status.Created, content_type: http.ContentType.Text, body: [] }
     }
     if request.target == "/empty" {
-        request.context.emit(log.Level.Warn, "app.empty", []);
+        request.context.warn("app.empty", [])
         return http.Response { headers: [], status: http.Status.from_code(204)!, content_type: http.ContentType.Text, body: [] }
     }
     if request.target == "/invalid" {
