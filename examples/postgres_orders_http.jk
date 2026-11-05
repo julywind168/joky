@@ -3,7 +3,6 @@ import postgres_orders as orders
 import joky/log
 import joky/postgres
 import joky/http.{type Service}
-import joky/json/typed
 import joky/shutdown
 import joky/tcp
 
@@ -29,19 +28,18 @@ impl Service for Orders {
     fn route(&self, request: &http.Request) -> Option<String> {
         if request.method == http.Method.Post && request.path() == "/orders" { Some("/orders") } else { None }
     }
-    fn handle(&self, request: http.Request) @suspends -> http.Response {
+    fn handle(&self, var request: http.Request) @suspends -> http.Response {
         if request.method != http.Method.Post || request.path() != "/orders" { return error_reply(http.Status.NotFound, "not found") }
         var keys = request.header_all("Idempotency-Key")
         if keys.is_empty() { return error_reply(http.Status.BadRequest, "missing Idempotency-Key") }
         if keys.len() != 1 { return error_reply(http.Status.BadRequest, "invalid Idempotency-Key") }
         let key = keys.take_last()
         if key.is_empty() || key.byte_length() > 128 { return error_reply(http.Status.BadRequest, "invalid Idempotency-Key") }
-        let http.Request { context, method, target, headers, body } = request
-        let input = match typed.decode_bytes::<Purchase>(body) {
+        let input = match request.take_json::<Purchase>() {
             Ok(input) => input, Err(_) => return error_reply(http.Status.BadRequest, "expected a positive integer qty")
         }
         if input.qty <= 0 { return error_reply(http.Status.BadRequest, "expected a positive integer qty") }
-        order_reply(context, orders.place(&self.pool, 1, key, input.qty))
+        order_reply(request.context, orders.place(&self.pool, 1, key, input.qty))
     }
 }
 fn order_reply(context: http.RequestContext, result: Result<orders.Order, postgres.DbError>) -> http.Response {

@@ -83,8 +83,22 @@ fn requests() {
     assert(request("/bad?x=%FF").query_pairs().is_err(), "request decode error")
     pairs(request("/path?x=a?b").query_pairs()!, [("x", "a?b")])
 }
-#derive(ToJson)
+#derive(ToJson, FromJson)
 struct ErrorBody { error: String }
+fn decoding() {
+    var value = request("/decode?x=1")
+    value.headers.push(http.Header { name: "X-Item", value: "kept" })
+    let id = value.context.request_id
+    value.body = r#"{"error":"bad"}"#.into_bytes()
+    let decoded = value.take_json::<ErrorBody>()!
+    assert(value.body.is_empty(), "successful decode consumes body")
+    assert(value.context.request_id == id && value.header("x-item")! == "kept"
+        && value.path() == "/decode" && value.method == http.Method.Get, "decode preserves request metadata")
+    assert(match value.take_json::<ErrorBody>() { Err(Syntax(_)) => true, _ => false }, "second decode sees empty body")
+    value.body = "42".into_bytes()
+    assert(match value.take_json::<ErrorBody>() { Err(Mapping(_)) => true, _ => false }, "mapping error remains observable")
+    assert(value.body.is_empty() && decoded.error == "bad", "failed decode consumes body and previous result stays independent")
+}
 fn helpers() {
     var value = request("/")
     assert(value.method == http.Method.Get && value.method != http.Method.Post, "typed method equality")
@@ -112,7 +126,7 @@ fn helpers() {
     assert(payload.error == "quote\"\n", "JSON borrows input")
     assert(http.json(http.Status.Ok, Float64.NAN).is_err(), "encoding failure remains observable")
 }
-fn main() { components(); queries(); requests(); helpers() }
+fn main() { components(); queries(); requests(); helpers(); decoding() }
 "##);
     work.assert_all_backends("url.jk", &[], b"", 0);
 }

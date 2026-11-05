@@ -300,7 +300,7 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 | 响应构造冗长 | 已补 `http.text`、`http.empty`、`http.json<T: ToJson>`、`Response.with_header` | JSON 保留编码错误；标头追加，发送时校验 |
 | JSON 错误体手写 | 订单示例已用 `http.json` 与派生 ToJson 的错误/订单结构体 | 编码失败显式返回空 500 响应 |
 | 状态码命名 | 已改为 `Status.Ok`、`InternalServerError`，补齐常用成功、重定向及错误码 | `from_code` 与原因短语同步；其他 200–599 保留 Other |
-| 请求体解码 | `typed.decode_bytes::<Purchase>(body)` 可用 | 补 `request.json::<T>()`，失败返回可直接转成 400 的错误 |
+| 请求体解码 | 已补 `request.take_json<T: FromJson>()`，订单示例已迁移 | 消费正文并保留请求元数据；解码错误原样返回，由 handler 决定响应 |
 | 函数 handler 不能带状态 | 有状态时实现 `Service.share/handle`；`route` 已有默认实现 | 路由器持有共享状态 `Router.with_state(state)`，handler 签名 `fn(&S, Request)` |
 | 连接模型 | 每连接一次请求、`Connection: close`、无 chunked | 记为已知限制即可，keep-alive 在压测和反向代理后会成为瓶颈，排入后续计划 |
 | 中间件 | 无 | 至少提供请求前后钩子：鉴权、请求日志已内置、CORS |

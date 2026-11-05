@@ -7087,6 +7087,12 @@ Method 是 Copy 值，派生 Eq 并支持 `==`／`!=`，Show 输出对应的大�
 `request.header_all(name: &String) -> Array<String>` 返回全部匹配值的独立副本，保留顺序及重复项，缺失为空数组。
 它不会按逗号拆分单个值。对于 Idempotency-Key 等要求唯一的标头，使用 header_all 检查数量，不能仅取第一个值。
 
+`request.take_json<T: FromJson>(&mut self) -> Result<T, typed.CodecError>` 取走 body，
+按 `typed.decode_bytes` 的默认选项解码，不额外复制正文。调用需要可变 Request，handler 参数可写 `var request: http.Request`。
+成功或失败后 body 都为空；重复调用会按空正文返回语法错误。返回的 T 独立拥有，不借用 Request，
+context、method、target 和 headers 保留，调用后仍可访问。该方法只解码正文，不检查 Content-Type；
+UTF-8、JSON 语法和类型映射错误按 CodecError 原样返回，由 handler 决定 HTTP 状态码及错误响应体。
+
 Response 提供 status、content_type、headers 和 body 字段，也提供下列便捷入口：
 
 | API | 语义 |
