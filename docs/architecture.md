@@ -970,14 +970,21 @@ parser 为每个函数类型参数创建独立的 `Type::Parameter` 身份，`Fn
 不新增字节码指令、运行时类型标签、C helper 或 CPS 帧协议。
 编译上下文及模板 AST 不进入 continuation；具体代码沿用所属模块的保活机制。
 
-## JSON 派生
+## 派生实现
+
+`core::key_derive` 与 `core::clone_derive` 在 JSON 属性展开前消费 Eq／Hash／Clone 请求，
+生成普通 trait impl，并共用下述字段义务推导。Eq 对记录字段生成按顺序短路的标准 Eq 调用，
+对 enum 生成借用匹配；Hash 顺序组合标准字段哈希，并混入 enum 标签。所有调用固定标准协议身份，
+不依赖同名固有方法。生成方法经过普通借用和 noescape 检查，三个后端共用，无新增 ABI。
+
+### JSON 派生
 
 `core::json_derive` 在根模块和源码依赖的导入绑定前消费 `#derive(ToJson, FromJson)`，
 补入或复用标准库导入，直接构造普通 impl AST。派生名固定指向内置 JSON trait，
 临时变量使用源码不可拼写的名字；所有生成表达式保留属性或原字段 Span，不添加伪源码位置。
 消费过的属性不重复展开，模块再次规范化不增加 impl；其他属性仍由原校验器处理。
 
-布局解析之后，`types::projections::json_derive` 按字段和现有 impl 条件反推类型参数约束，
+布局解析之后，`types::projections::derives` 按字段和现有 impl 条件反推类型参数约束，
 保持名义身份、别名、Map 键能力及可表示的关联等式。推导使用独立的 256 次义务展开/32 层预算，
 失败候选也计入共享工作量；
 同型递归复用义务，持续类型增长受限。无条件派生分别检查自己的字段，不为嵌套普通 struct

@@ -13,6 +13,7 @@ fn error(span: Span, message: impl Into<String>) -> Error {
 
 /// Consume attributes on an unbound module. The resulting module can be normalized again.
 pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
+    super::key_derive::expand(module)?;
     super::clone_derive::expand(module)?;
     let mut requests = Vec::new();
     for (index, record) in module.records.iter().enumerate() {
@@ -28,7 +29,7 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
             let Some(arguments) = &attribute.arguments else {
                 return Err(error(
                     attribute.span,
-                    "#derive requires Clone, ToJson and/or FromJson",
+                    "#derive requires Clone, Eq, Hash, ToJson and/or FromJson",
                 ));
             };
             if arguments.is_empty() {
@@ -47,7 +48,7 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
                 {
                     return Err(error(
                         argument.span,
-                        "Only #derive(Clone, ToJson, FromJson) is supported",
+                        "Only #derive(Clone, Eq, Hash, ToJson, FromJson) is supported",
                     ));
                 }
                 if seen.contains(&name.path) {

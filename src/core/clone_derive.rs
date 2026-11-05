@@ -12,7 +12,10 @@ fn error(span: Span, message: &str) -> Error {
     Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch, message).with_span(span)
 }
 
-fn take(attributes: &mut Vec<Attribute>) -> Result<Option<Span>, Error> {
+pub(super) fn take(
+    attributes: &mut Vec<Attribute>,
+    capability: &str,
+) -> Result<Option<Span>, Error> {
     let mut found = None;
     for attribute in attributes.iter_mut().filter(|a| a.path == "derive") {
         if let Some(arguments) = &mut attribute.arguments {
@@ -21,15 +24,21 @@ fn take(attributes: &mut Vec<Attribute>) -> Result<Option<Span>, Error> {
             }
             let mut retained = Vec::new();
             for argument in std::mem::take(arguments) {
-                if matches!(&argument.value, AttributeValue::Name(a) if a.path == "Clone") {
+                if matches!(&argument.value, AttributeValue::Name(a) if a.path == capability) {
                     let AttributeValue::Name(name) = &argument.value else {
                         unreachable!()
                     };
                     if argument.name.is_some() || name.arguments.is_some() {
-                        return Err(error(argument.span, "Clone derive takes no arguments"));
+                        return Err(error(
+                            argument.span,
+                            &format!("{capability} derive takes no arguments"),
+                        ));
                     }
                     if found.replace(argument.span).is_some() {
-                        return Err(error(argument.span, "Duplicate Clone derive"));
+                        return Err(error(
+                            argument.span,
+                            &format!("Duplicate {capability} derive"),
+                        ));
                     }
                 } else {
                     retained.push(argument);
@@ -66,7 +75,7 @@ fn copy(name: &str, alias: &str, span: Span) -> Expr {
 pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
     let mut requests = Vec::new();
     for record in &mut module.records {
-        if let Some(span) = take(&mut record.attributes)? {
+        if let Some(span) = take(&mut record.attributes, "Clone")? {
             requests.push((
                 record.name.clone(),
                 record.type_params.clone(),
@@ -77,7 +86,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
         }
     }
     for enumeration in &mut module.enums {
-        if let Some(span) = take(&mut enumeration.attributes)? {
+        if let Some(span) = take(&mut enumeration.attributes, "Clone")? {
             requests.push((
                 enumeration.name.clone(),
                 enumeration.type_params.clone(),
@@ -89,7 +98,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
         if let Some(attribute) = enumeration.attributes.first() {
             return Err(error(
                 attribute.span,
-                "JSON derives require a struct; enums support #derive(Clone)",
+                "JSON derives require a struct; enums support #derive(Clone, Eq, Hash)",
             ));
         }
     }

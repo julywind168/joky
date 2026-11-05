@@ -114,7 +114,7 @@ fn ffi_attributes_and_unsafe_boundaries_reject_invalid_programs() {
         "#repr(value: C) struct P { x: Int32 }",
         "#repr(C, C) struct P { x: Int32 }",
         "#repr struct P { x: Int32 }",
-        "#derive(Eq) struct P { x: Int32 }",
+        "#derive(Unknown) struct P { x: Int32 }",
         "#cfg(all(feature: true)) struct P { x: Int32 }",
         "#repr(C) fn f() {}",
         "pub #repr(C) struct P { x: Int32 }",

@@ -2,6 +2,8 @@ import joky/eq.{type Eq as Equal}
 import joky/hash.{type Hash as Hashed}
 import joky/check.{assert, panic}
 import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/clone.{type Clone}
 import joky/task
 extern fn record_int(value: Int32)
 struct Key<T> { value: T }
@@ -19,15 +21,18 @@ fn next(count: &mut Int32, expected: Int32) -> Key<String> {
     *count += 1
     Key { value: "owned" }
 }
-enum Choice { Empty, Text(String) }
-impl Equal for Choice {
-    fn eq(&self, other: &Self) -> Bool {
-        match self {
-            Choice.Empty => match other { Choice.Empty => true, Choice.Text(_) => false }
-            Choice.Text(a) => match other { Choice.Empty => false, Choice.Text(b) => a == b }
-        }
-    }
-}
+#derive(Eq, Hash)
+enum Choice { Empty, Text(String), Other(String), Number(Int32) }
+#derive(Clone, Eq, Hash)
+struct Derived<T, Unused> { value: T, code: Int32 }
+#derive(Eq, Hash)
+struct Nested<T> { value: Key<T> }
+#derive(Eq, Hash)
+struct Empty {}
+#derive(Eq, Hash)
+enum Single<T> { Value(T) }
+#derive(Eq)
+struct Floating { value: Float64 }
 enum Tag { One, Two }
 impl Equal for Tag { fn eq(&self, other: &Self) -> Bool { true } }
 enum PlainTag { One, Two }
@@ -45,9 +50,34 @@ struct Failing { text: String }
 impl Equal for Failing {
     fn eq(&self, other: &Self) -> Bool { panic("Eq comparison failed") }
 }
+#derive(Eq)
+struct Guarded { first: Int32, rest: Failing }
 fn equality_failed() { let _same = Failing { text: "left" } != Failing { text: "right" } }
+fn equality_failed_derived() { let _same = Guarded { first: 1, rest: Failing { text: "a" } } == Guarded { first: 1, rest: Failing { text: "b" } } }
 fn equality_failed_rhs() { let _same = Key { value: "left" } == { panic("Eq argument failed") } }
+fn derived_protocols() {
+    let a = Derived::<String, fn() -> Unit> { value: "owned", code: 7 }
+    let b = Clone.clone(&a)
+    assert(same(&a, &b), "Derived generic owner protocols")
+    assert(a != Derived::<String, fn() -> Unit> { value: "owned", code: 8 }, "All fields participate")
+    assert(a.value == "owned" && b.value == "owned", "Derived protocols preserve owners")
+    assert(same(Nested { value: Key { value: "nested" } }, Nested { value: Key { value: "nested" } }), "Derived conditional fields use standard traits")
+    assert(same(Empty {}, Empty {}), "Empty derived records")
+    assert(same(Single.Value(42), Single.Value(42)), "Single Copy variant")
+    assert(same(Single.Value("payload"), Single.Value("payload")), "Single owning variant")
+    assert(same(Choice.Text("same"), Choice.Text("same")), "Derived enum hash equality")
+    assert(Choice.Text("a") != Choice.Text("b") && Choice.Number(1) != Choice.Number(2), "Enum payload comparison")
+    assert(same(Choice.Number(42), Choice.Number(42)) && same(Choice.Empty, Choice.Empty), "Copy and empty variant protocols")
+    assert(Choice.Text("same") != Choice.Other("same") && Hashed.hash(Choice.Text("same")) != Hashed.hash(Choice.Other("same")), "Enum tag participates in equality and hashing")
+    assert(Guarded { first: 1, rest: Failing { text: "a" } } != Guarded { first: 2, rest: Failing { text: "b" } }, "Derived equality short circuits")
+    assert(Floating { value: -0.0 } == Floating { value: 0.0 }, "Derived IEEE zero equality")
+    assert(Floating { value: Float64.NAN } != Floating { value: Float64.NAN }, "Derived IEEE NaN equality")
+    var table = Map.new::<Derived<String, fn() -> Unit>, Int32>()
+    table.insert(a, 42)
+    assert(table.get(&b)! == 42 && b.code == 7, "Derived owning Map key")
+}
 fn protocols() -> Int32 {
+    derived_protocols()
     { let assertion_condition = Hashed.hash(int32(0)) == 0 && Hashed.hash(int32(1)) == 6238072747940578789; let assertion_message = "Small hash vectors"; assert(assertion_condition, &assertion_message) }
     { let assertion_condition = Hashed.hash(int32(42)) == 12058926934050108962; let assertion_message = "Hash 42"; assert(assertion_condition, &assertion_message) }
     { let assertion_condition = Hashed.hash(Int32.MAX) == 8876943580449041804 && Hashed.hash(Int32.MIN) == 11926543287740443804; let assertion_message = "Int32 hash vectors"; assert(assertion_condition, &assertion_message) }

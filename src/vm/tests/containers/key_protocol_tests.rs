@@ -14,9 +14,9 @@ fn standard_key_protocols_execute_vectors_and_fixed_conditional_dispatch() {
     modules.insert("keys", r#"
         import joky/eq.{type Eq as Equality}
         import joky/hash.{type Hash as Hashing}
-        pub struct Key { pub value: UInt32 }
-        impl Equality for Key { fn eq(&self, other: &Self) -> Bool { self.value == other.value } }
-        impl Hashing for Key { fn hash(&self) -> UInt64 { Hashing.hash(self.value) } }
+        #derive(Eq, Hash, ToJson, FromJson)
+        pub struct Key { value: UInt32 }
+        pub fn key(value: UInt32) -> Key { Key { value } }
         pub type Alias = Key
         pub fn compare<K: Equality + Hashing>(a: &K, b: &K) -> Bool { a.eq(b) && a.hash() == b.hash() }
     "#).unwrap();
@@ -25,8 +25,8 @@ fn standard_key_protocols_execute_vectors_and_fixed_conditional_dispatch() {
         {source}
         trait Eq {{ fn eq(&self, other: &Self) -> Bool }}
         fn test() -> Int32 {{
-            let a: keys.Alias = keys.Key {{ value: 42 }}
-            if keys.compare(a, a) && (a == keys.Key {{ value: 42 }}) && (a != keys.Key {{ value: 43 }}) {{ protocols() }} else {{ 0 }}
+            let a: keys.Alias = keys.key(42)
+            if keys.compare(a, a) && (a == keys.key(42)) && (a != keys.key(43)) {{ protocols() }} else {{ 0 }}
         }}
     "#
     );
@@ -53,6 +53,7 @@ fn standard_key_protocols_execute_vectors_and_fixed_conditional_dispatch() {
         drop(vm.call_async("equality_pending", &[]).unwrap());
         for (entry, message) in [
             ("equality_failed", "Eq comparison failed"),
+            ("equality_failed_derived", "Eq comparison failed"),
             ("equality_failed_rhs", "Eq argument failed"),
         ] {
             assert!(vm
@@ -87,5 +88,20 @@ fn standard_key_protocols_reject_missing_requirements_and_wrong_signatures() {
         }
         let e = AotCompiler::new("bad-key-protocol").unwrap().compile_module(&ast).unwrap_err();
         assert!(e.message().contains(expected), "{source}: {e}");
+    }
+}
+
+#[test]
+fn standard_key_derives_reject_invalid_attributes_and_field_obligations() {
+    for (source, expected) in [
+        ("#derive(Eq, Eq) struct Bad {}", "Duplicate Eq"),
+        ("#derive(Hash) #derive(Hash) enum Bad { A }", "Duplicate Hash"),
+        ("#derive(Eq(1)) struct Bad {}", "Eq derive takes no arguments"),
+        ("#derive(Hash) struct Bad { value: Float64 }", "Cannot derive"),
+        ("#derive(Eq) enum Bad { Value((Int32, Bool)) }", "Cannot derive"),
+        ("import joky/eq.{type Eq} #derive(Eq) struct Bad {} impl Eq for Bad { fn eq(&self, other: &Self) -> Bool { true } }", "Overlapping trait implementation"),
+    ] {
+        let error = VmEngine::with_mode(VmMode::Interpreter).load_source(source).unwrap_err();
+        assert!(error.message().contains(expected), "{source}: {error}");
     }
 }

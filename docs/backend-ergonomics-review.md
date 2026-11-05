@@ -53,7 +53,8 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 | 已完成 | 经 `&mut` 替换拥有型字段 | §4.2 |
 | P0 | String 基础方法：trim / split_once / contains / strip_prefix / replace / lines / 大小写 / parse | §6.1 |
 | 已完成 | 标准库公开错误与无载荷枚举实现 Show；Eq／Hash 统一为借用协议，Eq 接入 `==`／`!=` | §4.4 |
-| 待设计 | 调试输出派生、Eq／Hash 派生 | §4.4 |
+| 已完成 | Eq／Hash 派生 | §4.4 |
+| 待设计 | 调试输出派生 | §4.4 |
 | P0 | PostgreSQL 参数与结果：`ToSql`/`FromSql` 协议、按列名读取、`#derive(FromRow)`、更多类型 | §8 |
 | P0 | HTTP：路由、标头/查询查询、响应构造助手、`Status` 命名 | §7 |
 | 已完成 | prelude 补齐 `Array`/`Map`/`Set` 类型名 | §4.3 |
@@ -88,7 +89,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 跨模块枚举的裸变体查找降为 P2。订单示例用 `import joky/postgres.{IntValue, TextValue}` 声明所需变体，SQL 参数列表即可写成 `[IntValue(customer), TextValue(key)]`。表达式中的裸构造器须在作用域内唯一；即使是本地枚举，也不会按期望类型消除歧义。以后若扩展这条规则，需同时确定与同名函数、显式导入和泛型推导的优先关系。[订单示例](../examples/postgres_orders.jk)
 
-### 4.4 派生与 Show【Show 已补齐，Eq 已接入相等运算符】
+### 4.4 派生与 Show【Show 已补齐，Eq 运算符及 Eq／Hash 派生已实现】
 
 Show 是面向用户的显示协议，对应 Rust Display：String 原样输出，普通 struct／enum
 仍需手写实现。标准库公开错误与无载荷枚举已补齐 Show，包括 `task.Failure`、HTTP、
@@ -108,12 +109,16 @@ Map／Set 的 key 另要求等价关系、相等值同哈希及驻留期间结�
 下标字段借用已修复：`Array<Key<String>>` 的 `values[0].value == "text"` 可直接使用。
 单字段拥有型包装的字段投影复用已有句柄，不再把句柄当作存储地址重复读取；多字段记录仍按实际布局投影。
 
+`#derive(Eq, Hash)` 已支持 struct／enum，生成共享借用实现：Eq 逐字段短路比较，enum
+先区分变体再比较载荷；Hash 按字段顺序组合，并混入 enum 变体编号。泛型约束按字段及已有
+条件 impl 推导，未使用的类型参数不添加约束；可与 Clone 和 struct JSON 派生组合。
+浮点字段可派生 Eq，不能派生 Hash；const 泛型、缺少协议实现的元组及容器仍不支持。
+
 以下事项分开设计，尚未实现：
 
-1. 当前仅能派生 `Clone`、`ToJson`、`FromJson`。原建议的类型名、字段名及带引号字符串
-   属于 Debug 风格，不直接混入 Show；调试协议及其派生另议。
-2. Eq／Hash 派生以统一后的借用协议为目标，字段规则与泛型约束推导待设计。
-3. 标准 Default trait、Default 派生和 `Options { field: value, ..base }` 结构更新均未实现。
+1. 原建议的类型名、字段名及带引号字符串属于 Debug 风格，不直接混入 Show；
+   调试协议及其派生另议。
+2. 标准 Default trait、Default 派生和 `Options { field: value, ..base }` 结构更新均未实现。
    普通 `Type.default()` 可手写，业务配置的非零默认值不应被逐字段默认派生替代。
 
 ## 5. 关键词与语法手感
@@ -440,7 +445,7 @@ fn main() @suspends -> Int32 {
    `shutdown.with_signals`。均为标准库源码改动，不涉及编译器。
 3. **PostgreSQL 便利层**：Value 变体改名、按列名读取、`get::<T>`、timestamptz/uuid/jsonb、
    `pool.transaction`、Options。
-4. **语言特性**：调试协议及派生、Eq／Hash／Default 派生、字符串字面量模式与守卫、
+4. **语言特性**：调试协议及派生、Default 派生、字符串字面量模式与守卫、
    `ToSql` 隐式装箱、结构更新语法、非 pub 函数 `@suspends` 推导。
    每项按 AGENTS.md 的跨模块语义改动要求单独设计与验证。
 5. **关键词与命名迁移**（`when`→`atomic`、`alias`→`same`、`branch`→`spawn`、`var`/`mut` 统一、

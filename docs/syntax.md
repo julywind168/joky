@@ -84,6 +84,7 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 | 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 join/race 分支 | 同步匿名函数、借用/move 闭包及 Fn 家族约束已实现；挂起 move FnOnce 闭包已实现 |
 | 所有权容器 | 部分实现 | 按容器与资源专项推进 |
 | Arena、引用来源检查 | 已实现隐式 arena、同步显式 Arena.new()/arena.alloc() 与 &Arena helper、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、任务 arena 引用跨挂起及 join 分支借用、局部值/字段及容器元素/Slice 跨挂起借用与独立字段访问、异步宿主借用 v1 | 显式 Arena 跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
+| Eq／Hash 派生 | 已实现 `#derive(Eq, Hash)`，支持 struct／enum 及按字段推导的泛型约束 | 生成普通借用实现；Eq 短路比较，Hash 按字段顺序组合并区分 enum 变体，语义见 language.md |
 | Struct JSON 派生 | 已实现 `#derive(ToJson, FromJson)`，可单向派生，支持泛型条件约束与跨模块私有字段 | 生成普通 trait 实现；enum、字段改名/跳过/默认值注解留待后续，语义见 language.md |
 | 同步 C 接口 | 已实现 `#repr(C)`、unsafe 块、合计 0–4 个引用/Ptr 参数、整数/Ptr/Unit 结果、三后端互操作；Ptr.null()/Ptr.is_null() | 资源拥有包装与异步保留协议另行扩展 |
 | 动态挂起 dyn Trait | 拥有对象已支持共享/独占接收者与无引用参数、结果 | 借用型 dyn 跨挂起及 Parallel 挂起分派未实现；见语言参考 |
@@ -155,7 +156,7 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 第 10 节列出的数值与 Rune 类型名。这里的 `for` 仅用于 trait 实现，不引入 for 循环。
 这些名称在对应阶段启用时才变成关键字，不提前改变当前源码的解析结果。
 
-`suspends` 只在 `@suspends` 位置有特殊含义。声明属性使用 `#`，当前开放 struct 前的 `#repr(C)`、`#derive(ToJson, FromJson)`、`#state`，以及 `#state` 固有方法前的 `#every(duration)`，
+`suspends` 只在 `@suspends` 位置有特殊含义。声明属性使用 `#`，当前开放 struct 前的 `#repr(C)`、`#state`、`#derive(Clone, Eq, Hash, ToJson, FromJson)`（enum 支持前三项），以及 `#state` 固有方法前的 `#every(duration)`，
 不开放通用属性或用户属性宏；后续语法方向见 [Arena 设计 §2.5](arena-borrowing-ffi.md#25-后续属性系统的语法方向)。
 函数名、参数名和局部名称是单个标识符；`vm.call_int32` 是限定调用名，
 `vm.Vm` 是限定类型名。`.` 支持字段访问、固有方法调用和关联常量读取。

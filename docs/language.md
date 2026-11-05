@@ -90,7 +90,7 @@ fn run() -> Int64 {
   可用 `joky::ffi::c_header(&module)` 生成本机目标的 C11 声明和 sizeof/align/offset 断言，
   数组额外断言各维长度与元素步长。
   AOT 的 C 导入保持原生符号名，由链接器提供实现，不随 Joky symbol_prefix 改名。
-- `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前开放 `#repr(C)`、[Clone 派生](#显式复制与-clone-派生)与 [JSON 派生](#struct-与类型化-json)的 `#derive(...)`、[域根声明](#when-状态域操作)的 `#state` 与[周期声明](#周期声明-every)的 `#every(...)`，以及[原生测试](#原生测试)的无参数 `#test`，
+- `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前开放 `#repr(C)`、[Clone 派生](#显式复制与-clone-派生)、[Eq／Hash 派生](#key-协议)与 [JSON 派生](#struct-与类型化-json)的 `#derive(...)`、[域根声明](#when-状态域操作)的 `#state` 与[周期声明](#周期声明-every)的 `#every(...)`，以及[原生测试](#原生测试)的无参数 `#test`，
   允许尾随逗号；未知属性、重复属性或错误使用位置报错。通用属性及属性宏尚未实现；异步借用见下节。
 
 布局和注册细节见 [FFI 设计](arena-borrowing-ffi.md#5-ffic-布局与引用参数)。
@@ -750,7 +750,7 @@ pub trait Hash { fn hash(&self) @noescape -> UInt64 }
 泛型可写 `K: Eq + Hash`；只有实际复制值的代码才额外要求 Copy。
 模块/成员别名、条件 impl 和固定 trait 方法选择沿用普通语言规则。
 旧 BorrowEq／BorrowHash 和 eq_ref／hash_ref 已移除；旧按值实现需改为共享引用签名。
-实现标准 Eq 后，记录与有载荷枚举可直接使用 `==`／`!=`；尚无 Eq／Hash 自动派生。
+实现标准 Eq 后，记录与有载荷枚举可直接使用 `==`／`!=`。
 `a == b` 静态选择标准 `joky/eq.Eq.eq`，`a != b` 将同一次调用的结果取反，不能独立覆盖。
 两侧底层类型必须相同，按从左到右各求值一次；比较只借用，支持拥有值、共享/独占引用、字段、
 下标及临时值，比较后拥有值仍可使用。左侧借用持续到调用结束，右侧不能移动或修改被借用的位置。
@@ -771,6 +771,26 @@ Hash 标准实现覆盖 Int32、Int64、UInt32、UInt64、Bool、Unit、String �
 整数继续使用 UInt64 wrapping 混合，Int32 符号扩展、UInt32 零扩展；Bool 输入为 0/1，Unit 为 0。
 String 继续使用 64 位 FNV-1a wrapping hash。哈希输出不作为持久化格式，不承诺抗碰撞攻击。
 实现见 [eq.jk](../src/stdlib/eq.jk)、[hash.jk](../src/stdlib/hash.jk)。
+
+`#derive(Eq, Hash)` 支持命名字段 struct 和 enum，可以单独派生其中一个，也可与 Clone、
+struct 的 ToJson／FromJson 组合；无需手动导入派生协议，用户同名 trait 不改变标准协议身份。
+
+```joky
+#derive(Eq, Hash)
+struct Key<T> { value: T, code: Int32 }
+#derive(Eq, Hash)
+enum Label { Empty, Text(String), Number(Int32) }
+```
+
+- Eq 按字段声明顺序借用比较，遇到不等立即返回 false；空记录相等。enum 先匹配变体，
+  仅同变体比较载荷，无载荷的同变体相等。
+- Hash 按声明顺序组合各字段的标准 Hash 结果，enum 在载荷前混入变体编号；空记录返回固定哈希。
+  组合采用 UInt64 wrapping 运算，不承诺哈希数值跨版本稳定。
+- 每个字段或载荷类型须实现对应协议，泛型约束根据实际字段和已有条件 impl 推导，
+  未使用的类型参数不额外要求 Eq／Hash。派生不会给嵌套类型、元组或容器隐式增加协议实现。
+- 含浮点字段的类型可派生 Eq，仍保留 IEEE 行为；由于浮点无 Hash，不能派生 Hash。
+  派生不替代 Map/Set key 的等价性契约。
+- const 泛型暂不支持；重复派生、同一协议的手写与派生重叠均拒绝。
 
 ## 数组字面值
 
@@ -2980,7 +3000,7 @@ Array 逐元素复制，副本与原值独立，长度相同，不承诺保留�
 `#derive(Clone)` 支持命名字段 struct 和 enum，生成受检 Clone 实现：记录逐字段复制，
 枚举只复制当前变体的载荷，原值保持可用。私有字段在定义模块内处理；同名普通 clone 方法
 不替代字段的 Clone trait 实现。泛型约束按字段／载荷推导，未使用参数不额外要求 Clone。
-可与 struct 的 ToJson／FromJson 派生组合。字段或载荷须满足 Clone；没有实现的资源、
+可与 Eq／Hash 及 struct 的 ToJson／FromJson 派生组合。字段或载荷须满足 Clone；没有实现的资源、
 函数、引用、元组等不会被隐式按位复制。const 泛型派生暂不支持；手写与派生的同一 trait
 实现按重叠规则拒绝。完整行为示例见 [service_ergonomics.jk](../tests/fixtures/service_ergonomics.jk)。
 
@@ -7545,7 +7565,7 @@ struct Envelope<T> { value: T }
 ```
 
 - JSON `#derive` 位于 struct/pub 前，支持 `ToJson`、`FromJson`；可以只选择一个方向，
-  也可分成多个属性或与 `Clone` 组合。重复、空列表、未知派生名均拒绝；JSON 派生仍只接受 struct。
+  也可分成多个属性或与 `Clone`、`Eq`、`Hash` 组合。重复、空列表、未知派生名均拒绝；JSON 派生仍只接受 struct。
   用户同名 trait 或导入别名不改变派生协议；生成代码自动取得所需标准库依赖。
 - 支持命名字段 struct，包括空 struct、泛型及经拥有容器间接存储的有限递归树。
   所有字段按声明顺序映射，JSON 键就是原字段名；私有字段在定义模块内处理，可跨模块使用派生实现。

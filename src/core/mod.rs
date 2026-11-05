@@ -10,6 +10,7 @@ pub(crate) mod instance;
 pub(crate) mod integer;
 pub(crate) mod ir;
 mod json_derive;
+mod key_derive;
 pub mod parser;
 pub(crate) mod prepared;
 pub(crate) mod resolver;
