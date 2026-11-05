@@ -278,12 +278,23 @@ impl FunctionPlan {
                         default: true,
                     },
                 )?;
-                if base.is_some() && !ty.is_copy_value() {
+                if base.is_some() && !ty.is_copy_value() && !ty.is_owner() {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
-                        "Record update requires a Copy struct",
+                        "Record update requires a Copy or owning struct",
                     ));
+                }
+                if base.is_some() {
+                    let Type::Record(record) = &ty else {
+                        unreachable!()
+                    };
+                    let moves = record
+                        .fields
+                        .iter()
+                        .map(|field| (!fields.iter().any(|f| f.name == field.name), false))
+                        .collect::<Vec<_>>();
+                    self.check_record_pattern_moves(record, &moves, *span)?;
                 }
                 let result = self.slot(ty.clone())?;
                 if ty.is_place() {
@@ -366,8 +377,23 @@ impl FunctionPlan {
                             field_slot(self, &result, &field.name, span)?,
                             field_slot(self, &value, &field.name, span)?,
                         ) {
-                            self.emit(Op::Copy(dst, src));
+                            if src.ty.is_owner() {
+                                // Detach to its own cleanup item before releasing the
+                                // overwritten remainder, just like record destructuring.
+                                let detached = self.slot(src.ty.clone())?;
+                                self.emit(Op::Buffer(BufferOp::Detach {
+                                    dst: detached.clone(),
+                                    src,
+                                    owner: value.clone(),
+                                }));
+                                self.emit(Op::Copy(dst, detached));
+                            } else {
+                                self.emit(Op::Copy(dst, src));
+                            }
                         }
+                    }
+                    if ty.is_owner() {
+                        self.emit(Op::Buffer(BufferOp::End(value)));
                     }
                 }
                 if let Type::Record(record) = &result.ty {

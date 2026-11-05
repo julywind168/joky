@@ -82,7 +82,7 @@ pub enum Expr {
         name: String,
         type_args: Vec<GenericArgument>,
         fields: Vec<FieldInit>,
-        /// Same-type Copy value supplying omitted fields, evaluated after initializers.
+        /// Same-type value supplying omitted fields, evaluated after initializers.
         base: Option<Box<Expr>>,
         span: Span,
     },

@@ -381,16 +381,24 @@ fn record_updates_reject_invalid_bases_and_inaccessible_fields() {
             "Conflicting types",
         ),
         (
-            "struct P<T> { x: T } fn f<T>(p: P<T>) -> P<T> { P { ..p } }",
-            "requires a Copy struct",
+            "struct P<T> { x: T } fn f<T>(p: P<T>) -> P<T> { let next = P { ..p }; p }",
+            "moved",
         ),
         (
-            "struct P { x: String } fn f(p: P) -> P { P { x: \"new\", ..p } }",
-            "requires a Copy struct",
+            "struct P { x: String } fn f(p: &P) -> P { P { ..*p } }",
+            "through a reference",
         ),
         (
             "import joky/drop.{type Drop} struct P { text: String } impl Drop for P { fn drop(&mut self) {} } fn f(p: P) -> P { P { ..p } }",
-            "requires a Copy struct",
+            "Cannot move an owning field",
+        ),
+        (
+            "struct P { x: String, tag: Int32 } fn f(p: P) -> P { let view = &p.x; let next = P { tag: 2, ..p }; println(view); next }",
+            "borrow",
+        ),
+        (
+            "struct P { x: String } fn f(p: P) -> P { P { x: p.x, ..p } }",
+            "moved",
         ),
         (
             "struct P { x: &Int32 } fn f() -> P { let n = 42; P { ..P { x: &n } } }",

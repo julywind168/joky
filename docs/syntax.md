@@ -84,7 +84,7 @@ FS6 增加 read_all/write_all 与 read_text/write_text，读取另提供显式 `
 | 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 join/race 分支 | 同步匿名函数、借用/move 闭包及 Fn 家族约束已实现；挂起 move FnOnce 闭包已实现 |
 | 所有权容器 | 部分实现 | 按容器与资源专项推进 |
 | Arena、引用来源检查 | 已实现隐式 arena、同步显式 Arena.new()/arena.alloc() 与 &Arena helper、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、任务 arena 引用跨挂起及 join 分支借用、局部值/字段及容器元素/Slice 跨挂起借用与独立字段访问、异步宿主借用 v1 | 显式 Arena 跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
-| 结构更新 | Copy struct 支持 `Type { field: value, ..base }`，base 参与泛型推导 | 显式字段先求值，base 最后求值一次；不依赖 Default，拥有型结构更新留待后续 |
+| 结构更新 | Copy／拥有型 struct 支持 `Type { field: value, ..base }`，base 参与泛型推导 | 显式字段先求值，base 最后求值一次；拥有型 base 整体消费，被覆盖字段立即清理；不依赖 Default |
 | Eq／Hash 派生 | 已实现 `#derive(Eq, Hash)`，支持 struct／enum 及按字段推导的泛型约束 | 生成普通借用实现；Eq 短路比较，Hash 按字段顺序组合并区分 enum 变体，语义见 language.md |
 | Struct JSON 派生 | 已实现 `#derive(ToJson, FromJson)`，可单向派生，支持泛型条件约束与跨模块私有字段 | 生成普通 trait 实现；enum、字段改名/跳过/默认值注解留待后续，语义见 language.md |
 | 同步 C 接口 | 已实现 `#repr(C)`、unsafe 块、合计 0–4 个引用/Ptr 参数、整数/Ptr/Unit 结果、三后端互操作；Ptr.null()/Ptr.is_null() | 资源拥有包装与异步保留协议另行扩展 |

@@ -869,7 +869,7 @@ Parallel Region 的子 Arena 使用根预算下的独立分片。因为区域引
 公开数组、元素及切片模块不重导出私有导入，规范化函数保留定义作用域。
 
 `BufferOp::Move/Borrow/End` 表达拥有者转移、控制块视图及词法管理权结束；
-`BufferOp::Extract` 消费整个源记录并转移单个字段；`BufferOp::Detach` 是记录解构的
+`BufferOp::Extract` 消费整个源记录并转移单个字段；`BufferOp::Detach` 是记录解构与结构更新的
 字段分离：运行时转移与 Extract 相同（`__joky_cleanup_extract_field`），借用分析只
 消费选定子树，剩余字段的责任保留到显式 `End`。Detach 先拒绝源的活跃/保留别名，
 再为分离后的唯一拥有子树建立独立分析根，避免调用返回的保守共同来源造成兄弟拥有者冲突。
@@ -1114,9 +1114,14 @@ Buffer 控制块便结束内联布局路径；不按 Array/Map 名字放行。�
 `..` 只影响完备性检查；绑定名判重与元组模式一致。拥有值解构按模式书写顺序发布绑定，
 拥有叶子经 `BufferOp::Detach` 转移清理责任，全部叶子发布后 `BufferOp::End` 释放忽略项，
 清理顺序与该记录直接离开作用域一致；RHS 失败沿构造失败路径，无半初始化绑定可见。
+结构更新位于 `core::ir::records`：先保存显式字段，最后求值同型 base。Copy base 复制缺失字段；
+拥有型 base 经同一 Drop 移出检查，保留字段的清理责任先分离，再以 `End` 清理被覆盖部分，
+成功后才登记完整结果。固定存储使用既有 Place 读写与 End；不新增运行时操作或 ABI。
+中途失败或取消时，新字段、已分离字段及 base 剩余部分分别沿既有清理路径释放。
+
 借用解构在同步函数内经 `PatternProject` 链按存储字节偏移投影（`Projection::Pattern`
 路径证明兄弟不相交），Copy 字段读快照、拥有字段保持 `&Field` 视图，不运行 Drop。
-`suspends` 函数拒绝拥有记录与借用解构；Copy 记录解构走普通 CPS 帧。可见性检查经
+`suspends` 函数拒绝借用解构；Copy 与拥有记录解构走普通 CPS 帧。可见性检查经
 `definition_scope.records` 判定同模块权限，诊断不列举不可见字段名。
 
 ## 固有成员与源码库

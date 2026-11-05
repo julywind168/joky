@@ -1,5 +1,7 @@
 import joky/array.{type Array}
 import joky/drop.{type Drop}
+import joky/fixed_array.{type FixedArray}
+import joky/task
 
 extern fn record_drop(value: Int32)
 extern fn record(value: Int32) -> Int32
@@ -209,3 +211,84 @@ fn cancellation_inner() @suspends -> Int32 {
     int32(name.rune_count()) + score + tag
 }
 fn cancellation_flow() @suspends -> Int32 { cancellation_inner() }
+
+fn updated_pair<T>(base: Pair<T>, first: T) -> Pair<T> { Pair { first, ..base } }
+struct Single { value: String }
+struct OwnedRow { values: FixedArray<String, 2>, tag: Int32 }
+fn owning_updates() -> Int32 {
+    let numbers = updated_pair(Pair { first: 1, second: 2 }, 3)
+    assert(numbers.first == 3 && numbers.second == 2, "Generic Copy update")
+    let pair = updated_pair(Pair { first: "old", second: "kept" }, "new")
+    assert(pair.first == "new" && pair.second == "kept", "Generic owning update")
+    let single = Single { ..Single { value: "single" } }
+    assert(single.value == "single", "Single field owner update")
+    let row = OwnedRow { tag: 2, ..OwnedRow { values: ["a", "b"], tag: 1 } }
+    assert(row.values[0] == "a" && row.values[1] == "b", "Owned place update")
+    let nested = Wrapper { id: 42, ..Wrapper { inner: User { name: "nested", score: 7 }, id: 1 } }
+    assert(nested.inner.name == "nested" && nested.inner.score == 7, "Nested owner update")
+    42
+}
+fn update_drop_order() -> Int32 {
+    let updated = Holder {
+        left: Resource { id: 3, values: Array.new::<Int32>() }
+        ..Holder {
+            left: Resource { id: 1, values: Array.new::<Int32>() }
+            right: Resource { id: 2, values: Array.new::<Int32>() }
+            tag: 42
+        }
+    }
+    record_drop(-1)
+    updated.tag
+}
+fn update_drop_parent() -> Int32 {
+    let updated = Resource {
+        values: Array.new::<Int32>()
+        ..Resource { id: 7, values: Array.new::<Int32>() }
+    }
+    record_drop(-1)
+    updated.id
+}
+fn update_failed_base() -> Int32 {
+    let updated = Holder {
+        left: Resource { id: 3, values: Array.new::<Int32>() }
+        ..{ let fail = 1 << 32; Holder {
+            left: Resource { id: 1, values: Array.new::<Int32>() }
+            right: Resource { id: 2, values: Array.new::<Int32>() }
+            tag: 42
+        } }
+    }
+    updated.tag
+}
+struct FailingResource { value: Resource }
+impl Drop for FailingResource {
+    fn drop(&mut self) { panic("Overwritten field drop failed") }
+}
+struct FallibleUpdate { discarded: FailingResource, retained: Resource }
+fn update_failed_drop() -> Int32 {
+    let updated = FallibleUpdate {
+        discarded: FailingResource { value: Resource { id: 3, values: Array.new::<Int32>() } }
+        ..FallibleUpdate {
+            discarded: FailingResource { value: Resource { id: 1, values: Array.new::<Int32>() } }
+            retained: Resource { id: 2, values: Array.new::<Int32>() }
+        }
+    }
+    updated.retained.id
+}
+fn update_cancellation_flow() @suspends -> Int32 {
+    let row = OwnedRow { tag: 2, ..OwnedRow { values: ["a", "b"], tag: 1 } }
+    let updated = Holder {
+        left: { task.yield_now(); Resource { id: 3, values: Array.new::<Int32>() } }
+        ..{
+            let base = Holder {
+                left: Resource { id: 1, values: Array.new::<Int32>() }
+                right: Resource { id: 2, values: Array.new::<Int32>() }
+                tag: 42
+            }
+            task.yield_now()
+            base
+        }
+    }
+    task.yield_now()
+    assert(row.values[0] == "a" && row.tag == 2, "Owned place survives update suspension")
+    updated.tag
+}

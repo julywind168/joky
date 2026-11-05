@@ -39,6 +39,7 @@ fn record_patterns_match_in_both_execution_modes() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = vm(mode);
         for (name, expected) in [
+            ("owning_updates", 42),
             ("copy_full", 34),
             ("copy_rename_and_rest", 34),
             ("copy_reordered_and_var", 44),
@@ -68,6 +69,10 @@ fn record_patterns_match_in_both_execution_modes() {
 fn record_patterns_release_owners_exactly_once_in_order() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for (entry, expected, events) in [
+            ("update_drop_order", 42, vec![1, -1, 3, 2]),
+            ("update_drop_parent", 7, vec![7, -1, 7]),
+            ("update_failed_base", i32::MIN, vec![3]),
+            ("update_failed_drop", i32::MIN, vec![1, 2, 3]),
             ("drop_copy_only_runs_immediately", 7, vec![7, -1]),
             // Ignored fields follow the record's own destruction order,
             // matching a value that simply leaves scope.
@@ -90,6 +95,7 @@ fn record_patterns_release_owners_exactly_once_in_order() {
                 events,
                 "{mode:?} {entry}"
             );
+            crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
         }
     }
 }
@@ -343,4 +349,50 @@ fn exhaustive_record_patterns_owned_cps_cancellation() {
             crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
         },
     );
+}
+
+fn update_cancellation(sweep: CancellationSweep) {
+    let mut vm = vm(VmMode::Interpreter);
+    // Explicit yields are covered above; a budget cut must reach every transfer.
+    vm.load_source(&SOURCE.replace("task.yield_now()", "{}"))
+        .unwrap();
+    assert_cancellation(
+        &mut vm,
+        "update_cancellation_flow",
+        20_000,
+        sweep,
+        || EVENTS.with(|events| events.borrow_mut().clear()),
+        || EVENTS.with(|events| events.borrow().clone()),
+        || {
+            let events = EVENTS.with(|events| events.borrow().clone());
+            assert!(events.iter().all(|id| [1, 2, 3].contains(id)), "{events:?}");
+            for id in [1, 2, 3] {
+                assert!(
+                    events.iter().filter(|&&event| event == id).count() <= 1,
+                    "{events:?}"
+                );
+            }
+            crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+        },
+    );
+}
+#[test]
+fn owning_record_updates_survive_suspension_and_cancellation() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        EVENTS.with(|events| events.borrow_mut().clear());
+        let vm = vm(mode);
+        let mut task = vm.call_async("update_cancellation_flow", &[]).unwrap();
+        while !task.is_finished() {
+            task.resume().unwrap();
+        }
+        assert_eq!(task.cps_result(), Some(42));
+        drop(task);
+        assert_eq!(EVENTS.with(|events| events.borrow().clone()), [1, 3, 2]);
+    }
+    update_cancellation(CancellationSweep::ResourceBoundaries);
+}
+#[test]
+#[ignore = "exhaustive: every owning record update instruction and cleanup boundary"]
+fn exhaustive_owning_record_update_cancellation() {
+    update_cancellation(CancellationSweep::EveryInstruction);
 }

@@ -456,14 +456,21 @@ fn record_patterns_destructure_in_standalone_native_code() {
     let executable = fixture.path().join("patterns");
     let mut compiler = AotCompiler::new("record-patterns").unwrap();
     compiler.compile_module(&ast).unwrap();
+    let update_slots = compiler
+        .cps_frame_slots("update_cancellation_flow")
+        .unwrap();
     compiler.write_object(&object).unwrap();
     std::fs::write(&host, r#"
         #include <stdint.h>
         #include "joky_runtime.h"
+        #include "joky_cps.h"
         static int32_t events[64];
         static int count;
         void record_drop(int32_t value) { if (count < 64) events[count++] = value; }
         int32_t record(int32_t value) { (void)value; return value; }
+        extern int32_t update_cancellation_flow(JokyCpsFrame *);
+        extern int32_t owning_updates(void), update_drop_order(void), update_drop_parent(void);
+        extern int32_t update_failed_base(void), update_failed_drop(void);
         extern int32_t copy_full(void), copy_rename_and_rest(void), copy_reordered_and_var(void);
         extern int32_t copy_annotated(void), empty_record(void), nested_copy(void);
         extern int32_t nested_owned_rename(void), single_evaluation(void), owned_transfer(void);
@@ -480,6 +487,11 @@ fn record_patterns_destructure_in_standalone_native_code() {
         struct Case { int32_t (*call)(void); int failure; int32_t expected; int count; int32_t events[4]; };
         int main(void) {
             struct Case cases[] = {
+                {owning_updates, 0, 42, 0, {0}},
+                {update_drop_order, 0, 42, 4, {1, -1, 3, 2}},
+                {update_drop_parent, 0, 7, 3, {7, -1, 7}},
+                {update_failed_base, 1, 0, 1, {3}},
+                {update_failed_drop, 1, 0, 3, {1, 2, 3}},
                 {copy_full, 0, 34, 0, {0}}, {copy_rename_and_rest, 0, 34, 0, {0}},
                 {copy_reordered_and_var, 0, 44, 0, {0}}, {copy_annotated, 0, 34, 0, {0}},
                 {empty_record, 0, 42, 0, {0}}, {nested_copy, 0, 34, 0, {0}},
@@ -509,9 +521,18 @@ fn record_patterns_destructure_in_standalone_native_code() {
                     if (events[j] != cases[i].events[j]) return (int)i + 300 + j;
                 }
             }
+            count = 0;
+            JokyCpsFrame *frame = joky_cps_frame_new(UPDATE_SLOTS);
+            int status = JOKY_CPS_PENDING;
+            for (int i = 0; i < 16 && status == JOKY_CPS_PENDING; ++i) {
+                status = update_cancellation_flow(frame);
+            }
+            if (status != JOKY_CPS_COMPLETED || joky_cps_result(frame) != 42) return 90;
+            joky_cps_frame_free(frame);
+            if (count != 3 || events[0] != 1 || events[1] != 3 || events[2] != 2) return 91;
             return 0;
         }
-    "#).unwrap();
+    "#.replace("UPDATE_SLOTS", &update_slots.to_string())).unwrap();
     link(
         link_runtime(c_compiler().arg(&host).arg(&object)),
         &executable,
