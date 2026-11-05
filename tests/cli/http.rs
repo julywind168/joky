@@ -29,10 +29,11 @@ fn http_request_and_response_helpers_preserve_boundaries() {
     let work = Workspace::new();
     work.write("url.jk", r##"
 import joky/url
-import joky/http
+import joky/http.{type Service}
 import joky/log
 import joky/uuid
 import joky/mem
+import joky/task
 fn pairs(var actual: Array<(String, String)>, var expected: Array<(String, String)>) {
     assert(actual.len() == expected.len(), "pair count")
     while !expected.is_empty() {
@@ -133,7 +134,40 @@ fn helpers() {
     assert(payload.error == "quote\"\n", "JSON borrows input")
     assert(http.json(http.Status.Ok, Float64.NAN).is_err(), "encoding failure remains observable")
 }
-fn main() { components(); queries(); requests(); helpers(); decoding() }
+fn routed_request(method: http.Method, target: String) -> http.Request { http.Request { method, ..request(target) } }
+fn routed(request: http.Request) @suspends -> http.Response {
+    task.yield_now()
+    http.text(http.Status.Ok, "{request.method} {request.target}")
+}
+fn alternate(request: http.Request) @suspends -> http.Response { http.empty(http.Status.Accepted) }
+fn routing() @suspends {
+    var router = http.Router.new()
+    router.post("/item", routed)!
+    router.get("/item", routed)!
+    router.add(http.Method.Patch, "/a%2Fb", routed)!
+    assert(match router.get("/item", alternate) { Err(DuplicateRoute) => true, _ => false }, "reject duplicate route")
+    for path in ["", "relative", "/item?x=1", "/item#fragment", "/bad\npath", "/你"] {
+        assert(match router.get(path, routed) { Err(InvalidPath) => true, _ => false }, "reject invalid route path")
+    }
+    assert(String.from_utf8(router.handle(request("/item?x=1")).body)! == "GET /item?x=1", "query does not change route or request")
+    let denied = router.handle(routed_request(http.Method.Options, "/item"))
+    assert(match denied.status { MethodNotAllowed => true, _ => false }, "known path with unsupported method")
+    assert(denied.headers.len() == 1 && denied.headers[0].name == "Allow" && denied.headers[0].value == "GET, HEAD, POST", "deterministic allowed methods include implicit HEAD")
+    assert(router.route(routed_request(http.Method.Delete, "/item?secret=1"))! == "/item", "405 route label excludes query")
+    for path in ["/missing", "/Item", "/item/", "/a/b"] {
+        assert(router.route(request(path.clone())).is_none(), "unmatched path has no route label")
+        assert(match router.handle(request(path)).status { NotFound => true, _ => false }, "exact path matching")
+    }
+    assert(String.from_utf8(router.handle(routed_request(http.Method.Patch, "/a%2Fb")).body)! == "PATCH /a%2Fb", "encoded path remains literal")
+    let shared = router.share()
+    router.head("/item", alternate)!
+    router.options("/item", alternate)!
+    assert(match router.handle(routed_request(http.Method.Head, "/item")).status { Accepted => true, _ => false }, "explicit HEAD overrides GET fallback")
+    assert(match router.handle(routed_request(http.Method.Options, "/item")).status { Accepted => true, _ => false }, "explicit OPTIONS handler")
+    mem.drop(router)
+    assert(String.from_utf8(shared.handle(routed_request(http.Method.Head, "/item")).body)! == "HEAD /item", "shared table owns routes and preserves method in GET fallback")
+}
+fn main() @suspends { components(); queries(); requests(); helpers(); decoding(); routing() }
 "##);
     work.assert_all_backends("url.jk", &[], b"", 0);
 }
@@ -147,7 +181,7 @@ fn http_server_serves_json_and_validates_framing() {
     );
     success(&work.cli(&["build", "--task-workers", "2", "http_server.jk"]));
     for backend in ["jit", "interpreter", "aot"] {
-        let command = if backend == "aot" {
+        let mut command = if backend == "aot" {
             Command::new(work.path().join("http_server"))
         } else {
             let mut c = work.command();
@@ -157,6 +191,8 @@ fn http_server_serves_json_and_validates_framing() {
             }
             c
         };
+        let log_path = work.path().join(format!("requests-{backend}.jsonl"));
+        command.stderr(std::fs::File::create(&log_path).unwrap());
         let mut server = Running::start(command);
         let port = server
             .line()
@@ -178,9 +214,19 @@ fn http_server_serves_json_and_validates_framing() {
             ]
         )
         .ends_with("\r\n\r\n{\"n\":1}"));
+        let missing = http_reply(port, &[b"OPTIONS /unhandled HTTP/1.1\r\nHost: a\r\n\r\n"]);
+        assert!(missing.starts_with("HTTP/1.1 404 "));
+        let denied = http_reply(
+            port,
+            &[b"POST /health?secret=1 HTTP/1.1\r\nHost: a\r\n\r\n"],
+        );
         assert!(
-            http_reply(port, &[b"OPTIONS /unhandled HTTP/1.1\r\nHost: a\r\n\r\n"])
-                .starts_with("HTTP/1.1 404 ")
+            denied.starts_with("HTTP/1.1 405 Method Not Allowed\r\n")
+                && denied.contains("\r\nAllow: GET, HEAD\r\n")
+        );
+        assert!(
+            http_reply(port, &[b"HEAD /health HTTP/1.1\r\nHost: a\r\n\r\n"])
+                .ends_with("Content-Length: 11\r\nConnection: close\r\n\r\n")
         );
         if backend == "jit" {
             for (headers, code) in [
@@ -231,10 +277,6 @@ fn http_server_serves_json_and_validates_framing() {
                 "a".repeat(16384)
             );
             assert!(http_reply(port, &[long.as_bytes()]).starts_with("HTTP/1.1 431 "));
-            assert!(
-                http_reply(port, &[b"HEAD /health HTTP/1.1\r\nHost: a\r\n\r\n"])
-                    .ends_with("Content-Length: 11\r\nConnection: close\r\n\r\n")
-            );
             assert!(http_reply(
                 port,
                 &[b"POST /echo HTTP/1.1\r\nHost: a\r\nContent-Length: 1\r\n\r\nx"]
@@ -243,6 +285,23 @@ fn http_server_serves_json_and_validates_framing() {
         }
         server.signal("-TERM");
         assert!(server.finish().success());
+        let events: Vec<serde_json::Value> = std::fs::read_to_string(log_path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        for (reply, route) in [
+            (&health, Some("/health")),
+            (&denied, Some("/health")),
+            (&missing, None),
+        ] {
+            let id = super::tcp_server::response_id(reply);
+            let event = events
+                .iter()
+                .find(|event| event["request_id"] == id)
+                .unwrap();
+            assert_eq!(event["route"].as_str(), route);
+        }
     }
 }
 

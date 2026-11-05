@@ -181,6 +181,7 @@ impl Show for ServeError {
 
 const HEAD_LIMIT: UInt64 = 16384
 const BODY_LIMIT: UInt64 = 1048576
+const ROUTE_LABEL_LIMIT: UInt64 = 128
 enum ReadFailure { Bad, Network, HeadLimit, BodyLimit, Timeout, Stopped, Unsupported, Expectation }
 
 // HTTP token characters: ASCII letters, digits and the permitted punctuation.
@@ -417,7 +418,7 @@ fn respond(io: Wire, context: RequestContext, started: time.Instant, route: Opti
     var fields = [log.field("status", code), log.field("write_outcome", label)]
     if let Some(duration) = started.elapsed() { fields.push(log.field("duration_ms", duration.as_millis())) }
     if let Some(name) = route {
-        if !name.is_empty() && name.byte_length() <= 128 { fields.push(log.field("route", name)) }
+        if !name.is_empty() && name.byte_length() <= ROUTE_LABEL_LIMIT { fields.push(log.field("route", name)) }
     }
     context.info("http.request_finished", fields)
 }
@@ -432,6 +433,83 @@ pub trait Service {
     fn route(&self, request: &Request) -> Option<String> { None }
     fn share(&self) @suspends -> Self
     fn handle(&self, request: Request) @suspends -> Response
+}
+pub type Handler = fn(Request) @suspends -> Response
+pub enum RouteError { InvalidPath, DuplicateRoute }
+impl Show for RouteError {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        output.push_str(match self {
+            InvalidPath => "invalid HTTP route path"
+            DuplicateRoute => "duplicate HTTP route"
+        })
+    }
+}
+struct Route { method: Method, path: String, handler: Handler }
+pub struct Router { routes: Array<Route> }
+fn valid_route_path(path: &String) -> Bool {
+    if !path.starts_with("/") || path.byte_length() > ROUTE_LABEL_LIMIT { return false }
+    for byte in path.bytes() {
+        if *byte <= 32 || *byte > 126 || *byte == 63 || *byte == 35 { return false }
+    }
+    true
+}
+impl Router {
+    pub fn new() -> Self { Router { routes: [] } }
+    pub fn add(&mut self, method: Method, path: String, handler: Handler) -> Result<Unit, RouteError> {
+        if !valid_route_path(&path) { return Err(RouteError.InvalidPath) }
+        if self.find_handler(&path, method).is_some() { return Err(RouteError.DuplicateRoute) }
+        self.routes.push(Route { method, path, handler })
+        result.Ok({})
+    }
+    pub fn get(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Get, path, handler) }
+    pub fn head(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Head, path, handler) }
+    pub fn post(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Post, path, handler) }
+    pub fn put(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Put, path, handler) }
+    pub fn patch(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Patch, path, handler) }
+    pub fn delete(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Delete, path, handler) }
+    pub fn options(&mut self, path: String, handler: Handler) -> Result<Unit, RouteError> { self.add(Method.Options, path, handler) }
+    fn find_handler(&self, path: &String, method: Method) @noescape -> Option<Handler> {
+        for entry in &self.routes {
+            if entry.path == path && entry.method == method { return Some(entry.handler) }
+        }
+        None
+    }
+    fn select(&self, path: &String, method: Method) @noescape -> Option<Handler> {
+        let handler = self.find_handler(path, method)
+        if handler.is_none() && method == Method.Head { self.find_handler(path, Method.Get) } else { handler }
+    }
+    fn allowed(&self, path: &String) @noescape -> String {
+        var names: Array<String> = []
+        for method in [Method.Get, Method.Head, Method.Post, Method.Put, Method.Patch, Method.Delete, Method.Options] {
+            if self.select(path, method).is_some() { names.push(method_name(method)) }
+        }
+        names.join(", ")
+    }
+    fn copy_routes(&self) -> Self {
+        var routes: Array<Route> = []
+        for entry in &self.routes {
+            routes.push(Route { method: entry.method, path: entry.path.clone(), handler: entry.handler })
+        }
+        Router { routes }
+    }
+}
+impl Service for Router {
+    fn share(&self) @suspends -> Self { self.copy_routes() }
+    fn route(&self, request: &Request) -> Option<String> {
+        let path = request.path()
+        for entry in &self.routes {
+            if entry.path == path { return Some(entry.path.clone()) }
+        }
+        None
+    }
+    fn handle(&self, request: Request) @suspends -> Response {
+        let path = request.path()
+        if let Some(handler) = self.select(&path, request.method) { return handler(request) }
+        let allow = self.allowed(&path)
+        if allow.is_empty() { text(Status.NotFound, "not found") } else {
+            text(Status.MethodNotAllowed, "method not allowed").with_header("Allow", allow)
+        }
+    }
 }
 struct FunctionService { callback: fn(Request) @suspends -> Response }
 impl Service for FunctionService {

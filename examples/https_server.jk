@@ -1,5 +1,5 @@
 // Supply the certificate chain and private key paths at startup.
-import http_server.{handle}
+import http_server.{routes}
 import joky/http
 import joky/tls
 import joky/process
@@ -22,5 +22,5 @@ fn main() @suspends -> Int32 {
     let signals = stop.subscribe_unix()!
     var listener = tcp.listen("127.0.0.1", 0)!
     println("listening {listener.local_addr()!.port()}")
-    if http.serve_tls(listener, config, &stop, http.Options.default(), handle).is_ok() { 0 } else { 1 }
+    if http.serve_tls_with(listener, config, &stop, http.Options.default(), routes()).is_ok() { 0 } else { 1 }
 }

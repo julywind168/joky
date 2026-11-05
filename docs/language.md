@@ -7130,6 +7130,30 @@ HEAD 只发响应头。204、205、304 的正文必须为空，204 和 304 省�
 例如 share 可通过 `pool.share()` 返回同一数据库池的新句柄。握手、排空及期限沿用同一套规则。
 HTTPS 对应入口为 `http.serve_tls_with(listener, config, &stop, options, service)`。
 
+`http.Router` 实现 Service，提供精确路径路由，可直接传给 serve_with / serve_tls_with。
+用 `Router.new()` 创建可变路由器，再用 `router.add(method, path, handler)` 注册；
+`get/head/post/put/patch/delete/options(path, handler)` 是对应方法的便捷入口。
+`http.Handler` 是 `fn(Request) @suspends -> Response` 的别名，本版注册普通函数 handler。
+这些注册方法修改 Router，返回 `Result<Unit, RouteError>`；失败不修改已有路由。
+同一方法和路径重复注册返回 DuplicateRoute，不覆盖旧 handler。
+
+注册路径必须以 `/` 开始、长度不超过 128 字节，采用无空白的可打印 ASCII，且不能含 `?` 或 `#`，
+否则返回 InvalidPath。长度上限与请求日志的 route 标签上限一致，非 ASCII 路径需写成百分号编码。
+匹配使用 request.path()，不包含查询串；区分大小写、尾斜线和原始百分号编码，不解码或规范化路径。
+路径中的 `:id`、`*` 等均按字面字符匹配，尚无参数或通配符语法。
+
+Router 的分发规则如下：
+
+- 优先选择方法及路径完全匹配的 handler。HEAD 未显式注册时复用该路径的 GET handler，
+  传入的 Request.method 仍为 Head；最终 HTTP 发送层省略正文并保留表示长度。
+- 路径不存在返回文本 404；路径存在而方法不匹配返回文本 405，并设置 Allow。
+  Allow 按 GET、HEAD、POST、PUT、PATCH、DELETE、OPTIONS 顺序列出允许方法，GET 隐含 HEAD，去除重复。
+- OPTIONS 使用显式注册的 handler，未注册时沿用 404/405 规则；不自动生成 CORS 策略。
+- route 日志标签使用匹配到的注册路径，包含方法不匹配的 405；路径未匹配时不提供标签，查询串不会进入标签。
+
+Router.share 为每个连接复制路径和函数入口，连接拥有独立路由表。静态小路由表可直接使用，
+带共享业务状态的服务仍通过自定义 Service 实现。完整用法见 [HTTP 示例](../examples/http_server.jk)。
+
 服务端在响应写入结束时记录 `http.request_finished`。其中 `status` 是服务端选定的 HTTP 状态码，
 `write_outcome` 为 `complete`、`failed` 或 `timeout`。例如状态码可以是 200，同时写入失败。
 `complete` 表示本地写入完成；对端是否收到完整响应仍由客户端判断。
@@ -7140,7 +7164,7 @@ HTTPS 对应入口为 `http.serve_tls_with(listener, config, &stop, options, ser
 
 服务端提供 HTTP/1.1 的有限子集。支持 GET、HEAD、POST、PUT、PATCH、DELETE 和 OPTIONS，每个连接处理一次请求并发送 `Connection: close`。
 方法名区分大小写，合法 token 中未支持的方法（含小写拼写）返回 501，非法方法字符返回 400。
-OPTIONS 交给 handler 处理，不自动生成 Allow 或 CORS 响应头。
+OPTIONS 交给 Service 处理；Router 按上述规则分发，底层 HTTP 层不自动生成 Allow 或 CORS 响应头。
 目标须以 `/` 开始，标头采用 ASCII 和 CRLF，必须有且只有一个 Host（主机名或 IPv4，可带十进制端口）。
 正文缺省为空，可用单个十进制 Content-Length 指定。重复长度（即使相同）、Transfer-Encoding、折叠行、
 无效字符或截断正文均拒绝。Expect 返回 417。该版本未实现 chunked、keep-alive 或 IPv6 字面量 Host。

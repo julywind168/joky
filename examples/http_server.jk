@@ -6,20 +6,21 @@ import joky/tcp
 #derive(ToJson)
 struct Health { ok: Bool }
 
-pub fn handle(request: http.Request) @suspends -> http.Response {
-    let path = request.path()
-    let http.Request { context, method, target, headers, body } = request
-    if (method == http.Method.Get || method == http.Method.Head) && path == "/health" {
-        let health = Health { ok: true }
-        return http.json(http.Status.Ok, &health)!
+fn health(request: http.Request) @suspends -> http.Response {
+    let body = Health { ok: true }
+    http.json(http.Status.Ok, &body)!
+}
+fn echo(request: http.Request) @suspends -> http.Response {
+    if let Ok(value) = json.decode_bytes(&request.body) {
+        return http.Response { headers: [], status: http.Status.Ok, content_type: http.ContentType.Json, body: json.encode(&value)!.into_bytes() }
     }
-    if method == http.Method.Post && path == "/echo" {
-        if let Ok(value) = json.decode_bytes(&body) {
-            return http.Response { headers: [], status: http.Status.Ok, content_type: http.ContentType.Json, body: json.encode(&value)!.into_bytes() }
-        }
-        return http.text(http.Status.BadRequest, "invalid JSON")
-    }
-    http.text(http.Status.NotFound, "not found")
+    http.text(http.Status.BadRequest, "invalid JSON")
+}
+pub fn routes() -> http.Router {
+    var router = http.Router.new()
+    router.get("/health", health)!
+    router.post("/echo", echo)!
+    router
 }
 fn main() @suspends -> Int32 {
     let stop = shutdown.create()
@@ -27,5 +28,5 @@ fn main() @suspends -> Int32 {
     let signals = stop.subscribe_unix()!
     var listener = tcp.listen("127.0.0.1", 0)!
     println("listening {listener.local_addr()!.port()}")
-    if http.serve(listener, &stop, http.Options.default(), handle).is_ok() { 0 } else { 1 }
+    if http.serve_with(listener, &stop, http.Options.default(), routes()).is_ok() { 0 } else { 1 }
 }
