@@ -6,7 +6,7 @@ import joky/array.{type Array}
 import joky/task
 
 fn pem(path: String) @suspends -> Array<UInt8> {
-    var file = fs.open(path, fs.OpenOptions.new())!
+    var file = fs.open(path, fs.OpenOptions.default())!
     file.read_all_limited(131072)!
 }
 fn server(config: &tls.ServerConfig, socket: TcpStream, scenario: Int32) @suspends {

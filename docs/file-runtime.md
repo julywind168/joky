@@ -303,7 +303,7 @@ FS4 的文件服务能力由通用 Rust/C 宿主验证，Godot 不作为引擎�
 这些便利接口的函数名与组合错误未纳入 FS0 的首版 API；现由第 12 节 FS6 定义。
 
 OpenOptions 是六个公开 Bool 字段的 Copy 记录，依次为 `read`、`write`、`append`、
-`create`、`create_new`、`truncate`。`OpenOptions.new()` 返回 read=true、其他=false。
+`create`、`create_new`、`truncate`。`OpenOptions.default()` 返回 read=true、其他=false。
 内部 flags 按上述顺序占用位 0–5，其他位非零为 InvalidInput。
 
 | 访问组合 | 合法的创建/截断组合 |

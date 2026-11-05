@@ -515,7 +515,7 @@ fn closed(handle: &domain.WriteHandle<Membership>, _: &Unit) @suspends @noescape
 }}
 fn main() @suspends ->Int32 {{
     let stream=TcpStream.connect(Address.ipv4(0x7f000001,{port}))!
-    var options=session.defaults()
+    var options=session.Options.default()
     options.queue_messages=1
     options.queue_bytes=65536
     let connection=session.create(options)

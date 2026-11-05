@@ -327,7 +327,7 @@ import joky/fs
 fn cleanup() @suspends {{
     let path = testing.temp_dir()!
     eprintln("TEST_DIR={{path}}")
-    var options = fs.OpenOptions.new()
+    var options = fs.OpenOptions.default()
     options.write = true
     options.create = true
     var file = fs.open("marker.txt", options)!

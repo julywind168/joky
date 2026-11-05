@@ -22,5 +22,5 @@ fn main() @suspends -> Int32 {
     let signals = stop.subscribe_unix()!
     var listener = tcp.listen("127.0.0.1", 0)!
     println("listening {listener.local_addr()!.port()}")
-    if http.serve(listener, &stop, http.defaults(), handle).is_ok() { 0 } else { 1 }
+    if http.serve(listener, &stop, http.Options.default(), handle).is_ok() { 0 } else { 1 }
 }

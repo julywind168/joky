@@ -35,7 +35,7 @@ fn process_inputs_preserve_arguments_environment_and_caller_paths() {
             println(process.env("JOKY_TEST_EMPTY")!)
             println(process.env("JOKY_TEST_MISSING")!)
             let path = process.resolve_path("input.txt")!
-            var file = fs.open(path, fs.OpenOptions.new())!
+            var file = fs.open(path, fs.OpenOptions.default())!
             println(file.read_text()!)
             assert(process.current_dir()!.byte_length() > 0, "caller directory")
             7

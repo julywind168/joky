@@ -81,29 +81,29 @@ fn limited<T: ToJson>(value: &T, options: Options, expected: Int32, path: String
 fn user() -> User { User { name: "你🙂\0", age: 37, nickname: Option.Some("Ada") } }
 fn limits() {
     let value = UserRecord { value: user() }
-    var options = Options.defaults()
+    var options = Options.default()
     options.limits.max_depth = 1; limited(&value, options, 7, "/value")
     options.limits.max_depth = 2; ensure(typed.encode_with_options(&value, options).is_ok())
     options.limits.max_nodes = 4; limited(&value, options, 8, "/value/nickname")
     options.limits.max_nodes = 5; ensure(typed.encode_with_options(&value, options).is_ok())
     options.limits.max_nodes = 6; ensure(typed.encode_with_options(&value, options).is_ok())
-    options = Options.defaults(); options.limits.max_string_bytes = 7
+    options = Options.default(); options.limits.max_string_bytes = 7
     limited(&value, options, 9, "/value/name")
-    options = Options.defaults(); options.limits.max_number_bytes = 1
+    options = Options.default(); options.limits.max_number_bytes = 1
     limited(&value, options, 10, "/value/age")
-    options = Options.defaults(); options.limits.max_depth = 129; limited(&value, options, 11, "")
-    options = Options.defaults(); options.limits.max_output_bytes = 1
+    options = Options.default(); options.limits.max_depth = 129; limited(&value, options, 11, "")
+    options = Options.default(); options.limits.max_output_bytes = 1
     match typed.encode_with_options(&value, options) { Err(Encoding(json.EncodeError.OutputLimit)) => {}, _ => { ensure(false) } }
-    options = Options.defaults(); options.limits.max_depth = 0
+    options = Options.default(); options.limits.max_depth = 0
     let scalar: UInt8 = 7; ensure(typed.encode_with_options(&scalar, options).is_ok())
     let empty = Array.new::<UInt8>(); limited(&empty, options, 7, "")
-    options = Options.defaults(); options.limits.max_nodes = 0; limited(&scalar, options, 8, "")
-    options = Options.defaults(); options.limits.max_number_bytes = 0; limited(&scalar, options, 10, "")
-    options = Options.defaults(); options.limits.max_string_bytes = 0
+    options = Options.default(); options.limits.max_nodes = 0; limited(&scalar, options, 8, "")
+    options = Options.default(); options.limits.max_number_bytes = 0; limited(&scalar, options, 10, "")
+    options = Options.default(); options.limits.max_string_bytes = 0
     let empty = ""; ensure(typed.encode_with_options(&empty, options).is_ok())
     let nonempty = "a"; limited(&nonempty, options, 9, "")
     let text = "null"
-    options = Options.defaults(); options.limits.max_input_bytes = 0
+    options = Options.default(); options.limits.max_input_bytes = 0
     match typed.decode_with_options::<Unit>(&text, options) {
         Err(Syntax(error)) => { ensure(error.offset == 0) }
         _ => { ensure(false) }
@@ -113,7 +113,7 @@ fn limits() {
     var bytes = Array.new::<UInt8>(); bytes.push(0xff)
     match typed.decode_bytes::<User>(bytes) { Err(Syntax(error)) => { ensure(error.offset == 0) }, _ => { ensure(false) } }
     let valid = "{{\"name\":\"Ada\",\"age\":37}}"
-    var defaults = Options.defaults(); defaults.limits.max_nodes = 3
+    var defaults = Options.default(); defaults.limits.max_nodes = 3
     match typed.decode_with_options::<User>(&valid, defaults) {
         Err(error) => mapping(error, 8, "/nickname")
         Ok(_) => { ensure(false) }

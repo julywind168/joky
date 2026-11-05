@@ -7,7 +7,7 @@ struct Settings { path: String, text: String }
 fn exercise(settings: &Settings) @suspends -> Int32 {
     let addresses = dns.lookup("localhost", 7777)!
     if addresses.len() == 0 { return -7 }
-    var options = fs.OpenOptions.new()
+    var options = fs.OpenOptions.default()
     options.write = true
     options.create = true
     options.truncate = true
@@ -37,7 +37,7 @@ fn main() @suspends -> Int32 {
     0
 }
 fn read(path: &String) @suspends {
-    var file = fs.open(path.clone(), fs.OpenOptions.new())!
+    var file = fs.open(path.clone(), fs.OpenOptions.default())!
     file.read(16);
 }
 fn parked() @suspends {

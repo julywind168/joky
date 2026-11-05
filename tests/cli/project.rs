@@ -18,7 +18,7 @@ fn project(work: &Workspace) {
         import shared
         import joky/fs
         fn main() @suspends {
-            var file = fs.open("assets/message.txt", fs.OpenOptions.new())!
+            var file = fs.open("assets/message.txt", fs.OpenOptions.default())!
             println(file.read_text()!)
             println(shared.answer())
         }

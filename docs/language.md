@@ -1278,8 +1278,8 @@ fn columns() -> Columns {
 Copy 或拥有型 struct 支持以 `..base` 补齐未显式指定的字段，不依赖 Default trait：
 
 ```joky
-let options = http.Options { max_connections: 4, ..http.defaults() }
-let limits = json.Limits { max_depth: 16, ..json.Limits.defaults() }
+let options = http.Options { max_connections: 4, ..http.Options.default() }
+let limits = json.Limits { max_depth: 16, ..json.Limits.default() }
 ```
 
 - `..base` 最多一个且必须位于末尾，可带尾随逗号；允许 `Type { ..base }`。
@@ -6864,7 +6864,7 @@ SIGKILL 不可接入，不能期待强制杀进程时执行清理。
 ## 连接运行组件 joky/session
 
 显式导入 `joky/session`。`Options` 的公开字段为 `max_line_bytes`、`queue_messages`、
-`queue_bytes`（以上均为 UInt64）和 `idle_timeout: Duration`；`defaults()` 分别返回 4096、64、65536 和 `0ns`。
+`queue_bytes`（以上均为 UInt64）和 `idle_timeout: Duration`；`session.Options.default()` 分别返回 4096、64、65536 和 `0ns`。
 行长含结束符，容量沿用 TCP／outbox 的有效范围。`idle_timeout = 0ns` 关闭超时；例如 `idle_timeout = 30s` 限制
 等到下一条完整行的时间，零散字节不会重置期限。
 
@@ -6951,7 +6951,7 @@ HTTPS 对应入口为 `http.serve_tls_with(listener, config, &stop, options, ser
 请求体最多 1 MiB，超限返回 413。响应体也限 1 MiB，超限在写响应头前返回 500。
 响应可使用预设的 ContentType.Text、Json、Bytes，也可用 `http.ContentType.custom("image/png")`。
 该构造函数返回 Option，接受 ASCII 类型/子类型及可选的媒体参数，无效输入返回 None。
-`http.defaults()` 允许同时 128 个连接，满额时关闭新连接。完整请求读取和完整响应写入的默认期限分别为 10s。
+`http.Options.default()` 允许同时 128 个连接，满额时关闭新连接。完整请求读取和完整响应写入的默认期限分别为 10s。
 零散字节不重置读取期限，超时返回 408。发送失败或写入超时会结束连接，已经写出的前缀仍可能到达对端。
 
 完整请求读完后再次检查停机状态，通过检查的请求进入 handler。通知会停止监听并结束待准入的读取，
@@ -7359,7 +7359,7 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 Rust 自定义文件服务可以分别实现这些路径操作。未安装文件能力、未实现相应方法或使用 C 版
 `FileServiceV1` 时，合法请求返回 `Unsupported`。
 
-`OpenOptions.new()` 仅启用 read。六个公开 Bool 字段为 read、write、append、create、
+`OpenOptions.default()` 仅启用 read。六个公开 Bool 字段为 read、write、append、create、
 create_new、truncate。访问模式只能是 read、write、read+write、append、read+append；
 write 与 append 不可同时启用。只读不能创建或截断；create 与 create_new 互斥；
 truncate 仅可用于 write，不能与 create_new 同用。create 不隐式截断；create_new
@@ -7522,7 +7522,7 @@ JSON 的 `\uXXXX` 支持成对代理项，解码后的 NUL 和非 BMP 标量保�
 重复键按解码后的字符串判断，`"a"` 与 `"\u0061"` 相同；不做 Unicode 规范化。
 Number 保留原始拼写和超出机器数范围的合法数字。
 
-Limits 是 Copy 记录，字段均为公开 UInt64；`Limits.defaults()` 返回以下默认值，它们同时是硬上限。
+Limits 是 Copy 记录，字段均为公开 UInt64；`Limits.default()` 返回以下默认值，它们同时是硬上限。
 `limits.is_valid()` 检查配置是否在硬上限内；调用者可降低到零但不能增大，边界按 `实际值 <= 上限` 接受：
 
 | 字段 | 默认/硬上限 | 计数 |
@@ -7610,7 +7610,7 @@ struct Envelope<T> { value: T }
 | `typed.encode<T: ToJson>(&T)` | 借用输入，返回独立拥有的 `Result<String, CodecError>` |
 | `typed.decode<T: FromJson>(&String)` | 输入保留，返回独立拥有的 `Result<T, CodecError>` |
 | `typed.decode_bytes<T: FromJson>(Array<UInt8>)` | 消费输入，含失败路径 |
-| 以上接口的 `_with_options` 版本 | 最后一个参数为 `Options`，默认使用 `Options.defaults()` |
+| 以上接口的 `_with_options` 版本 | 最后一个参数为 `Options`，默认使用 `Options.default()` |
 
 `Options` 包含 `limits: json.Limits` 和 `reject_unknown_fields: Bool`（默认 false）。
 标准实现覆盖 Unit、Bool、String、Number、八种整数、Float32/Float64、Option<T>、Array<T>

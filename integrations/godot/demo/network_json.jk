@@ -11,7 +11,7 @@ import joky/integer
 
 fn ensure(ok: Bool) { let message = "JSON message session"; assert(ok, &message) }
 fn limits() -> Limits {
-    var value = Limits.defaults()
+    var value = Limits.default()
     value.max_input_bytes = 65536; value.max_output_bytes = 65536
     value.max_depth = 16; value.max_nodes = 4096; value.max_string_bytes = 32768
     value

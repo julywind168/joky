@@ -84,7 +84,7 @@ fn structs() {
     ensure(null.nickname.is_none())
     let unknown = "{{\"name\":\"Ada\",\"age\":37,\"extra\":[{{\"x\":\"owned\"}}]}}"
     ensure(typed.decode::<User>(&unknown).is_ok())
-    var options = Options.defaults(); options.reject_unknown_fields = true
+    var options = Options.default(); options.reject_unknown_fields = true
     match typed.decode_with_options::<User>(&unknown, options) { Err(error) => mapping(error, 2, "/extra"), Ok(_) => { ensure(false) } }
     bad::<User>("{{\"age\":37}}", 1, "/name")
     bad::<User>("{{\"name\":\"Ada\",\"age\":256}}", 5, "/age")

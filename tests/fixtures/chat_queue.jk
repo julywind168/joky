@@ -17,7 +17,7 @@ fn fixture() @suspends -> Fixture {
     let accounts = domain.directory(4096)
     let room = domain.create(new_room, "r")
     let other = domain.create(new_room, "other")
-    var config = defaults()
+    var config = Config.default()
     config.reclaim_empty = false
     let host = Host { config: config, rooms: rooms.handle(), accounts: accounts.handle() }
     let first = "r"

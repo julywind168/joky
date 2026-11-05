@@ -175,7 +175,7 @@ JSON 转义与 Joky 源码字符串转义分别实现：不能把 `\u{...}` 当�
 
 ### 5.1 Limits
 
-Limits 是 Copy 配置，`Limits.defaults()` 返回以下默认值。首版这些值同时是硬上限，
+Limits 是 Copy 配置，`Limits.default()` 返回以下默认值。首版这些值同时是硬上限，
 调用者可缩小但不能增大；超过硬上限先返回 InvalidLimits，不开始编解码。
 零上限合法，但相关内容不能超过零；所有边界按 `实际值 <= 上限` 接受。
 

@@ -6,7 +6,7 @@ fn main() @suspends {
     assert(entries.contains("旧.txt") && entries.contains("ready") && entries.contains("sub"), "entry names")
     assert(fs.read_dir("paths/sub")!.is_empty(), "empty directory")
     assert(fs.rename("paths/旧.txt", "paths/ready").is_ok(), "replace existing destination")
-    var file = fs.open("paths/ready", fs.OpenOptions.new())!
+    var file = fs.open("paths/ready", fs.OpenOptions.default())!
     assert(file.read_text()! == "new contents", "renamed file contents")
     file.close()!
     let info = fs.metadata("paths/ready")!

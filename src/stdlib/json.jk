@@ -222,7 +222,7 @@ pub struct Limits {
 }
 impl Limits {
     pub fn is_valid(&self) -> Bool { valid_limits(*self) }
-    pub fn defaults() -> Limits {
+    pub fn default() -> Limits {
         Limits { max_input_bytes: 1048576, max_output_bytes: 1048576, max_depth: 128,
             max_nodes: 65536, max_string_bytes: 262144, max_number_bytes: 1024 }
     }
@@ -432,7 +432,7 @@ fn new_frame(byte: UInt8) -> DecodeFrame {
     }
 }
 
-pub fn decode(input: &String) -> Result<Value, DecodeError> { decode_with_limits(input, Limits.defaults()) }
+pub fn decode(input: &String) -> Result<Value, DecodeError> { decode_with_limits(input, Limits.default()) }
 fn decode_step(input: &String, decoder: &mut Decoder) -> Result<Bool, DecodeError> {
     let length = input.byte_length()
     let bytes = input.bytes()
@@ -527,7 +527,7 @@ pub fn decode_with_limits(input: &String, limits: Limits) -> Result<Value, Decod
 }
 
 pub fn decode_bytes(input: array.Array<UInt8>) -> Result<Value, DecodeError> {
-    decode_bytes_with_limits(input, Limits.defaults())
+    decode_bytes_with_limits(input, Limits.default())
 }
 pub fn decode_bytes_with_limits(input: array.Array<UInt8>, limits: Limits) -> Result<Value, DecodeError> {
     if !valid_limits(limits) { return Err(decode_error(DecodeErrorKind.InvalidLimits, 0)) }
@@ -680,7 +680,7 @@ fn encode_step(root: &Value, encoder: &mut Encoder) -> Result<Bool, EncodeError>
     }
     Ok(false)
 }
-pub fn encode(value: &Value) -> Result<String, EncodeError> { encode_with_limits(value, Limits.defaults()) }
+pub fn encode(value: &Value) -> Result<String, EncodeError> { encode_with_limits(value, Limits.default()) }
 pub fn encode_with_limits(value: &Value, limits: Limits) -> Result<String, EncodeError> {
     if !valid_limits(limits) { return Err(EncodeError.InvalidLimits) }
     var encoder = Encoder { output: string.StringBuilder.new(), path: array.Array.new::<UInt64>(),

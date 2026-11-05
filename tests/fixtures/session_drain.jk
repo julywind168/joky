@@ -50,7 +50,7 @@ fn scenario(which: Int32) @suspends {
     var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
     let remote = TcpStream.connect(listener.local_addr()!)!
     let stream = listener.accept()!
-    let connection = session.create(session.defaults())
+    let connection = session.create(session.Options.default())
     let owner = domain.create(make, {})
     let stop = shutdown.create()
     if which == 1 { stop.request(); }

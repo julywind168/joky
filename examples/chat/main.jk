@@ -2,7 +2,7 @@
 // script/main.jk and are republished through the admin port without dropping connections.
 import host/config as startup
 import host/admin
-import contract.{type Contract, type Host, type Call, type AccountInit, type Client, defaults, require_contract}
+import contract.{type Contract, type Host, type Call, type AccountInit, type Client, type Config, require_contract}
 import joky/vm
 import joky/domain
 import joky/session
@@ -92,7 +92,7 @@ fn main() @suspends -> Int32 {
             return 1
         }
     }
-    let config = defaults()
+    let config = Config.default()
     let rooms = domain.directory(config.max_rooms)
     let accounts = domain.directory(config.max_clients)
     let host = Host { config, rooms: rooms.handle(), accounts: accounts.handle() }

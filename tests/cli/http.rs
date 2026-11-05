@@ -159,7 +159,7 @@ fn main() @suspends -> Int32 {
     let stop = shutdown.create()
     let signals = stop.subscribe_unix()!
     var listener = tcp.listen("127.0.0.1", 0)!
-    var options = http.defaults()
+    var options = http.Options.default()
     if process.env("JOKY_TEST_HTTP_MINIMUM_WARN")!.is_some() { options.logger = log.Logger.new(log.Level.Warn) }
     options.read_timeout = 250ms
     options.max_connections = 1

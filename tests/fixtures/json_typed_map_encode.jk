@@ -49,6 +49,6 @@ fn main() {
     let expected = "{{\"items\":[null,18446744073709551615,0]}}"
     ensure(text.equals(&expected))
     ensure(fields.len() == 1)
-    var options = Options.defaults(); options.limits.max_string_bytes = 4
+    var options = Options.default(); options.limits.max_string_bytes = 4
     match typed.encode_with_options(&fields, options) { Err(error) => mapping(error, 9, "/items"), Ok(_) => { ensure(false) } }
 }

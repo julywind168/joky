@@ -101,44 +101,44 @@ fn negative() {
     bad("{{\"🙂\":1,\"\\uD83D\\uDE42\":2}}", 7, 10)
 }
 fn boundaries() {
-    var limits = Limits.defaults()
+    var limits = Limits.default()
     limits.max_input_bytes = 4
     limited("0  ", limits, 0, 0); limited("null", limits, 0, 0); limited("null ", limits, 9, 4)
     limits.max_input_bytes = 0
     limited("", limits, 1, 0); limited("0", limits, 9, 0)
-    limits = Limits.defaults()
+    limits = Limits.default()
     limits.max_depth = 2
     limited("[]", limits, 0, 0); limited("[{{}}]", limits, 0, 0); limited("[[[]]]", limits, 10, 2)
     limits.max_depth = 0
     limited("0", limits, 0, 0); limited("[]", limits, 10, 0)
-    limits = Limits.defaults()
+    limits = Limits.default()
     limits.max_nodes = 3
     limited("[0]", limits, 0, 0); limited("[0,{{}}]", limits, 0, 0); limited("[0,0,0]", limits, 11, 5)
     limited("{{\"a\":null,\"b\":null}}", limits, 0, 0)
     limits.max_nodes = 0
     limited("null", limits, 11, 0)
-    limits = Limits.defaults()
+    limits = Limits.default()
     limits.max_string_bytes = 4
     limited("\"你\"", limits, 0, 0); limited("\"🙂\"", limits, 0, 0); limited("\"你ab\"", limits, 12, 5)
     limited("\"\\uD83D\\uDE42\"", limits, 0, 0); limited("\"a\\uD83D\\uDE42\"", limits, 12, 2)
     limited("{{\"abcde\":0}}", limits, 12, 6)
     limits.max_string_bytes = 0
     limited("{{\"\":\"\"}}", limits, 0, 0); limited("\"a\"", limits, 12, 1)
-    limits = Limits.defaults()
+    limits = Limits.default()
     limits.max_number_bytes = 3
     limited("10", limits, 0, 0); limited("100", limits, 0, 0); limited("1000", limits, 13, 3)
     limits.max_number_bytes = 0
     limited("null", limits, 0, 0); limited("0", limits, 13, 0)
-    limits = Limits.defaults()
+    limits = Limits.default()
     limits.max_output_bytes = 0
     limited("[null]", limits, 0, 0)
     limits.max_output_bytes = 1048577
     limited("", limits, 14, 0)
-    limits = Limits.defaults(); limits.max_input_bytes = 1048577; limited("0", limits, 14, 0)
-    limits = Limits.defaults(); limits.max_depth = 129; limited("0", limits, 14, 0)
-    limits = Limits.defaults(); limits.max_nodes = 65537; limited("0", limits, 14, 0)
-    limits = Limits.defaults(); limits.max_string_bytes = 262145; limited("0", limits, 14, 0)
-    limits = Limits.defaults(); limits.max_number_bytes = 1025; limited("0", limits, 14, 0)
+    limits = Limits.default(); limits.max_input_bytes = 1048577; limited("0", limits, 14, 0)
+    limits = Limits.default(); limits.max_depth = 129; limited("0", limits, 14, 0)
+    limits = Limits.default(); limits.max_nodes = 65537; limited("0", limits, 14, 0)
+    limits = Limits.default(); limits.max_string_bytes = 262145; limited("0", limits, 14, 0)
+    limits = Limits.default(); limits.max_number_bytes = 1025; limited("0", limits, 14, 0)
     var builder = StringBuilder.new()
     var index: UInt64 = 0
     while index < 128 { builder.push('['); index = index + 1 }
@@ -165,7 +165,7 @@ fn bytes() {
     match json.decode_bytes(source) { Err(error) => { ensure(error.offset == 0); ensure(error_code(error) == 5) }, _ => { ensure(false) } }
     var source = Array.new::<UInt8>()
     source.push(0xff)
-    var limits = Limits.defaults(); limits.max_input_bytes = 0
+    var limits = Limits.default(); limits.max_input_bytes = 0
     match json.decode_bytes_with_limits(source, limits) { Err(error) => { ensure(error.offset == 0); ensure(error_code(error) == 9) }, _ => { ensure(false) } }
     var source = Array.new::<UInt8>(); source.push(0xff)
     limits.max_output_bytes = 1048577

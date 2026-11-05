@@ -114,7 +114,7 @@ Map／Set 的 key 另要求等价关系、相等值同哈希及驻留期间结�
 条件 impl 推导，未使用的类型参数不添加约束；可与 Clone 和 struct JSON 派生组合。
 浮点字段可派生 Eq，不能派生 Hash；const 泛型、缺少协议实现的元组及容器仍不支持。
 
-Copy／拥有型 struct 已支持 `Options { field: value, ..base }`，可直接基于现有 defaults/new 或业务配置
+Copy／拥有型 struct 已支持 `Options { field: value, ..base }`，可直接基于现有 `Type.default()` 或业务配置
 覆盖字段，不依赖 Default。显式字段先求值，base 随后求值一次；类型及泛型实参必须相同，
 所有字段须可见。现有 HTTP／session／JSON／文件／聊天配置均可使用。
 拥有型 base 整体消费，保留字段转入结果，被覆盖的旧字段在表达式结束前清理；
@@ -391,7 +391,7 @@ chat 主文件中的 `serve` 循环（准入、计数 ID、复制脚本、isolat
 | 维度 | 现状 | 建议 |
 | --- | --- | --- |
 | 构造 | `Vm.new()`、`StringBuilder.new()`、`shutdown.create()`、`session.create(opts)`、`admission.create(n, 0)`、`domain.directory(n)`、`postgres.open(n)` | 值对象 `Type.new(...)`；I/O 资源用 `open`/`connect`/`listen`；模块级 `create` 改为 `Type.new` |
-| 默认配置 | `http.defaults()`、`session.defaults()`、`json.Limits.defaults()`、`typed.Options.defaults()`、chat 的 `defaults()` | Copy／拥有型记录已可用 `..base` 结构更新；`Type.default()`／Default 派生暂缓 |
+| 默认配置 | `http.Options.default()`、`session.Options.default()`、`json.Limits.default()`、`typed.Options.default()`、chat 的 `Config.default()` | Copy／拥有型记录已可用 `..base` 结构更新；已统一 `Type.default()` 普通固有方法；Default trait／派生暂缓 |
 | 数值缩写 | `get_i64`、`to_i64`、`from_u64`、`to_f64` 与类型名 `Int64`/`UInt64`/`Float64` 并存 | 跟随类型名：`to_int64()`，或用泛型 `to::<Int64>()`；列读取用 `row.get::<Int64>` |
 | 长度 | 容器 `len()`，String `byte_length()`，StringBuilder `byte_length()` | 保留 `byte_length` 明确单位是对的；补 `len()` 作为同义词会更符合直觉，二选一需写入约定 |
 | 访问器 | `get`/`get_ref`/`borrow`/`borrow_ref`/`borrow_mut`/`borrow_mut_ref` | 见 §6.2 |

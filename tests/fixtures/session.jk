@@ -43,7 +43,7 @@ fn run(scenario: UInt64) @suspends {
     var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
     let peer_stream = TcpStream.connect(listener.local_addr()!)!
     let stream = listener.accept()!
-    var options = session.defaults()
+    var options = session.Options.default()
     options.max_line_bytes = 5
     if scenario == 2 { options.idle_timeout = 1ms }
     let connection = session.create(options)

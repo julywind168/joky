@@ -68,7 +68,9 @@ pub struct Options {
     pub write_timeout: Duration,
     pub grace: Duration
 }
-pub fn defaults() -> Options { Options { logger: log.Logger.new(log.Level.Debug), max_connections: 128, read_timeout: 10s, write_timeout: 10s, grace: 5s } }
+impl Options {
+    pub fn default() -> Self { Options { logger: log.Logger.new(log.Level.Debug), max_connections: 128, read_timeout: 10s, write_timeout: 10s, grace: 5s } }
+}
 pub enum ServeError { InvalidOptions, AcceptFailed, Deadline }
 impl Show for ServeError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {

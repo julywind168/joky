@@ -14,7 +14,7 @@ fn filesystem_default_is_unsupported() {
         vm.load_source(
             r#"import joky/fs
             fn run() @suspends -> Int32 {
-                match fs.open("missing", fs.OpenOptions.new()) {
+                match fs.open("missing", fs.OpenOptions.default()) {
                     Ok(file) => { let ignored = file.close(); 0 }
                     Err(error) => match error.kind { fs.ErrorKind.Unsupported => 42, _ => 1 }
                 }
@@ -369,7 +369,7 @@ fn filesystem_c_header_and_default_aot_embedding() {
     use std::process::Command;
     let work = scratch::ScratchDir::new("fs-header");
     let source = r#"import joky/fs
-    fn missing() @suspends -> Int32 { match fs.open("absent",fs.OpenOptions.new()) {
+    fn missing() @suspends -> Int32 { match fs.open("absent",fs.OpenOptions.default()) {
         Ok(f) => { let ignored=f.close(); 1 }, Err(e) => match e.kind {fs.ErrorKind.Unsupported => 42,_ => 2}
     }}"#;
     let mut compiler = joky::aot::AotCompiler::new("fs-header").unwrap();
@@ -534,7 +534,7 @@ fn filesystem_internal_resources_reject_forgery_and_wrong_signatures() {
 fn filesystem_nested_vm_does_not_inherit_ambient_service() {
     unsafe extern "C" fn nested() -> i32 {
         let mut vm = VmEngine::with_mode(VmMode::Interpreter);
-        vm.load_source("import joky/fs fn run() @suspends -> Int32 { match fs.open(\"nested\", fs.OpenOptions.new()) { Ok(_) => 0, Err(e) => match e.kind { fs.ErrorKind.Unsupported => 42, _ => 1 } } }").unwrap();
+        vm.load_source("import joky/fs fn run() @suspends -> Int32 { match fs.open(\"nested\", fs.OpenOptions.default()) { Ok(_) => 0, Err(e) => match e.kind { fs.ErrorKind.Unsupported => 42, _ => 1 } } }").unwrap();
         block_on(vm.prepare_async("run", &[]).unwrap()).unwrap() as i32
     }
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -594,12 +594,12 @@ fn filesystem_shared_service_enforces_quota_across_vms() {
     use joky::runtime::executor::{HostExecutor, TaskGroup};
     let source = r#"import joky/fs import joky/task
         fn hold() @suspends -> Int32 {
-            var options=fs.OpenOptions.new(); options.write=true; options.create=true
+            var options=fs.OpenOptions.default(); options.write=true; options.create=true
             let file=match fs.open("held",options) {Ok(file)=>file,Err(e)=>{return 1}}
             task.sleep_ms(60000)
             let ignored=file.close(); 42
         }
-        fn busy() @suspends -> Int32 { match fs.open("held",fs.OpenOptions.new()) {
+        fn busy() @suspends -> Int32 { match fs.open("held",fs.OpenOptions.default()) {
             Ok(file)=>{let ignored=file.close(); 0},Err(e)=>match e.kind{fs.ErrorKind.Busy=>42,_=>1}
         }}"#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {

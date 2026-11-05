@@ -1,6 +1,6 @@
 // Appended to fs.jk so both cancellation probes share the same host bindings.
 fn convenience() @suspends -> Int32 {
-    var options = fs.OpenOptions.new()
+    var options = fs.OpenOptions.default()
     options.write = true
     var file = fs.open("convenience", options).unwrap()
     file.write_text("Hi🙂").unwrap()

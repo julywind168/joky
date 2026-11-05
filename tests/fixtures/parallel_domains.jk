@@ -3,7 +3,7 @@ import joky/string
 import joky/vm
 
 fn verify(engine:&vm.Vm,path:String) @suspends {
-    var file=fs.open(path,fs.OpenOptions.new())!
+    var file=fs.open(path,fs.OpenOptions.default())!
     let source=file.read_text()!
     let entry="\nfn entry(_:Unit) @suspends {{ main() }}"
     engine.load_source(string.concat(&source,&entry))!

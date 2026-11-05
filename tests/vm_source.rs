@@ -120,7 +120,7 @@ fn vm_source_named_diagnostics_and_staged_file_capability() {
         assert_eq!(vm.call_int32_0("answer").unwrap(), 7);
         let source = r#"import joky/fs
 fn run() @suspends ->Bool {
-    match fs.open("Cargo.toml",fs.OpenOptions.new()) {
+    match fs.open("Cargo.toml",fs.OpenOptions.default()) {
         Ok(file)=>{file.close().unwrap(); true}
         Err(_)=>false
     }

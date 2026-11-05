@@ -12,8 +12,10 @@ pub struct Options {
     pub queue_bytes: UInt64,
     pub idle_timeout: Duration
 }
-pub fn defaults() -> Options {
-    Options { max_line_bytes: 4096, queue_messages: 64, queue_bytes: 65536, idle_timeout: 0ns }
+impl Options {
+    pub fn default() -> Self {
+        Options { max_line_bytes: 4096, queue_messages: 64, queue_bytes: 65536, idle_timeout: 0ns }
+    }
 }
 // Copyable output endpoint; send stages bytes in when, close stops the session.
 pub type Output = outbox.Handle

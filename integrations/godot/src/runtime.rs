@@ -221,7 +221,7 @@ mod tests {
             struct State { value: Int32 }
             fn create() -> State { State { value: 0 } }
             fn unsupported(path: String) @suspends -> Bool {
-                match fs.open(path, fs.OpenOptions.new()) {
+                match fs.open(path, fs.OpenOptions.default()) {
                     Err(error) => match error.kind { fs.ErrorKind.Unsupported => true, _ => false }
                     Ok(file) => { let ignored = file.close(); false }
                 }

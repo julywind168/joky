@@ -9,7 +9,7 @@ fn make(value:Int32)->Room {Room{value:value}}
 impl Room {fn read(&self)->Int32 {self.value+1}}
 fn answer()->Int32 {1}
 fn files(_:Int32) @suspends ->Bool {
-    match fs.open("old.jk",fs.OpenOptions.new()) {
+    match fs.open("old.jk",fs.OpenOptions.default()) {
         Err(e)=>match e.kind {fs.ErrorKind.Unsupported=>true,_=>false}
         Ok(f)=>{f.close().unwrap(); false}
     }

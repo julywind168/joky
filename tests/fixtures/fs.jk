@@ -2,7 +2,7 @@ import joky/task
 import joky/fs
 import joky/array.{type Array}
 fn run() @suspends -> Int32 {
-    var options = fs.OpenOptions.new()
+    var options = fs.OpenOptions.default()
     options.write = true
     options.create = true
     options.truncate = true
@@ -23,7 +23,7 @@ fn run() @suspends -> Int32 {
     42
 }
 fn malformed() @suspends -> Int32 {
-    match fs.open("bad", fs.OpenOptions.new()) {
+    match fs.open("bad", fs.OpenOptions.default()) {
         Ok(file) => { let ignored = file.close(); 0 }
         Err(error) => match error.kind { fs.ErrorKind.SystemFailure => 42, _ => 1 }
     }
@@ -47,9 +47,9 @@ fn flags(value: UInt64) @suspends -> Int32 {
     }
 }
 fn boundaries() @suspends -> Int32 {
-    match fs.open("", fs.OpenOptions.new()) { Err(e) => { if error_code(e) != 5 { return 1 } }, Ok(_) => { return 2 } }
-    match fs.open("nul\0path", fs.OpenOptions.new()) { Err(e) => { if error_code(e) != 5 { return 3 } }, Ok(_) => { return 4 } }
-    var options = fs.OpenOptions.new()
+    match fs.open("", fs.OpenOptions.default()) { Err(e) => { if error_code(e) != 5 { return 1 } }, Ok(_) => { return 2 } }
+    match fs.open("nul\0path", fs.OpenOptions.default()) { Err(e) => { if error_code(e) != 5 { return 3 } }, Ok(_) => { return 4 } }
+    var options = fs.OpenOptions.default()
     options.write = true
     options.create = true
     options.truncate = true
@@ -81,7 +81,7 @@ fn boundaries() @suspends -> Int32 {
 
 fn pending_read(file: &mut fs.File) @suspends { let ignored = file.read_text_limited(8) }
 fn after_cancel(expected: Int32) @suspends -> Int32 {
-    var file = match fs.open("cancel", fs.OpenOptions.new()) { Ok(f) => f, Err(_) => { return 1 } }
+    var file = match fs.open("cancel", fs.OpenOptions.default()) { Ok(f) => f, Err(_) => { return 1 } }
     race { | pending_read(&mut file) | task.yield_now() }
     match file.read(0) { Err(e) => { if error_code(e) != expected { return 2 } }, Ok(_) => { return 3 } }
     let empty = ""

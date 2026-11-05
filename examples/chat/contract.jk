@@ -9,8 +9,10 @@ pub struct Config {
     pub max_clients: UInt64,
     pub reclaim_empty: Bool
 }
-pub fn defaults() -> Config {
-    Config { connection: session.defaults(), max_rooms: 4096, max_clients: 512, reclaim_empty: true }
+impl Config {
+    pub fn default() -> Self {
+        Config { connection: session.Options.default(), max_rooms: 4096, max_clients: 512, reclaim_empty: true }
+    }
 }
 pub struct Host {
     pub config: Config,

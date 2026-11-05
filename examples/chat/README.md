@@ -111,14 +111,14 @@ shutdown
 
 按关注点阅读示例：
 
-- [contract.jk](contract.jk)：共享类型、入口契约和 `defaults()` 配置。
+- [contract.jk](contract.jk)：共享类型、入口契约和 `Config.default()` 配置。
 - [script/main.jk](script/main.jk)：从 `handle_line` 进入，每条命令是一个具名 `when`；
   收费看 `say` 与 `SAY_PRICE_CENTS`，换房和缺失房间的事务内创建看 `join`，主动离开看 `leave`；
   开户与欢迎看 `init_account`，断线清理看 `forget`，空房条件回收看 `reclaim`。
 - [main.jk](main.jk)：连接生命周期（开户、会话、清理）、失败隔离和服务启动。
 - [host/admin.jk](host/admin.jk)：独立的发布与停机协议。
 
-修改连接策略只需调整 `defaults()`：默认每行 4096 字节（含结束符）、队列 64 条／64 KiB，
+修改连接策略只需调整 `Config.default()`：默认每行 4096 字节（含结束符）、队列 64 条／64 KiB，
 最多 512 个连接、4096 个存活房间名。`connection.idle_timeout = 0ns` 关闭完整行超时，`reclaim_empty = false` 保留空房；
 输出满或关闭时提交照常成功，慢连接通过独立控制信号断开，正常断线回调清理成员；
 健康成员先收到本次业务消息，不会因慢连接而回滚或重放。账户由连接作用域拥有，默认同时回收空房域和名字条目，下次加入时在事务内重建。状态、消息及活动帧另受运行时预算约束。

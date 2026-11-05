@@ -473,10 +473,13 @@ fn chat_matrix(parallel: bool) {
         include_str!("../examples/chat/host/config.jk"),
     )
     .unwrap();
-    assert_eq!(source.matches("    let config = defaults()").count(), 1);
+    assert_eq!(
+        source.matches("    let config = Config.default()").count(),
+        1
+    );
     let path = app.join("main.jk");
     let source = source.replace("import joky/vm", "import joky/vm\nimport joky/check\nimport joky/outbox")
-        .replace("    let config = defaults()", "    engine.call::<Unit,Unit>(\"verify\", {});\n    verify_publication(&engine)\n    let config = defaults()");
+        .replace("    let config = Config.default()", "    engine.call::<Unit,Unit>(\"verify\", {});\n    verify_publication(&engine)\n    let config = Config.default()");
     let source = if parallel {
         source.replace("    verify_publication(&engine)\n", "")
     } else {
@@ -487,7 +490,7 @@ fn chat_matrix(parallel: bool) {
         std::fs::write(&path, &source).unwrap();
         let logic = format!(
         "import joky/mem\nimport joky/outbox\nimport joky/check\nimport joky/string.{{type StringBuilder}}\n{}\n{}\n{}\nfn verify(_:Unit) @suspends {{verify_chat_queue_domain()}}",
-        include_str!("../examples/chat/script/main.jk").replace("type Client}", "type Client, defaults}"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
+        include_str!("../examples/chat/script/main.jk").replace("type Client}", "type Client, type Config}"), include_str!("fixtures/chat_queue.jk"), include_str!("fixtures/chat_reload.jk")
     );
         assert_eq!(logic.matches("    let command = parse(line)\n").count(), 1);
         let logic = logic.replace(

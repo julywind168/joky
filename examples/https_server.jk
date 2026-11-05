@@ -14,13 +14,13 @@ fn main() @suspends -> Int32 {
     let key_path = match process.env("JOKY_TLS_KEY")! {
         Some(path) => path, None => { eprintln("Set JOKY_TLS_KEY to the PEM private key path"); return 2 }
     }
-    var chain = fs.open(chain_path, fs.OpenOptions.new())!
-    var key = fs.open(key_path, fs.OpenOptions.new())!
+    var chain = fs.open(chain_path, fs.OpenOptions.default())!
+    var key = fs.open(key_path, fs.OpenOptions.default())!
     let config = tls.ServerConfig.from_pem(chain.read_all_limited(131072)!, key.read_all_limited(131072)!)!
     let stop = shutdown.create()
     // Keep the subscription until in-flight HTTPS requests finish draining.
     let signals = stop.subscribe_unix()!
     var listener = tcp.listen("127.0.0.1", 0)!
     println("listening {listener.local_addr()!.port()}")
-    if http.serve_tls(listener, config, &stop, http.defaults(), handle).is_ok() { 0 } else { 1 }
+    if http.serve_tls(listener, config, &stop, http.Options.default(), handle).is_ok() { 0 } else { 1 }
 }

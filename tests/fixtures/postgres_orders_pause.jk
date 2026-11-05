@@ -24,5 +24,5 @@ fn main() @suspends {
     let stop = shutdown.create()
     var listener = tcp.listen("127.0.0.1", 0)!
     println("listening {listener.local_addr()!.port()}")
-    http.serve_with(listener, &stop, http.defaults(), Paused { inner: Orders.new(db) })!
+    http.serve_with(listener, &stop, http.Options.default(), Paused { inner: Orders.new(db) })!
 }

@@ -54,7 +54,7 @@ impl Show for ReadTextError {
 
 pub struct OpenOptions { pub read: Bool, pub write: Bool, pub append: Bool, pub create: Bool, pub create_new: Bool, pub truncate: Bool }
 impl OpenOptions {
-    pub fn new() -> Self { OpenOptions { read: true, write: false, append: false, create: false, create_new: false, truncate: false } }
+    pub fn default() -> Self { OpenOptions { read: true, write: false, append: false, create: false, create_new: false, truncate: false } }
 }
 pub enum SeekFrom { Start(UInt64), Current(Int64), End(Int64) }
 pub enum FileKind { Regular, Directory, Symlink, Other }

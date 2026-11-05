@@ -86,7 +86,7 @@ import joky/http
 import joky/fs
 import joky/tls
 fn main() @suspends {
-    var ca = fs.open("tests/fixtures/tls/ca.pem", fs.OpenOptions.new())!
+    var ca = fs.open("tests/fixtures/tls/ca.pem", fs.OpenOptions.default())!
     let trusted = tls.ClientConfig.from_ca_pem(ca.read_all_limited(131072)!)!
     let client = http.Client.https("localhost", PORT, trusted)!
     let reply = client.post_json("/echo", "123")!

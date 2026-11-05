@@ -162,7 +162,7 @@ fn source_result(value: &Vm, path: String, source: String, mode: UInt64) @suspen
     Err(LoadError { path: path, kind: kind })
 }
 fn file_text(path: String) @suspends -> Result<String, LoadError> {
-    var file = match fs.open(path.clone(), fs.OpenOptions.new()) {
+    var file = match fs.open(path.clone(), fs.OpenOptions.default()) {
         Ok(file) => file
         Err(error) => { return Err(LoadError { path: path, kind: LoadErrorKind.Io(error) }) }
     }

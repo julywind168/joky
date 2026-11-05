@@ -99,7 +99,7 @@ fn startup_workers_project_wrapper_forwards_options_after_relocation() {
         "[project]\nname='demo'\nentry='main.jk'\nresources=['message.txt']",
     );
     work.write("app/message.txt", "bundle");
-    work.write("app/main.jk", "import joky/fs fn main() @suspends { var file = fs.open(\"message.txt\", fs.OpenOptions.new())!; println(file.read_text()!) }");
+    work.write("app/main.jk", "import joky/fs fn main() @suspends { var file = fs.open(\"message.txt\", fs.OpenOptions.default())!; println(file.read_text()!) }");
     success(&work.cli(&["build", "app", "--parallel"]));
     let moved = work.path().join("relocated");
     std::fs::rename(work.path().join("app/dist"), &moved).unwrap();

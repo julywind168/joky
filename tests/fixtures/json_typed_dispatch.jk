@@ -71,13 +71,13 @@ impl FromJson for Loop {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> { context.read::<Self>(value) }
 }
 fn dispatch() {
-    var options = Options.defaults(); options.limits.max_depth = 2
+    var options = Options.default(); options.limits.max_depth = 2
     let value = Recover {}
     let output = match typed.encode_with_options(&value, options) { Ok(output) => output, Err(_) => { ensure(false); "" } }
     let expected = "{{\"good\":[]}}"; ensure(output.equals(&expected))
     options.limits.max_nodes = 3; limited(&value, options, 8, "/good")
-    let duplicate = Duplicate {}; limited(&duplicate, Options.defaults(), 12, "/same")
-    let looping = Loop {}; limited(&looping, Options.defaults(), 16, "")
+    let duplicate = Duplicate {}; limited(&duplicate, Options.default(), 12, "/same")
+    let looping = Loop {}; limited(&looping, Options.default(), 16, "")
     bad::<Loop>("null", 16, "")
 }
 fn main() { dispatch() }

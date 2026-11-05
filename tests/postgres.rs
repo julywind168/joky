@@ -470,7 +470,7 @@ fn main() @suspends {
     let signals=stop.subscribe_unix()!
     var listener=tcp.listen("127.0.0.1",0)!
     println("listening {listener.local_addr()!.port()}")
-    http.serve_with(listener,&stop,http.defaults(),Orders.new(pool))!
+    http.serve_with(listener,&stop,http.Options.default(),Orders.new(pool))!
 }"#,
     )
     .unwrap();
