@@ -17,6 +17,13 @@ fn limited() -> Error {
         "Domain value packet allocation failed",
     )
 }
+pub(crate) fn validate_when_handles(packet: &Buffer) -> Result<(), Error> {
+    if !(1..=64).contains(&packet.len()) {
+        return Err(invalid("Invalid when access count"));
+    }
+    Ok(())
+}
+
 pub(crate) fn has_owners(ty: &Type) -> bool {
     ty.scalar_types().iter().any(Type::is_owner_lane)
 }

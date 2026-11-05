@@ -106,7 +106,7 @@ fn direct_parallel_single_domain_survives_vm_drop() {
 }
 
 #[test]
-fn direct_parallel_domains_reject_multi_domain_and_periodic_entries() {
+fn direct_parallel_domains_reject_dynamic_paths_and_periodic_entries() {
     let mut vm = VmEngine::new_interpreter();
     vm.load_source(
         r#"
@@ -116,19 +116,17 @@ fn direct_parallel_domains_reject_multi_domain_and_periodic_entries() {
         #state
         struct Clock { ticks: Int32 }
         impl Clock { #every(1s) fn tick(&mut self) { self.ticks += 1 } }
-        fn stock(n: Int32) -> Stock { Stock { count: n } }
         fn clock(n: Int32) -> Clock { Clock { ticks: n } }
-        fn pair() @suspends {
-            let owner = domain.create(stock, 1)
-            let a = owner.handle()
-            let b = owner.read_handle()
-            when (a, b) { a.count + b.count }!;
+        fn path() @suspends {
+            let directory = domain.directory(1)
+            let routes = directory.handle()
+            when (stock: Stock = routes[1]) { stock.count }!;
         }
         fn periodic() @suspends { domain.create(clock, 0).close() }
     "#,
     )
     .unwrap();
-    for entry in ["pair", "periodic"] {
+    for entry in ["path", "periodic"] {
         let error = vm
             .prepare_parallel_task(entry, vec![], vec![])
             .err()

@@ -3,6 +3,17 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn direct_parallel_multi_domain_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "transfer.jk",
+        include_str!("../fixtures/parallel_multi_domain.jk"),
+    );
+    work.assert_native("transfer.jk", &["--task-workers", "2"], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
 fn direct_parallel_single_domain_in_standalone_aot() {
     let work = Workspace::new();
     work.write(

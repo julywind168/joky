@@ -6022,11 +6022,11 @@ R7c 的控制代理绑定同一任务树。`Vm.share()` 返回独立拥有句柄
 共享的是控制身份，跨线程包不包含 `&Vm`、Rc 或调用帧地址。最后一个句柄释放时关闭 VM，
 显式 `close` 关闭所有别名；给已关闭的身份再创建别名不会重新打开它。
 `Vm.call`／`try_call`、类型化 Entry 的普通流程以及源码加载／契约声明／发布由该树唯一控制线程驱动。
-Parallel 主程序可以直接 `domain.create`、取得读写句柄，并执行静态单域 `when`。
-Owner 归创建任务所有，子任务可携带弱句柄竞争同一个域。控制线程登记域身份，按读写权限授权，
-worker 执行受检构造器和块体，控制线程提交成功的写候选。业务拒绝回滚，关闭后旧句柄返回 Closed。
-直接多域 `when`、动态路径和带 `#every` 的域创建仍要求 Local。库存竞争示例见
-[parallel_single_domain.jk](../tests/fixtures/parallel_single_domain.jk)。
+Parallel 主程序可以直接 `domain.create`、取得读写句柄，并在 `when` 中列出 1–64 个静态域绑定。
+Owner 归创建任务所有，子任务可携带弱句柄。控制线程对整个访问集一次授权，worker 在私有候选上执行写入，
+控制线程一起发布各域的修改。业务拒绝或提交前取消会丢弃全部候选。重复只读绑定有效，可写别名返回
+InvalidAccess；任一参与域已关闭时返回 Closed。直接动态目录路径和带 `#every` 的域创建仍要求 Local。
+见[库存竞争](../tests/fixtures/parallel_single_domain.jk)和[跨账户转账](../tests/fixtures/parallel_multi_domain.jk)。
 
 R8 将业务脚本中的 `when`（含生成的状态方法与创建回退）交给同一 worker 池：完整访问集一起授权，
 冲突写入排队，共享读可并行，不相交域可同时计算；只复制写域。根、目录条目和 outbox 消息由控制端一次提交。

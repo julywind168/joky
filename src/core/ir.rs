@@ -403,7 +403,7 @@ pub(crate) enum Op {
     FunctionRef(Slot, String),
     DomainModule {
         slot: Slot,
-        // The direct Parallel bridge admits creation and static single-domain when.
+        // The direct Parallel bridge admits creation and static when access sets.
         parallel: bool,
     },
     /// Encode/decode one nullable owner lane in a domain-owned wire packet.

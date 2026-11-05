@@ -563,9 +563,11 @@ pub(crate) unsafe fn poll(
         if matches!(
             op,
             Operation::Domain(crate::runtime::domain::Operation::When)
-        ) && byte_len(frame.slots[2], 8)? != 8
-        {
-            return Err(invalid("Direct parallel when requires exactly one domain"));
+        ) {
+            let handles = (frame.slots[2] as *const Buffer)
+                .as_ref()
+                .ok_or_else(|| invalid("Null when access packet"))?;
+            crate::runtime::domain_packet::validate_when_handles(handles)?;
         }
         let core = pool::control()?;
         let (kinds, _) = op.layout();

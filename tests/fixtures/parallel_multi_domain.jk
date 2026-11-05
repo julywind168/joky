@@ -1,0 +1,53 @@
+import joky/domain
+
+#state
+struct Account { balance: Int32 }
+fn account(balance: Int32) -> Account { Account { balance } }
+
+fn transfer(src: domain.WriteHandle<Account>, dst: domain.WriteHandle<Account>, amount: Int32) @suspends {
+    when (mut src, mut dst) {
+        src.balance -= amount
+        dst.balance += amount
+    }!
+}
+
+// The worker test holds each candidate here until both disjoint transfers arrive.
+fn independent(src: domain.WriteHandle<Account>, dst: domain.WriteHandle<Account>) @suspends {
+    when "r8probe" (mut src, mut dst) {
+        src.balance -= 1
+        dst.balance += 1
+    }!
+}
+
+fn main() @suspends {
+    let alice = domain.create(account, 10)
+    let bob = domain.create(account, 20)
+    let carol = domain.create(account, 30)
+    let dan = domain.create(account, 40)
+    let a = alice.handle()
+    let b = bob.handle()
+    let c = carol.handle()
+    let d = dan.handle()
+
+    join { independent(a, b), independent(c, d) };
+    join { transfer(a, b, 3), transfer(b, a, 2) };
+    let rejected = when (mut a, mut b) {
+        a.balance -= 50
+        b.balance += 50
+        let decision: Result<Unit, String> = Err("overdraft")
+        decision
+    }
+    assert(match rejected { Rejected(reason) => reason == "overdraft", _ => false }, "business rejection")
+    let alias = alice.read_handle()
+    assert(match when (mut a, alias) { a.balance += alias.balance } {
+        Err(InvalidAccess) => true, _ => false
+    }, "write and read aliases conflict")
+    assert(when (a, b, c, d) {
+        a.balance == 8 && b.balance == 22 && c.balance == 29 && d.balance == 41
+    }!, "committed transfers and rejected writes")
+    bob.close()
+    assert(match when (mut a, b) { a.balance = b.balance } {
+        Err(Closed) => true, _ => false
+    }, "closed participant rejects the whole access set")
+    assert(when (a, alias) { a.balance == 8 && alias.balance == 8 }!, "shared aliases observe the same balance")
+}

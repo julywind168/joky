@@ -92,9 +92,7 @@ pub(super) unsafe fn poll(
                 (vec![], module, 1)
             } else if many {
                 let packet = &*(frame.slots[2] as *const Buffer);
-                if !(1..=64).contains(&packet.len()) {
-                    return Err(invalid("Invalid when access count"));
-                }
+                crate::runtime::domain_packet::validate_when_handles(packet)?;
                 let handles = (0..packet.len())
                     .map(|i| source::handle(registry, packet.load(i)?.cast::<u64>().read()))
                     .collect::<Result<Vec<_>, Error>>()?;

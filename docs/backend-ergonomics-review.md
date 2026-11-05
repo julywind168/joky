@@ -309,7 +309,7 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 
 ### 7.1 HTTP 应用状态与关联请求上下文设计
 
-2026-11-06：已实现 `Request<C>`、`ContextSource` 与 `with_context`。Parallel 主程序已支持静态单域 `when`；`with_state` 是后续目标。沿用 `#state` / `when`，不新增 Shared/Mutex
+2026-11-06：已实现 `Request<C>`、`ContextSource` 与 `with_context`。Parallel 主程序已支持静态单域和多域 `when`；`with_state` 是后续目标。沿用 `#state` / `when`，不新增 Shared/Mutex
 或另一套状态修改闭包 API。下列 `text` 代码块表示目标接口，不属于当前可执行标准库。
 
 应用有三种不同的状态来源：
@@ -406,17 +406,17 @@ request_id、method、path 和计时起点由 HTTP 层在调用 handler 前固�
 request.log 的绑定和完成日志使用同一个原始 request_id；handler 修改自己的 request 或 ctx
 不得改变框架绑定的日志身份。
 
-**并行边界。** 主程序已接通直接构造、Owner 关闭和静态单域 `when`。JIT、解释器及独立 AOT
+**并行边界。** 主程序已接通直接构造、Owner 关闭和静态访问集 `when`。JIT、解释器及独立 AOT
 均复用根任务树的控制代理和 R8 授权器。后续接入 HTTP 时，handler 在请求任务中执行，只在 `when` 处提交受检捕获包。
-数据库池与完整请求由调用任务持有。见[库存竞争用例](../tests/fixtures/parallel_single_domain.jk)。
+数据库池与完整请求由调用任务持有。见[库存竞争用例](../tests/fixtures/parallel_single_domain.jk)和[转账用例](../tests/fixtures/parallel_multi_domain.jk)。
 
-后续先补直接路径的关闭／取消交错和静态多域原子提交，再接入 `with_state`。
+下一步接入 `with_state`，验证服务排空、Owner 关闭与已准入请求的交错。
 动态目录路径与自动周期方法分别验收；直接入口在支持前继续拒绝。
 
 **实施顺序与验收。**
 
 1. 已交付 `with_context` 并迁移订单服务。复用路由 fixture 检查请求局部字段独立、自动 404/405 跳过初始化、隐式 HEAD 正常分发。真实 PostgreSQL 用例验证并发下单和丢失响应后的幂等重试；独立连接观察池会话，确认最后一个路由句柄释放后会话结束。
-2. 已接通直接并行单域路径。同步探针让两个任务争抢同一域的最后一件库存，断言恰有一个成功且最终库存为零。后续验收多域时，还需验证不相交的域能同时计算，以及整个访问集在拒绝或取消时的回滚。
+2. 已接通直接并行静态访问集。同步探针让两个任务争抢同一域的最后一件库存，断言恰有一个成功且最终库存为零。多域转账覆盖反向竞争、不相交的访问集同时计算、业务拒绝和提交前取消。
 
 **2026-11-05 设计探针。** 临时探针已执行 JIT、解释器、独立 AOT：关联类型选择上下文，泛型请求
 持有 `Option<postgres.Pool>` 与 String，适配现有 Service.share/handle，

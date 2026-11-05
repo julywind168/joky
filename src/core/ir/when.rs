@@ -979,7 +979,7 @@ impl FunctionPlan {
         let module = self.slot(crate::runtime::domain::module_type())?;
         self.emit(Op::DomainModule {
             slot: module.clone(),
-            parallel: !dynamic && block.accesses.len() == 1,
+            parallel: !dynamic,
         });
         let Flow::Value(text) = self.expr(
             &Expr::Literal {

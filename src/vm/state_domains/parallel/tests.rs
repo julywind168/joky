@@ -76,7 +76,7 @@ pub(super) fn completed_computation(method: &str) -> Result<(), Error> {
     Ok(())
 }
 #[test]
-fn direct_parallel_when_discards_a_cancelled_candidate() {
+fn direct_parallel_when_discards_all_cancelled_candidates() {
     let _serial = SERIAL
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -107,14 +107,16 @@ fn direct_parallel_when_discards_a_cancelled_candidate() {
             #state
             struct Stock { count: Int32 }
             fn stock(n: Int32) -> Stock { Stock { count: n } }
-            fn reserve(h: domain.WriteHandle<Stock>) @suspends {
-                when "r8probe" (mut h) { h.count -= 1 }!;
+            fn transfer(a: domain.WriteHandle<Stock>, b: domain.WriteHandle<Stock>) @suspends {
+                when "r8probe" (mut a, mut b) { a.count -= 1; b.count += 1 }!;
             }
-            fn main() @suspends -> Int32 {
-                let owner = domain.create(stock, 1)
-                let h = owner.handle()
-                race { reserve(h), candidate_ready() }
-                when (h) { h.count }!
+            fn main() @suspends {
+                let source = domain.create(stock, 1)
+                let dest = domain.create(stock, 0)
+                let a = source.handle()
+                let b = dest.handle()
+                race { transfer(a, b), candidate_ready() }
+                assert(when (a, b) { a.count == 1 && b.count == 0 }!, "cancelled transfer changed balances")
             }
         "#,
         )
@@ -134,13 +136,37 @@ fn direct_parallel_when_discards_a_cancelled_candidate() {
             );
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert_eq!(
-            task.take_result().unwrap().value(),
-            &crate::vm::parallel::TaskValue::Scalar(InstanceValue::Int32(1))
-        );
+        task.take_result().unwrap();
         drop(task);
         pool.wait_closed();
         assert_eq!(budget.used(), 0);
+    }
+}
+
+#[test]
+fn direct_parallel_disjoint_transfers_compute_together() {
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../../../tests/fixtures/parallel_multi_domain.jk"
+        ))
+        .unwrap();
+        let root = vm.prepare_parallel_task("main", vec![], vec![]).unwrap();
+        let pool = ParallelExecutor::new(4, 64).unwrap();
+        let probe = Probe::install();
+        let reset = Reset(probe.clone());
+        let task = root.submit(&pool).unwrap();
+        probe.wait(2);
+        {
+            let state = probe.state.lock().unwrap();
+            assert_ne!(state.threads[0], state.threads[1]);
+        }
+        drop(reset);
+        task.wait().unwrap();
+        task.take_result().unwrap();
     }
 }
 
