@@ -30,8 +30,7 @@ impl Service for Orders {
         if request.method == http.Method.Post && request.path() == "/orders" { Some("/orders") } else { None }
     }
     fn handle(&self, request: http.Request) @suspends -> http.Response {
-        let method = request.method
-        if method != http.Method.Post || request.path() != "/orders" { return error_reply(http.Status.NotFound, "not found") }
+        if request.method != http.Method.Post || request.path() != "/orders" { return error_reply(http.Status.NotFound, "not found") }
         var keys = request.header_all("Idempotency-Key")
         if keys.is_empty() { return error_reply(http.Status.BadRequest, "missing Idempotency-Key") }
         if keys.len() != 1 { return error_reply(http.Status.BadRequest, "invalid Idempotency-Key") }

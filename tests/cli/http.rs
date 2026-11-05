@@ -236,9 +236,8 @@ import joky/shutdown
 import joky/task
 import joky/tcp
 fn handle(request: http.Request) @suspends -> http.Response {
-    let method = request.method
-    if method == http.Method.Options {
-        return http.text(http.Status.Ok, "{method}")
+    if request.method == http.Method.Options {
+        return http.text(http.Status.Ok, "{request.method}")
     }
     if let Some(code) = request.target.strip_prefix("/status/") {
         return http.empty(http.Status.from_code(UInt16.parse(&code)!)!)

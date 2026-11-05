@@ -6906,7 +6906,8 @@ fn greeting(name: &String) -> String {
 ## 跨挂起借用
 
 跨挂起借用统一按存储、生命周期和访问权限检查。支持无引用 Copy 局部值及其字段、
-完整存储树无引用的拥有值，以及这些容器的元素、Element 和 Slice 视图。
+完整存储树无引用的拥有值及其无引用 Copy 字段，以及这些容器的元素、Element 和 Slice 视图。
+字段的显式借用与 Eq 比较产生的隐式借用沿用同一规则，右侧表达式挂起时左侧仍保持借用。
 `&T` / `&mut T` 可跨挂起保存、传入挂起函数，或进入 join/race、scope/branch。
 接收者方法沿用自动重借用，普通挂起函数实参使用显式 `&` / `&mut`。
 挂起返回值仍不开放拥有对象、Element 或 Slice 的引用；普通 Copy 引用返回继续跟踪输入来源。
@@ -7070,8 +7071,7 @@ Duration 显式选择单位，例如 `log.field("duration_ms", duration.as_milli
 按接收顺序保存的标头数组（名字转小写，值去除两端的空格和制表符）及拥有的正文字节。
 `request.method: http.Method` 与客户端共用枚举，变体为 Get、Head、Post、Put、Patch、Delete、Options。
 Method 是 Copy 值，派生 Eq 并支持 `==`／`!=`，Show 输出对应的大写方法名。
-挂起函数中比较拥有的 Request 字段时，先用 `let method = request.method` 取副本，再比较
-`method == http.Method.Post`；当前 Eq 的隐式字段借用受挂起函数的局部借用限制。
+挂起 handler 可直接比较 `request.method == http.Method.Post`，比较不消费 Request。
 服务端在开始读取请求时创建 UUID v4，handler 通过 `request.context.request_id` 访问，
 同一次响应的 `X-Request-Id` 标头返回这个 ID。客户端传来的同名标头不参与生成，重试会获得新 ID。
 `request.context` 的类型为 `http.RequestContext`，可显式传递并跨挂起使用。它的 `emit(level, event, fields)`

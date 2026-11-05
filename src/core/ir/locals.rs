@@ -508,7 +508,13 @@ impl FunctionPlan {
                         &self.type_registry,
                     )
                     .and_then(|target| self.field_target(target, &path, span))
-                    .is_ok_and(|t| t.is_suspend_safe_owner()))
+                    .is_ok_and(|t| {
+                        t.is_suspend_safe_owner()
+                            // Copy fields share their owning root's stable CPS storage.
+                            || ty.is_suspend_safe_owner()
+                                && t.is_copy_storage_value()
+                                && !t.contains_references()
+                    }))
         {
             return Err(type_error(
                 &span,

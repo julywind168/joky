@@ -457,8 +457,7 @@ fn connection<S: Service>(config: Option<tls.ServerConfig>, stream: TcpStream, s
             respond(io, context, started, None, code, label, "text/plain", [], [], false, options.write_timeout)
         }
         result.Ok(request) => {
-            let method = request.method
-            let head = method == Method.Head
+            let head = request.method == Method.Head
             let route = if context.logger.enabled(log.Level.Info) { service.route(&request) } else { None }
             let Response { status, content_type, headers, body } = service.handle(request)
             let (code, label) = status_line(status)

@@ -9,6 +9,11 @@ import joky/element.{type Element}
 struct Pair { left: Int32, right: Int32 }
 struct Holder { value: &Int32 }
 struct Packet { text: String, tag: Int32 }
+#derive(Eq)
+enum Phase { Ready, Done }
+#derive(Eq)
+struct Metadata { phase: Phase, count: Int32 }
+struct Envelope { text: String, metadata: Metadata }
 type Packets = Array<Packet>
 trait Read { fn read(&self) @noescape -> Int32 }
 impl Read for Pair { fn read(&self) -> Int32 { self.left + self.right } }
@@ -75,6 +80,14 @@ fn hold(value: &mut Int32) @suspends {
 fn instant() @suspends {}
 
 fn locals() @suspends {
+    var envelope = Envelope { text: "owned", metadata: Metadata { phase: Phase.Ready, count: 40 } }
+    assert(envelope.metadata.phase == { task.yield_now(); Phase.Ready }, "field equality borrows across RHS suspension")
+    assert(envelope.metadata.phase != Phase.Done, "field inequality")
+    let metadata = &envelope.metadata
+    task.yield_now()
+    assert(*metadata == Metadata { phase: Phase.Ready, count: 40 }, "Copy aggregate field stays borrowed")
+    add(&mut envelope.metadata.count, 2)
+    assert(envelope.metadata.count == 42 && envelope.text == "owned", "mutable field borrow updates original owner")
     var value = 40
     let view = &mut value
     task.yield_now()

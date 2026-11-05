@@ -109,6 +109,9 @@ fn suspending_borrows_reject_conflicts_retention_and_short_lifetimes() {
         import joky/slice.{type Slice}
         import joky/mem
         struct Holder { value: &Int32 }
+        #derive(Eq)
+        enum Phase { Ready, Done }
+        struct Owned { text: String, phase: Phase, count: Int32 }
         fn read(value: &Int32) @suspends -> Int32 { task.yield_now(); *value }
         fn write(value: &mut Int32) @suspends { task.yield_now(); *value = 42 }
         fn retain(value: &Int32) @suspends { alloc(Holder { value: value }); task.yield_now() }
@@ -119,6 +122,9 @@ fn suspending_borrows_reject_conflicts_retention_and_short_lifetimes() {
         fn view(values: &Array<Int32>) -> &Int32 { values.borrow_ref(0) }
     "#;
     for body in [
+        "var value = Owned { text: \"owned\", phase: Phase.Ready, count: 1 }; let r = &value.count; task.yield_now(); value.count = 2; read(r);",
+        "let value = Owned { text: \"owned\", phase: Phase.Ready, count: 1 }; let r = &value.count; task.yield_now(); mem.drop(value); read(r);",
+        "var value = Owned { text: \"owned\", phase: Phase.Ready, count: 1 }; let same = value.phase == { task.yield_now(); value.phase = Phase.Done; Phase.Done };",
         "var value = 1; join { write(&mut value), read(&value) };",
         "var value = 1; join { write(&mut value), write(&mut value) };",
         "var value = 1; scope { let r = &mut value; branch { write(r) }; value = 2 }",
