@@ -1,4 +1,4 @@
-import joky/string.{type StringBuilder, type Utf8Error, type Utf8ErrorCode, type SplitError}
+import joky/string.{type StringBuilder, type Utf8Error, type Utf8ErrorCode}
 import joky/integer.{type ParseIntError}
 import joky/float.{type ParseFloatError}
 import joky/array.{type Array}
@@ -108,11 +108,5 @@ impl Show for Utf8ErrorCode {
             InvalidSequence => "invalid UTF-8 sequence"
             UnexpectedEnd => "truncated UTF-8 sequence"
         })
-    }
-}
-
-impl Show for SplitError {
-    fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str("empty string separator")
     }
 }

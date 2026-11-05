@@ -12,10 +12,8 @@ fn main() {
             let piece = combined.substring(0, 7).unwrap_or("")
             println(piece.byte_length())
             println(combined.rune_count())
-            var offset: UInt64 = 0
-            while let Some((rune, next)) = combined.next_rune(offset) {
+            for rune in combined.runes() {
                 println(rune.to_u32())
-                offset = next
             }
             let number: Int64 = -9223372036854775808
             let decimal = number.to_string()

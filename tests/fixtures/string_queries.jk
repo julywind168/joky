@@ -4,6 +4,7 @@ import joky/slice
 import joky/option.{Some, None}
 import joky/result.{Ok, Err}
 import joky/integer
+import joky/iter
 
 fn view(text: &String) -> &slice.Slice<UInt8> { text.bytes() }
 fn error_offset(error: DecodeError) -> UInt64 { error.offset }

@@ -6621,11 +6621,12 @@ fn sample() -> UInt64 {
 | `text.bytes()` / `string.bytes(&text)` | 只读 &Slice<UInt8>，依赖整个输入 String；不分配或复制载荷 |
 | `text.into_bytes()` / `string.into_bytes(text)` | 消费式 Array<UInt8>，转移原存储及容量 |
 | `text.substring(start, end)` / `string.substring(&text, start, end)` | Option<String>，复制半开字节范围；逆序、越界或非 UTF-8 边界为 None |
+| `text.runes()` / `string.runes(&text)` | Runes，借用原文本的惰性 Rune 迭代器，实现 SharedIterator；不分配或复制文本 |
 | `text.rune_count()` / `string.rune_count(&text)` | UInt64，Unicode 标量数量 |
 | `text.next_rune(offset)` / `string.next_rune(&text, offset)` | Option<(Rune, UInt64)>，标量和下一字节偏移；末尾 None，非法偏移为带源码位置的终止性 RuntimeError |
 | `left.concat(&right)` / `string.concat(&left, &right)` | 独立 String，不消费两侧输入，组合长度沿 Array.reserve 受检 |
 | `string.join(&parts, &separator)` | String，借用 Array<String> 与分隔符，返回独立拼接结果；总长度受检 |
-| `text.split(&separator)` / `string.split(&text, &separator)` | Result<Array<String>, SplitError>，复制各项；空分隔符为 Err(SplitError.EmptySeparator) |
+| `text.split(&separator)` / `string.split(&text, &separator)` | Array<String>，复制各项；空分隔符按 Rune 边界切分，不添加首尾空项 |
 
 `replace` 的 from 为空时，在每个 Rune 边界（包含首尾）插入 to，例如
 `"é中".replace("", "-")` 得到 `"-é-中-"`；输入为空时得到 to 的副本。
@@ -6649,8 +6650,14 @@ String Map key 已支持借用式内容协议和查询，接口见上文 key 协
 
 join 不消费输入，空数组得到空串，单元素也生成独立文本，空分隔符表示直接连接。
 split 按非空分隔符从左到右不重叠匹配，保留头尾和相邻分隔符产生的空项；空输入得到一个空项。
+空分隔符则按 Unicode 标量切分：`"中🙂".split("")` 得到 `["中", "🙂"]`，`"".split("")` 得到空数组；
+组合字符分别成项，不按字形簇切分。
 各项均复制内容，释放输入后仍可使用；部分构造失败会清理已完成项，分配失败仍为终止性 ResourceLimit。
 示例见 [string_collections.jk](../examples/string_collections.jk)，三后端输出 5、11、6。
+
+`runes()` 可直接用于 `for rune in text.runes()`，元素为 Rune；也可用 `iter.step_shared` 逐步读取，
+耗尽后始终返回 None。迭代器保留原 String 的共享借用，最后使用前不能移动、释放或替换原文本。
+需要独立拥有的文本数组时用 `split("")`。
 
 UTF-8 验证严格拒绝过长编码、孤立续字节、代理项、超出 U+10FFFF 的编码及截断序列，不做替换解码。
 `joky/string` 导出 Copy 记录 `Utf8Error { code: Utf8ErrorCode, offset: UInt64 }`；

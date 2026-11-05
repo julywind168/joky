@@ -1,19 +1,14 @@
 import joky/io.{println}
 import joky/string
-import joky/array.{type Array}
 
 fn main() {
     let input = "|中||🙂|"
     let separator = "|"
-    match input.split(&separator) {
-        Err(string.SplitError.EmptySeparator) => { println(-1) }
-        Ok(parts) => {
-            input.release()
-            println(int32(parts.len()))
-            let joined = string.join(&parts, &separator)
-            parts.release()
-            println(int32(joined.byte_length()))
-            println(int32(joined.rune_count()))
-        }
-    }
+    let parts = input.split(&separator)
+    input.release()
+    println(int32(parts.len()))
+    let joined = string.join(&parts, &separator)
+    parts.release()
+    println(int32(joined.byte_length()))
+    println(int32(joined.rune_count()))
 }

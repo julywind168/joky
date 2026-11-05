@@ -64,6 +64,9 @@ fn literal(value: &str) -> String {
 pub fn bulk_group() -> Group {
     let mut group = group(&[("bulk_work", None, &[], false)]);
     let mut cases = vec![
+        ("", ""),
+        ("a", ""),
+        ("é中🙂\0e\u{301}", ""),
         ("", ","),
         ("a", ","),
         (",a,,", ","),
@@ -98,9 +101,15 @@ pub fn bulk_group() -> Group {
         cases.push((text, separator));
     }
     for (index, (text, separator)) in cases.iter().enumerate() {
-        let parts = text.split(separator).collect::<Vec<_>>();
+        let parts = if separator.is_empty() {
+            text.chars()
+                .map(|rune| rune.to_string())
+                .collect::<Vec<_>>()
+        } else {
+            text.split(separator).map(str::to_owned).collect::<Vec<_>>()
+        };
         let name = format!("bulk_{index}");
-        group.source.push_str(&format!("\nfn {name}() -> Int32 {{ let input = {}; let separator = {}; let parts = input.split(&separator).unwrap_or(Array.new::<String>()); input.release(); if parts.len() != {} {{ return 1 }}; ", literal(text), literal(separator), parts.len()));
+        group.source.push_str(&format!("\nfn {name}() -> Int32 {{ let input = {}; let separator = {}; let parts = input.split(&separator); input.release(); if parts.len() != {} {{ return 1 }}; ", literal(text), literal(separator), parts.len()));
         for (index, part) in parts.iter().enumerate() {
             group.source.push_str(&format!("{{ let expected = {}; if !parts.borrow_ref({index}).equals(&expected) {{ return 2 }} }}; ", literal(part)));
         }
@@ -135,12 +144,5 @@ pub fn bulk_group() -> Group {
             failure: false,
         });
     }
-    group.source.push_str("\nfn empty_separator() -> Int32 { let input = \"中🙂\"; let separator = \"\"; let result = input.split(&separator); if input.byte_length() != 7 { return 1 }; match result { Err(string.SplitError.EmptySeparator) => 42, Ok(_) => 2 } }");
-    group.entries.push(Entry {
-        name: "empty_separator".into(),
-        text: None,
-        drops: vec![],
-        failure: false,
-    });
     group
 }

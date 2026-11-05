@@ -2,6 +2,10 @@
 
 阅读约定：阶段编号与验收命令保留当时的记录；现行测试按行为命名，可用 `cargo test -- --list` 查找。当前 API 以 [language.md](language.md) 为准。
 
+**后续 API 调整（2026-11-05）：** `split` 改为直接返回 `Array<String>`，空分隔符按 Rune 边界切分，
+不添加首尾空项，空文本得到空数组；SplitError 已删除。新增 `runes()` 借用迭代器，惰性产出 Rune。
+以下 S0–S7 的 SplitError 描述保留为历史记录，现行接口见 [语言参考](language.md)。
+
 状态：2026-10-03，**S0–S7 已完成；不可变拥有型 String、StringBuilder、文本转换与批量操作、同步聚合/容器、宿主文本 ABI/CPS、借用式 String Map key 及同步 C 文本适配已验收；S8 未开始**。
 仓库基线为 `8068f1c`；Array 与 Map 已完成首版所有权和稳定性验收。
 

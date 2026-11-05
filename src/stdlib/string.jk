@@ -7,6 +7,7 @@ import joky/option.{type Option, Some, None}
 import joky/integer
 import joky/result.{type Result, Ok, Err}
 import joky/check
+import joky/iter.{type SharedIterator}
 
 fn copy_text(text: &String) @noescape -> String { text_storage.clone(text) }
 #intrinsic("text.freeze_utf8")
@@ -88,6 +89,20 @@ pub fn next_rune(text: &String, offset: UInt64) -> Option<(Rune, UInt64)> {
     match decode(source, offset) { Ok(value) => Some(value), Err(_) => None }
 }
 
+pub struct Runes { source: &String, offset: UInt64 }
+
+pub fn runes(text: &String) -> Runes { Runes { source: text, offset: 0 } }
+
+impl SharedIterator for Runes {
+    type Item = Rune
+    fn step(var self) -> (Self, Option<Rune>) {
+        match next_rune(self.source, self.offset) {
+            Some((rune, next)) => { self.offset = next; (self, Some(rune)) }
+            None => (self, None)
+        }
+    }
+}
+
 pub fn rune_count(text: &String) -> UInt64 {
     var offset: UInt64 = 0
     var count: UInt64 = 0
@@ -106,8 +121,6 @@ pub fn concat(left: &String, right: &String) -> String {
     builder.push_str(right)
     builder.finish()
 }
-
-pub enum SplitError { EmptySeparator }
 
 fn add_join_length(current: UInt64, additional: UInt64) -> UInt64 {
     let limit = buffer.capacity_limit::<UInt8>()
@@ -141,15 +154,24 @@ pub fn join(parts: &Array<String>, separator: &String) -> String {
     builder.finish()
 }
 
-pub fn split(text: &String, separator: &String) -> Result<Array<String>, SplitError> {
+pub fn split(text: &String, separator: &String) -> Array<String> {
     let source = bytes(text)
     let pattern = bytes(separator)
     let length = slice.len(source)
     let width = slice.len(pattern)
-    if width == 0 { return Err(SplitError.EmptySeparator) }
     var output = Array.new::<String>()
     var start: UInt64 = 0
     var index: UInt64 = 0
+    if width == 0 {
+        while index < length {
+            index += 1
+            if boundary(source, index) {
+                output.push(substring(text, start, index)!)
+                start = index
+            }
+        }
+        return output
+    }
     while width <= length - index {
         if matches_at(source, pattern, index) {
             // A valid UTF-8 pattern cannot match at a continuation byte.
@@ -165,7 +187,7 @@ pub fn split(text: &String, separator: &String) -> Result<Array<String>, SplitEr
         Some(part) => { output.push(part) }
         None => {}
     }
-    Ok(output)
+    output
 }
 
 fn decimal(value: UInt64, negative: Bool) -> String {
@@ -249,9 +271,10 @@ impl String {
     pub fn into_bytes(self) -> Array<UInt8> { into_bytes(self) }
     pub fn substring(&self, start: UInt64, end: UInt64) -> Option<String> { substring(self, start, end) }
     pub fn next_rune(&self, offset: UInt64) -> Option<(Rune, UInt64)> { next_rune(self, offset) }
+    pub fn runes(&self) -> Runes { runes(self) }
     pub fn rune_count(&self) -> UInt64 { rune_count(self) }
     pub fn concat(&self, right: &String) -> String { concat(self, right) }
-    pub fn split(&self, separator: &String) -> Result<Array<String>, SplitError> { split(self, separator) }
+    pub fn split(&self, separator: &String) -> Array<String> { split(self, separator) }
     pub fn new() -> Self { new() }
     pub fn clone(&self) -> Self { clone(self) }
     pub fn release(self) { release(self) }

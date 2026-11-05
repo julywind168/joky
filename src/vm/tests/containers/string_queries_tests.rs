@@ -50,6 +50,8 @@ fn string_queries_matches_utf8_substring_rune_and_decimal_models() {
 #[test]
 fn string_queries_rejects_byte_view_escape_writes_moves_and_private_freezing() {
     for source in [
+        "import joky/string.{type Runes} fn f() -> Runes { let text = \"中\"; text.runes() }",
+        "fn f() { let text = \"中\"; let cursor = text.runes(); text.release(); for rune in cursor {} }",
         "import joky/slice.{type Slice} fn f() -> &Slice<UInt8> { let text = \"中\"; text.bytes() }",
         "import joky/slice.{type Slice} fn view(text: &String) -> &Slice<UInt8> { text.bytes() } fn f() -> &Slice<UInt8> { let text = \"中\"; view(&text) }",
         "import joky/slice fn f() { let text = \"中\"; slice.set(text.bytes(), 0, 255); }",
@@ -127,6 +129,9 @@ fn string_queries_byte_borrow_and_consuming_conversion_need_no_allocation() {
             let lower = "content-type"
             exhaust_budget()
             if !header.eq_ignore_ascii_case(&lower) || header.eq_ignore_ascii_case(&text) { return 3 }
+            var count: UInt64 = 0
+            for rune in text.runes() { count += 1 }
+            if count != 3 { return 4 }
             let view = text.bytes()
             if slice.len(view) != 9 { return 1 }
             let data = text.into_bytes()

@@ -213,10 +213,10 @@ chat 的 `parse()` 已改用 split_once 和 contains，保留原命令的空格�
 | `eq_ignore_ascii_case(&other)` | 已完成；标头、方法名比较 |
 | `text.parse::<T>()` 或保留 `T.parse(&text)` 并统一 | 目前只能 `UInt16.parse(&text)` |
 | `repeat(n)`、`pad_start` | 输出格式化 |
-| `runes()` 迭代器 | 替代手写 `next_rune` 循环 |
+| `runes()` 迭代器 | 已完成；借用原文本、惰性产出 Rune，替代手写 `next_rune` 循环 |
 
-`split` 返回 `Result<Array<String>, SplitError>`（仅因空分隔符）导致每次调用都要 `!`；
-建议空分隔符改为按 Rune 切分或 panic，返回值直接为 `Array<String>`。
+`split` 已直接返回 `Array<String>`，空分隔符按 Rune 边界切成独立字符串，不添加首尾空项；
+空文本配空分隔符得到空数组。已删除 SplitError，调用方不再需要 `!`。
 
 ### 6.2 集合与迭代【P1】
 

@@ -168,7 +168,7 @@ fn partial_failure<T>() -> Int32 {
 fn bulk_work<T>() -> Int32 {
     let value = "|中||🙂|"
     let separator = "|"
-    let parts = value.split(&separator).unwrap_or(Array.new::<String>())
+    let parts = value.split(&separator)
     value.release()
     let joined = string.join(&parts, &separator)
     if joined.byte_length() != 11 || parts.len() != 5 { return 1 }

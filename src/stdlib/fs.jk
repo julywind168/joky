@@ -142,7 +142,7 @@ pub fn read_dir(path: String) @suspends -> Result<Array<String>, IoError> {
     let code = __fs_code(&mut result)
     if code != 0 { return Err(error(&mut result, code)) }
     let names = String.from_utf8(__fs_bytes(&mut result))!
-    if names.is_empty() { Ok(Array.new::<String>()) } else { Ok(names.split("\0")!) }
+    if names.is_empty() { Ok(Array.new::<String>()) } else { Ok(names.split("\0")) }
 }
 // Acquire the host's exclusive stdin stream; normal file operations retain their contracts.
 pub fn stdin() @suspends -> Result<File, IoError> {

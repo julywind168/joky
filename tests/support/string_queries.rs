@@ -177,6 +177,13 @@ pub fn cases() -> Cases {
         cases.integers.push((name, 42));
     }
     for (text_index, value) in ["", "aé中🙂\0", "e\u{301}"].into_iter().enumerate() {
+        let name = format!("runes_{text_index}");
+        cases.source.push_str(&format!("fn {name}() -> Int32 {{ let text = {}; let expected: Array<UInt32> = [{}]; var count: UInt64 = 0; for rune in text.runes() {{ if expected.get(count).unwrap_or(UInt32.MAX) != rune.to_u32() {{ return 1 }}; count += 1 }}; if count != {} {{ return 2 }}; var cursor = string.runes(&text); ", literal(value), value.chars().map(|rune| u32::from(rune).to_string()).collect::<Vec<_>>().join(", "), value.chars().count()));
+        for scalar in value.chars() {
+            cases.source.push_str(&format!("{{ let (next, item) = iter.step_shared(cursor); cursor = next; match item {{ Some(rune) => {{ if rune.to_u32() != {} {{ return 3 }} }}, None => {{ return 6 }} }} }}; ", u32::from(scalar)));
+        }
+        cases.source.push_str("let (end, item) = iter.step_shared(cursor); if item.is_some() { return 4 }; let (_, item) = iter.step_shared(end); if item.is_some() { return 5 }; 42 }\n");
+        cases.integers.push((name, 42));
         for start in 0..=value.len() + 1 {
             for end in 0..=value.len() + 1 {
                 let name = format!("substring_{text_index}_{start}_{end}");

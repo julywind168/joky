@@ -334,7 +334,7 @@ fn string_collections_example_and_module_aliases_run_in_all_backends() {
         pub fn unpack<T>(value: Envelope<T>) -> T { value.value }
         pub fn pack(input: &Word) -> Envelope<Texts> {
             let separator = "|"
-            let parts = input.split(&separator).unwrap_or(Array.new::<Word>())
+            let parts = input.split(&separator)
             Envelope { value: pass(parts) }
         }
         pub fn render(parts: &Texts) -> Word {
