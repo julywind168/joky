@@ -123,7 +123,10 @@ fn string_queries_byte_borrow_and_consuming_conversion_need_no_allocation() {
         extern fn exhaust_budget()
         fn transfer() -> Int32 {
             let text = "é中🙂"
+            let header = "Content-TYPE"
+            let lower = "content-type"
             exhaust_budget()
+            if !header.eq_ignore_ascii_case(&lower) || header.eq_ignore_ascii_case(&text) { return 3 }
             let view = text.bytes()
             if slice.len(view) != 9 { return 1 }
             let data = text.into_bytes()

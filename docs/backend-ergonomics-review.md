@@ -197,6 +197,7 @@ Copy／拥有型 struct 已支持 `Options { field: value, ..base }`，可直接
 已补齐 `contains`、`split_once`、`strip_prefix` / `strip_suffix`、`trim` / `trim_start` / `trim_end`，
 同时提供 String 方法与 string 模块函数。输入均为借用，文本结果为独立拥有值；trim 使用 Unicode White_Space。
 chat 的 `parse()` 已改用 split_once 和 contains，保留原命令的空格与参数校验规则。
+已补齐 ASCII 大小写转换、无文本分配的 eq_ignore_ascii_case，以及按非重叠匹配替换的 replace。
 
 其余建议及本轮完成状态：
 
@@ -206,10 +207,10 @@ chat 的 `parse()` 已改用 split_once 和 contains，保留原命令的空格�
 | `split_once(&sep) -> Option<(String, String)>` | 已完成；协议行、`key=value`、`Bearer xxx` |
 | `strip_prefix(&p) -> Option<String>` / `strip_suffix` | 已完成；路由、前缀命令 |
 | `contains(&needle) -> Bool` | 已完成；替代 `find(x).is_some()` |
-| `replace(&from, &to)` | 模板、转义 |
+| `replace(&from, &to)` | 已完成；普通文本替换，空 from 在每个 Rune 边界插入 |
 | `lines()`、`split_whitespace()` | 文本协议、CSV 粗处理 |
-| `to_lowercase()` / `to_uppercase()`（ASCII 版本 `to_ascii_lowercase` 先行） | 标头名、大小写无关比较 |
-| `eq_ignore_ascii_case(&other)` | 标头、方法名 |
+| `to_lowercase()` / `to_uppercase()` | ASCII 版本 `to_ascii_lowercase` / `to_ascii_uppercase` 已完成；完整 Unicode 转换暂缓 |
+| `eq_ignore_ascii_case(&other)` | 已完成；标头、方法名比较 |
 | `text.parse::<T>()` 或保留 `T.parse(&text)` 并统一 | 目前只能 `UInt16.parse(&text)` |
 | `repeat(n)`、`pad_start` | 输出格式化 |
 | `runes()` 迭代器 | 替代手写 `next_rune` 循环 |

@@ -36,6 +36,7 @@ pub fn cases() -> Cases {
         .to_vec(),
     };
     text_helpers(&mut cases);
+    ascii_and_replace(&mut cases);
     // Exercise scalar boundaries on both sides of the runtime's bounded scans.
     // Build long prefixes as literals, keeping the generated program compact.
     for (index, (padding, tail)) in [
@@ -311,5 +312,70 @@ fn text_helpers(cases: &mut Cases) {
         }
         cases.source.push_str("} }\n");
         cases.integers.push((name, 42));
+    }
+}
+
+fn ascii_and_replace(cases: &mut Cases) {
+    let ascii: String = (0..=127).map(char::from).collect();
+    for (index, input) in ["", ascii.as_str(), "HeLLo Éé中🙂\0İß"]
+        .into_iter()
+        .enumerate()
+    {
+        for (method, expected) in [
+            ("to_ascii_lowercase", input.to_ascii_lowercase()),
+            ("to_ascii_uppercase", input.to_ascii_uppercase()),
+        ] {
+            let name = format!("{method}_{index}");
+            let call = if index % 2 == 0 {
+                format!("input.{method}()")
+            } else {
+                format!("string.{method}(&input)")
+            };
+            cases.source.push_str(&format!("\nfn {name}() -> String {{ let input = {}; let result = {call}; input.release(); result }}", literal(input)));
+            cases.strings.push((name, expected));
+        }
+    }
+    for (index, (left, right)) in [
+        ("", ""),
+        ("Content-TYPE", "content-type"),
+        ("A", "aa"),
+        ("ABC", "abd"),
+        ("ÉA中🙂\0z", "Éa中🙂\0Z"),
+        ("É", "é"),
+        ("[\\]^_`", "{|}~_`"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("ascii_equal_{index}");
+        cases.source.push_str(&format!("\nfn {name}() -> Int32 {{ let left = {}; let right = {}; if left.eq_ignore_ascii_case(&right) == {} && string.eq_ignore_ascii_case(&left, &right) == {} {{ 42 }} else {{ 1 }} }}", literal(left), literal(right), left.eq_ignore_ascii_case(right), left.eq_ignore_ascii_case(right)));
+        cases.integers.push((name, 42));
+    }
+    for (index, (input, from, to)) in [
+        ("", "", "-"),
+        ("", "x", "y"),
+        ("aé中🙂", "", "|"),
+        ("text", "", ""),
+        ("aaaaa", "aa", "b"),
+        ("aaa", "a", "aa"),
+        ("a-b-a", "a", ""),
+        ("中🙂中", "中", "é"),
+        ("x\0y\0", "\0", "🙂"),
+        ("é", "e", "X"),
+        ("small", "longer pattern", ""),
+        ("same", "same", "same"),
+        ("ends!", "!", "?"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("replace_{index}");
+        let call = if index % 2 == 0 {
+            "input.replace(&from, &to)"
+        } else {
+            "string.replace(&input, &from, &to)"
+        };
+        cases.source.push_str(&format!("\nfn {name}() -> String {{ let input = {}; let from = {}; let to = {}; let result = {call}; input.release(); from.release(); to.release(); result }}", literal(input), literal(from), literal(to)));
+        cases.strings.push((name, input.replace(from, to)));
     }
 }

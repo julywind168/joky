@@ -6603,6 +6603,10 @@ fn sample() -> UInt64 {
 | `text.byte_length()` / `string.byte_length(&text)` | UInt64，UTF-8 字节长度 |
 | `text.is_empty()` / `string.is_empty(&text)` | Bool |
 | `text.equals(&other)` / `string.equals(&text, &other)` | Bool，按字节内容相等 |
+| `text.eq_ignore_ascii_case(&other)` / `string.eq_ignore_ascii_case(&text, &other)` | Bool，仅忽略 ASCII 字母大小写，非 ASCII 字节必须相同；不分配转换后的文本 |
+| `text.to_ascii_lowercase()` / `string.to_ascii_lowercase(&text)` | 独立 String，仅将 ASCII A–Z 转成 a–z，其他字节保持原样 |
+| `text.to_ascii_uppercase()` / `string.to_ascii_uppercase(&text)` | 独立 String，仅将 ASCII a–z 转成 A–Z，其他字节保持原样 |
+| `text.replace(&from, &to)` / `string.replace(&text, &from, &to)` | 独立 String，按从左到右的不重叠匹配替换全部命中；新插入文本不再参与匹配 |
 | `text.find(&needle)` / `string.find(&text, &needle)` | Option<UInt64>，首次命中的字节偏移；未命中 None，空 needle 为 Some(0) |
 | `text.starts_with(&prefix)` / `string.starts_with(&text, &prefix)` | Bool，空前缀为 true |
 | `text.ends_with(&suffix)` / `string.ends_with(&text, &suffix)` | Bool，空后缀为 true |
@@ -6622,6 +6626,12 @@ fn sample() -> UInt64 {
 | `left.concat(&right)` / `string.concat(&left, &right)` | 独立 String，不消费两侧输入，组合长度沿 Array.reserve 受检 |
 | `string.join(&parts, &separator)` | String，借用 Array<String> 与分隔符，返回独立拼接结果；总长度受检 |
 | `text.split(&separator)` / `string.split(&text, &separator)` | Result<Array<String>, SplitError>，复制各项；空分隔符为 Err(SplitError.EmptySeparator) |
+
+`replace` 的 from 为空时，在每个 Rune 边界（包含首尾）插入 to，例如
+`"é中".replace("", "-")` 得到 `"-é-中-"`；输入为空时得到 to 的副本。
+非空 from 未命中时返回输入副本，to 为空时删除命中的内容。所有输入均为借用；
+返回的文本可在输入释放后继续使用，输出增长沿用 Array 的容量与任务预算检查。
+ASCII 大小写接口不进行 Unicode 大小写折叠或规范化，例如 `"É"` 与 `"é"` 不相等。
 
 String 的 `==` / `!=` 按 UTF-8 字节内容比较，支持拥有值、共享/独占引用、内联字段、
 数组下标与临时字符串；按从左到右各求值一次，仅在比较期间借用，两侧仍可继续使用。
