@@ -86,6 +86,8 @@ fn run_groups(groups: Vec<crate::string_collection_model::Group>) {
 #[test]
 fn string_collections_rejects_copy_get_moves_conflicting_views_and_suspension() {
     for source in [
+        "fn f() { var a = [\"keep\"]; let first = a.first(); a.retain(|value| { true }); first!.byte_length(); }",
+        "fn f() { var a = [\"keep\"]; a.retain(|value| { a.len() > 0 }); }",
         "fn f() { var a = [\"中\"]; let found = a.find(|value| { !value.is_empty() }); a.clear(); found!.byte_length(); }",
         "fn f() -> Option<&String> { let a = [\"中\"]; a.first() }",
         "import joky/array.{type Array} fn f() { let a = Array.new::<String>(); a.get(0); }",
@@ -198,6 +200,7 @@ fn string_collections_budget_failures_release_nested_and_partial_bulk_outputs() 
 fn string_collections_interpreter_cancellation_reclaims_containers_and_bulk_parts() {
     use super::support::{assert_cancellation, CancellationSweep};
     for entry in [
+        "array_retain",
         "array_records",
         "enum_arrays",
         "nested",

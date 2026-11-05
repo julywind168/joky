@@ -40,6 +40,7 @@ pub fn ownership_groups() -> Vec<Group> {
             ("shapes", None, &[2, 3], false),
             ("arrays", Some("A|tail"), &[], false),
             ("array_queries", None, &[], false),
+            ("array_retain", None, &[40, 41, 42, 43, 44], false),
             ("array_records", None, &[10, 11, 12, 13, 14, 15], false),
         ]),
         group(&[("nested", None, &[], false)]),
@@ -49,6 +50,7 @@ pub fn ownership_groups() -> Vec<Group> {
         group(&[
             ("tracked_failure", None, &[20, 21], true),
             ("partial_failure", None, &[30], true),
+            ("array_retain_failure", None, &[60, 61, 62, 63], true),
         ]),
     ]
 }

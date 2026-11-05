@@ -57,6 +57,7 @@ impl<T> Array<T> {
     pub fn reserve(&mut self, additional: UInt64) { reserve(self, additional) }
     pub fn truncate(&mut self, length: UInt64) { truncate(self, length) }
     pub fn clear(&mut self) { clear(self) }
+    pub fn retain<F: Fn(&T) @noescape -> Bool>(&mut self, predicate: F) { retain(self, predicate) }
     pub fn swap(&mut self, first: UInt64, second: UInt64) -> Bool { swap(self, first, second) }
     pub fn sort_by<F: Fn(&T, &T) @noescape -> Int32>(&mut self, compare: F) { sort_by(self, compare) }
     pub fn push(&mut self, value: T) { push(self, value) }
@@ -199,6 +200,22 @@ pub fn truncate<T>(values: &mut Array<T>, length: UInt64) {
     if length < buffer.len(values) { buffer.truncate(values, length) }
 }
 pub fn clear<T>(values: &mut Array<T>) { truncate(values, 0) }
+
+// Compact by swapping so every slot stays initialized, including on predicate
+// failure or cancellation. Discarded owners are destroyed by the final truncate.
+pub fn retain<T, F: Fn(&T) @noescape -> Bool>(values: &mut Array<T>, predicate: F) {
+    let values = &mut values.storage
+    let length = buffer.len(values)
+    var kept: UInt64 = 0
+    for index in 0..length {
+        if predicate(buffer.borrow_ref(values, index)) {
+            if kept != index { buffer.swap_elements(values, kept, index) }
+            kept += 1
+        }
+    }
+    buffer.truncate(values, kept)
+}
+
 pub fn swap<T>(values: &mut Array<T>, first: UInt64, second: UInt64) -> Bool {
     let values = &mut values.storage
     let length = buffer.len(values)

@@ -225,10 +225,12 @@ Array 已补齐 `any`、`all`、`find`、`position`、`first` / `last`，同时�
 chat 的 Room.has_member 已使用 any，remove_member 使用 position 加 swap_remove，保留原删除语义。
 已修复泛型调用中闭包参数的借用效果映射；find 的返回引用只依赖数组，
 捕获的查询值可在查询结束后释放，无需保留到结果最后使用。
+Array 已补 `retain` 方法与模块函数：同步借用元素判断，原地保留并保持顺序和容量，
+支持拥有型元素，无需 Copy / Clone；淘汰项在压紧后的截断阶段销毁。
 
 后续分批推进：
 
-- Array：`retain`、`dedup`、`extend_from(&slice)`，先明确元素移动、销毁与复制约定。
+- Array：`dedup`、`extend_from(&slice)`，先明确元素移动、销毁与复制约定。
   `Array<String>.join` 可复用已有 string.join。
 - 迭代器：已有拥有型 Iterator、共享 SharedIterator 与独占游标组合入口；
   先补 `count`、`fold`、`enumerate`、`skip`、`chain`，再考虑 sum、collect、flat_map。
