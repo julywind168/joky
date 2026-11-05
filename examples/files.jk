@@ -7,10 +7,12 @@ fn main() @suspends -> Int32 {
     var arguments = process.args()!
     if arguments.len() > 1 { eprintln("usage: files [path]"); return 2 }
     let path = process.resolve_path(arguments.pop().unwrap_or("joky-file-example.txt"))!
-    var options = fs.OpenOptions.new()
-    options.write = true
-    options.create = true
-    options.truncate = true
+    let options = fs.OpenOptions {
+        write: true
+        create: true
+        truncate: true
+        ..fs.OpenOptions.new()
+    }
     var file = match fs.open(path, options) {
         Ok(file) => file
         Err(error) => { eprintln(error.message); return 1 }

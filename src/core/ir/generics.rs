@@ -904,6 +904,7 @@ impl FunctionPlan {
                 name,
                 type_args,
                 fields,
+                base,
                 ..
             },
         ) = (formal, arg)
@@ -924,6 +925,9 @@ impl FunctionPlan {
                         )?;
                     }
                     self.hint_bindings(&field.value, &mut local, functions, types);
+                }
+                if let Some(base) = base {
+                    self.infer_generic_argument(formal, base, &local, functions, types, inference)?;
                 }
                 return Ok(());
             }

@@ -82,6 +82,8 @@ pub enum Expr {
         name: String,
         type_args: Vec<GenericArgument>,
         fields: Vec<FieldInit>,
+        /// Same-type Copy value supplying omitted fields, evaluated after initializers.
+        base: Option<Box<Expr>>,
         span: Span,
     },
     /// Checked element place in an array or slice.
@@ -439,11 +441,13 @@ impl Expr {
                 name,
                 type_args,
                 fields,
+                base,
                 ..
             } => Self::Record {
                 name,
                 type_args,
                 fields,
+                base,
                 span,
             },
             Self::Field {
@@ -1511,7 +1515,11 @@ impl Expr {
             Expr::Match { value, arms, .. } => std::iter::once(value.as_ref())
                 .chain(arms.iter().map(|a| &a.body))
                 .collect(),
-            Expr::Record { fields, .. } => fields.iter().map(|f| &f.value).collect(),
+            Expr::Record { fields, base, .. } => fields
+                .iter()
+                .map(|f| &f.value)
+                .chain(base.iter().map(Box::as_ref))
+                .collect(),
             Expr::Array { elements, .. } | Expr::Tuple { elements, .. } => {
                 elements.iter().collect()
             }

@@ -498,7 +498,7 @@ fn resolve_calls(
             }
         }
 
-        Expr::Record { fields, .. } => {
+        Expr::Record { fields, base, .. } => {
             for field in fields {
                 resolve_calls(
                     &mut field.value,
@@ -507,6 +507,9 @@ fn resolve_calls(
                     call_forms,
                     locals,
                 )?;
+            }
+            if let Some(base) = base {
+                resolve_calls(base, functions, member_roots, call_forms, locals)?;
             }
         }
         Expr::Field { base, .. } => {

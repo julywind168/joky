@@ -175,6 +175,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
                         span,
                     },
                     Expr::Record {
+                        base: None,
                         name: name.clone(),
                         type_args: type_params.iter().map(|p| p.argument()).collect(),
                         fields: fields

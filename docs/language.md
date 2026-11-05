@@ -1275,6 +1275,24 @@ fn columns() -> Columns {
 
 字段按构造表达式顺序初始化，完整记录按字段声明顺序析构；构造中途退出只清理已初始化字段。
 
+Copy struct 支持以 `..base` 补齐未显式指定的字段，不依赖 Default trait：
+
+```joky
+let options = http.Options { max_connections: 4, ..http.defaults() }
+let limits = json.Limits { max_depth: 16, ..json.Limits.defaults() }
+```
+
+- `..base` 最多一个且必须位于末尾，可带尾随逗号；允许 `Type { ..base }`。
+  字段分隔沿用逗号或换行，显式字段支持简写；重复字段仍报错。
+- 显式字段按源码顺序各求值一次并保存结果，之后 base 求值一次，再补齐其余字段。
+  即使显式字段已列全或结构体为空，仍求值并检查 base。表达式支持正常的失败、返回及挂起规则。
+- base 必须是同一具体 struct 类型的值，包含相同的泛型实参；可从 base 推导类型及常量参数。
+  不改变泛型参数、不自动解引用或调用 Clone；从共享引用复制时显式写 `..*base`。
+- 结果必须满足 Copy；原 base 仍可使用，固定数组字段按值复制，共享引用字段保留原借用来源。
+  拥有字段、独占引用字段和实现 Drop 的记录暂不支持；泛型定义须能证明 Copy 条件。
+- 所有字段必须在构造处可见，包括由 base 补齐的字段；`..base` 不能绕过私有字段构造限制。
+  嵌套配置使用嵌套结构更新，不支持 `limits.max_depth: value` 形式的字段路径。
+
 ```joky
 fn take_scores() -> Array<Int64> {
     let value = columns()

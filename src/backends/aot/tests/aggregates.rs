@@ -114,8 +114,10 @@ fn records_execute_in_native_objects_and_cps_with_the_shared_runtime() {
                 Deferred { stamp: delayed_value(record(n)), value: value }
             }
             fn cps_record(p: Point) @suspends -> Point {
-                let saved = defer(p, p.y)
-                Point { y: saved.stamp, x: saved.value.x }
+                Point { x: p.x, ..{
+                    let saved = defer(p, p.y)
+                    Point { y: saved.stamp, ..saved.value }
+                } }
             }
             fn pending() @suspends -> Int32 {
                 let p = cps_record(direct_record(10))

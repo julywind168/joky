@@ -193,7 +193,10 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
                 pending.push(value);
                 pending.extend(arms.iter().map(|arm| &arm.body));
             }
-            Expr::Record { fields, .. } => pending.extend(fields.iter().map(|field| &field.value)),
+            Expr::Record { fields, base, .. } => {
+                pending.extend(fields.iter().map(|field| &field.value));
+                pending.extend(base.iter().map(Box::as_ref));
+            }
             Expr::MethodCall(call) => {
                 if let Some((root, path)) = local_path(&call.receiver) {
                     names.receiver(root, path, &call.name, call.span);

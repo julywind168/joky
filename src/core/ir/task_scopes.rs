@@ -497,9 +497,12 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                     visit(element, scopes, walk);
                 }
             }
-            Expr::Record { fields, .. } => {
+            Expr::Record { fields, base, .. } => {
                 for field in fields {
                     visit(&field.value, scopes, walk);
+                }
+                if let Some(base) = base {
+                    visit(base, scopes, walk);
                 }
             }
             Expr::Field { base, .. } => visit(base, scopes, walk),

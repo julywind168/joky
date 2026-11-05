@@ -592,7 +592,7 @@ impl Inference<'_> {
                     depends |= descend(element, vars, tracked, ty)?;
                 }
             }
-            Expr::Record { fields, .. } => {
+            Expr::Record { fields, base, .. } => {
                 let ty = self
                     .plan
                     .record_type(
@@ -616,6 +616,9 @@ impl Inference<'_> {
                         _ => None,
                     };
                     depends |= descend(&field.value, vars, tracked, field_type)?;
+                }
+                if let Some(base) = base {
+                    depends |= descend(base, vars, tracked, ty.as_ref())?;
                 }
             }
             Expr::Array { elements, .. } => {

@@ -103,6 +103,7 @@ impl FunctionPlan {
             name,
             type_args,
             fields,
+            base,
             span,
         } = expr
         else {
@@ -143,7 +144,9 @@ impl FunctionPlan {
             }
         }
         for field in &record.fields {
-            if !seen.contains(&field.name) {
+            if base.is_some() {
+                self.check_field(record, &field.name, span)?;
+            } else if !seen.contains(&field.name) {
                 return Err(type_error(
                     span,
                     ErrorCode::TypeMismatch,
@@ -205,6 +208,16 @@ impl FunctionPlan {
                 )?;
                 self.hint_bindings(&field.value, &mut local, functions, types);
             }
+            if let Some(base) = base {
+                self.infer_generic_argument(
+                    &Type::Record(record.clone()),
+                    base,
+                    &local,
+                    functions,
+                    types,
+                    inference,
+                )?;
+            }
             Ok(())
         })?;
         self.materialize_inference(&mut inference, types, *span)?;
@@ -252,7 +265,9 @@ impl FunctionPlan {
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         match expr {
-            Expr::Record { fields, .. } => {
+            Expr::Record {
+                fields, base, span, ..
+            } => {
                 let ty = self.record_type(
                     expr,
                     vars,
@@ -263,6 +278,13 @@ impl FunctionPlan {
                         default: true,
                     },
                 )?;
+                if base.is_some() && !ty.is_copy_value() {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::TypeMismatch,
+                        "Record update requires a Copy struct",
+                    ));
+                }
                 let result = self.slot(ty.clone())?;
                 if ty.is_place() {
                     self.emit(Op::Place(PlaceOp::Allocate(result.clone())));
@@ -286,6 +308,9 @@ impl FunctionPlan {
                         if let Some(next) = fields.get(index + 1) {
                             return Err(unreachable_error(&next.value));
                         }
+                        if let Some(base) = base {
+                            return Err(unreachable_error(base));
+                        }
                         return Ok(Flow::Diverged);
                     };
                     if slot_type(&target) != slot_type(&value) {
@@ -308,6 +333,41 @@ impl FunctionPlan {
                         self.place_write(&result, offset, value);
                     } else if let (Some(dst), Some(src)) = (target, value) {
                         self.emit(Op::Copy(dst, src));
+                    }
+                }
+                if let Some(base) = base {
+                    let Flow::Value(value) =
+                        self.expr_expected(base, vars, functions, suspends, types, Some(&ty))?
+                    else {
+                        return Ok(Flow::Diverged);
+                    };
+                    if slot_type(&value) != ty {
+                        return Err(type_error(
+                            &base.span(),
+                            ErrorCode::TypeMismatch,
+                            format!("Record update base expects {ty}, got {}", slot_type(&value)),
+                        ));
+                    }
+                    let value = value.expect("record value");
+                    let Type::Record(record) = &ty else {
+                        unreachable!()
+                    };
+                    for field in &record.fields {
+                        if fields.iter().any(|f| f.name == field.name) {
+                            continue;
+                        }
+                        if ty.is_place() {
+                            let (offset, field_ty) = ty
+                                .storage_field_path(std::slice::from_ref(&field.name))
+                                .unwrap();
+                            let field_value = self.place_read(&value, offset, field_ty)?;
+                            self.place_write(&result, offset, field_value);
+                        } else if let (Some(dst), Some(src)) = (
+                            field_slot(self, &result, &field.name, span)?,
+                            field_slot(self, &value, &field.name, span)?,
+                        ) {
+                            self.emit(Op::Copy(dst, src));
+                        }
                     }
                 }
                 if let Type::Record(record) = &result.ty {

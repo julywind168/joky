@@ -294,6 +294,7 @@ fn implementation(
             span,
         ));
         Expr::Record {
+            base: None,
             name: record.name.clone(),
             type_args: type_params.iter().map(|p| p.argument()).collect(),
             fields: fields

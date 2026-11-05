@@ -1387,8 +1387,9 @@ pub(crate) fn resolve_pattern_heads(
                     pending.extend(args.iter_mut());
                 }
                 Expr::Call { args, .. } => pending.extend(args.iter_mut()),
-                Expr::Record { fields, .. } => {
+                Expr::Record { fields, base, .. } => {
                     pending.extend(fields.iter_mut().map(|field| &mut field.value));
+                    pending.extend(base.iter_mut().map(Box::as_mut));
                 }
                 Expr::Array { elements, .. }
                 | Expr::Tuple { elements, .. }
@@ -1523,6 +1524,7 @@ pub(crate) fn map_syntax(
         }
         Expr::Record {
             fields,
+            base,
             type_args,
             span,
             ..
@@ -1532,6 +1534,9 @@ pub(crate) fn map_syntax(
             }
             for field in fields {
                 map_syntax(&mut field.value, map, substitutions)?;
+            }
+            if let Some(base) = base {
+                map_syntax(base, map, substitutions)?;
             }
         }
         Expr::Field {

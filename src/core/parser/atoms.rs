@@ -331,7 +331,17 @@ impl Parser<'_> {
                     let previous_newlines =
                         std::mem::replace(&mut self.newlines, Newlines::Separate);
                     let mut fields = Vec::new();
+                    let mut base = None;
                     while self.peek() != &TokenKind::RBrace {
+                        if self.peek() == &TokenKind::DotDot {
+                            self.advance();
+                            base = Some(Box::new(self.parse_assignment()?));
+                            self.expect_braced_separator("record fields")?;
+                            if self.peek() != &TokenKind::RBrace {
+                                return Err(self.error("Record update base must be last".into()));
+                            }
+                            break;
+                        }
                         if self.peek() == &TokenKind::Comma {
                             return Err(self.error("Record fields cannot be empty".into()));
                         }
@@ -361,6 +371,7 @@ impl Parser<'_> {
                         name,
                         type_args,
                         fields,
+                        base,
                         span: self.span(start, self.last_span.end()),
                     })
                 } else if !type_args.is_empty() {
@@ -435,7 +446,7 @@ impl Parser<'_> {
         let Some(first) = self.tokens.get(self.pos + 1) else {
             return false;
         };
-        first.kind == TokenKind::RBrace
+        matches!(first.kind, TokenKind::RBrace | TokenKind::DotDot)
             || (matches!(first.kind, TokenKind::Ident(_))
                 && self.tokens.get(self.pos + 2).is_some_and(|next| {
                     matches!(

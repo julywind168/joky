@@ -119,7 +119,7 @@ fn record_suspensions_keep_snapshots_through_reload_failure_and_cancellation() {
         extern fn record(x: Int32) -> Int32
         fn original() -> Point { Point { x: 1, y: 2 } }
         fn build(p: Point, n: Int32) @suspends -> Point {
-            Point { y: delayed_value(record(n)), x: p.x }
+            Point { y: delayed_value(record(n)), ..p }
         }
         fn pass(p: Point) -> Point { p }
         fn empty() @suspends -> Empty { delayed_value(0); Empty {} }
@@ -275,5 +275,133 @@ fn wide_record_parameters_and_mixed_fields_match_all_call_conventions() {
             };
             assert_eq!(value, -2, "{mode:?} suspends={suspends}");
         }
+    }
+}
+
+#[test]
+fn record_updates_preserve_order_inference_and_copy_storage() {
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "model",
+            r#"
+        pub struct Pair<T> { pub value: T, pub tag: Int32 }
+        pub fn retag<T: Copy>(base: Pair<T>) -> Pair<T> { Pair { tag: 7, ..base } }
+    "#,
+        )
+        .unwrap();
+    let source = r#"
+        import model
+        import joky/check.{assert}
+        import joky/fixed_array.{type FixedArray}
+        struct Point { x: Int32, y: Int32 }
+        struct Empty {}
+        struct Row<const N: UInt64> { values: FixedArray<Int32, N>, tag: Int32 }
+        fn value<T: Copy>(p: model.Pair<T>) -> T { p.value }
+        fn probe() -> Int32 {
+            var count = 0
+            let p = Point {
+                x: { count += 1; count }
+                y: { count *= 10; count }
+                ..{ count += 2; Point { x: 99, y: 99 } },
+            }
+            assert(p.x == 1 && p.y == 10 && count == 12, "Update evaluation order")
+            let empty = Empty { ..{ count += 1; Empty {} } }
+            assert(count == 13, "Empty base evaluated once")
+            var base = model.Pair { value: uint64(40), tag: 1 }
+            let next = model.Pair { tag: 2, ..base }
+            let inferred = model.Pair { value: 42, ..base }
+            base.tag = 9
+            assert(next.tag == 2 && next.value == 40 && base.tag == 9, "Copy base remains independent")
+            let dereferenced = model.Pair { tag: 4, ..*&base }
+            assert(dereferenced.value == 40, "Explicit base dereference")
+            assert(value(model.Pair { ..inferred }) == 42, "Base infers generic argument")
+            assert(model.retag(next).tag == 7, "Generic definition scope")
+            let make = || { model.Pair { tag: 3, ..next } }
+            assert(make().value == 40, "Base captured by closure")
+            let number = 42
+            let borrowed = model.Pair { value: &number, tag: 0 }
+            let copied = model.Pair { tag: 1, ..borrowed }
+            assert(*copied.value == 42 && *borrowed.value == 42, "Shared reference fields")
+            var row = Row { values: [10, 20], tag: 0 }
+            let copy = Row { tag: 2, ..row }
+            row.values[0] = 99
+            assert(copy.values[0] == 10 && copy.values[1] == 20 && copy.tag == 2, "Fixed storage snapshot")
+            assert(row.values[0] == 99, "Fixed storage base remains usable")
+            42
+        }
+    "#;
+    let ast = crate::TypeRegistry::default()
+        .with_prelude(false)
+        .resolve_with_modules(&crate::parser::parse(source).unwrap(), &modules)
+        .unwrap();
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = super::VmEngine::with_mode(mode);
+        vm.load_module(&ast).unwrap();
+        assert_eq!(vm.call_int32_0("probe").unwrap(), 42);
+    }
+    crate::backends::aot::tests::assert_sync_int32(&ast, "probe", 42);
+}
+
+#[test]
+fn record_updates_reject_invalid_bases_and_inaccessible_fields() {
+    let mut modules = crate::ModuleSources::new();
+    modules.insert("model", "pub struct P { pub x: Int32, hidden: Int32 } pub fn make() -> P { P { x: 1, hidden: 2 } }").unwrap();
+    for (source, message) in [
+        (
+            "struct P { x: Int32 } fn f(p: P) -> P { P { ..p, x: 1 } }",
+            "base must be last",
+        ),
+        (
+            "struct P { x: Int32 } fn f(p: P) -> P { P { ..p, ..p } }",
+            "base must be last",
+        ),
+        (
+            "struct P { x: Int32 } fn f(p: P) -> P { P { x: 1, x: 2, ..p } }",
+            "Duplicate initializer",
+        ),
+        (
+            "struct P { x: Int32 } fn f(p: P) -> P { P { unknown: 1, ..p } }",
+            "no field",
+        ),
+        (
+            "struct P { x: Int32 } fn f() -> P { P { ..1 } }",
+            "base expects",
+        ),
+        (
+            "struct P { x: Int32 } struct Q { x: Int32 } fn f(q: Q) -> P { P { ..q } }",
+            "base expects",
+        ),
+        (
+            "struct P { x: Int32 } fn f(p: &P) -> P { P { ..p } }",
+            "base expects",
+        ),
+        (
+            "struct P<T> { x: T } fn f(p: P<Int32>) -> P<Bool> { P { ..p } }",
+            "Conflicting types",
+        ),
+        (
+            "struct P<T> { x: T } fn f<T>(p: P<T>) -> P<T> { P { ..p } }",
+            "requires a Copy struct",
+        ),
+        (
+            "struct P { x: String } fn f(p: P) -> P { P { x: \"new\", ..p } }",
+            "requires a Copy struct",
+        ),
+        (
+            "import joky/drop.{type Drop} struct P { text: String } impl Drop for P { fn drop(&mut self) {} } fn f(p: P) -> P { P { ..p } }",
+            "requires a Copy struct",
+        ),
+        (
+            "struct P { x: &Int32 } fn f() -> P { let n = 42; P { ..P { x: &n } } }",
+            "cannot outlive",
+        ),
+        (
+            "import model fn f() -> model.P { model.P { x: 3, ..model.make() } }",
+            "private",
+        ),
+    ] {
+        let error = frontend_error(source, &modules);
+        assert!(error.message().contains(message), "{source}: {error}");
     }
 }

@@ -870,9 +870,12 @@ impl FunctionPlan {
                 self.hint_bindings(lhs, vars, functions, types);
                 self.hint_bindings(rhs, vars, functions, types);
             }
-            Expr::Record { fields, .. } => {
+            Expr::Record { fields, base, .. } => {
                 for field in fields {
                     self.hint_bindings(&field.value, vars, functions, types);
+                }
+                if let Some(base) = base {
+                    self.hint_bindings(base, vars, functions, types);
                 }
             }
             Expr::MethodCall(call) => {

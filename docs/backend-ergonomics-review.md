@@ -53,7 +53,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 | 已完成 | 经 `&mut` 替换拥有型字段 | §4.2 |
 | P0 | String 基础方法：trim / split_once / contains / strip_prefix / replace / lines / 大小写 / parse | §6.1 |
 | 已完成 | 标准库公开错误与无载荷枚举实现 Show；Eq／Hash 统一为借用协议，Eq 接入 `==`／`!=` | §4.4 |
-| 已完成 | Eq／Hash 派生 | §4.4 |
+| 已完成 | Eq／Hash 派生；Copy struct 的 `..base` 结构更新 | §4.4 |
 | 待设计 | 调试输出派生 | §4.4 |
 | P0 | PostgreSQL 参数与结果：`ToSql`/`FromSql` 协议、按列名读取、`#derive(FromRow)`、更多类型 | §8 |
 | P0 | HTTP：路由、标头/查询查询、响应构造助手、`Status` 命名 | §7 |
@@ -114,11 +114,15 @@ Map／Set 的 key 另要求等价关系、相等值同哈希及驻留期间结�
 条件 impl 推导，未使用的类型参数不添加约束；可与 Clone 和 struct JSON 派生组合。
 浮点字段可派生 Eq，不能派生 Hash；const 泛型、缺少协议实现的元组及容器仍不支持。
 
+Copy struct 已支持 `Options { field: value, ..base }`，可直接基于现有 defaults/new 或业务配置
+覆盖字段，不依赖 Default。显式字段先求值，base 随后求值一次；类型及泛型实参必须相同，
+所有字段须可见。现有 HTTP／session／JSON／文件／聊天配置均可使用；拥有型结构更新留待后续。
+
 以下事项分开设计，尚未实现：
 
 1. 原建议的类型名、字段名及带引号字符串属于 Debug 风格，不直接混入 Show；
    调试协议及其派生另议。
-2. 标准 Default trait、Default 派生和 `Options { field: value, ..base }` 结构更新均未实现。
+2. 标准 Default trait 和 Default 派生暂缓。
    普通 `Type.default()` 可手写，业务配置的非零默认值不应被逐字段默认派生替代。
 
 ## 5. 关键词与语法手感
@@ -385,7 +389,7 @@ chat 主文件中的 `serve` 循环（准入、计数 ID、复制脚本、isolat
 | 维度 | 现状 | 建议 |
 | --- | --- | --- |
 | 构造 | `Vm.new()`、`StringBuilder.new()`、`shutdown.create()`、`session.create(opts)`、`admission.create(n, 0)`、`domain.directory(n)`、`postgres.open(n)` | 值对象 `Type.new(...)`；I/O 资源用 `open`/`connect`/`listen`；模块级 `create` 改为 `Type.new` |
-| 默认配置 | `http.defaults()`、`session.defaults()`、`json.Limits.defaults()`、`typed.Options.defaults()`、chat 的 `defaults()` | 统一 `Type.default()`（配合 `#derive(Default)` 与结构更新） |
+| 默认配置 | `http.defaults()`、`session.defaults()`、`json.Limits.defaults()`、`typed.Options.defaults()`、chat 的 `defaults()` | Copy 配置已可用 `..base` 结构更新；`Type.default()`／Default 派生暂缓 |
 | 数值缩写 | `get_i64`、`to_i64`、`from_u64`、`to_f64` 与类型名 `Int64`/`UInt64`/`Float64` 并存 | 跟随类型名：`to_int64()`，或用泛型 `to::<Int64>()`；列读取用 `row.get::<Int64>` |
 | 长度 | 容器 `len()`，String `byte_length()`，StringBuilder `byte_length()` | 保留 `byte_length` 明确单位是对的；补 `len()` 作为同义词会更符合直觉，二选一需写入约定 |
 | 访问器 | `get`/`get_ref`/`borrow`/`borrow_ref`/`borrow_mut`/`borrow_mut_ref` | 见 §6.2 |
@@ -446,7 +450,7 @@ fn main() @suspends -> Int32 {
 3. **PostgreSQL 便利层**：Value 变体改名、按列名读取、`get::<T>`、timestamptz/uuid/jsonb、
    `pool.transaction`、Options。
 4. **语言特性**：调试协议及派生、Default 派生、字符串字面量模式与守卫、
-   `ToSql` 隐式装箱、结构更新语法、非 pub 函数 `@suspends` 推导。
+   `ToSql` 隐式装箱、拥有型结构更新、非 pub 函数 `@suspends` 推导。
    每项按 AGENTS.md 的跨模块语义改动要求单独设计与验证。
 5. **关键词与命名迁移**（`when`→`atomic`、`alias`→`same`、`branch`→`spawn`、`var`/`mut` 统一、
    构造与缩写命名）：集中一次完成并提供迁移诊断，趁项目尚未公开时做。
