@@ -481,6 +481,31 @@ fn join_is_contextual_and_old_parallel_has_a_migration_span() {
 }
 
 #[test]
+fn aliased_is_contextual_and_old_when_alias_has_a_migration_span() {
+    for source in [
+        "fn aliased() {} fn alias() {} fn f() { when (state) {}; aliased(); alias(); let aliased = true; if aliased {} }",
+        "fn f() { when (state) {}\naliased()\nalias() }",
+        "fn f() { when (mut first, mut last: State = routes[key]) {} aliased {} }",
+        "fn f() { when (mut first, mut last?: State = routes[key]) {} else {}\naliased {} }",
+    ] {
+        parse(source).unwrap_or_else(|error| panic!("{source}: {error}"));
+    }
+    for fallback in ["", " else {}"] {
+        let source = format!(
+            "fn f() {{ when (mut first, mut last{}: State = routes[key]) {{}}{fallback}\n    alias {{}} }}",
+            if fallback.is_empty() { "" } else { "?" }
+        );
+        let error = parse(&source).unwrap_err();
+        assert_eq!(
+            error.message,
+            "Use aliased instead of alias for a when branch"
+        );
+        assert_eq!(error.line, 2);
+        assert_eq!(error.span.slice(&source), Some("alias"));
+    }
+}
+
+#[test]
 fn expression_depth_accepts_its_boundary_and_preserves_the_vm_after_rejection() {
     let source = |depth| {
         format!(

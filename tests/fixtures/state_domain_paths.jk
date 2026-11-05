@@ -22,7 +22,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(value.unwrap()==3)
     when(mut first) {first.key=1}.unwrap()
     let aliased=when "alias" (mut first,mut second:State=routes[first.key]) { first.n+=second.n; first.n }
-        alias { first.n+=1; first.n }
+        aliased { first.n+=1; first.n }
     assert(aliased.unwrap()==4)
     match when(mut first,second:State=routes[first.key]) { first.n+=second.n } {
         Err(Aliased(pair))=>assert(pair==1), _=>assert(false)

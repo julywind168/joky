@@ -4422,13 +4422,15 @@ when "move" (mut account,
     // account、next、old 都存在，且写引用互不别名。
 } else {
     // old 不存在；仅提供 account、next。
-} alias {
+} aliased {
     // 最后的 old 与前面的域发生写别名；仅提供 account、next。
 }
 ```
 
 可选路径用绑定名后的 `?` 标记，只能位于最后，且必须提供 `else`；前面至少有一个域。
-`alias` 同样仅处理最后一个绑定与前面绑定的写别名，前缀自身的写别名仍拒绝。
+`aliased` 同样仅处理最后一个绑定与前面绑定的写别名，前缀自身的写别名仍拒绝。
+`aliased` 是分支位置的上下文关键字，普通标识符仍可使用这个名字；旧 `alias { ... }`
+语法会报告迁移诊断，需改写为 `aliased { ... }`。
 路径键也可为标准库 `Option<UInt64>`／`Option<String>`，包括前面状态字段的投影和外部捕获。
 Option 键只允许用于最后的 `?` 可选路径，不能用于必需路径或 `get_or_stage`。
 `None` 不读取载荷、不查目录，直接进入 `else`（即使该目录已经关闭）；`Some(key)` 与普通键相同，
@@ -4768,7 +4770,7 @@ Committed 表示业务成功并已发布；Rejected 表示业务拒绝，丢弃�
 显式原地短操作、request、快照和提案回执沿用各自原有结果类型与契约。
 
 块返回普通值或 `Option<T>` 时仍保留外层访问 Result。外层函数返回类型或局部变量注解为
-`domain.Outcome<T,E>` 时，块体及 else／alias 分支获得 `Result<T,E>` 的期望类型；
+`domain.Outcome<T,E>` 时，块体及 else／aliased 分支获得 `Result<T,E>` 的期望类型；
 其他块仍从完整的 `Result<R, DomainAccessError>` 接收 R。只有 Ok 或只有 Err 的块无需重复泛型参数。
 没有外层期望类型且无法独立推导时仍需显式注解。可执行示例见
 [三态状态域结果](../tests/fixtures/state_domain_outcome.jk)。

@@ -53,7 +53,7 @@ fn lifecycle() @suspends -> Int32 {
         mem.replace(&mut first.payload, Payload.Nested(("header", Option.Some(values))))
         mem.replace(&mut first.name, Option.Some("self"));
     }.unwrap()
-    assert(when(mut first, mut second?: State = routes[first.name]) { 0 } else { 0 } alias { first.n += 1; first.n }.unwrap() == 2)
+    assert(when(mut first, mut second?: State = routes[first.name]) { 0 } else { 0 } aliased { first.n += 1; first.n }.unwrap() == 2)
     assert(when(first) { match &first.payload { Nested(pair) => pair.0.equals("header"), _ => false } }.unwrap())
     when(mut first) { mem.replace(&mut first.name, Option.None); first.index = Option.None; mem.replace(&mut first.payload, Payload.Empty); }.unwrap()
     assert(snapshot.value() == 1)

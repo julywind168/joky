@@ -190,7 +190,7 @@ when "say" (mut account: Account = accounts[id], room?: Room = rooms[account.roo
 （读与写、写与写），就进入声明的别名分支或返回专用结果，由业务处理
 （chat 的“已在房间”路径）。调度权限合并不等于引用合法：独占授权下同时暴露同一状态的
 `&S` 与 `&mut S`，可能在通过可写绑定扩容容器后使只读绑定的引用失效。
-若以后希望把读写别名合并为一个规范绑定，须另行设计编译器借用规则。R3 使用块后的 `alias { ... }`，
+若以后希望把读写别名合并为一个规范绑定，须另行设计编译器借用规则。R3 使用块后的 `aliased { ... }`，
 只处理末项与有效前缀的写别名；分支只取得前缀引用。可选末项必须声明 `else`，同样只提供前缀。
 第一版显式标注路径状态类型，键限于 UInt64 常量／外层投影／先前状态字段，目录为外层弱句柄投影。
 Local 在完整注册表访问区间内重算一次即稳定；`max_path_retries` 默认 64，零值拒绝身份变化。
@@ -211,7 +211,7 @@ Local 在完整注册表访问区间内重算一次即稳定；`max_path_retries
 ```text
 when "join" (mut account,
              mut next: Room = rooms.get_or_stage(name, make_room(name.clone())),
-             mut old?: Room = rooms[account.room]) { ... } else { ... } alias { ... }
+             mut old?: Room = rooms[account.room]) { ... } else { ... } aliased { ... }
 ```
 
 - 解析时键不存在，则计划创建；校验时仍不存在，在本次尝试内暂存新域并独占初始化；
@@ -420,7 +420,7 @@ fn say(host: Host, account: domain.WriteHandle<Account>, text: String) @suspends
 
 相对重构前移除了 `ctx`、`excluded`、`expected`、`Retry`、位置重试循环与捕获复制。路径校验保证 `room`
 仍是账户所在的同一个域；live 与成员关系仍由块体检查。可选路径落空时进入 `else` 分支，
-换房时新旧房间相同进入 `alias` 分支。`Outcome<T>` 现为 `domain.Outcome<T, Rejection>` 的别名，
+换房时新旧房间相同进入 `aliased` 分支。`Outcome<T>` 现为 `domain.Outcome<T, Rejection>` 的别名，
 调用方直接匹配 Committed／Rejected／Failed，不再使用双层 Result。
 
 ## 7. 实施阶段
@@ -627,7 +627,7 @@ R2 专项验收（2026-10-26，Debug）：
 ### R3 实施记录（2026-10-26）
 
 - 新增显式类型的目录访问路径，支持外层 UInt64 键与依赖先前状态的字段投影。
-  末项可声明 `?`／`else` 或 `alias` 分支，分支只获得有效前缀引用，不扩展借用枚举类型系统。
+  末项可声明 `?`／`else` 或 `aliased` 分支，分支只获得有效前缀引用，不扩展借用枚举类型系统。
 - 入队与执行分别解析完整集合，以域身份校验删除重建；Local 注册表区间保证一次重算即稳定。
   `max_path_retries` 默认 64，零值拒绝变化；缺失、写别名和超限提供独立访问错误。
 - 动态拥有捕获保留为独立数据包，块内共享借用；静态形式保持原有移动语义。
@@ -902,7 +902,7 @@ R2 专项验收（2026-10-26，Debug）：
 
 - 标准库新增 `domain.Outcome<T,E>`，区分 Committed、Rejected、Failed。when 和句柄方法仅在
   块体返回标准 Result 时使用 Outcome；普通值与 Option 保留访问 Result，不递归展开内层 T。
-- 编译器从期望 Outcome 反向推导块体 Result，块内 Ok／Err、`?`、else／alias 及回滚规则不变。
+- 编译器从期望 Outcome 反向推导块体 Result，块内 Ok／Err、`?`、else／aliased 及回滚规则不变。
   转换发生于原访问适配器返回后；快照／提案回执、显式原地操作和 request 不改变结果形状。
 - Outcome 提供 is_committed、committed、unwrap、into_result，以及单个 `!` 和同类结果间的 `?`；
   Failed 只包装 DomainAccessError，运行时异常、取消与结果交付失败保持任务通道。

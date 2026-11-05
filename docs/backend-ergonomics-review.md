@@ -66,7 +66,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 | P1 | 整数默认类型与长度/下标 UInt64 的摩擦 | §5.4 |
 | P1 | 字符串字面量模式、match 守卫 | §5.5 |
 | P2 | `Result?` 的自动错误转换（推迟至泛型 trait 设计） | §4.1 |
-| P2 | 关键词：`when`/`alias`、`branch`、`var`/`mut` 双拼写、`Unit` 写作 `{}` | §5 |
+| P2 | 关键词：`when`、`branch`、`var`/`mut` 双拼写、`Unit` 写作 `{}` | §5 |
 | P2 | 命名一致性：构造器、缩写、访问器族、`release` | §10 |
 
 ## 4. 类型系统与错误处理
@@ -129,16 +129,17 @@ Copy／拥有型 struct 已支持 `Options { field: value, ..base }`，可直接
 
 ## 5. 关键词与语法手感
 
-### 5.1 `when` 与 `alias`
+### 5.1 `when` 与 `aliased`【分支关键字已调整】
 
-`when "say" (mut account, room?: Room = host.rooms[account.room]) { ... } else { ... } alias { ... }`
+`when "say" (mut account, room?: Room = host.rooms[account.room]) { ... } else { ... } aliased { ... }`
 是 Joky 最有特色的构造，但关键词选择不利于理解：
 
 - `when` 在 Kotlin/Elixir/Ruby 中是模式匹配或条件分支，读者会以为"当 account 满足……时"。
   它实际表达的是**具名原子操作 / 事务**。建议候选：`atomic "say" (...)` 或 `transact "say" (...)`，
   更直接地传达"要么全部提交，要么都不提交"。
-- `else` 分支在可选路径缺失时执行，含义尚可推断；`alias` 分支（两个路径解析到同一实例）
-  读不出意思。建议改为 `same { ... }` 或 `aliased { ... }`，并在诊断中说明触发条件。
+- `else` 分支在最后一个可选路径缺失时执行；写别名分支已由 `alias` 改为 `aliased`，
+  与 `DomainAccessError.Aliased` 对齐。仅处理最后一个绑定与前面绑定之间涉及写入的别名；
+  只读别名仍正常执行。旧 `alias { ... }` 会报告迁移诊断。
 - 返回值 `Outcome<T, Rejection>` 加 `is_committed()` 的组合是对的；建议 `Outcome` 提供
   `committed_or(default)`，减少 `vacated()` 这类只为折叠 Outcome 的函数。
 
@@ -454,7 +455,7 @@ fn main() @suspends -> Int32 {
 4. **语言特性**：调试协议及派生、Default 派生、字符串字面量模式与守卫、
    `ToSql` 隐式装箱、非 pub 函数 `@suspends` 推导。
    每项按 AGENTS.md 的跨模块语义改动要求单独设计与验证。
-5. **关键词与命名迁移**（`when`→`atomic`、`alias`→`same`、`branch`→`spawn`、`var`/`mut` 统一、
+5. **关键词与命名迁移**（`when`→`atomic`、`branch`→`spawn`、`var`/`mut` 统一、
    构造与缩写命名）：集中一次完成并提供迁移诊断，趁项目尚未公开时做。
 
 每项落地时同步更新 language.md 与相关示例，示例应作为"目标写法"的验收标准：

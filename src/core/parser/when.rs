@@ -117,7 +117,16 @@ impl Parser<'_> {
         } else {
             None
         };
-        let alias = if matches!(self.peek(), TokenKind::Ident(name) if name == "alias") {
+        let branch_follows = self
+            .tokens
+            .get(self.pos + 1)
+            .is_some_and(|token| token.kind == TokenKind::LBrace);
+        if branch_follows && matches!(self.peek(), TokenKind::Ident(name) if name == "alias") {
+            return Err(self.error("Use aliased instead of alias for a when branch".into()));
+        }
+        let alias = if branch_follows
+            && matches!(self.peek(), TokenKind::Ident(name) if name == "aliased")
+        {
             self.advance();
             Some(self.parse_block()?)
         } else {
@@ -137,7 +146,7 @@ impl Parser<'_> {
             return Err(self.error("when branches require a preceding domain binding".into()));
         }
         if alias.is_some() && paths.iter().all(Option::is_none) {
-            return Err(self.error("when alias branch requires an access path".into()));
+            return Err(self.error("when aliased branch requires an access path".into()));
         }
         Ok(Expr::When(Box::new(When {
             method: None,

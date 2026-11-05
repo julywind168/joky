@@ -23,7 +23,7 @@ fn lifecycle() @suspends ->Int32 {
     mem.replace(&mut account.room,name.clone());
     next.n+=1
     next.n
- } alias {next.n}
+ } aliased {next.n}
  assert(result.unwrap()==2)
  let name="房间🙂"
  let result=when(mut next:Room=rooms.get_or_stage(name,make_room(name.clone()))) { next.n+=1; next.n }

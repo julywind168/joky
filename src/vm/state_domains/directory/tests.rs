@@ -252,7 +252,7 @@ fn read(s:&S)->Int32 {s.n}
 fn operation(first:domain.WriteHandle<S>,routes:domain.DirectoryHandle) @suspends ->Int32 {
     when "update" (mut first,mut second?:S=routes[first.key]) {
         first.n+=second.n; first.n
-    } else {first.n+=10; first.n} alias {first.n+=100; first.n}.unwrap()
+    } else {first.n+=10; first.n} aliased {first.n+=100; first.n}.unwrap()
 }"#;
     const ENTRY: &str = "$when/named/4:main/9:operation/6:757064617465";
     for mode in [VmMode::Jit, VmMode::Interpreter] {

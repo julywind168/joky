@@ -224,7 +224,7 @@
           "name": "keyword.control.joky"
         },
         {
-          "match": "(?<![.\\p{L}\\p{N}_])\\b(?:join|isolate|alias)\\b(?=\\s*\\{)",
+          "match": "(?<![.\\p{L}\\p{N}_])\\b(?:join|isolate|aliased)\\b(?=\\s*\\{)",
           "name": "keyword.control.joky"
         },
         {

@@ -105,7 +105,7 @@ fn join(host: Host, account: domain.WriteHandle<Account>, name: String) @suspend
         account.check_live()?
         enter(account, next, name)?
         Ok(None)
-    } alias {
+    } aliased {
         let member = check_member(account, next)?
         member.send("error already joined\n")
         Ok(None)
