@@ -86,6 +86,8 @@ fn run_groups(groups: Vec<crate::string_collection_model::Group>) {
 #[test]
 fn string_collections_rejects_copy_get_moves_conflicting_views_and_suspension() {
     for source in [
+        "fn f() { var a = [\"中\"]; let found = a.find(|value| { !value.is_empty() }); a.clear(); found!.byte_length(); }",
+        "fn f() -> Option<&String> { let a = [\"中\"]; a.first() }",
         "import joky/array.{type Array} fn f() { let a = Array.new::<String>(); a.get(0); }",
         "import joky/array.{type Array} fn f() { let a = Array.new::<StringBuilder>(); a.get(0); }",
         "import joky/map.{type Map} fn f() { let a = Map.new::<Int32, String>(); a.get(0); }",

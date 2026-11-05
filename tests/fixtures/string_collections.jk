@@ -85,6 +85,31 @@ fn arrays<T>() -> String {
     parts.release()
     result
 }
+fn query_match(value: &String) @noescape -> Bool {
+    assert(value != "trap", "query must short-circuit")
+    value == "hit"
+}
+fn array_queries<T>() -> Int32 {
+    let empty = Array.new::<String>()
+    if empty.any(query_match) || !empty.all(query_match) { return 1 }
+    if empty.find(query_match).is_some() || empty.position(query_match).is_some() { return 2 }
+    if empty.first().is_some() || empty.last().is_some() { return 3 }
+    let values = ["skip", "hit", "hit", "trap"]
+    if !values.any(query_match) || values.all(|value| { !query_match(value) }) { return 4 }
+    if values.position(query_match).unwrap_or(99) != 1 || values.find(query_match)! != "hit" { return 5 }
+    if values.first()! != "skip" || values.last()! != "trap" { return 6 }
+    if array.any(&values, |value| { value.is_empty() }) || !array.all(&values, |value| { !value.is_empty() }) { return 7 }
+    if array.find(&values, |value| { value.is_empty() }).is_some() || array.position(&values, |value| { value.is_empty() }).is_some() { return 8 }
+    let needle = "hit"
+    let found = values.find(|value| { value == &needle })
+    let module_found = array.find(&values, |value| { value == &needle })
+    if found! != "hit" || module_found! != "hit" { return 9 }
+    needle.release()
+    let single = [42]
+    if *array.first(&single)! != 42 || *array.last(&single)! != 42 { return 10 }
+    if single.position(|value| { *value == 42 }).unwrap_or(99) != 0 { return 11 }
+    42
+}
 fn array_records<T>() -> Int32 {
     var values = Array.new::<Pair>()
     values.push(pair(10)); values.push(pair(11)); values.push(pair(12))

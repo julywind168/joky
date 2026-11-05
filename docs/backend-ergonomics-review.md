@@ -220,16 +220,22 @@ chat 的 `parse()` 已改用 split_once 和 contains，保留原命令的空格�
 
 ### 6.2 集合与迭代【P1】
 
-`iter` 模块只有 take/zip/map/filter。chat 的 `Room.has_member` 和 `remove_member`
-（[script/main.jk:192](../examples/chat/script/main.jk)）都是手写循环。建议：
+Array 已补齐 `any`、`all`、`find`、`position`、`first` / `last`，同时提供方法与模块函数。
+谓词同步借用元素，按顺序短路；find/first/last 返回 Option<&T>，支持 String 等拥有值。
+chat 的 Room.has_member 已使用 any，remove_member 使用 position 加 swap_remove，保留原删除语义。
+find 的返回引用目前受泛型来源分析的保守约束，借用捕获值需保留到结果最后使用；
+更精确地排除谓词捕获来源需要后续单独修正编译器推导。
 
-- Array 方法：`any`、`all`、`find`、`position`、`retain`、`dedup`、`first`/`last`、`extend_from(&slice)`、`join`（对 String 元素）。
-- 迭代器：`enumerate`（for 已有 `index, item` 语法，组合器链中仍需要）、`fold`、`sum`、`count`、
-  `collect::<Array<_>>()`、`skip`、`chain`、`flat_map`。
-- 访问器族收敛：Array/Map/List 同时存在 `get`（Copy）、`get_ref`（Option<&T>）、
-  `borrow`（&Element）、`borrow_ref`（&T，未命中失败）、`borrow_mut`、`borrow_mut_ref`。
-  六个名字对用户来说只有两件事："可能没有"和"一定有"。建议文档推荐面只保留
-  `get`（Option<&T> 或 Copy 值）、`get_mut` 与下标 `xs[i]`（未命中失败），其余降为内部或兼容入口。
+后续分批推进：
+
+- Array：`retain`、`dedup`、`extend_from(&slice)`，先明确元素移动、销毁与复制约定。
+  `Array<String>.join` 可复用已有 string.join。
+- 迭代器：已有拥有型 Iterator、共享 SharedIterator 与独占游标组合入口；
+  先补 `count`、`fold`、`enumerate`、`skip`、`chain`，再考虑 sum、collect、flat_map。
+  新操作需明确适用的迭代入口；for 的 `index, item` 已提供直接遍历编号。
+- 访问器：get 的 Copy 取值与 get_ref 的共享借用语义先保留，文档优先推荐下标及显式借用。
+  访问器还区分复制值、共享借用、独占借用，不能仅按“可能没有 / 一定有”合并。
+  `Option<&mut T>` 当前尚不支持，get_mut 与 Element 访问器收敛另行设计。
 
 ### 6.3 Option / Result【P1】
 

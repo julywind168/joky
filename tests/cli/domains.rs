@@ -137,6 +137,7 @@ fn state_domains_snapshot_checks_proofs_and_generic_request_values() {
     for (case, diagnostic) in [
         ("fn bad(s: &State) -> Int32 { let f = identity; f(s.count) } fn main() @suspends { let o = domain.create(make, 1); domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
         ("fn helper(n: Int32) { io.println(&n) } fn bad(s: &State) -> Int32 { helper(s.count); s.count } fn main() @suspends { let o = domain.create(make, 1); domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
+        ("fn bad(s: &State) -> Int32 { let values = [s.count]; values.any(|value| { io.println(value); true }); s.count } fn main() @suspends { let o = domain.create(make, 1); domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
         ("fn main() @suspends { let o = domain.create(make, 1); relay(o.handle(), (1, Ptr.null())); }", "bounded value"),
     ] {
         work.write("rejected.jk", &format!("{prefix}\n{case}"));

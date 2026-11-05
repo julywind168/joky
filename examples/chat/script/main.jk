@@ -189,16 +189,12 @@ fn depart(account: &mut Account, room: &mut Room, notify_self: Bool) -> Option<S
 impl Room {
     fn add_member(&mut self, member: Member) { self.members.push(member) }
     fn remove_member(&mut self, id: UInt64) {
-        for index, member in &self.members {
-            if member.id == id {
-                self.members.swap_remove(index);
-                return
-            }
+        if let Some(index) = self.members.position(|member| { member.id == id }) {
+            self.members.swap_remove(index);
         }
     }
     fn has_member(&self, id: UInt64) -> Bool {
-        for member in &self.members { if member.id == id { return true } }
-        false
+        self.members.any(|member| { member.id == id })
     }
     fn broadcast(&self, message: &String) {
         let bytes = message.clone().into_bytes()

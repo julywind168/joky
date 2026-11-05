@@ -67,6 +67,12 @@ impl<T> Array<T> {
     pub fn take_last(&mut self) -> T { take_last(self) }
     pub fn borrow_ref(&self, index: UInt64) -> &T { borrow_ref(self, index) }
     pub fn get_ref(&self, index: UInt64) -> Option<&T> { get_ref(self, index) }
+    pub fn first(&self) -> Option<&T> { first(self) }
+    pub fn last(&self) -> Option<&T> { last(self) }
+    pub fn any<F: Fn(&T) @noescape -> Bool>(&self, predicate: F) -> Bool { any(self, predicate) }
+    pub fn all<F: Fn(&T) @noescape -> Bool>(&self, predicate: F) -> Bool { all(self, predicate) }
+    pub fn find<F: Fn(&T) @noescape -> Bool>(&self, predicate: F) -> Option<&T> { find(self, predicate) }
+    pub fn position<F: Fn(&T) @noescape -> Bool>(&self, predicate: F) -> Option<UInt64> { position(self, predicate) }
     pub fn iter_shared(&self) -> SharedIter<T> { iter_shared(self) }
     pub fn borrow_mut_ref(&mut self, index: UInt64) -> &mut T { borrow_mut_ref(self, index) }
     pub fn slice(&self, start: UInt64, end: UInt64) -> &Slice<T> { slice(self, start, end) }
@@ -225,6 +231,28 @@ pub fn contains<T: Eq>(values: &Array<T>, value: &T) -> Bool {
 
 pub fn get_ref<T>(values: &Array<T>, index: UInt64) -> Option<&T> {
     if index < len(values) { Some(borrow_ref(values, index)) } else { None }
+}
+
+pub fn first<T>(values: &Array<T>) -> Option<&T> { get_ref(values, 0) }
+pub fn last<T>(values: &Array<T>) -> Option<&T> {
+    let length = len(values)
+    if length == 0 { None } else { get_ref(values, length - 1) }
+}
+pub fn any<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> Bool {
+    for value in values { if predicate(value) { return true } }
+    false
+}
+pub fn all<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> Bool {
+    for value in values { if !predicate(value) { return false } }
+    true
+}
+pub fn position<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> Option<UInt64> {
+    for index, value in values { if predicate(value) { return Some(index) } }
+    None
+}
+pub fn find<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> Option<&T> {
+    let index = position(values, predicate)?
+    get_ref(values, index)
 }
 
 // A composable shared traversal; the source owner remains outside the state.

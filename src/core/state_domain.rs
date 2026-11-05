@@ -203,7 +203,10 @@ fn safe_bodies(
                         || storage_op(op, body)
                         || matches!(
                             op,
-                            Op::Copy(..)
+                            // Closure markers only track static move/borrow
+                            // responsibility. Actual calls are proved below.
+                            Op::Closure(_)
+                                | Op::Copy(..)
                                 | Op::Reference { .. }
                                 | Op::Reserve { .. }
                                 | Op::Project { .. }

@@ -966,6 +966,11 @@ fn answer() -> Int32 {
 | `capacity(&Array<T>) -> UInt64` | 当前容量 |
 | `is_empty(&Array<T>) -> Bool` | 是否没有元素 |
 | `get(&Array<T>, UInt64) -> Option<T>` | 复制元素，越界返回 None |
+| `first(&Array<T>) -> Option<&T>` / `last(&Array<T>) -> Option<&T>` | 借用首项 / 末项；空数组为 None，无需 Copy |
+| `any(&Array<T>, predicate) -> Bool` | 按顺序查询，首次 true 即返回 true；空数组为 false |
+| `all(&Array<T>, predicate) -> Bool` | 按顺序查询，首次 false 即返回 false；空数组为 true |
+| `find(&Array<T>, predicate) -> Option<&T>` | 借用第一个满足谓词的元素；未命中为 None |
+| `position(&Array<T>, predicate) -> Option<UInt64>` | 第一个满足谓词的元素下标；未命中为 None |
 | `set(&mut Array<T>, UInt64, T) -> Bool` | 替换已有元素，越界返回 false 且不修改数组 |
 | `push(&mut Array<T>, T)` | 必要时扩容，追加元素 |
 | `array.extend_bytes(&mut Array<UInt8>, &Slice<UInt8>, start: UInt64, end: UInt64)` | 批量追加半开区间 [start, end) 的字节，必要时扩容；只提供模块函数 |
@@ -983,6 +988,12 @@ fn answer() -> Int32 {
 | `swap(&mut Array<T>, UInt64, UInt64) -> Bool` | 交换两个有效位置，长度/容量不变；任一索引越界返回 false，不修改数组 |
 | `sort(&mut Array<T>)` | T 实现 Ord 时，按自然顺序稳定升序排列 |
 | `sort_by(&mut Array<T>, compare)` | 按同步比较器的顺序稳定排列，比较器借用两个元素 |
+
+`any`、`all`、`find`、`position` 接受 `Fn(&T) @noescape -> Bool`，支持函数和只读捕获闭包，
+同步借用元素，不消费或复制元素，不要求 T: Copy。四者按原顺序短路，不再调用后续元素的谓词。
+`first`、`last`、`find` 的返回引用依赖原数组；引用最后使用前不能释放或冲突修改数组。
+当前泛型引用来源分析会保守关联 find 的谓词捕获值；借用捕获值需保留到返回引用的最后使用。
+若需要先释放查询值，可先用 position 得到下标，再调用 get_ref 借用结果。
 
 两种排序都修改原数组并返回 Unit，保留长度和容量。比较结果为负数、零、正数分别表示左项在前、
 两项等价、右项在前；等价项保留输入次序。比较器应给出一致的顺序。
