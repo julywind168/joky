@@ -256,9 +256,13 @@ SharedPipeline 提供同名终结方法；支持拥有型累积值，按顺序�
 
 ### 6.4 配置与进程
 
-- `process.env(name)` 返回 `Result<Option<String>, IoError>`，读取一个可选端口要 12 行
-  （[chat/host/config.jk](../examples/chat/host/config.jk)）。建议补
-  `process.env_or(name, default)` 与 `process.env_parse::<T>(name) -> Result<Option<T>, ConfigError>`。
+- `process.env(name)` 返回 `Result<Option<String>, IoError>`；已补
+  `process.env_or(name, default) -> Result<String, IoError>`，适合
+  [stdin_lines.jk](../examples/stdin_lines.jk) 和 [testing_inputs.jk](../examples/testing_inputs.jk)
+  这类缺失时直接采用默认值的场景。读取一个可选端口仍需解析和自定义错误消息，见
+  [chat/host/config.jk](../examples/chat/host/config.jk)。
+- `process.env_parse::<T>(name) -> Result<Option<T>, ConfigError>` 暂缓，等待统一的文本解析协议和
+  配置错误类型；当前整数、浮点、Uuid 的解析错误类型不同。
 - 参数名类型 `String` 迫使调用方 `name.clone()`；只读输入应接受 `&String`。
 - 错误消息访问方式不一致：`IoError.message` 是字段，`vm.LoadError.message()` 是方法。统一为 Show + 必要时的方法。
 

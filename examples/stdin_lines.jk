@@ -3,8 +3,8 @@ import joky/process
 
 // A line filter with a configurable prefix; also accepts an unterminated final line.
 fn main() @suspends -> Int32 {
-    let prefix = match process.env("JOKY_LINE_PREFIX") {
-        Ok(value) => value.unwrap_or("> ")
+    let prefix = match process.env_or("JOKY_LINE_PREFIX", "> ") {
+        Ok(value) => value
         Err(error) => { eprintln(error.message); return 1 }
     }
     var input = io.stdin()!

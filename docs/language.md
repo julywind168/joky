@@ -2591,6 +2591,7 @@ Joky 自身选项放在分隔符之前；项目自动发现时若要传参，显
 | --- | --- |
 | `process.args()` | `Result<Array<String>, IoError>`；按原顺序返回应用参数，不包含程序名或 Joky 自身参数 |
 | `process.env(name: String)` | `Result<Option<String>, IoError>`；未设置为 `None`，空值为 `Some("")` |
+| `process.env_or(name: String, fallback: String)` | `Result<String, IoError>`；仅未设置时返回 fallback，保留空值，读取错误原样返回；fallback 总会先求值 |
 | `process.current_dir()` | `Result<String, IoError>`；程序启动时调用者的绝对工作目录 |
 | `process.resolve_path(path: String)` | `Result<String, IoError>`；相对路径按启动目录拼接，绝对路径保持不变，不检查文件是否存在 |
 

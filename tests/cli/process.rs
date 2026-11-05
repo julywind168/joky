@@ -34,6 +34,10 @@ fn process_inputs_preserve_arguments_environment_and_caller_paths() {
             println(process.env("JOKY_TEST_ENTRY")!)
             println(process.env("JOKY_TEST_EMPTY")!)
             println(process.env("JOKY_TEST_MISSING")!)
+            println(process.env_or("JOKY_TEST_ENTRY", "fallback")!)
+            println(process.env_or("JOKY_TEST_MISSING", "fallback")!)
+            assert(process.env_or("JOKY_TEST_EMPTY", "fallback")! == "", "empty is present")
+            assert(process.env_or("bad=name", "fallback").err()!.kind == fs.ErrorKind.InvalidInput, "errors are preserved")
             let path = process.resolve_path("input.txt")!
             var file = fs.open(path, fs.OpenOptions.default())!
             println(file.read_text()!)
@@ -66,7 +70,7 @@ fn process_inputs_preserve_arguments_environment_and_caller_paths() {
         assert_eq!(output.status.code(), Some(7), "{backend}: {output:?}");
         assert_eq!(
             output.stdout,
-            "\ntwo words\n中文\n--task-workers\n3\nSome(value)\nSome()\nNone\ncaller data\n"
+            "\ntwo words\n中文\n--task-workers\n3\nSome(value)\nSome()\nNone\nvalue\nfallback\ncaller data\n"
                 .as_bytes()
         );
         assert!(output.stderr.is_empty(), "{output:?}");

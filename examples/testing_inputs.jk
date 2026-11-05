@@ -7,7 +7,7 @@ import joky/fs
 fn application() @suspends -> Int32 {
     var args = process.args()!
     if args.len() != 1 { return 2 }
-    if process.env("APP_MODE")!.unwrap_or("") != "test" { return 3 }
+    if process.env_or("APP_MODE", "")! != "test" { return 3 }
 
     var config = fs.open("prefix.txt", fs.OpenOptions.default())!
     let prefix = config.read_text()!

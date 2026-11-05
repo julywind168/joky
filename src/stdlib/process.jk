@@ -50,5 +50,12 @@ pub fn env(name: String) @suspends -> Result<Option<String>, IoError> {
         Err(error) => if error.kind == ErrorKind.NotFound { Ok(None) } else { Err(error) }
     }
 }
+pub fn env_or(name: String, fallback: String) @suspends -> Result<String, IoError> {
+    match env(name) {
+        Ok(Some(value)) => Ok(value)
+        Ok(None) => Ok(fallback)
+        Err(error) => Err(error)
+    }
+}
 pub fn current_dir() @suspends -> Result<String, IoError> { text(3, 0, "") }
 pub fn resolve_path(path: String) @suspends -> Result<String, IoError> { text(4, 0, path) }
