@@ -19,11 +19,12 @@ fn reply(status: http.Status, text: String) -> http.Response {
 impl Service for Orders {
     fn share(&self) @suspends -> Self { Orders { pool: self.pool.share() } }
     fn route(&self, request: &http.Request) -> Option<String> {
-        if request.method == "POST" && request.target == "/orders" { Some("/orders") } else { None }
+        if request.method == "POST" && request.path() == "/orders" { Some("/orders") } else { None }
     }
     fn handle(&self, request: http.Request) @suspends -> http.Response {
+        let path = request.path()
         let http.Request { context, method, target, headers, body } = request
-        if method != "POST" || target != "/orders" { return reply(http.Status.NotFound, r#"{"error":"not found"}"#) }
+        if method != "POST" || path != "/orders" { return reply(http.Status.NotFound, r#"{"error":"not found"}"#) }
         var key = ""
         for field in &headers {
             if field.name == "idempotency-key" {

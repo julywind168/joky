@@ -110,6 +110,13 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
     },
     SourceDefinition {
         kind: SourceKind::BufferLibrary,
+        path: "joky/url",
+        source: include_str!("../../stdlib/url.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::BufferLibrary,
         path: "joky/hex",
         source: include_str!("../../stdlib/hex.jk"),
         reexport_imports: false,

@@ -25,6 +25,70 @@ fn http_reply(port: u16, fragments: &[&[u8]]) -> String {
 }
 
 #[test]
+fn url_components_and_query_pairs_preserve_boundaries() {
+    let work = Workspace::new();
+    work.write("url.jk", r#"
+import joky/url
+import joky/http
+import joky/log
+import joky/uuid
+fn pairs(var actual: Array<(String, String)>, var expected: Array<(String, String)>) {
+    assert(actual.len() == expected.len(), "pair count")
+    while !expected.is_empty() {
+        let (key, value) = actual.take_last()
+        let (expected_key, expected_value) = expected.take_last()
+        assert(key == expected_key && value == expected_value, "pair order and content")
+    }
+}
+fn request(target: String) -> http.Request {
+    http.Request {
+        context: http.RequestContext { request_id: uuid.Uuid.parse("00112233-4455-6677-8899-aabbccddeeff")!, logger: log.Logger.new(log.Level.Info) },
+        method: "GET", target, headers: [], body: []
+    }
+}
+fn components() {
+    assert(url.encode_component("AZaz09-._~") == "AZaz09-._~", "unreserved ASCII")
+    assert(url.encode_component(" /?&=+#%") == "%20%2F%3F%26%3D%2B%23%25", "reserved bytes")
+    assert(url.encode_component("中🙂") == "%E4%B8%AD%F0%9F%99%82", "UTF-8 encoding")
+    assert(url.decode_component("%e4%b8%ad%2f+")! == "中/+", "hex case and literal plus")
+    assert(url.decode_component("%252F")! == "%2F", "decode once")
+    for text in ["", "a b+c", "中文🙂", "\0", "x&y=z?/#", "%'()*!"] {
+        assert(url.decode_component(url.encode_component(&text))! == text, "round trip")
+    }
+    for text in ["%", "%1", "%GG", "%0g"] {
+        assert(match url.decode_component(&text) { Err(InvalidEscape(offset)) => offset == 0, _ => false }, "invalid escape")
+    }
+    for text in ["%FF", "%C0%AF", "%E4%B8", "%ED%A0%80"] {
+        assert(match url.decode_component(&text) { Err(Utf8(_)) => true, _ => false }, "strict UTF-8")
+    }
+}
+fn queries() {
+    pairs(url.parse_query("q=a%26b&tag=x&tag=y&x%3Dy=a=b&plus=a+b%2Bc")!,
+        [("q", "a&b"), ("tag", "x"), ("tag", "y"), ("x=y", "a=b"), ("plus", "a b+c")])
+    pairs(url.parse_query("&&bare&empty=&=value&=&")!, [("bare", ""), ("empty", ""), ("", "value"), ("", "")])
+    pairs(url.parse_query("%E4%B8%AD=🙂&a+b=%2526&%2B=+")!, [("中", "🙂"), ("a b", "%26"), ("+", " ")])
+    assert(url.parse_query("")!.is_empty() && url.parse_query("&&")!.is_empty(), "empty query")
+    for text in ["ok=1&bad=%", "ok=1&%=bad", "x=%&y=41", "x=%FF"] {
+        assert(url.parse_query(&text).is_err(), "reject entire query")
+    }
+    assert(match url.parse_query("ok=1&bad=%") { Err(InvalidEscape(offset)) => offset == 9, _ => false }, "query source offset")
+}
+fn requests() {
+    let value = request("/a%2Fb?q=a%26b&tag=x&tag=y")
+    assert(value.path() == "/a%2Fb", "raw encoded path")
+    pairs(value.query_pairs()!, [("q", "a&b"), ("tag", "x"), ("tag", "y")])
+    assert(value.target == "/a%2Fb?q=a%26b&tag=x&tag=y", "queries borrow request")
+    assert(request("/plain").query_pairs()!.is_empty() && request("/plain?").query_pairs()!.is_empty(), "absent and empty query")
+    assert(request("/plain").path() == "/plain" && request("/plain?").path() == "/plain", "plain paths")
+    assert(request("/bad?x=%FF").query_pairs().is_err(), "request decode error")
+    pairs(request("/path?x=a?b").query_pairs()!, [("x", "a?b")])
+}
+fn main() { components(); queries(); requests() }
+"#);
+    work.assert_all_backends("url.jk", &[], b"", 0);
+}
+
+#[test]
 fn http_server_serves_json_and_validates_framing() {
     let work = Workspace::new();
     work.write(
@@ -50,7 +114,10 @@ fn http_server_serves_json_and_validates_framing() {
             .unwrap()
             .parse()
             .unwrap();
-        let health = http_reply(port, &[b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n"]);
+        let health = http_reply(
+            port,
+            &[b"GET /health?probe=1 HTTP/1.1\r\nHost: localhost\r\n\r\n"],
+        );
         let id = super::tcp_server::response_id(health.split_once("\r\n\r\n").unwrap().0);
         assert_eq!(health.replacen(&format!("X-Request-Id: {id}\r\n"), "", 1), "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}");
         assert!(http_reply(

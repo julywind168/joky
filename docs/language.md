@@ -7043,6 +7043,26 @@ Duration 显式选择单位，例如 `log.field("duration_ms", duration.as_milli
 同一条记录内的字段名须唯一，且不能使用上述三个保留名。`try_emit(level, event, fields) -> Result<Unit, LogError>` 区分字段校验、Encoding 和 WriteFailed。断管返回 WriteFailed，调用方可以继续执行；底层写入中途失败时可能已经写出部分字节。`emit` 保留 Bool 接口，失败返回 false。
 应用自行选择业务字段，应避免写入凭据、原始请求或幂等键。
 
+## URL 组件与查询串 joky/url
+
+`import joky/url` 提供 UTF-8 组件编解码及表单风格的查询串解析，不解析完整 URL 或规范化路径。
+
+| API | 语义 |
+| --- | --- |
+| `url.encode_component(text: &String) -> String` | 仅保留 ASCII 字母、数字和 `-._~`，其他 UTF-8 字节编码为大写 `%HH`；空格为 `%20`，加号为 `%2B` |
+| `url.decode_component(text: &String) -> Result<String, url.DecodeError>` | 解码一层 `%HH`，接受大小写十六进制；`+` 保持加号，严格验证解码后的 UTF-8 |
+| `url.parse_query(query: &String) -> Result<Array<(String, String)>, url.DecodeError>` | 输入不含开头的 `?`；返回拥有型键值对，保留顺序、重复键及空键/空值 |
+
+查询解析先按原始 `&` 分段，再以每段第一个 `=` 分隔键和值，然后分别解码；
+因此 `%26` 和 `%3D` 不会变成分隔符。查询中的原始 `+` 转为空格，`%2B` 转为加号。
+忽略空段，裸键等同空值；空串和 `&&` 均返回空数组。
+例如 `q=a%26b&tag=x&tag=y` 得到 `[("q", "a&b"), ("tag", "x"), ("tag", "y")]`。
+
+`DecodeError.InvalidEscape(offset)` 指向非法或不完整转义的 `%`，偏移是输入组件或完整查询串的字节位置。
+`DecodeError.Utf8(error)` 保留 `string.Utf8Error`，其中偏移相对于解码后的单个组件。
+错误支持 Show；任一键或值解码失败时整个查询返回 Err，不返回部分结果。
+调用不消费输入，成功返回的字符串和数组拥有独立存储。NUL 可表示为 `%00`，由具体使用场景决定是否接受。
+
 ## HTTP 服务端 joky/http
 
 `http.serve(listener, &stop, options, handler) @suspends -> Result<Unit, ServeError>` 消费已绑定的 TCP 监听器。
@@ -7052,6 +7072,12 @@ Duration 显式选择单位，例如 `log.field("duration_ms", duration.as_milli
 同一次响应的 `X-Request-Id` 标头返回这个 ID。客户端传来的同名标头不参与生成，重试会获得新 ID。
 `request.context` 的类型为 `http.RequestContext`，可显式传递并跨挂起使用。它的 `emit(level, event, fields)`
 会补上 `request_id` 后使用 Options.logger 的最低等级，默认 Debug。context.try_emit 区分 Written、Filtered 和错误，context.emit 在过滤时返回 true。`context.debug/info/warn/error` 同样补上 request_id 并遵循等级过滤，返回 Unit。这个字段占用 32 个字段中的一个名额，重复传入时拒绝整条事件。
+
+`request.path() -> String` 返回第一个 `?` 之前的路径副本；无查询串时返回整个 target 的副本。
+保留百分号编码、重复斜线和点段，不做解码或规范化，`%2F` 不会成为路径分隔符。
+`request.query_pairs() -> Result<Array<(String, String)>, url.DecodeError>` 解析第一个 `?` 后的完整查询串，
+规则同 `url.parse_query`；没有查询串或查询串为空时返回空数组。两者共享借用 Request，保留原始 target。
+
 Response 提供 status、content_type、headers 和 body 字段。没有附加响应头时传 `headers: []`。
 可用 Status.Created、Status.NoContent 等预设状态，也可用 Status.from_code(code) 校验 200–599 的最终状态码。
 handler 可以提供 Location 等响应头。定界字段、Content-Type 和 X-Request-Id 由服务端生成。

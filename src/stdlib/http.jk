@@ -1,6 +1,7 @@
 // One HTTP/1.1 exchange per connection. Parse octets before decoding text.
 import joky/show.{type Show}
 import joky/log
+import joky/url
 import joky/uuid
 import joky/admission
 import joky/array.{type Array}
@@ -35,6 +36,18 @@ pub struct Request {
     pub target: String,
     pub headers: Array<Header>,
     pub body: Array<UInt8>
+}
+impl Request {
+    pub fn path(&self) -> String {
+        let end = self.target.find("?").unwrap_or(self.target.byte_length())
+        self.target.substring(0, end)!
+    }
+    pub fn query_pairs(&self) -> Result<Array<(String, String)>, url.DecodeError> {
+        match self.target.find("?") {
+            Some(offset) => url.parse_query(self.target.substring(offset + 1, self.target.byte_length())!)
+            None => Ok(Array.new::<(String, String)>())
+        }
+    }
 }
 pub struct FinalCode { value: UInt16 }
 pub enum Status { Success, Created, NoContent, BadRequest, NotFound, ContentTooLarge, InternalError, Conflict, ServiceUnavailable, Other(FinalCode) }

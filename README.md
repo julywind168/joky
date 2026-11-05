@@ -49,6 +49,7 @@ fn main() {
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。
 - `joky/random` 提供操作系统安全随机字节，以及显式设种子的非密码学 `Rng`、无偏整数范围采样和原地洗牌；
   同一种子与调用顺序在三个后端上可复现。示例：[random.jk](examples/random.jk)。
+- `joky/url` 提供 UTF-8 组件百分号编解码和保留重复键的查询串解析；HTTP Request 可分别读取路径与查询键值对；
 - `joky/hex` 与 `joky/base64` 提供字节与文本编解码，包含 URL-safe/无填充配置、严格校验和错误字节偏移；
   可直接将安全随机字节编码为 token。示例：[codecs.jk](examples/codecs.jk)。
 - `joky/uuid` 提供系统安全随机源生成的 UUID v4 / v7、严格标准文本解析、16 字节转换和 Map 键支持。

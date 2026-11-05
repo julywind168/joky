@@ -281,7 +281,7 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 
 | 模块 | 用途 | 备注 |
 | --- | --- | --- |
-| URL / 查询串 / 百分号编码 | 解析 `request.target` 中的路径与查询 | HTTP 路由的前提 |
+| URL / 查询串 / 百分号编码 | 已补 `joky/url` 组件编解码、查询键值对及 `Request.path/query_pairs` | 保留重复键；路径不自动解码，完整 URL 解析后置 |
 | 时间格式化 | Timestamp 已有 RFC 3339 子集解析与文本输出，缺日期组件（年月日）、日期运算与自定义格式 | 订单、审计常用 |
 | 环境配置 | 见 §6.4 | |
 | 十进制数 | 金额（chat 用分 + UInt64 回避了这个问题） | 可先与 PG numeric 一起做 |
@@ -295,7 +295,7 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 | --- | --- | --- |
 | 没有路由 | handler 内手写 `if method == "POST" && target == "/orders"`，`route()` 再写一遍同样的判断 | `http.Router`：`router.post("/orders/:id", handler)`，自动提供 route 标签、405/404 |
 | 方法是字符串 | `Request.method: String`，客户端却用 `Method` 枚举 | 服务端也用 `http.Method`，与客户端统一 |
-| target 含查询串 | 需要用户自己拆 `?` | `request.path()`、`request.query("page") -> Option<String>` |
+| target 含查询串 | 已补 `request.path()` 和 `request.query_pairs()`，HTTP 示例已迁移 | 查询保留重复键和错误，由调用者选择取值策略 |
 | 标头查找 | `for field in &headers { if field.name == "idempotency-key" ... }`（示例第 28 行） | `request.header("idempotency-key") -> Option<&String>`，`header_all` 处理重复 |
 | 响应构造冗长 | 每次写 `http.Response { headers: [], status, content_type, body: text.into_bytes() }`，示例各自封装 `reply()` | `http.json(status, &value)`（ToJson）、`http.text(status, s)`、`http.empty(status)`；`Response.with_header(name, value)` |
 | JSON 错误体手写 | `r#"{"error":"not found"}"#` 遍布示例 | 配合 `http.json` 与 `#derive(ToJson)` 错误结构体 |

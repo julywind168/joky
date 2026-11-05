@@ -4,11 +4,12 @@ import joky/shutdown
 import joky/tcp
 
 pub fn handle(request: http.Request) @suspends -> http.Response {
+    let path = request.path()
     let http.Request { context, method, target, headers, body } = request
-    if (method == "GET" || method == "HEAD") && target == "/health" {
+    if (method == "GET" || method == "HEAD") && path == "/health" {
         return http.Response { headers: [], status: http.Status.Success, content_type: http.ContentType.Json, body: "{{\"ok\":true}}".into_bytes() }
     }
-    if method == "POST" && target == "/echo" {
+    if method == "POST" && path == "/echo" {
         if let Ok(value) = json.decode_bytes(body) {
             return http.Response { headers: [], status: http.Status.Success, content_type: http.ContentType.Json, body: json.encode(&value)!.into_bytes() }
         }
