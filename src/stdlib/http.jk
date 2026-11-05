@@ -33,7 +33,7 @@ impl RequestContext {
 }
 pub struct Request {
     pub context: RequestContext,
-    pub method: String,
+    pub method: Method,
     pub target: String,
     pub headers: Array<Header>,
     pub body: Array<UInt8>
@@ -223,7 +223,8 @@ fn valid_media_type(value: &String) -> Bool {
     }
     true
 }
-pub enum Method { Get, Head, Post, Put, Patch, Delete }
+#derive(Eq)
+pub enum Method { Get, Head, Post, Put, Patch, Delete, Options }
 impl Show for Method {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         output.push_str(method_name(*self))
@@ -231,11 +232,19 @@ impl Show for Method {
 }
 
 fn method_name(method: Method) -> String {
-    match method { Get => "GET", Head => "HEAD", Post => "POST", Put => "PUT", Patch => "PATCH", Delete => "DELETE" }
+    match method { Get => "GET", Head => "HEAD", Post => "POST", Put => "PUT", Patch => "PATCH", Delete => "DELETE", Method.Options => "OPTIONS" }
 }
-fn supported_method(value: &String) -> Bool {
-    value == method_name(Get) || value == method_name(Head) || value == method_name(Post) ||
-        value == method_name(Put) || value == method_name(Patch) || value == method_name(Delete)
+fn parse_method(value: &String) -> Option<Method> {
+    match value {
+        "GET" => Some(Method.Get)
+        "HEAD" => Some(Method.Head)
+        "POST" => Some(Method.Post)
+        "PUT" => Some(Method.Put)
+        "PATCH" => Some(Method.Patch)
+        "DELETE" => Some(Method.Delete)
+        "OPTIONS" => Some(Method.Options)
+        _ => None
+    }
 }
 enum Wire { Plain(BufferedTcp), Secure(tls.TlsStream) }
 impl Wire {
@@ -271,7 +280,7 @@ fn line(stream: &mut Wire, remaining: &mut UInt64) @suspends -> Result<Array<UIn
     bytes.truncate(n - 2)
     result.Ok(bytes)
 }
-fn request_line(bytes: Array<UInt8>) -> Result<(String, String), ReadFailure> {
+fn request_line(bytes: Array<UInt8>) -> Result<(Method, String), ReadFailure> {
     for b in &bytes { if *b < 32 || *b > 126 { return Err(ReadFailure.Bad) } }
     let text = String.from_utf8(bytes)!
     let first = match text.find(" ") { Some(i) => i, None => return Err(ReadFailure.Bad) }
@@ -283,7 +292,7 @@ fn request_line(bytes: Array<UInt8>) -> Result<(String, String), ReadFailure> {
     if rest.substring(end + 1, rest.byte_length())! != "HTTP/1.1" { return Err(ReadFailure.Bad) }
     let target = rest.substring(0, end)!
     if !target.starts_with("/") || target.find("#").is_some() { return Err(ReadFailure.Bad) }
-    if !supported_method(&method) { return Err(ReadFailure.Unsupported) }
+    let method = parse_method(&method).ok_or(ReadFailure.Unsupported)?
     result.Ok((method, target))
 }
 fn header(var bytes: Array<UInt8>) -> Result<Header, ReadFailure> {
@@ -448,7 +457,8 @@ fn connection<S: Service>(config: Option<tls.ServerConfig>, stream: TcpStream, s
             respond(io, context, started, None, code, label, "text/plain", [], [], false, options.write_timeout)
         }
         result.Ok(request) => {
-            let head = request.method == "HEAD"
+            let method = request.method
+            let head = method == Method.Head
             let route = if context.logger.enabled(log.Level.Info) { service.route(&request) } else { None }
             let Response { status, content_type, headers, body } = service.handle(request)
             let (code, label) = status_line(status)

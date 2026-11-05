@@ -43,7 +43,7 @@ fn pairs(var actual: Array<(String, String)>, var expected: Array<(String, Strin
 fn request(target: String) -> http.Request {
     http.Request {
         context: http.RequestContext { request_id: uuid.Uuid.parse("00112233-4455-6677-8899-aabbccddeeff")!, logger: log.Logger.new(log.Level.Info) },
-        method: "GET", target, headers: [], body: []
+        method: http.Method.Get, target, headers: [], body: []
     }
 }
 fn components() {
@@ -87,6 +87,8 @@ fn requests() {
 struct ErrorBody { error: String }
 fn helpers() {
     var value = request("/")
+    assert(value.method == http.Method.Get && value.method != http.Method.Post, "typed method equality")
+    assert("{value.method}" == "GET" && "{http.Method.Options}" == "OPTIONS", "method wire names")
     value.headers.push(http.Header { name: "X-Item", value: "first" })
     value.headers.push(http.Header { name: "x-item", value: "second" })
     value.headers.push(http.Header { name: "Empty", value: "" })
@@ -155,6 +157,10 @@ fn http_server_serves_json_and_validates_framing() {
             ]
         )
         .ends_with("\r\n\r\n{\"n\":1}"));
+        assert!(
+            http_reply(port, &[b"OPTIONS /unhandled HTTP/1.1\r\nHost: a\r\n\r\n"])
+                .starts_with("HTTP/1.1 404 ")
+        );
         if backend == "jit" {
             for (headers, code) in [
                 (
@@ -190,8 +196,10 @@ fn http_server_serves_json_and_validates_framing() {
                 let request = format!("{method} /unhandled HTTP/1.1\r\nHost: a\r\n\r\n");
                 assert!(http_reply(port, &[request.as_bytes()]).starts_with("HTTP/1.1 404 "));
             }
-            assert!(http_reply(port, &[b"OTHER / HTTP/1.1\r\nHost: a\r\n\r\n"])
-                .starts_with("HTTP/1.1 501 "));
+            for method in ["OTHER", "get", "options"] {
+                let request = format!("{method} / HTTP/1.1\r\nHost: a\r\n\r\n");
+                assert!(http_reply(port, &[request.as_bytes()]).starts_with("HTTP/1.1 501 "));
+            }
             let many = format!(
                 "GET /health HTTP/1.1\r\nHost: a\r\n{}\r\n",
                 "x: y\r\n".repeat(64)
@@ -228,6 +236,10 @@ import joky/shutdown
 import joky/task
 import joky/tcp
 fn handle(request: http.Request) @suspends -> http.Response {
+    let method = request.method
+    if method == http.Method.Options {
+        return http.text(http.Status.Ok, "{method}")
+    }
     if let Some(code) = request.target.strip_prefix("/status/") {
         return http.empty(http.Status.from_code(UInt16.parse(&code)!)!)
     }
@@ -284,6 +296,9 @@ fn main() @suspends -> Int32 {
         (server, port)
     };
     let (mut server, port) = start(false);
+    assert!(
+        http_reply(port, &[b"OPTIONS / HTTP/1.1\r\nHost: a\r\n\r\n"]).ends_with("\r\n\r\nOPTIONS")
+    );
     for (code, reason) in [
         (401, "Unauthorized"),
         (403, "Forbidden"),

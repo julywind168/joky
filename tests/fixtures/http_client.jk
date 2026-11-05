@@ -21,7 +21,7 @@ fn inspect_headers(stream: &mut BufferedTcp, port: UInt16) @suspends -> (String,
 }
 fn inspect(stream: &mut BufferedTcp, i: Int32, port: UInt16) @suspends {
     let first = stream.read_line(256)!!
-    let expected = match i { 0 => "POST", 4 => "POST", 9 => "PUT", 10 => "HEAD", _ => "GET" }
+    let expected = match i { 0 => "POST", 4 => "POST", 9 => "PUT", 10 => "HEAD", 11 => "OPTIONS", _ => "GET" }
     assert(first == "{expected} / HTTP/1.1", "one request per call")
     let (length, media, key) = inspect_headers(stream, port)
     if i == 0 {
@@ -45,12 +45,13 @@ fn payload(i: Int32) -> String {
         6 => "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\n",
         7 => "HTTP/1.1 200 OK\r\n\r\nabcd",
         9 => "HTTP/1.1 204 No Content\r\n\r\n",
+        11 => "HTTP/1.1 204 No Content\r\n\r\n",
         10 => "HTTP/1.1 200 OK\r\nContent-Length: 4294967296\r\n\r\n",
         _ => "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\na"
     }
 }
 fn peer(var listener: TcpListener, port: UInt16) @suspends {
-    for i in 0 .. 11 {
+    for i in 0 .. 12 {
         var stream = BufferedTcp.new(listener.accept()!)
         inspect(&mut stream, i, port)
         stream.write_all(payload(i).into_bytes())!
@@ -60,11 +61,13 @@ fn peer(var listener: TcpListener, port: UInt16) @suspends {
     assert(!silent.read(1024)!.is_empty(), "client started TLS handshake")
     while !silent.read(16384)!.is_empty() {}
 }
-fn check_put_head(client: &http.Client) @suspends {
+fn check_methods(client: &http.Client) @suspends {
     let put = client.request(http.Method.Put, "/", [http.Header { name: "Content-Type", value: "application/octet-stream" }], [255, 0])!
     assert(put.status == 204, "binary PUT accepted")
     let head = client.request(http.Method.Head, "/", [], [])!
     assert(head.status == 200 && head.body.is_empty(), "HEAD length describes the representation")
+    let options = client.request(http.Method.Options, "/", [], [])!
+    assert(options.status == 204, "OPTIONS accepted")
 }
 fn calls(port: UInt16) @suspends {
     var client = http.Client.http("127.0.0.1", port)!
@@ -87,7 +90,7 @@ fn calls(port: UInt16) @suspends {
     client.exchange_timeout = 50ms
     assert(match client.get("/") { Err(ExchangeTimeout) => true, _ => false }, "whole response deadline")
     client.exchange_timeout = 2s
-    check_put_head(&client)
+    check_methods(&client)
     var secure = http.Client.https("127.0.0.1", port, tls.ClientConfig.web_roots()!)!
     secure.connect_timeout = 40ms
     assert(match secure.get("/") { Err(ConnectTimeout) => true, _ => false }, "connect deadline covers handshake")

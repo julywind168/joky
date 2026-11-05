@@ -7068,6 +7068,10 @@ Duration 显式选择单位，例如 `log.field("duration_ms", duration.as_milli
 `http.serve(listener, &stop, options, handler) @suspends -> Result<Unit, ServeError>` 消费已绑定的 TCP 监听器。
 处理函数的类型是 `fn(http.Request) @suspends -> http.Response`。Request 包含方法、原始请求目标（含查询串）、
 按接收顺序保存的标头数组（名字转小写，值去除两端的空格和制表符）及拥有的正文字节。
+`request.method: http.Method` 与客户端共用枚举，变体为 Get、Head、Post、Put、Patch、Delete、Options。
+Method 是 Copy 值，派生 Eq 并支持 `==`／`!=`，Show 输出对应的大写方法名。
+挂起函数中比较拥有的 Request 字段时，先用 `let method = request.method` 取副本，再比较
+`method == http.Method.Post`；当前 Eq 的隐式字段借用受挂起函数的局部借用限制。
 服务端在开始读取请求时创建 UUID v4，handler 通过 `request.context.request_id` 访问，
 同一次响应的 `X-Request-Id` 标头返回这个 ID。客户端传来的同名标头不参与生成，重试会获得新 ID。
 `request.context` 的类型为 `http.RequestContext`，可显式传递并跨挂起使用。它的 `emit(level, event, fields)`
@@ -7128,7 +7132,9 @@ HTTPS 对应入口为 `http.serve_tls_with(listener, config, &stop, options, ser
 默认省略 route；空标签或超过 128 字节的标签也会省略。HTTP 层不自动记录原始 URL、标头或正文。
 握手失败、未进入写响应流程的请求，以及在产生写入结果前被强制取消的分支，都不会产生该完成事件。
 
-服务端提供 HTTP/1.1 的有限子集。支持 GET、HEAD、POST、PUT、PATCH 和 DELETE，每个连接处理一次请求并发送 `Connection: close`。
+服务端提供 HTTP/1.1 的有限子集。支持 GET、HEAD、POST、PUT、PATCH、DELETE 和 OPTIONS，每个连接处理一次请求并发送 `Connection: close`。
+方法名区分大小写，合法 token 中未支持的方法（含小写拼写）返回 501，非法方法字符返回 400。
+OPTIONS 交给 handler 处理，不自动生成 Allow 或 CORS 响应头。
 目标须以 `/` 开始，标头采用 ASCII 和 CRLF，必须有且只有一个 Host（主机名或 IPv4，可带十进制端口）。
 正文缺省为空，可用单个十进制 Content-Length 指定。重复长度（即使相同）、Transfer-Encoding、折叠行、
 无效字符或截断正文均拒绝。Expect 返回 417。该版本未实现 chunked、keep-alive 或 IPv6 字面量 Host。
@@ -7230,12 +7236,12 @@ HTTPS 使用该主机名或 IP 验证证书，可传入 `tls.ClientConfig.web_ro
 | --- | --- |
 | `client.get(target)` | 发送 GET |
 | `client.post_json(target, text)` | 以 application/json 原样发送给定文本，按字节计算 Content-Length |
-| `client.request(method, target, headers, body)` | Method 可选 Get、Head、Post、Put、Patch、Delete。正文按字节发送，GET 和 HEAD 须为空 |
+| `client.request(method, target, headers, body)` | Method 可选 Get、Head、Post、Put、Patch、Delete、Options。正文按字节发送，GET 和 HEAD 须为空 |
 
 三个方法均为 `@suspends`，返回 `Result<ClientResponse, ClientError>`。成功读完响应即可读取
 `status: UInt16`、按接收顺序存放的 `headers` 和原始 `body` 字节；404、409 等也作为普通响应返回。
 通用请求可传一个 Content-Type 标头，名称忽略大小写，值须为有效媒体类型。
-POST、PUT、PATCH 总是发送按字节计算的 Content-Length，DELETE 带正文时也发送。
+POST、PUT、PATCH、OPTIONS 总是发送按字节计算的 Content-Length，DELETE 带正文时也发送。
 旧的 Method.PostJson 调用可改用 post_json，或传 Method.Post 和显式的 application/json 标头。
 客户端校验出站目标和头字段，拒绝 CR/LF 注入及覆盖 Host、Content-Length、Transfer-Encoding 等保留头。
 客户端不跟随重定向，也不自动重发请求。POST 已发出而响应丢失时，由业务决定是否携原幂等键重试。

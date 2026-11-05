@@ -9,11 +9,11 @@ struct Health { ok: Bool }
 pub fn handle(request: http.Request) @suspends -> http.Response {
     let path = request.path()
     let http.Request { context, method, target, headers, body } = request
-    if (method == "GET" || method == "HEAD") && path == "/health" {
+    if (method == http.Method.Get || method == http.Method.Head) && path == "/health" {
         let health = Health { ok: true }
         return http.json(http.Status.Ok, &health)!
     }
-    if method == "POST" && path == "/echo" {
+    if method == http.Method.Post && path == "/echo" {
         if let Ok(value) = json.decode_bytes(body) {
             return http.Response { headers: [], status: http.Status.Ok, content_type: http.ContentType.Json, body: json.encode(&value)!.into_bytes() }
         }
