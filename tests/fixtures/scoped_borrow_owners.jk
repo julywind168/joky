@@ -13,7 +13,7 @@ fn text(value: &String) @suspends -> Int32 {
     int32(value.byte_length())
 }
 fn entry(value: &Entry) @suspends -> Int32 {
-    let (a, b) = join { | text(&value.name) | text(&value.name) }
+    let (a, b) = join { text(&value.name), text(&value.name) }
     a + b + int32(value.marker) + value.row
 }
 fn entries(values: &Array<Entry>) @suspends -> Int32 {
@@ -24,7 +24,7 @@ fn entries(values: &Array<Entry>) @suspends -> Int32 {
 fn room(value: &Room) @suspends -> Int32 {
     var total = text(&value.title) + text(&value.extra.0) + value.extra.1
     for group in &value.groups {
-        let (a, b) = join { | entries(group) | entries(group) }
+        let (a, b) = join { entries(group), entries(group) }
         total += a + b
     }
     total
@@ -37,7 +37,7 @@ fn make() -> Room {
 }
 fn main() @suspends -> Int32 {
     var value = make()
-    let (a, b) = join { | room(&value) | room(&value) }
+    let (a, b) = join { room(&value), room(&value) }
     value.title = "changed"
     a + b
 }
@@ -51,21 +51,21 @@ fn dynamic() @suspends -> Int32 {
 fn texts(values: &Slice<String>) @suspends -> Int32 {
     var total = 0
     for value in values {
-        let (a, b) = join { | text(value) | text(value) }
+        let (a, b) = join { text(value), text(value) }
         total += a + b
     }
     total
 }
 fn strings() @suspends -> Int32 {
     var values = ["a", "é", "xyz"]
-    let (a, b) = join { | texts(values.slice(1, 3)) | texts(values.slice(0, 0)) }
+    let (a, b) = join { texts(values.slice(1, 3)), texts(values.slice(0, 0)) }
     values[0] = "replaced"
     a + b
 }
 fn wrapped(value: &Wrapper<String>) @suspends -> Int32 { text(&value.value) }
 fn transparent() @suspends -> Int32 {
     let value = Wrapper { value: "abc" }
-    let (a, b) = join { | wrapped(&value) | wrapped(&value) }
+    let (a, b) = join { wrapped(&value), wrapped(&value) }
     a + b
 }
 fn pair(value: &(String, Int32)) @suspends -> Int32 {
@@ -75,11 +75,11 @@ fn pair(value: &(String, Int32)) @suspends -> Int32 {
 }
 fn tuples() @suspends -> Int32 {
     let values = [("abc", 4), ("é", 5)]
-    let (a, b) = join { | pair(values.borrow_ref(0)) | pair(values.borrow_ref(1)) }
+    let (a, b) = join { pair(values.borrow_ref(0)), pair(values.borrow_ref(1)) }
     a + b
 }
 fn capacity(values: &Array<Array<String>>) @suspends -> Int32 {
-    let (inner, _) = join { | row_capacity(values.borrow_ref(0)) | task.yield_now() }
+    let (inner, _) = join { row_capacity(values.borrow_ref(0)), task.yield_now() }
     int32(values.capacity()) + inner
 }
 fn row_capacity(values: &Array<String>) @suspends -> Int32 { task.yield_now(); int32(values.capacity()) }
@@ -91,14 +91,14 @@ fn capacities() @suspends -> Int32 {
     values.push(row)
     var numbers = Array.with_capacity::<Int32>(28)
     numbers.push(1)
-    let (a, b) = join { | capacity(&values) | plain_capacity(&numbers) }
+    let (a, b) = join { capacity(&values), plain_capacity(&numbers) }
     a + b
 }
 fn forever(value: &Room) @suspends -> Int32 { while true { room(value); } }
 fn fail(value: &Room) @suspends -> Int32 { task.yield_now(); check.panic("reader failed") }
 fn failed() @suspends -> Int32 {
     let value = make()
-    let (a, b) = join { | forever(&value) | fail(&value) }
+    let (a, b) = join { forever(&value), fail(&value) }
     a + b
 }
 fn parked() @suspends {
@@ -108,7 +108,7 @@ fn parked() @suspends {
 }
 fn isolated() @suspends -> Int32 {
     let value = make()
-    match isolate { race { | room(&value) | forever(&value) } } {
+    match isolate { race { room(&value), forever(&value) } } {
         Ok(value) => value, Err(_) => -1
     }
 }

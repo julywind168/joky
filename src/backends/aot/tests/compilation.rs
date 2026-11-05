@@ -30,8 +30,8 @@ fn scope_aot_lowering_emits_all_branch_frames() {
         fn right(x: Int32) @suspends { wait_value(x); {} }
         fn all() @suspends -> Int32 {
             join {
-                | left(1)
-                | right(2)
+                left(1)
+                right(2)
             }
             42
         }

@@ -48,8 +48,8 @@ fn hold(value: &mut Packet) @suspends {
 fn instant() @suspends {}
 fn exercise_scopes() @suspends -> Int32 {
     var packet = Packet { bytes: Array.new::<Int32>(), tag: 0 }
-    race { | hold(&mut packet) | instant() }
-    join { | read(&packet) | read(&packet) }
+    race { hold(&mut packet), instant() }
+    join { read(&packet), read(&packet) }
     scope {
         let view = &mut packet
         branch { view.update() }
@@ -71,7 +71,7 @@ fn exercise_text() @suspends {
     extend_text(&mut builder)
     let text = builder.finish()
     let view = &text
-    join { | instant() | task.yield_now() }
+    join { instant(), task.yield_now() }
     let message = "whole String and StringBuilder views survive suspension"
     assert(view.byte_length() == 2 && query("owned", later()) == 42, &message)
 }

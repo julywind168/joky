@@ -12,7 +12,7 @@ fn local_sequential() @suspends -> Int32 {
 }
 fn local_race() @suspends -> Int32 {
     var p = AsyncPoint { value: 40, mode: 0 }
-    race { | host_io(&mut p) | timeout() }
+    race { host_io(&mut p), timeout() }
     p.value = 42
     after_stop(p.value)
 }
@@ -39,14 +39,14 @@ fn sequential() @suspends -> Int32 {
 }
 fn race_timeout() @suspends -> Int32 {
     let p = alloc(AsyncPoint { value: 40, mode: 0 })
-    race { | host_io(p) | timeout() }
+    race { host_io(p), timeout() }
     p.value = 42
     after_stop(p.value)
 }
 fn instant() @suspends {}
 fn unstarted() @suspends -> Int32 {
     let p = alloc(AsyncPoint { value: 42, mode: 0 })
-    race { | instant() | host_io(p) }
+    race { instant(), host_io(p) }
     after_stop(p.value)
 }
 fn immediate() @suspends -> Int32 {
@@ -75,26 +75,26 @@ fn trap_after_timeout(divisor: Int32) @suspends {
 }
 fn sibling_failure(divisor: Int32) @suspends -> Int32 {
     let p = alloc(AsyncPoint { value: 41, mode: 0 })
-    join { | host_io(p) | trap_after_timeout(divisor) }
+    join { host_io(p), trap_after_timeout(divisor) }
     after_stop(0)
 }
 fn read_unit(p: &AsyncPoint) @suspends { let value = host_read(p) }
 fn shared() @suspends -> Int32 {
     let p = alloc(AsyncPoint { value: 42, mode: 0 })
-    join { | read_unit(p) | read_unit(p) }
+    join { read_unit(p), read_unit(p) }
     p.value = 42
     after_stop(p.value)
 }
 fn distinct() @suspends -> Int32 {
     let p = alloc(AsyncPoint { value: 20, mode: 0 })
     let q = alloc(AsyncPoint { value: 20, mode: 0 })
-    join { | host_io(p) | host_io(q) }
+    join { host_io(p), host_io(q) }
     after_stop(p.value + q.value)
 }
-fn inner(p: &mut AsyncPoint) @suspends { join { | host_io(p) } }
+fn inner(p: &mut AsyncPoint) @suspends { join { host_io(p) } }
 fn nested() @suspends -> Int32 {
     let p = alloc(AsyncPoint { value: 40, mode: 0 })
-    race { | inner(p) | timeout() }
+    race { inner(p), timeout() }
     p.value = 42
     after_stop(p.value)
 }
@@ -102,7 +102,7 @@ fn repeated() @suspends -> Int32 {
     let p = alloc(AsyncPoint { value: 0, mode: 0 })
     var n = 0
     while n < 20 {
-        race { | inner(p) | timeout() }
+        race { inner(p), timeout() }
         p.value = n
         n = n + 1
     }

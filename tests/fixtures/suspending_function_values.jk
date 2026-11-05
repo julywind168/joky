@@ -92,20 +92,20 @@ fn suspending_aggregates() @suspends -> Int32 {
 }
 fn suspending_scope() @suspends -> Int32 {
     var f = branch_task
-    join { | f({ f = fast; record(1) }) | f(2) }
+    join { f({ f = fast; record(1) }), f(2) }
     42
 }
 fn suspending_race() @suspends -> Int32 {
     let pending = branch_task
     let winner = fast
-    race { | pending(1) | winner(2) }
+    race { pending(1), winner(2) }
     42
 }
 fn suspending_nested_scope() @suspends -> Int32 {
     let f = branch_task
     let holder = Holder { run: async_id::<Int32> }
     let _ = holder.run(0)
-    join { | f(1) | f(2) }
+    join { f(1), f(2) }
     42
 }
 fn suspending_recursive() @suspends -> Int32 { let f = recursive; f(20) }
@@ -117,7 +117,7 @@ fn suspending_failure() @suspends -> Int32 {
 fn suspending_scope_failure() @suspends -> Int32 {
     let f = fail_branch
     let never = branch_task
-    join { | f(0) | never(1) }
+    join { f(0), never(1) }
     42
 }
 fn reload_target(x: Int32) @suspends -> Int32 {

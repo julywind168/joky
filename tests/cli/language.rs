@@ -1736,7 +1736,7 @@ fn cps_local_borrows_allow_live_loans_at_suspension() {
         "assert(read(41, later()) == 42, \"temporary borrow survives argument suspension\")",
         "let x = 42; read(&x, later());",
         "let x = 42; consume(&x)",
-        "let x = 42; join { | consume(&x) }",
+        "let x = 42; join { consume(&x) }",
         "let x = 42; let r = &x; scope { branch { yield_now() } }; println(r)",
         "let x = 42; let r = &x; scope { branch { println(r) } }",
     ];
@@ -3602,11 +3602,11 @@ fn concurrent_call_branches_accept_suspending_closures() {
         import joky/task
         fn main() @suspends {
             let f = move |x: Int32| @suspends { x + 1 }
-            let value = race { | f(41) | { task.yield_now(); 0 } }
+            let value = race { f(41), { task.yield_now(); 0 } }
             println(value)
             let text = "forty"
             let g = move || @suspends { task.yield_now(); int32(text.byte_length()) }
-            let (a, b) = join { | g() | { 1 } }
+            let (a, b) = join { g(), { 1 } }
             println(a + b)
         }
     "#,
@@ -3614,7 +3614,7 @@ fn concurrent_call_branches_accept_suspending_closures() {
     work.assert_all_backends("calls.jk", &[], b"42\n6\n", 0);
     work.write(
         "calls.jk",
-        "fn bad() @suspends { let f = move || @suspends {}; join { | f() | f() } } fn main() {}",
+        "fn bad() @suspends { let f = move || @suspends {}; join { f(), f() } } fn main() {}",
     );
     failure(&work.cli(&["check", "calls.jk"]), "moved");
 }

@@ -91,7 +91,7 @@ fn lifecycle() @suspends ->Int32 {
     let a=domain.create(make,"初始🙂"); let b=domain.create(make,"")
     let x=a.handle(); let y=b.handle()
     verify_values(x,y); verify_snapshots(x,y); verify_timer(x)
-    race {|pending(x)|ready()};
+    race {pending(x),ready()};
     a.close()
     match x.replace("closed input") {Err(Closed)=>{},_=>assert(false)}
     b.close()

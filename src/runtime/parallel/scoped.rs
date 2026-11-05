@@ -847,7 +847,7 @@ mod plain_tests {
                 fn reader(value: &Int32) @suspends -> Int32 { inspect() + *value }
                 fn root() @suspends -> Int32 {
                     let pair = Pair { a: 7, b: 9 }
-                    let (a, b) = join { | reader(&pair.a) | task.yield_now() }
+                    let (a, b) = join { reader(&pair.a), task.yield_now() }
                     a
                 }
             "#,

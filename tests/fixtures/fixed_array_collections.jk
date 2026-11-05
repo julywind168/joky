@@ -118,7 +118,7 @@ fn bundle() -> Bundle {
 fn text(value: &String) @suspends -> Int32 { task.yield_now(); int32(value.byte_length()) }
 fn read(value: &Bundle) @suspends -> Int32 {
     let first = list.borrow_ref(fixed_array.borrow_ref(&value.lists, 0), 0)
-    let (a, b) = join { | text(first) | text(first) }
+    let (a, b) = join { text(first), text(first) }
     check.assert(a + b == 2, "bad nested loan")
     check.assert(map.len(fixed_array.borrow_ref(&value.maps, 1)) == 16 && set.len(fixed_array.borrow_ref(&value.sets, 0)) == 2, "bad borrowed containers")
     check.assert(row_size(list.borrow_ref(&value.rows, 0)) == 3, "bad borrowed rows")
@@ -126,13 +126,13 @@ fn read(value: &Bundle) @suspends -> Int32 {
 }
 fn main() @suspends -> Int32 {
     var value = bundle()
-    let (a, b) = join { | read(&value) | read(&value) }
+    let (a, b) = join { read(&value), read(&value) }
     value.lists = lists()
     a + b
 }
 fn relay(value: Bundle) @suspends -> Bundle { task.yield_now(); value }
 fn transferred() @suspends -> Int32 {
-    let (a, b) = join { | relay(bundle()) | relay(bundle()) }
+    let (a, b) = join { relay(bundle()), relay(bundle()) }
     read(&a) + read(&b)
 }
 fn dynamic() @suspends -> Int32 {
@@ -147,12 +147,12 @@ fn dynamic_moved() @suspends -> Int32 {
 }
 fn forever(value: &Bundle) @suspends -> Int32 { while true { task.yield_now(); read(value); } }
 fn fail(value: &Bundle) @suspends -> Int32 { task.yield_now(); check.panic("fixed collection reader failed") }
-fn failed() @suspends -> Int32 { let value = bundle(); let (a, b) = join { | read(&value) | fail(&value) }; a + b }
+fn failed() @suspends -> Int32 { let value = bundle(); let (a, b) = join { read(&value), fail(&value) }; a + b }
 fn parked() @suspends { let value = bundle(); let view = &value; scope { branch { forever(view); } } }
-fn raced() @suspends -> Int32 { let value = bundle(); race { | read(&value) | forever(&value) } }
+fn raced() @suspends -> Int32 { let value = bundle(); race { read(&value), forever(&value) } }
 fn isolated() @suspends -> Int32 {
     let value = bundle(); let view = &value
-    match isolate { let (a, b) = join { | read(view) | fail(view) }; a + b } { Ok(_) => 0, Err(_) => 42 }
+    match isolate { let (a, b) = join { read(view), fail(view) }; a + b } { Ok(_) => 0, Err(_) => 42 }
 }
 fn empty() -> Int32 {
     let a: FixedArray<List<String>, 0> = []

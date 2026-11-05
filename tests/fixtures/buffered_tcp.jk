@@ -95,7 +95,7 @@ fn cancel() @suspends {
     ensure(peer.write_all(bytes).is_ok())
     let first = match buffered.read(1) { Ok(bytes) => bytes, Err(error) => { ensure(false); return } }
     ensure(first.get(0).unwrap_or(0) == 42 && buffered.buffered_len() == 0)
-    race { | wait(&mut buffered) | task.sleep_ms(1) }
+    race { wait(&mut buffered), task.sleep_ms(1) }
     // Cancellation releases the loan; end this protocol connection explicitly.
     ensure(buffered.buffered_len() <= buffered.capacity())
     ensure(buffered.close().is_ok())
@@ -105,7 +105,7 @@ fn cancel() @suspends {
 fn main() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
     let address = match listener.local_addr() { Ok(address) => address, Err(error) => { return 2 } }
-    join { | receive(&mut listener) | send(address) }
+    join { receive(&mut listener), send(address) }
     invalid(address)
     ensure(listener.close().is_ok())
     cancel()

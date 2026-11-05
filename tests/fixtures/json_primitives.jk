@@ -118,7 +118,7 @@ fn main() @suspends -> Int32 {
     task.yield_now()
     inspect(&owner.groups)
     mutate(&mut owner.groups)
-    race { | hold(&owner) | task.yield_now() }
+    race { hold(&owner), task.yield_now() }
     ensure(owner.groups.len() == 2)
     0
 }

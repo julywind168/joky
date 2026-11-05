@@ -51,7 +51,7 @@ fn receive(stream: &mut TcpStream) @suspends {
 }
 fn main() @suspends -> Int32 {
     var (client, server) = match connected() { Ok(value) => value, Err(_) => return 1 }
-    join { | receive(&mut server) | send(&mut client) }
+    join { receive(&mut server), send(&mut client) }
     let message = "detached TCP owners close independently"
     assert(client.close().is_ok(), &message)
     assert(server.close().is_ok(), &message)

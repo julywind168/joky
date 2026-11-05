@@ -143,12 +143,12 @@ fn owning_arrays_cross_suspending_calls_in_standalone_native_code() {
         fn finish() @suspends {}
         fn scope_run() @suspends -> Int32 {
             let values = array.new::<Int32>()
-            join { | hold(values) }
+            join { hold(values) }
             42
         }
         fn race_run() @suspends -> Int32 {
             let values = array.new::<Int32>()
-            race { | hold(values) | finish() }
+            race { hold(values), finish() }
             42
         }
     "#;

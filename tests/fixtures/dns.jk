@@ -43,7 +43,7 @@ fn resolved() @suspends -> Int32 {
 fn pending() @suspends -> Int32 { expect(dns.lookup("controlled.test", 443)); 42 }
 fn cancelled_branch() @suspends { dns.lookup("controlled.test", 443); }
 fn reuse() @suspends -> Int32 {
-    race { | cancelled_branch() | task.yield_now() }
+    race { cancelled_branch(), task.yield_now() }
     expect(dns.lookup("next.test", 443));
     42
 }
@@ -73,7 +73,7 @@ fn connect(port: UInt16) @suspends {
 fn loopback() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(_) => { return 1 } }
     let port = (match listener.local_addr() { Ok(address) => address, Err(_) => { return 2 } }).port()
-    join { | accept(&mut listener) | connect(port) }
+    join { accept(&mut listener), connect(port) }
     42
 }
 fn main() @suspends -> Int32 {

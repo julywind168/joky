@@ -259,10 +259,10 @@ fn suspending_arena_rejects_escape_conflicts_and_indirect_concurrency() {
         "fn bad() @suspends { let a = Arena.new(); let p = a.alloc(42); task.yield_now(); let b = a; println(*p) }",
         "fn bad() @suspends { let a = Arena.new(); let p = a.alloc(42); task.yield_now(); alloc((&*p,)); }",
         "fn bad() @suspends { let outer = Arena.new(); { let inner = Arena.new(); let p = inner.alloc(42); task.yield_now(); outer.alloc((&*p,)); } }",
-        "fn child(p: &Int32) @suspends -> Int32 { *p } fn helper(p: &Int32) @suspends { join { | child(p) | child(p) }; } fn forward(p: &Int32) @suspends { helper(p) } fn bad() @suspends { let a = Arena.new(); let p = a.alloc(42); forward(p) }",
+        "fn child(p: &Int32) @suspends -> Int32 { *p } fn helper(p: &Int32) @suspends { join { child(p), child(p) }; } fn forward(p: &Int32) @suspends { helper(p) } fn bad() @suspends { let a = Arena.new(); let p = a.alloc(42); forward(p) }",
         "fn child(p: &Int32) @suspends { println(*p) } fn helper(p: &Int32) @suspends { scope { branch { child(p) } } } fn bad() @suspends { let a = Arena.new(); let p = a.alloc(42); helper(p) }",
-        "fn child(p: &Int32) @suspends -> Int32 { *p } fn helper(p: &Int32) @suspends -> Int32 { race { | child(p) | child(p) } } fn bad() @suspends { let a = Arena.new(); let p = a.alloc(42); helper(p); }",
-        "fn helper(p: &Int32, n: Int32) @suspends { if n > 0 { forward(p, n - 1) } else { join { | { println(*p) } | {} }; } } fn forward(p: &Int32, n: Int32) @suspends { helper(p, n) } fn bad() @suspends { let a = Arena.new(); let p = a.alloc(42); forward(p, 2) }",
+        "fn child(p: &Int32) @suspends -> Int32 { *p } fn helper(p: &Int32) @suspends -> Int32 { race { child(p), child(p) } } fn bad() @suspends { let a = Arena.new(); let p = a.alloc(42); helper(p); }",
+        "fn helper(p: &Int32, n: Int32) @suspends { if n > 0 { forward(p, n - 1) } else { join { { println(*p) }, {} }; } } fn forward(p: &Int32, n: Int32) @suspends { helper(p, n) } fn bad() @suspends { let a = Arena.new(); let p = a.alloc(42); forward(p, 2) }",
         "fn bad(f: fn() @suspends -> Int32) @suspends -> Int32 { let a = Arena.new(); let p = a.alloc(42); f(); *p }",
     ] {
         let source = format!("import joky/arena.{{type Arena}} import joky/task import joky/mem {body}");

@@ -4,13 +4,13 @@ const OWNERS: &str = r#"
     import joky/task
     fn echo(text: String) @suspends -> String { task.yield_now(); text }
     fn pair(text: String) @suspends -> String {
-        let (a, b) = join { | echo(text) | echo("other owner") }
+        let (a, b) = join { echo(text), echo("other owner") }
         a
     }
-    fn root(text: String) @suspends -> String { race { | pair(text) | pair("other winner") } }
+    fn root(text: String) @suspends -> String { race { pair(text), pair("other winner") } }
     fn consume(text: String) { }
     fn bad(text: String) @suspends -> String { consume(text); task.yield_now(); 1 / 0; "bad" }
-    fn failed(text: String) @suspends -> String { let (a, b) = join { | bad(text) | pair("loser") }; a }
+    fn failed(text: String) @suspends -> String { let (a, b) = join { bad(text), pair("loser") }; a }
     fn parked(text: String) @suspends -> String { task.sleep_ms(60000); text }
     fn cancelled(text: String) @suspends -> String { scope { branch { consume(pair("child")) } }; parked(text) }
 "#;

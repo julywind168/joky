@@ -42,7 +42,7 @@ fn client(config: &tls.ClientConfig, socket: TcpStream, scenario: Int32) @suspen
         return
     }
     if scenario == 4 {
-        race { | cancelled_read(&mut stream) | task.sleep(25ms) }
+        race { cancelled_read(&mut stream), task.sleep(25ms) }
         assert(match stream.write_all([42]) { Err(Unusable) => true, _ => false }, "cancelled stream cannot be reused")
         return
     }
@@ -60,7 +60,7 @@ fn pair() @suspends -> (TcpStream, TcpStream) {
 }
 fn exchange(c: &tls.ClientConfig, s: &tls.ServerConfig, scenario: Int32) @suspends {
     let (outgoing, incoming) = pair()
-    join { | client(c, outgoing, scenario) | server(s, incoming, scenario) }
+    join { client(c, outgoing, scenario), server(s, incoming, scenario) }
 }
 fn start_handshake(c: &tls.ClientConfig, socket: TcpStream) @suspends { c.connect(socket, "localhost"); }
 fn main() @suspends {
@@ -75,6 +75,6 @@ fn main() @suspends {
     exchange(&c, &s, 3)
     exchange(&c, &s, 4)
     var (outgoing, peer) = pair()
-    race { | start_handshake(&c, outgoing) | task.sleep(25ms) }
+    race { start_handshake(&c, outgoing), task.sleep(25ms) }
     while !peer.read(16384)!.is_empty() {}
 }

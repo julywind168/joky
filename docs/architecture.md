@@ -2597,8 +2597,8 @@ JIT / AOT 共用 narrowing `ireduce`、signed widening `sextend`、unsigned wide
 位运算和移位复用 typed IR 的 Binary / Unary，不增加运行时值类型或 CPS 状态结构。
 移位两侧由共享语义检查保证同型。原生 lowering 使用 `band` / `bor` / `bxor` / `bnot`、
 `ishl`，以及依符号选择的 `sshr` / `ushr`。位运算按源码求值顺序保留快照。
-parser 的分支上下文将最外层 `|` 保留给 match / join；进入括号、调用参数、元组、字段或块时
-允许按位或，退出时恢复外层状态。优先级和用户写法见 [位运算与移位](language.md#位运算与移位)。
+parser 的 match、join 与 race 分支统一以逗号或真实换行分隔，按位或沿用普通表达式规则，
+无需额外的分支管道上下文。优先级和用户写法见 [位运算与移位](language.md#位运算与移位)。
 
 ## 原生错误传播
 

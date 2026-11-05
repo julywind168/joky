@@ -305,7 +305,7 @@ fn respond(io: Wire, context: RequestContext, started: time.Instant, route: Opti
             response_prefix(code, "Internal Server Error", "text/plain", [], 0, context)!
         }
     }
-    let outcome = race { | send(io, prefix, body, head) | write_timeout(timeout) }
+    let outcome = race { send(io, prefix, body, head), write_timeout(timeout) }
     if !context.logger.enabled(log.Level.Info) { return }
     let label = match outcome { Complete => "complete", Failed => "failed", TimedOut => "timeout" }
     var fields = [log.uint("status", uint64(code)), log.text("write_outcome", label)]
@@ -335,13 +335,13 @@ impl Service for FunctionService {
 fn connection<S: Service>(config: Option<tls.ServerConfig>, stream: TcpStream, stop: shutdown.Controller, options: Options, service: S, _permit: admission.Permit) @suspends {
     var io = match config {
         None => Plain(BufferedTcp.new(stream)),
-        Some(config) => match race { | secure(&config, stream) | stop_handshake(&stop) | handshake_timeout(options.read_timeout) } {
+        Some(config) => match race { secure(&config, stream), stop_handshake(&stop), handshake_timeout(options.read_timeout) } {
             Some(wire) => wire, None => return
         }
     }
     let context = RequestContext { request_id: uuid.v4()!, logger: options.logger }
     let started = time.Instant.now()
-    let input = race { | read_request(&mut io, context) | stop_read(&stop) | read_timeout(options.read_timeout) }
+    let input = race { read_request(&mut io, context), stop_read(&stop), read_timeout(options.read_timeout) }
     // This check admits a complete request. Shutdown lets its handler and write finish.
     if stop.requested() { return }
     match input {
@@ -372,7 +372,7 @@ fn listen<S: Service>(config: Option<tls.ServerConfig>, var listener: TcpListene
     var failed = false
     scope {
         while !stop.requested() {
-            let stream = match race { | accept(&mut listener) | stop_accept(stop) } {
+            let stream = match race { accept(&mut listener), stop_accept(stop) } {
                 Client(stream) => stream, Stop => break, Error => { failed = true; break }
             }
             if stop.requested() { break }
@@ -392,7 +392,7 @@ fn deadline(stop: &shutdown.Controller, grace: Duration) @suspends -> Result<Uni
 }
 fn run<S: Service>(config: Option<tls.ServerConfig>, listener: TcpListener, stop: &shutdown.Controller, options: Options, service: S) @suspends -> Result<Unit, ServeError> {
     if options.max_connections == 0 || options.read_timeout.is_zero() || options.write_timeout.is_zero() { return Err(ServeError.InvalidOptions) }
-    race { | listen(config, listener, stop, options, service) | deadline(stop, options.grace) }
+    race { listen(config, listener, stop, options, service), deadline(stop, options.grace) }
 }
 
 pub fn serve(listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
@@ -455,9 +455,9 @@ impl Client {
     pub fn request(&self, method: Method, target: String, headers: Array<Header>, body: Array<UInt8>) @suspends -> Result<ClientResponse, ClientError> {
         if self.connect_timeout.is_zero() || self.exchange_timeout.is_zero() || self.max_body > BODY_LIMIT { return Err(InvalidRequest) }
         let head = client_head(self.host.clone(), self.port, method, target, headers, body.len())?
-        let wire = match race { | self.open() | connect_deadline(self.connect_timeout) } { Ok(io) => io, Err(e) => return Err(e) }
+        let wire = match race { self.open(), connect_deadline(self.connect_timeout) } { Ok(io) => io, Err(e) => return Err(e) }
         let head_only = match method { Head => true, _ => false }
-        race { | exchange(wire, head, body, self.max_body, head_only) | exchange_deadline(self.exchange_timeout) }
+        race { exchange(wire, head, body, self.max_body, head_only), exchange_deadline(self.exchange_timeout) }
     }
 }
 fn connect_deadline(timeout: Duration) @suspends -> Result<Wire, ClientError> { task.sleep(timeout); Err(ConnectTimeout) }

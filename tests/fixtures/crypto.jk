@@ -250,7 +250,7 @@ fn crypto_stream_parallel() @suspends -> Int32 {
     var mac = HmacSha256.new(key.bytes())
     hash.update(head.bytes())
     mac.update(head.bytes())
-    let (hash, mac) = join { | hash_child(hash) | mac_child(mac) }
+    let (hash, mac) = join { hash_child(hash), mac_child(mac) }
     let digest = hash.finish()
     assert(hex.encode(digest.slice(0, 32)) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "hash owner moves to child and back")
     let input = "abc"

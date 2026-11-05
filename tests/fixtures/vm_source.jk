@@ -69,9 +69,9 @@ fn run(interpreted:Bool) @suspends ->Int32 {
     other.load_file("old.jk").unwrap()
     let other_directory=domain.directory(1)
     race {
-        | h.call::<domain.DirectoryHandle,Unit>("hold",directory.handle())
-        | other.call::<domain.DirectoryHandle,Unit>("hold",other_directory.handle())
-        | update(&h,directory.handle(),&other,other_directory.handle())
+        h.call::<domain.DirectoryHandle,Unit>("hold",directory.handle())
+        other.call::<domain.DirectoryHandle,Unit>("hold",other_directory.handle())
+        update(&h,directory.handle(),&other,other_directory.handle())
     };
     expect(h.call::<domain.DirectoryHandle,Int32>("probe",directory.handle())==-1)
     0

@@ -94,7 +94,7 @@ fn serve(reader: &mut BufferedTcpReader, writer: &mut TcpWriter) @suspends {
 fn task_session(port: Int32, deadline_ms: Int32) @suspends {
     let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { Ok(stream) => stream, _ => { ensure(false); return } }
     var (reader, writer) = BufferedTcp.new(stream).split()
-    race { | serve(&mut reader, &mut writer) | clock.sleep_ms(deadline_ms.to_u64().unwrap_or(0)) }
+    race { serve(&mut reader, &mut writer), clock.sleep_ms(deadline_ms.to_u64().unwrap_or(0)) }
     let completed = "completed"; let broken = "broken"
     if task.read_int32(&completed) == 0 && task.read_int32(&broken) == 0 { notify("timeout") }
     reader.close(); writer.close();
@@ -140,7 +140,7 @@ fn task_pressure(port: Int32) @suspends {
     ensure(text.byte_length() == 8208)
     let header = "\0\0 \u{10}"
     let wire = header.concat(&text)
-    join { | flood(&mut writer, &wire) | pushes(&mut reader) }
+    join { flood(&mut writer, &wire), pushes(&mut reader) }
     let after = match json.encode_with_limits(&value, limits()) { Ok(text) => text, _ => { ensure(false); return } }
     ensure(after.equals(&text))
     reader.close(); writer.close(); notify("finish")

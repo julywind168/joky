@@ -16,13 +16,13 @@ fn point(value: &Point) @suspends -> Int32 {
     before + int32(value.marker)
 }
 fn relay(value: &Point) @suspends -> Int32 {
-    let (a, b) = join { | point(value) | scalar(&value.pair.0) }
+    let (a, b) = join { point(value), scalar(&value.pair.0) }
     a + b
 }
 fn main() @suspends -> Int32 {
     var value = Point { marker: 3, pair: (7, 1.5) }
     var number = 5
-    let (a, b) = join { | relay(&value) | scalar(&number) }
+    let (a, b) = join { relay(&value), scalar(&number) }
     number = 11
     value.pair.0 = 99
     a + b + number
@@ -46,12 +46,12 @@ fn row<const N: UInt64>(values: &FixedArray<Int32, N>) @suspends -> Int32 {
     total
 }
 fn row_relay(values: &FixedArray<Int32, 3>) @suspends -> Int32 {
-    let (a, b) = join { | row(values) | scalar(values.borrow_ref(1)) }
+    let (a, b) = join { row(values), scalar(values.borrow_ref(1)) }
     a + b
 }
 fn arrays() @suspends -> Int32 {
     var values: FixedArray<Int32, 3> = [2, 3, 4]
-    let (a, b) = join { | row_relay(&values) | row(&values) }
+    let (a, b) = join { row_relay(&values), row(&values) }
     values.set(0, 99)
     a + b
 }
@@ -59,14 +59,14 @@ fn empty(value: &Empty) @suspends -> Int32 { task.yield_now(); 1 }
 fn zero() @suspends -> Int32 {
     let value = Empty { value: {} }
     let values = fixed_array.repeat::<Int32, 0>(1)
-    let (a, b) = join { | empty(&value) | row(&values) }
+    let (a, b) = join { empty(&value), row(&values) }
     a + b
 }
 fn forever(value: &Int32) @suspends -> Int32 { while true { scalar(value); } }
 fn fail(value: &Int32) @suspends -> Int32 { task.yield_now(); check.panic("reader failed") }
 fn failed() @suspends -> Int32 {
     let value = 7
-    let (a, b) = join { | forever(&value) | fail(&value) }
+    let (a, b) = join { forever(&value), fail(&value) }
     a + b
 }
 fn parked() @suspends {
@@ -76,7 +76,7 @@ fn parked() @suspends {
 }
 fn isolated() @suspends -> Int32 {
     let value = 7
-    match isolate { race { | scalar(&value) | forever(&value) } } {
+    match isolate { race { scalar(&value), forever(&value) } } {
         Ok(value) => value, Err(_) => -1
     }
 }
@@ -84,7 +84,7 @@ fn reuse() @suspends -> Int32 {
     var total = 0
     for index in range(0, 8) {
         let value = index
-        let (a, b) = join { | scalar(&value) | scalar(&value) }
+        let (a, b) = join { scalar(&value), scalar(&value) }
         total += a + b
     }
     total
@@ -96,30 +96,30 @@ fn matrix_reader(value: &Matrix) @suspends -> Int32 {
     task.yield_now()
     let first = value.rows.borrow_ref(0)
     let second = value.rows.borrow_ref(1)
-    let (a, b) = join { | scalar(&first.0) | scalar(&second.0) }
+    let (a, b) = join { scalar(&first.0), scalar(&second.0) }
     a + b + int32(value.marker)
 }
 fn matrices() @suspends -> Int32 {
     let value = Matrix { marker: 3, rows: [(7, 1.5), (11, 2.5)] }
-    let (a, b) = join { | matrix_reader(&value) | matrix_reader(&value) }
+    let (a, b) = join { matrix_reader(&value), matrix_reader(&value) }
     a + b
 }
 struct Box<T> { value: T }
 fn box_reader(value: &Box<Int32>) @suspends -> Int32 { scalar(&value.value) }
 fn generic() @suspends -> Int32 {
     let value = Box { value: 21 }
-    let (a, b) = join { | box_reader(&value) | box_reader(&value) }
+    let (a, b) = join { box_reader(&value), box_reader(&value) }
     a + b
 }
 
 fn moved_array(values: Array<Int32>, anchor: &Int32) @suspends -> Int32 {
     let item = values.borrow_ref(1)
-    let (a, b) = join { | scalar(item) | scalar(item) }
+    let (a, b) = join { scalar(item), scalar(item) }
     a + b
 }
 fn owned_source() @suspends -> Int32 {
     let values = [7, 21]
     let anchor = 0
-    let (a, b) = join { | moved_array(values, &anchor) | task.yield_now() }
+    let (a, b) = join { moved_array(values, &anchor), task.yield_now() }
     a
 }

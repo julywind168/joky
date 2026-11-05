@@ -19,12 +19,12 @@ fn scoped_borrow_nested_groups_forward_received_views() {
     let source = format!(
         r#"{SOURCE}
         fn nested(values: &Array<Int32>) @suspends -> Int32 {{
-            let (a, b) = join {{ | array_sum(values) | array_sum(values) }}
+            let (a, b) = join {{ array_sum(values), array_sum(values) }}
             a + b
         }}
         fn forwarding() @suspends -> Int32 {{
             let values = [1, 2]
-            let (a, _) = join {{ | nested(&values) | task.yield_now() }}
+            let (a, _) = join {{ nested(&values), task.yield_now() }}
             a
         }}
         fn slow(values: &Array<Int32>) @suspends -> Int32 {{
@@ -32,7 +32,7 @@ fn scoped_borrow_nested_groups_forward_received_views() {
         }}
         fn local_race() @suspends -> Int32 {{
             let values = [1, 2]
-            race {{ | nested(&values) | slow(&values) }}
+            race {{ nested(&values), slow(&values) }}
         }}
         fn isolated() @suspends -> Int32 {{
             let values = [1, 2]
@@ -126,8 +126,8 @@ fn input_engine(mode: VmMode) -> VmEngine {
             let result = isolate {{
                 let text = "source"
                 let (a, b) = join {{
-                    | with_input(&text, Input {{ text: "first" }})
-                    | with_input(&text, Input {{ text: "second" }})
+                    with_input(&text, Input {{ text: "first" }})
+                    with_input(&text, Input {{ text: "second" }})
                 }}
                 a + b
             }}
@@ -490,7 +490,7 @@ fn scoped_borrow_isolate_does_not_hide_fatal_source_cleanup() {
             fn root() @suspends -> Int32 {
                 let result = isolate {
                     let source = Source { text: "source" }
-                    join { | borrowed(&source) | sibling(&source) }
+                    join { borrowed(&source), sibling(&source) }
                 }
                 99
             }

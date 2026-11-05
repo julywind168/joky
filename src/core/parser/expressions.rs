@@ -38,8 +38,7 @@ impl Parser<'_> {
                     | TokenKind::RBrace
                     | TokenKind::Comma
                     | TokenKind::Eof
-            ) || (self.peek() == &TokenKind::Pipe && !self.allow_pipe)
-            {
+            ) {
                 break;
             }
             exprs.push(self.parse_assignment()?);
@@ -71,9 +70,7 @@ impl Parser<'_> {
                             | TokenKind::RBracket
                             | TokenKind::Comma
                             | TokenKind::Eof
-                    )
-                    || (self.peek() == &TokenKind::Pipe && !self.allow_pipe)
-                {
+                    ) {
                     None
                 } else {
                     Some(Box::new(self.parse_assignment()?))
@@ -271,9 +268,6 @@ impl Parser<'_> {
         let mut rest = Vec::new();
         loop {
             if self.at_expression_break() {
-                break;
-            }
-            if self.peek() == &TokenKind::Pipe && !self.allow_pipe {
                 break;
             }
             let Some((_, op)) = operators.iter().find(|(token, _)| self.peek() == token) else {

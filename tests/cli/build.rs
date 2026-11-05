@@ -211,8 +211,8 @@ fn main() @suspends {
     assert(password.verify("installed example password", password_hash).unwrap(), "Installed Argon2id backend")
     task.sleep(250us)
     let deadline = domain.deadline_after(0ns)
-    let (a, b) = join { | value(40, 2) | value(2, 0) }
-    let winner = race { | value(a + b, 0) | value(0, 3) }
+    let (a, b) = join { value(40, 2), value(2, 0) }
+    let winner = race { value(a + b, 0), value(0, 3) }
     println(&winner)
 }
 "#,

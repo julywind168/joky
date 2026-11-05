@@ -51,10 +51,10 @@ fn duplex() @suspends -> Int32 {
     ensure(client_reader.capacity() == 7 && server_reader.capacity() == 16384)
     ensure(client_reader.local_addr().is_ok() && client_reader.peer_addr().is_ok())
     join {
-        | receive(&mut client_reader)
-        | send(&mut client_writer)
-        | receive(&mut server_reader)
-        | send(&mut server_writer)
+        receive(&mut client_reader)
+        send(&mut client_writer)
+        receive(&mut server_reader)
+        send(&mut server_writer)
     }
     client_reader.close();
     server_reader.close();
@@ -99,7 +99,7 @@ fn pending() @suspends -> Int32 {
     prefix.push(0); prefix.push(0); prefix.push(0); prefix.push(3); prefix.push(42)
     ensure(peer.write_all(prefix).is_ok())
     var (reader, writer) = BufferedTcp.new(stream).split()
-    join { | wait(&mut reader) | task.sleep_ms(100000) }
+    join { wait(&mut reader), task.sleep_ms(100000) }
     writer.peer_addr();
     peer.peer_addr();
     42
@@ -111,7 +111,7 @@ fn cancel() @suspends -> Int32 {
     prefix.push(0); prefix.push(0); prefix.push(0); prefix.push(3); prefix.push(42)
     ensure(peer.write_all(prefix).is_ok())
     var (reader, writer) = BufferedTcp.new(stream).split()
-    race { | wait(&mut reader) | task.sleep_ms(2) }
+    race { wait(&mut reader), task.sleep_ms(2) }
     ensure(reader.buffered_len() <= reader.capacity())
     ensure(writer.write_message(payload(2), 2).is_ok())
     var peer = BufferedTcp.new(peer)
@@ -189,7 +189,7 @@ fn fragmented() @suspends -> Int32 {
     let (client, peer) = match pair() { Ok(value) => value, _ => { return 1 } }
     var (reader, writer) = BufferedTcp.new(client).split()
     var (peer_reader, peer_writer) = peer.split()
-    join { | message(&mut reader) | fragments(&mut peer_writer) }
+    join { message(&mut reader), fragments(&mut peer_writer) }
     42
 }
 // Keep cancellation cuts focused on the new cache/half ownership handoff.
@@ -220,6 +220,6 @@ fn maximum() @suspends -> Int32 {
     let (client, peer) = match pair() { Ok(value) => value, _ => { return 1 } }
     var (reader, writer) = BufferedTcp.new(client).split()
     var (peer_reader, peer_writer) = BufferedTcp.new(peer).split()
-    join { | send_maximum(&mut writer) | receive_maximum(&mut peer_reader) }
+    join { send_maximum(&mut writer), receive_maximum(&mut peer_reader) }
     42
 }

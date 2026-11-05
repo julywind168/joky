@@ -16,23 +16,23 @@ fn write(p: &mut Point, id: Int32) @suspends {
 }
 fn scope_shared() @suspends -> Int32 {
     let p = alloc(Point { x: 20 })
-    join { | read(p, 0) | read(p, 1) }
+    join { read(p, 0), read(p, 1) }
     p.x = 42
     p.x
 }
 fn scope_distinct() @suspends -> Int32 {
     let a = alloc(Point { x: 20 })
     let b = alloc(Point { x: 20 })
-    join { | write(a, 0) | write(b, 0) }
+    join { write(a, 0), write(b, 0) }
     a.x + b.x
 }
 fn nested(p: &mut Point, view: &Point) @suspends {
-    join { | write(p, 0) | read(view, 1) }
+    join { write(p, 0), read(view, 1) }
 }
 fn scope_nested() @suspends -> Int32 {
     let a = alloc(Point { x: 20 })
     let b = alloc(Point { x: 20 })
-    join { | nested(a, b) | read(b, 2) }
+    join { nested(a, b), read(b, 2) }
     a.x + b.x + 1
 }
 fn next(node: &Node) -> &Node { node.next.unwrap_or(node) }
@@ -49,14 +49,14 @@ fn scope_graph() @suspends -> Int32 {
         graph.link(b.next, a)
         a
     }
-    join { | read_node(root, 0) | read_node(next(root), 1) }
+    join { read_node(root, 0), read_node(next(root), 1) }
     root.value + next(root).value
 }
 fn generic_view<T: Copy>(value: (Option<&T>,), id: Int32) @suspends { delayed_value(id); }
 fn scope_aggregate() @suspends -> Int32 {
     let p = alloc(Point { x: 41 })
     let values = (Some((&*p)),)
-    join { | generic_view(values, 0) | generic_view(values, 1) | generic_view::<Point>((None,), 2) }
+    join { generic_view(values, 0), generic_view(values, 1), generic_view::<Point>((None,), 2) }
     p.x = p.x + 1
     p.x
 }
@@ -67,7 +67,7 @@ fn retain_view(p: &Point, id: Int32) @suspends {
 }
 fn scope_retained() @suspends -> Int32 {
     let p = alloc(Point { x: 21 })
-    join { | retain_view(p, 0) | retain_view(p, 1) }
+    join { retain_view(p, 0), retain_view(p, 1) }
     p.x + p.x
 }
 fn allocate_branch(value: Int32) @suspends {
@@ -75,9 +75,9 @@ fn allocate_branch(value: Int32) @suspends {
     delayed_value(value)
     record(p.x);
 }
-fn allocate_nested<T>() @suspends { join { | allocate_branch(20) | allocate_branch(22) } }
+fn allocate_nested<T>() @suspends { join { allocate_branch(20), allocate_branch(22) } }
 fn scope_allocations() @suspends -> Int32 {
-    join { | allocate_nested::<Int32>() | allocate_branch(42) }
+    join { allocate_nested::<Int32>(), allocate_branch(42) }
     42
 }
 fn allocate_twice(value: Int32) @suspends {
@@ -87,20 +87,20 @@ fn allocate_twice(value: Int32) @suspends {
     record(p.x);
 }
 fn scope_partial() @suspends -> Int32 {
-    join { | allocate_branch(20) | allocate_twice(22) }
+    join { allocate_branch(20), allocate_twice(22) }
     42
 }
 fn scope_loop() @suspends -> Int32 {
     let a = alloc(Point { x: 0 })
     let b = alloc(Point { x: 0 })
     var i = 0
-    while i < 3 { join { | write(a, 6) | write(b, 6) }; i = i + 1; }
+    while i < 3 { join { write(a, 6), write(b, 6) }; i = i + 1; }
     a.x + b.x
 }
 fn scope_arguments() @suspends -> Int32 {
     let a = alloc(Point { x: 20 })
     let b = alloc(Point { x: 20 })
-    join { | write(a, record(0)) | write(b, delayed_value(record(-1))) }
+    join { write(a, record(0)), write(b, delayed_value(record(-1))) }
     a.x + b.x
 }
 fn failed_branch(divisor: Int32) @suspends {
@@ -109,16 +109,16 @@ fn failed_branch(divisor: Int32) @suspends {
     record((*p) / divisor);
 }
 fn failed_nested(divisor: Int32) @suspends {
-    join { | allocate_twice(22) | failed_branch(divisor) }
+    join { allocate_twice(22), failed_branch(divisor) }
 }
 fn scope_failure(divisor: Int32) @suspends {
-    join { | allocate_branch(20) | failed_nested(divisor) | allocate_branch(40) }
+    join { allocate_branch(20), failed_nested(divisor), allocate_branch(40) }
 }
 fn scope_budget() @suspends -> Int32 {
-    join { | allocate_branch(20) | allocate_branch(22) };
+    join { allocate_branch(20), allocate_branch(22) };
     (*(alloc(42)))
 }
 fn scope_argument_failure(divisor: Int32) @suspends {
     let p = alloc(Point { x: 42 })
-    join { | read(p, 0) | read(p, delayed_value(1) / divisor) }
+    join { read(p, 0), read(p, delayed_value(1) / divisor) }
 }

@@ -619,8 +619,8 @@ fn borrowed_dyn_v3_reborrows_reject_permission_conflicts_and_escape() {
         ("fn f() { let c = Counter { value: 1 }; &*c; }", "requires a checked reference"),
         ("fn f(flag: Bool) { var a = Counter { value: 1 }; var b = Counter { value: 2 }; var c = Counter { value: 3 }; let v: &dyn Read = if flag { &a } else { if flag { &b } else { &c } }; c.value = 4; inspect(&*v); }", "borrow"),
         ("fn wait() @suspends {} fn f() @suspends { var c = Counter { value: 1 }; let v: &mut dyn Read = &mut c; let s = &*v; wait(); inspect(s); }", "across suspension"),
-        ("fn wait() @suspends {} fn f(v: &dyn Read) @noescape { join { | inspect(&*v); | wait(); } }", "@suspends"),
-        ("fn wait() @suspends {} fn f() @suspends { var c = Counter { value: 1 }; let v: &mut dyn Read = &mut c; join { | wait(); | wait(); }; inspect(&*v); }", "concurrency"),
+        ("fn wait() @suspends {} fn f(v: &dyn Read) @noescape { join { inspect(&*v), wait() } }", "@suspends"),
+        ("fn wait() @suspends {} fn f() @suspends { var c = Counter { value: 1 }; let v: &mut dyn Read = &mut c; join { wait(), wait() }; inspect(&*v); }", "concurrency"),
     ] { rejected(&format!("{base} {body}"), message); }
 }
 

@@ -265,7 +265,7 @@ pub enum Expr {
         trailing: bool,
         span: Span,
     },
-    /// `join { | branch1 | branch2 ... }` or `race { | branch1 | branch2 ... }`.
+    /// `join { branch1, branch2, ... }` or `race { branch1, branch2, ... }`.
     Concurrent {
         kind: ConcurrentKind,
         branches: Vec<Expr>,

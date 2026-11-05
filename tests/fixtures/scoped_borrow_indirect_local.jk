@@ -12,6 +12,6 @@ fn expose() -> fn(&String) @suspends @noescape -> Int32 { bad }
 fn local() @suspends -> Int32 {
     let value = "abc"
     let callback = safe
-    let (a, b) = join { | callback(&value) | safe(&value) }
+    let (a, b) = join { callback(&value), safe(&value) }
     a + b
 }

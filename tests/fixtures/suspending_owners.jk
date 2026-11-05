@@ -51,8 +51,8 @@ fn consume_bytes(value: Result<Array<UInt8>, Int32>) -> Int32 { match value { Ok
 fn array_result() @suspends -> Int32 { let value=relay(bytes()); task.yield_now(); consume_bytes(value) }
 fn hold(value: Tracked) @suspends { task.yield_now(); task.yield_now() }
 fn instant() @suspends {}
-fn race_unstarted() @suspends -> Int32 { race { | instant() | hold(make(1)) }; 42 }
-fn race_started() @suspends -> Int32 { race { | hold(make(1)) | instant() }; 42 }
+fn race_unstarted() @suspends -> Int32 { race { instant(), hold(make(1)) }; 42 }
+fn race_started() @suspends -> Int32 { race { hold(make(1)), instant() }; 42 }
 fn dynamic() @suspends -> Int32 {
     scope {
         var id=1

@@ -35,7 +35,7 @@ fn array_values(id: Int32) @suspends {
 fn shared_cursor(id: Int32) @suspends {
     let values = [2, 13, 14]
     let cursor = values.iter()
-    let (left, right) = join { | count(cursor, id) | count(cursor, id) }
+    let (left, right) = join { count(cursor, id), count(cursor, id) }
     check.assert(left + right == 3, "local aliases share one cursor position")
     let strings = ["one", "two"]
     check.assert(count(strings.iter(), id) == 2, "owning elements stay borrowed")
@@ -73,14 +73,14 @@ fn park_map() @suspends {
     table.insert(1, "map owner")
     for entry in &table { observe(100); task.sleep_ms(60000); check.assert(map.entry_value(entry).equals("map owner"), "map borrow") }
 }
-fn parked() @suspends { join { | park_array() | park_map() } }
+fn parked() @suspends { join { park_array(), park_map() } }
 fn invalid_cursor() @suspends {
     let values = [1]
     let cursor = values.iter()
     iter.current(cursor);
 }
 fn main() @suspends -> Int32 {
-    join { | exercise(1) | exercise(2) }
+    join { exercise(1), exercise(2) }
     check.assert(isolate { invalid_cursor() }.is_err(), "invalid cursor access remains checked")
     0
 }

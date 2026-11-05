@@ -15,7 +15,6 @@ impl Parser<'_> {
         let value = Box::new(self.parse_condition()?);
         self.expect(&TokenKind::LBrace)?;
         let previous = std::mem::replace(&mut self.allow_record, true);
-        let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
         let previous_newlines = std::mem::replace(&mut self.newlines, Newlines::Separate);
         let mut arms = Vec::new();
         while self.peek() != &TokenKind::RBrace {
@@ -37,7 +36,6 @@ impl Parser<'_> {
         }
         self.expect(&TokenKind::RBrace)?;
         self.allow_record = previous;
-        self.allow_pipe = previous_pipe;
         self.newlines = previous_newlines;
         Ok(Expr::Match {
             conditional: false,
@@ -398,7 +396,6 @@ impl Parser<'_> {
         let start = self.peek_span().start();
         self.expect(&TokenKind::LBrace)?;
         let previous = std::mem::replace(&mut self.allow_record, true);
-        let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
         let previous_newlines = std::mem::replace(&mut self.newlines, Newlines::Separate);
         let mut stmts = Vec::new();
         while self.peek() != &TokenKind::RBrace && self.peek() != &TokenKind::Eof {
@@ -415,7 +412,6 @@ impl Parser<'_> {
         }
         self.expect(&TokenKind::RBrace)?;
         self.allow_record = previous;
-        self.allow_pipe = previous_pipe;
         self.newlines = previous_newlines;
         Ok(Expr::Block {
             exprs: stmts,

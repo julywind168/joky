@@ -146,7 +146,7 @@ fn startup_workers_same_aot_code_uses_selected_threads_and_preserves_embedding()
                 r#"
         extern fn observe() @suspends -> Int32
         fn root() @suspends -> Int32 {
-            let (a, b, c) = join { | observe() | observe() | observe() }
+            let (a, b, c) = join { observe(), observe(), observe() }
             a + b + c
         }
     "#,

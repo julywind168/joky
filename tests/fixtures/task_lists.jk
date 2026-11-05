@@ -24,25 +24,25 @@ fn texts() @suspends -> List<String> {
     values
 }
 fn root(value: List<Payload>) @suspends -> (List<Payload>, List<String>) {
-    let (a, b) = join { | echo(value) | texts() }
+    let (a, b) = join { echo(value), texts() }
     scope {
         let captured = List.from_array([Payload.Lists(List.from_array(["branch owner"])), Payload.Empty])
         branch { consume(echo(captured)) }
         task.yield_now()
     }
-    let c = race { | texts() | texts() }
+    let c = race { texts(), texts() }
     b.release()
     (a, c)
 }
 fn identity(value: List<Payload>) @suspends -> List<Payload> { echo(value) }
 fn unit_child(value: List<Unit>) @suspends -> List<Unit> { task.yield_now(); value }
 fn units(value: List<Unit>) @suspends -> List<Unit> {
-    let (a, b) = join { | unit_child(value) | unit_child(List.new::<Unit>()) }
+    let (a, b) = join { unit_child(value), unit_child(List.new::<Unit>()) }
     a
 }
 fn fail(value: List<Payload>) @suspends -> List<Payload> { task.yield_now(); 1 / 0; value }
 fn failed(value: List<Payload>) @suspends -> List<Payload> {
-    let (a, b) = join { | fail(value) | texts() }
+    let (a, b) = join { fail(value), texts() }
     a
 }
 fn parked(value: List<Payload>) @suspends -> List<Payload> { task.sleep_ms(60000); value }
@@ -50,7 +50,7 @@ fn cancelled(value: List<Payload>) @suspends -> List<Payload> {
     scope { branch { consume(parked(List.from_array([Payload.Text("waiting capture")]))) }; parked(value) }
 }
 fn capacity() @suspends -> UInt64 {
-    let (a, b) = join { | texts() | texts() }
+    let (a, b) = join { texts(), texts() }
     a.capacity() + b.capacity()
 }
 fn mutate(value: List<String>) @suspends -> List<String> {
@@ -63,9 +63,9 @@ fn mutate(value: List<String>) @suspends -> List<String> {
     values
 }
 fn topology() @suspends -> Int32 {
-    let (a, b) = join { | texts() | texts() }
+    let (a, b) = join { texts(), texts() }
     let before = a.capacity()
-    let (c, d) = join { | mutate(a) | mutate(b) }
+    let (c, d) = join { mutate(a), mutate(b) }
     if before == 8 && c.capacity() == before && d.capacity() == before {
         var ca = c.into_array()
         var da = d.into_array()

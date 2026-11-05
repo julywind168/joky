@@ -62,7 +62,7 @@ fn relay(value: FixedArray<String, 2>) @suspends -> FixedArray<String, 2> {
     value
 }
 fn transferred() @suspends -> Int32 {
-    let (a, b) = join { | relay(words()) | relay(words()) }
+    let (a, b) = join { relay(words()), relay(words()) }
     size(&a) + size(&b)
 }
 fn reader(value: &FixedArray<String, 2>) @suspends -> Int32 {
@@ -71,7 +71,7 @@ fn reader(value: &FixedArray<String, 2>) @suspends -> Int32 {
 }
 fn borrowed() @suspends -> Int32 {
     let value = words()
-    let (a, b) = join { | reader(&value) | reader(&value) }
+    let (a, b) = join { reader(&value), reader(&value) }
     a + b
 }
 fn dynamic() @suspends -> Int32 {

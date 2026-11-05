@@ -143,7 +143,7 @@ fn fragmented() @suspends -> Int32 {
     let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => { return 3 } }
     var peer = match listener.accept() { Ok(stream) => stream, _ => { return 4 } }
     var buffered = BufferedTcp.new(stream)
-    join { | consume(&mut buffered) | produce(&mut peer) }
+    join { consume(&mut buffered), produce(&mut peer) }
     42
 }
 fn main() @suspends -> Int32 {
@@ -208,7 +208,7 @@ fn cancel() @suspends -> Int32 {
         if mode == 0 { prefix.truncate(2) } else { prefix.push(42) }
         ensure(peer.write_all(prefix).is_ok())
         var buffered = BufferedTcp.new(stream)
-        race { | wait(&mut buffered) | task.sleep_ms(1) }
+        race { wait(&mut buffered), task.sleep_ms(1) }
         ensure(buffered.buffered_len() <= buffered.capacity())
         ensure(buffered.close().is_ok())
         ensure(peer.close().is_ok())
@@ -237,7 +237,7 @@ fn maximum() @suspends -> Int32 {
     let peer = match listener.accept() { Ok(stream) => stream, _ => { return 4 } }
     var writer = BufferedTcp.new(stream)
     var reader = BufferedTcp.new(peer)
-    join { | send_maximum(&mut writer) | receive_maximum(&mut reader) }
+    join { send_maximum(&mut writer), receive_maximum(&mut reader) }
     ensure(writer.close().is_ok())
     match reader.read_message(0) { Ok(None) => {}, _ => { return 5 } }
     42

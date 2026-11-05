@@ -910,7 +910,7 @@ fn main() @suspends {{
     let source={source:?}
     let message="timer host"
     check.assert(vm.load_source(h,&source)==0,&message)
-    join {{ | h.call::<domain.TimerHandle,Unit>("hold",timer) | control(&h,timer) }};
+    join {{ h.call::<domain.TimerHandle,Unit>("hold",timer), control(&h,timer) }};
     check.assert(vm.close(h)==0,&message)
     owner.close()
     check.assert(match timer.status() {{ Closed=>true,_=>false }},&message)
@@ -996,7 +996,7 @@ fn main() @suspends {{
     let h=vm.Vm.{create}(); let source={old:?}
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(2); let directory=owner.handle()
-    join {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    join {{ h.call::<domain.DirectoryHandle,Unit>("hold",directory), control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
 }}"#
@@ -1435,7 +1435,7 @@ fn main() @suspends {{
     let h=vm.Vm.{create}(); let source={old:?}
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(1); let directory=owner.handle()
-    join {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    join {{ h.call::<domain.DirectoryHandle,Unit>("hold",directory), control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
 }}"#
@@ -1549,7 +1549,7 @@ fn main() @suspends {{
     let h=vm.Vm.{create}(); let source={old:?}
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(1); let directory=owner.handle()
-    join {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    join {{ h.call::<domain.DirectoryHandle,Unit>("hold",directory), control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
 }}"#
@@ -1646,7 +1646,7 @@ fn main() @suspends {{
     let h=vm.Vm.{create}(); let source={old:?}
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(1); let directory=owner.handle()
-    join {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    join {{ h.call::<domain.DirectoryHandle,Unit>("hold",directory), control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
 }}"#));
@@ -1787,7 +1787,7 @@ fn main() @suspends {{
     let timer=domain.timer(); let t=timer.handle()
     let h=vm.Vm.{create}(); let source={source:?}
     assert(vm.load_source(h,&source)==0)
-    join {{ | h.call::<domain.TimerHandle,Unit>("hold",t) | control(&h,t) }};
+    join {{ h.call::<domain.TimerHandle,Unit>("hold",t), control(&h,t) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
 }}"#));
@@ -2170,7 +2170,7 @@ fn control(h:&vm.Vm,directory:domain.DirectoryHandle) @suspends {{
 fn main() @suspends {{
     let h=vm.Vm.{create}(); let source={old:?}; assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(2); let directory=owner.handle()
-    join {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    join {{ h.call::<domain.DirectoryHandle,Unit>("hold",directory), control(&h,directory) }};
     assert(vm.module_count(h)==1); assert(vm.close(h)==0)
 }}"#));
         work.assert_all_backends("when_reload.jk", &[], b"", 0);
@@ -2369,7 +2369,7 @@ fn control(h:&vm.Vm,d:domain.DirectoryHandle) @suspends {{
 fn main() @suspends {{
  let owner=domain.directory(1); let d=owner.handle(); let h=vm.Vm.{create}()
  let source={old}; assert(vm.load_source(h,&source)==0)
- race{{| h.call::<domain.DirectoryHandle,Unit>("hold",d) | control(&h,d)}};
+ race{{h.call::<domain.DirectoryHandle,Unit>("hold",d), control(&h,d)}};
  assert(vm.module_count(h)==1)
  assert(h.call::<domain.DirectoryHandle,Int32>("probe",d)==-1)
  assert(vm.close(h)==0)
@@ -2418,7 +2418,7 @@ fn control(h:&vm.Vm,d:domain.DirectoryHandle) @suspends {{
 fn main() @suspends {{
  let owner=domain.directory(1); let d=owner.handle(); let h=vm.Vm.{create}()
  let old={old}; assert(vm.load_source(h,&old)==0)
- race{{| h.call::<domain.DirectoryHandle,Unit>("hold",d) | control(&h,d)}};
+ race{{h.call::<domain.DirectoryHandle,Unit>("hold",d), control(&h,d)}};
  assert(vm.module_count(h)==1)
  assert(h.call::<domain.DirectoryHandle,Int32>("probe",d)==-1)
  assert(vm.close(h)==0)

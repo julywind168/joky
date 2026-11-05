@@ -55,8 +55,8 @@ fn main() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
     let address = match listener.local_addr() { Ok(address) => address, Err(error) => { return 2 } }
     // A real monotonic timeout stops accept; the same listener is reusable.
-    race { | pending(&mut listener) | task.sleep_ms(2) }
-    join { | server(&mut listener) | send(address) | send(address) | send(address) }
+    race { pending(&mut listener), task.sleep_ms(2) }
+    join { server(&mut listener), send(address), send(address), send(address) }
     checked(listener.close())
     cancel_prefix()
     0
@@ -74,7 +74,7 @@ fn cancel_sender(address: Address) @suspends {
     var stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { checked(Result.Err(error)); return } }
     // The write makes progress then cooperatively yields. Cancellation retains
     // that prefix, releases the borrow, and permits a new operation on the stream.
-    race { | cancelled_write(&mut stream) | task.yield_now() }
+    race { cancelled_write(&mut stream), task.yield_now() }
     checked(stream.write_all(marker()))
     checked(stream.shutdown(Shutdown.Write))
 }
@@ -108,5 +108,5 @@ fn cancel_receiver(listener: &mut TcpListener) @suspends {
 fn cancel_prefix() @suspends {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { checked(Result.Err(error)); return } }
     let address = match listener.local_addr() { Ok(address) => address, Err(error) => { checked(Result.Err(error)); return } }
-    join { | cancel_receiver(&mut listener) | cancel_sender(address) }
+    join { cancel_receiver(&mut listener), cancel_sender(address) }
 }

@@ -44,7 +44,7 @@ fn serve(script: &Script, host: Host, var listener: TcpListener, stop: &shutdown
     var next_id: UInt64 = 1
     scope {
         while !stop.requested() {
-            let stream = match race { | stopped(stop) | accept(&mut listener) } { Some(stream) => stream, None => break }
+            let stream = match race { stopped(stop), accept(&mut listener) } { Some(stream) => stream, None => break }
             if stop.requested() { break }
             let permit = match entrants.try_acquire() { Ok(permit) => permit, Err(_) => continue }
             let id = next_id
@@ -67,8 +67,8 @@ fn stopped(stop: &shutdown.Controller) @suspends -> Option<TcpStream> { stop.wai
 fn accept(listener: &mut TcpListener) @suspends -> Option<TcpStream> { listener.accept().ok() }
 fn services(script: &Script, host: Host, chat: TcpListener, admin_listener: TcpListener, stop: &shutdown.Controller) @suspends -> Int32 {
     let (business, admin_status) = join {
-        | serve(script, host, chat, stop)
-        | admin.serve(&script.vm, script_path(), admin_listener, stop)
+        serve(script, host, chat, stop)
+        admin.serve(&script.vm, script_path(), admin_listener, stop)
     }
     if business != 0 || admin_status != 0 { 1 } else { 0 }
 }
@@ -112,7 +112,7 @@ fn main() @suspends -> Int32 {
     println("admin {admin_listener.local_addr()!.port()}")
     let script = Script { vm: engine, entries }
     race {
-        | services(&script, host, chat, admin_listener, &stop)
-        | deadline(&stop)
+        services(&script, host, chat, admin_listener, &stop)
+        deadline(&stop)
     }
 }

@@ -35,7 +35,7 @@ fn lifecycle() @suspends ->Int32 {
     let snapshot=domain.snapshot_pair(a.read_handle(),b.read_handle(),total)
     let candidate=choose(snapshot,bh,20)
     var single=domain.commit_to(bh,candidate)
-    race { | wait_single(&mut single) | stop_wait() };
+    race { wait_single(&mut single), stop_wait() };
     assert(single.wait().unwrap()==1)
     assert(domain.read_from(a.read_handle(),read).unwrap()==1)
     assert(domain.read_from(b.read_handle(),read_rules).unwrap()==20)
@@ -44,7 +44,7 @@ fn lifecycle() @suspends ->Int32 {
     let first=domain.candidate_from(snapshot,bh,rules,30)
     let pair=domain.candidate_pair_from(first,ah,make_value,Input{n:2})
     var pair_receipt=domain.commit_pair_to(bh,ah,pair)
-    race { | wait_pair(&mut pair_receipt) | stop_wait() };
+    race { wait_pair(&mut pair_receipt), stop_wait() };
     assert(match pair_receipt.wait(){Ok((x,y))=>x==2 && y==1,_=>false})
     // A read-only dependency is retained when selecting the second target.
     let snapshot=domain.snapshot_pair(a.read_handle(),b.read_handle(),total)
@@ -61,7 +61,7 @@ fn lifecycle() @suspends ->Int32 {
     let candidate=domain.candidate_set_add(candidate,ah,make_value,Input{n:4})
     var mailbox=outbox.create(1,1)
     var receipt=domain.commit_set(candidate.with_outbox(batch(mailbox.handle())))
-    race { | wait_set(&mut receipt) | stop_wait() };
+    race { wait_set(&mut receipt), stop_wait() };
     assert(receipt.wait().is_ok())
     assert(receipt.revision(a.read_handle()).unwrap().unwrap_or(0)==3)
     assert(receipt.revision(b.read_handle()).unwrap().unwrap_or(0)==3)

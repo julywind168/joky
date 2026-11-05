@@ -64,7 +64,7 @@ fn main() @suspends {
     readers.push(reader)
     let stored = readers.get(0).unwrap_or(reader)
     assert(domain.read_from(stored, read).unwrap() == 10, "copy handles in owned storage")
-    join { | launch(handle, 2) | launch(handle, 3) }
+    join { launch(handle, 2), launch(handle, 3) }
     assert(domain.read_from(reader, read).unwrap() == 15, "serialized writes")
     assert(status(domain.request(handle, broken, 0)) == 1, "request failure is isolated")
     assert(status(domain.request_read(reader, work, 5)) == 1, "unwrap turns denied write into request failure")
@@ -72,9 +72,9 @@ fn main() @suspends {
     assert(domain.read_from(reader, read).unwrap() == 15, "failure preserved state")
     assert(domain.request(handle, echo, -2147483648).unwrap_or(0) == -2147483648, "minimum scalar result")
     assert(domain.request(handle, echo, 2147483647).unwrap_or(0) == 2147483647, "maximum scalar result")
-    race { | slow(handle) | ready() }
+    race { slow(handle), ready() }
     assert(domain.read_from(reader, read).unwrap() == 15, "race cancelled pending work")
-    join { | wait_for_close(handle) | close_owner(owner) }
+    join { wait_for_close(handle), close_owner(owner) }
     assert(status(domain.request(handle, work, 1)) == 3, "closed handles stay invalid")
     let stale = { let temporary = domain.create(make, 1); temporary.handle() }
     assert(status(domain.request(stale, work, 1)) == 3, "drop closes state")

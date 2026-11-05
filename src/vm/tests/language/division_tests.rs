@@ -184,7 +184,7 @@ fn division_failure_stops_scope_siblings_and_cancelled_tasks() {
         fn failing() @suspends { let value = 7 / delayed_value(record(-1)); record(99); }
         fn sibling() @suspends { delayed_value(record(2)); record(98); }
         fn compute() @suspends -> Int32 {
-            join { | failing() | sibling() }
+            join { failing(), sibling() }
             record(97)
         }
     "#;

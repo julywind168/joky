@@ -42,7 +42,7 @@ fn exchange(settings: &Settings, var stream: TcpStream) @suspends {
     check.assert(stream.read(1)!.get(0)! == settings.byte, "stream payload")
     if settings.split {
         let (reader, writer) = stream.split()
-        join { | send(settings, writer) | receive(settings, reader) };
+        join { send(settings, writer), receive(settings, reader) };
     } else {
         closed(stream.shutdown(Shutdown.Both))
         stream.close()!
@@ -59,7 +59,7 @@ fn server(settings: &Settings, var listener: TcpListener) @suspends {
 fn round(settings: &Settings) @suspends {
     var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
     let address = listener.local_addr()!
-    join { | client(settings, address) | server(settings, listener) };
+    join { client(settings, address), server(settings, listener) };
 }
 fn pending_accept(settings: &Settings) @suspends {
     var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
@@ -83,10 +83,10 @@ fn main() @suspends {
         branch { round(plain_view) }
         branch { round(halves_view) }
     }
-    race { | pending_accept(&plain) | task.sleep_ms(5) };
+    race { pending_accept(&plain), task.sleep_ms(5) };
     let settings = &halves
     let failure = isolate {
-        join { | pending_accept(settings) | fail() };
+        join { pending_accept(settings), fail() };
         0
     }
     check.assert(failure.is_err(), "isolated failure")
@@ -94,14 +94,14 @@ fn main() @suspends {
 }
 fn parked_accept() @suspends {
     let settings = Settings { byte: 42, split: false }
-    join { | pending_accept(&settings) | pending_accept(&settings) };
+    join { pending_accept(&settings), pending_accept(&settings) };
 }
 fn parked_read() @suspends {
     let settings = Settings { byte: 42, split: false }
     var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
     let address = listener.local_addr()!
-    let (client, server) = join { | connect(address) | accept(listener) }
-    join { | pending_read(&settings, client) | pending_read(&settings, server) };
+    let (client, server) = join { connect(address), accept(listener) }
+    join { pending_read(&settings, client), pending_read(&settings, server) };
 }
 
 // No peer can report a secondary protocol failure before the allocation error.
@@ -113,5 +113,5 @@ fn allocate(settings: &Settings) @suspends {
 }
 fn allocation_budget() @suspends {
     let settings = Settings { byte: 42, split: false }
-    join { | allocate(&settings) | allocate(&settings) };
+    join { allocate(&settings), allocate(&settings) };
 }

@@ -806,7 +806,7 @@ fn main() @suspends {
     shutdown.run_fixture()
     var queue = outbox.create(1, 0)
     let output = queue.handle()
-    let (message, _) = join { | queue.receive() | seal(output) }
+    let (message, _) = join { queue.receive(), seal(output) }
     check.assert(message.is_none(), "parallel seal wakes pending receive")
 }
 "#,

@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 const SOURCE: &str = r#"
         fn echo(text: String) @suspends -> String { text }
         fn text(text: String) @suspends -> String {
-            let (a, b) = join { | echo(text) | echo("discarded") }
+            let (a, b) = join { echo(text), echo("discarded") }
             a
         }
-        fn raced(text: String) @suspends -> String { race { | echo(text) | echo("other") } }
+        fn raced(text: String) @suspends -> String { race { echo(text), echo("other") } }
         fn consume(text: String) @suspends { }
         fn branched(text: String) @suspends -> String {
             scope { branch { consume(text) } }
@@ -288,8 +288,8 @@ fn parallel_frozen_children_share_one_root_in_join_race_and_branch() {
             consume(text)
             n + sum - 4950
         }
-        fn joined(n: Int32) @suspends -> Int32 { let (a, b) = join { | dispatch(n) | dispatch(n + 1) }; a + b }
-        fn raced(n: Int32) @suspends -> Int32 { race { | dispatch(n) | dispatch(n + 1) } }
+        fn joined(n: Int32) @suspends -> Int32 { let (a, b) = join { dispatch(n), dispatch(n + 1) }; a + b }
+        fn raced(n: Int32) @suspends -> Int32 { race { dispatch(n), dispatch(n + 1) } }
         fn branched(n: Int32) @suspends -> Int32 { scope { branch { dispatch(n); }; branch { dispatch(n + 1); } }; n }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -381,7 +381,7 @@ fn parallel_pending_cancellation_cleans_on_the_worker_and_releases_code_last() {
         vm.load_source(r#"
             extern fn pause() @suspends
             fn parked(text: String) @suspends -> String { pause(); text }
-            fn root(text: String) @suspends -> String { let (a, b) = join { | parked(text) | parked("pending owner") }; a }
+            fn root(text: String) @suspends -> String { let (a, b) = join { parked(text), parked("pending owner") }; a }
         "#).unwrap();
         let budget = TaskBudget::new(1 << 20);
         let prepared = vm
@@ -414,12 +414,12 @@ fn task_pool_nested_join_race_branch_and_owned_text() {
         vm.set_prelude_enabled(false);
         vm.load_source(r#"
             fn leaf(n: Int32) @suspends -> Int32 { n + 1 }
-            fn joined(n: Int32) @suspends -> Int32 { let (a, b) = join { | leaf(n) | leaf(n + 1) }; a + b }
-            fn nested(n: Int32) @suspends -> Int32 { let (a, b) = join { | joined(n) | joined(n + 2) }; a + b }
-            fn raced(n: Int32) @suspends -> Int32 { race { | joined(n) | leaf(n) } }
+            fn joined(n: Int32) @suspends -> Int32 { let (a, b) = join { leaf(n), leaf(n + 1) }; a + b }
+            fn nested(n: Int32) @suspends -> Int32 { let (a, b) = join { joined(n), joined(n + 2) }; a + b }
+            fn raced(n: Int32) @suspends -> Int32 { race { joined(n), leaf(n) } }
             fn branched(n: Int32) @suspends -> Int32 { scope { branch { joined(n); }; branch { nested(n); } }; n }
             fn echo(text: String) @suspends -> String { text }
-            fn text(text: String) @suspends -> String { let (a, b) = join { | echo(text) | echo("temporary") }; a }
+            fn text(text: String) @suspends -> String { let (a, b) = join { echo(text), echo("temporary") }; a }
         "#).unwrap();
         for workers in [1, 2, 4] {
             let executor = crate::runtime::parallel::ParallelExecutor::new(workers, 128).unwrap();
@@ -485,11 +485,11 @@ fn task_pool_admission_failure_cancellation_and_shutdown_refund_storage() {
         vm.load_source(
             r#"
             fn leaf() @suspends -> Int32 { 42 }
-            fn root() @suspends -> Int32 { let (a, b) = join { | leaf() | leaf() }; a + b }
+            fn root() @suspends -> Int32 { let (a, b) = join { leaf(), leaf() }; a + b }
             fn burn() -> Int32 { var i = 0; while true { i = i + 1 } }
             fn spin() @suspends -> Int32 { burn() }
             fn fail() @suspends -> Int32 { 1 / 0 }
-            fn failed() @suspends -> Int32 { let (a, b) = join { | fail() | spin() }; a + b }
+            fn failed() @suspends -> Int32 { let (a, b) = join { fail(), spin() }; a + b }
             fn failed_branch() @suspends -> Int32 { scope { branch { fail(); }; burn() } }
         "#,
         )
@@ -563,7 +563,7 @@ fn task_pool_timer_submission_reload_and_shutdown() {
             fn leaf(n: Int32) @suspends -> Int32 { task.sleep_ms(2); n }
             fn root() @suspends -> Int32 {
                 scope { branch { task.sleep_ms(2) }; task.yield_now() }
-                let (a, b) = join { | leaf(20) | leaf(22) }
+                let (a, b) = join { leaf(20), leaf(22) }
                 a + b
             }
             fn parked() @suspends { task.sleep_ms(60000) }
@@ -636,7 +636,7 @@ fn parallel_stdout_frozen_evidence_survives_reload_and_vm_drop() {
             21
         }
         fn nested(text: &String) @suspends -> Int32 {
-            let (a, b) = join { | write(text) | write(text) }
+            let (a, b) = join { write(text), write(text) }
             a + b
         }
         fn root() @suspends -> Int32 {
@@ -651,7 +651,7 @@ fn parallel_stdout_frozen_evidence_survives_reload_and_vm_drop() {
         }
         fn parked() @suspends {
             let text = ""
-            join { | hold(&text) | hold(&text) };
+            join { hold(&text), hold(&text) };
         }
     "#;
     for (mode, workers) in [

@@ -13,7 +13,7 @@ fn receive(queue: &mut outbox.Mailbox) @suspends -> Int32 {
 }
 fn nested(queue: &mut outbox.Mailbox) @suspends -> Int32 {
     // Reborrowing a received exclusive loan remains within this worker.
-    let (value, _) = join { | receive(queue) | task.yield_now() }
+    let (value, _) = join { receive(queue), task.yield_now() }
     value
 }
 fn ready() @suspends -> Int32 { task.yield_now(); 42 }
@@ -26,35 +26,35 @@ fn main() @suspends -> Int32 {
     engine.load_source("import joky/domain import joky/outbox\nstruct State {{ value: Int32 }}\nfn make(value: Int32) -> State {{ State {{ value }} }}\nfn send(target: outbox.Handle) @suspends {{ let owner = domain.create(make, 0); let handle = owner.handle(); when \"send\" (mut handle) {{ handle.value += 1; let bytes = \"中\\0🙂\".into_bytes(); target.send(&bytes); let result: Result<Unit, Int32> = Ok({{}}); result }}.unwrap(); }}")!
     var queue = outbox.create(2, 64)
     let target = queue.handle()
-    let (first, _) = join { | receive(&mut queue) | publish(&engine, target) }
+    let (first, _) = join { receive(&mut queue), publish(&engine, target) }
     if first != 21 { return 1 }
     // A returned loan leaves the same source and Handle usable.
-    let (second, _) = join { | nested(&mut queue) | publish(&engine, target) }
+    let (second, _) = join { nested(&mut queue), publish(&engine, target) }
     if second != 21 { return 2 }
-    if (race { | receive(&mut queue) | ready() }) != 42 { return 3 }
+    if (race { receive(&mut queue), ready() }) != 42 { return 3 }
     publish(&engine, target)
     let view = &mut queue
     scope { branch { if receive(view) != 21 { check.panic("bad dynamic receive") } } }
     publish(&engine, target)
     let borrowed = &mut queue
-    let failure = isolate { join { | failed(borrowed) | task.yield_now() } }
+    let failure = isolate { join { failed(borrowed), task.yield_now() } }
     if failure.is_ok() { return 4 }
     publish(&engine, target)
     if receive(&mut queue) != 21 { return 5 }
     target.close()
-    let (last, _) = join { | receive(&mut queue) | task.yield_now() }
+    let (last, _) = join { receive(&mut queue), task.yield_now() }
     if last != 0 { return 6 }
     0
 }
 fn parked() @suspends {
     var first = outbox.create(2, 64)
     var second = outbox.create(2, 64)
-    join { | receive(&mut first) | receive(&mut second) };
+    join { receive(&mut first), receive(&mut second) };
 }
 fn allocation_budget() @suspends -> Int32 {
     var queue = outbox.create(1, 0)
     let target = queue.handle()
     target.close()
-    let (value, _) = join { | receive(&mut queue) | task.yield_now() }
+    let (value, _) = join { receive(&mut queue), task.yield_now() }
     value
 }

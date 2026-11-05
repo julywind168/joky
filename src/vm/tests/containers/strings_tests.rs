@@ -354,12 +354,12 @@ fn owning_string_cps_capture_after_reload_and_scope_cleanup() {
         fn forever(text: String) @suspends { while true { task.yield_now() } }
         fn ready(text: String) @suspends { text.release() }
         fn compete() @suspends -> Int32 {
-            race { | forever("中🙂") | ready("done") }
-            join { | ready("left") | ready("right") }
+            race { forever("中🙂"), ready("done") }
+            join { ready("left"), ready("right") }
             42
         }
         fn unpolled() @suspends -> Int32 {
-            race { | ready("done") | forever("never polled") }
+            race { ready("done"), forever("never polled") }
             42
         }
     "#;

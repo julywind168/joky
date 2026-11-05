@@ -432,7 +432,7 @@ fn parallel_tcp_borrowed_groups_stay_local_but_reference_packets_are_rejected() 
         import joky/drop.{type Drop}
         fn inspect(listener: &TcpListener) @suspends {}
         fn shared(listener: TcpListener) @suspends {
-            join { | inspect(&listener) | inspect(&listener) }
+            join { inspect(&listener), inspect(&listener) }
         }
         fn capture(listener: &TcpListener) @suspends { scope { branch { inspect(listener) } } }
         fn captured_owner(listener: TcpListener) @suspends { capture(&listener) }

@@ -265,11 +265,11 @@ mod tests {
             fn callable(value: fn(Int32) -> Int32) { }
             fn child() @suspends -> One { One { value: 42 } }
             fn join_value() @suspends -> Int32 {
-                let (a, b) = join { | child() | child() }
+                let (a, b) = join { child(), child() }
                 a.value + b.value
             }
             fn race_value() @suspends -> Int32 {
-                let a = race { | child() | child() }
+                let a = race { child(), child() }
                 a.value
             }
             fn branch_value(value: One) @suspends { scope { branch { one(value) } } }

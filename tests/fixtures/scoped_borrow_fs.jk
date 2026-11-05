@@ -30,7 +30,7 @@ fn exercise(settings: &Settings) @suspends -> Int32 {
 fn main() @suspends -> Int32 {
     let first = Settings { path: "first.bin", text: "中\0🙂" }
     let second = Settings { path: "second.bin", text: "second\0文件" }
-    let (a, b) = join { | exercise(&first) | exercise(&second) }
+    let (a, b) = join { exercise(&first), exercise(&second) }
     if a + b != 42 { return 1 }
     let view = &first
     scope { branch { if exercise(view) != 21 { check.panic("bad file result") } } }

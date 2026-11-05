@@ -118,7 +118,7 @@ fn demo(_: Unit) @suspends {
     // The client creates the ID before sending, and keeps it across retries.
     let key = uuid.v4()!
     let order = Request { user: 1, id: key, amount: 10 }
-    let (a, b) = join { | begin(stock, order, 0) | begin(stock, order, 0) }
+    let (a, b) = join { begin(stock, order, 0), begin(stock, order, 0) }
     let ticket = match (a, b) {
         (Start(id), Return(Processing)) => id,
         (Return(Processing), Start(id)) => id,
@@ -144,7 +144,7 @@ fn demo(_: Unit) @suspends {
     check.assert(match begin(stock, order, 60) { Return(Confirmed(id)) => id == ticket, _ => false }, "retain until deadline")
     check.assert(match purchase(stock, order, Decision.Reject, 61) { Declined => true, _ => false }, "new admission after replay window")
 
-    race { | abandoned(stock, fresh) | stop_after_reservation(read) }
+    race { abandoned(stock, fresh), stop_after_reservation(read) }
     assert_stock(read, 85, 10, 5)
     let old = when (stock) { stock.next_id - 1 }!
     when (mut stock) { stock.expire(110) }!

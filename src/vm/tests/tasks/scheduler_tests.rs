@@ -69,8 +69,8 @@ fn scope_polls_all_branches_and_waits_for_each_completion() {
         fn right(value: Int32) @suspends { delayed_value(value); {} }
         fn all() @suspends -> Int32 {
             join {
-                | left(1)
-                | right(2)
+                left(1)
+                right(2)
             }
             42
         }
@@ -89,11 +89,11 @@ fn scope_requires_suspending_function_branches() {
     let mut vm = VmEngine::new();
     for (source, message) in [
         (
-            "fn f() { join { | f() } }",
+            "fn f() { join { f() } }",
             "join must be inside an @suspends function",
         ),
         (
-            "fn branch_task() {} fn f() @suspends { join { | branch_task() } }",
+            "fn branch_task() {} fn f() @suspends { join { branch_task() } }",
             "must be an @suspends function",
         ),
         (
@@ -118,7 +118,7 @@ fn scope_failure_stops_polling_and_releases_siblings() {
         extern fn fail_now() @suspends
         fn pending() @suspends { delayed_value(1); {} }
         fn failed() @suspends { fail_now() }
-        fn all() @suspends { join { | pending() | failed() } }
+        fn all() @suspends { join { pending(), failed() } }
     "#);
     let error = vm.call_async("all", &[]).unwrap_err();
     assert!(format!("{error:?}").contains("failure status 7"));

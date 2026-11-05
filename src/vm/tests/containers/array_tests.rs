@@ -110,12 +110,12 @@ fn owning_arrays_cross_scope_and_race_in_all_vm_modes() {
 
         fn scope_run() @suspends -> Int32 {
             let values = array.new::<Int32>()
-            join { | hold(values) }
+            join { hold(values) }
             42
         }
         fn race_run() @suspends -> Int32 {
             let values = array.new::<Int32>()
-            race { | hold(values) | finish() }
+            race { hold(values), finish() }
             42
         }
     "#;
@@ -411,10 +411,10 @@ fn arrays_reject_capability_escapes_and_invalid_storage() {
         "fn bad() { var a = array.new::<Int32>(); let r = &a; (*(&mut a) = array.new::<Int32>()); array.len(r); }",
         "fn bad() { let a = array.new::<Int32>() ; (&*a); }",
         "fn bad(a: &Array<&Int32>) @suspends {}",
-        "fn branch_task(a: &Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>(); join { | branch_task(&a) } }",
-        "fn branch_task(a: &Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>(); race { | branch_task(&a) } }",
-        "fn branch_task(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>(); join { | branch_task(a) } }",
-        "fn branch_task(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>(); race { | branch_task(a) } }",
+        "fn branch_task(a: &Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>(); join { branch_task(&a) } }",
+        "fn branch_task(a: &Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>(); race { branch_task(&a) } }",
+        "fn branch_task(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>(); join { branch_task(a) } }",
+        "fn branch_task(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>(); race { branch_task(a) } }",
         "extern fn host(a: Array<Int32>) fn bad() {}",
         "unsafe extern \"C\" fn host(a: &Array<Int32>) fn bad() {}",
         "fn bad() { array.allocate(1); }",

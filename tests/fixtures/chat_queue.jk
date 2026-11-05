@@ -96,7 +96,7 @@ fn verify_balance_race() @suspends {
     check.assert(balance(&alice) == 500, "no-room send is free")
     check.assert(handle_line(f.ctx, 1, "join r"), "join")
     expect_message(&mut queue, "joined r 1\n")
-    join { | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) | paid_send(f.ctx) }
+    join { paid_send(f.ctx), paid_send(f.ctx), paid_send(f.ctx), paid_send(f.ctx), paid_send(f.ctx), paid_send(f.ctx) }
     var i: UInt64 = 0
     while i < 5 { expect_message(&mut queue, "message r 1 concurrent\n"); i += 1 }
     expect_message(&mut queue, "error insufficient balance\n")

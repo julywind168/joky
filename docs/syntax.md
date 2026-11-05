@@ -303,8 +303,7 @@ while / if 条件中的序列使用括号，例如 `while (advance(); ready()) {
 `&` / `|` / `^` 均求值两侧，不能替代 Bool 短路运算。
 
 match 分支以逗号或真实换行分隔，分支结果可直接写按位或 `a | b`。
-join/race 分支最外层的 `|` 保留为分隔符；按位或写为 `(a | b)` 或 `{ a | b }`。
-括号、调用参数、元组、记录字段和块内部允许按位或；闭合定界符后恢复外层分支规则。
+join/race 分支也以逗号或真实换行分隔，`|` 不再充当分隔符；按位或沿用普通表达式规则。
 嵌套 match 自己管理逗号与换行分支分隔符，不进行按名称或后续 `=>` 猜测；表达式沿用换行与圆括号的通用规则。
 
 当前 `1 + 2 * 3` 为 `7`；依赖旧版同优先级规则得到 `9` 的代码应迁移为 `(1 + 2) * 3`。
@@ -376,6 +375,7 @@ fn sum_until(n: Int32, limit: Int32) -> Int32 {
 
 管道分支形式先由 `scope` 改名为 `parallel`，现已统一为 `join`，行为不变。
 旧 `parallel { ... }` 和管道式 `scope { | ... }` 均给出迁移诊断，不提供别名。
+join/race 分支现统一以逗号或真实换行分隔，旧前导 `|` 写法也报告迁移诊断。
 `isolate { body }` 已实现为显式失败边界，语义与限制见 [语言参考](language.md#失败隔离-isolate)。
 它是后接块时的上下文词，监督策略在其返回的 Result 上组合。
 
@@ -398,8 +398,8 @@ fn worker(count: Int32) @suspends {
 
 fn run_pair() @suspends {
     join {
-        | worker(2)
-        | worker(3)
+        worker(2)
+        worker(3)
     }
 }
 ```
@@ -424,7 +424,7 @@ fn run_pair() @suspends {
   并取消其余分支、清理已接收的拥有结果。
   父任务取消也取消其子任务。核心阶段没有 `defer` 或用户析构语法；所有权扩展后，
   取消必须释放已初始化且仍由任务拥有的值，清理动作同步完成、不可挂起，见第 10 节。
-- `race { | first() | second() }` 按源码顺序轮询，首个观察到的完成或失败决定结果：
+- `race { first(), second() }` 按源码顺序轮询，首个观察到的完成或失败决定结果：
   完成返回获胜分支的值，失败终止整个任务；同轮就绪按轮询顺序处理。父函数继续前同步清理
   其余分支及嵌套子帧，后续分支可能从未被轮询，已发生副作用不回滚。
   普通分支借用在此边界结束，实际保留的任务期存储借用及 arena 对象仍保持到根任务结束。
@@ -1198,8 +1198,8 @@ TupleValue   = "(", Expression, ",", [ Expression, { ",", Expression }, [ "," ] 
 If           = "if", Condition, Block, [ "else", (If | Block) ] ;
 While        = "while", Condition, Block ;
 Condition    = "let", Pattern, "=", NonSequence | NonSequence ;
-Concurrent   = ("join" | "race"), "{", Branch, { Branch }, "}" ;
-Branch       = "|", NonSequence, [ ";" ] ;
+Concurrent   = ("join" | "race"), "{", Branch, { BracedSep, Branch }, [ "," ], "}" ;
+Branch       = NonSequence ;
 TaskScope    = "scope", Block ;
 Isolate      = "isolate", Block ;
 TaskBranch   = "branch", Block ;
@@ -1241,9 +1241,9 @@ Name 后的 `{}` 或以 `Identifier :` 开始的块优先解析为 RecordValue�
 空载荷泛型构造可独立写 `Option.None::<Int32>`，无括号且不是函数值。
 类型注解中的 Name 先匹配当前声明的类型参数，且形参不能重复或使用 `_`；impl 参数也不能命名为 `Self`。
 方法参数不能遮蔽 impl 参数、impl 目标名称或 `Self`，两层参数合计最多 64 个。
-连续运算符按最长匹配分词；`||` 不是两个分支符。类型列表解析时按需拆分 `>>` 的闭合符，
+连续运算符按最长匹配分词；`||` 是逻辑或或无参数闭包的起始符。类型列表解析时按需拆分 `>>` 的闭合符，
 或 `>=` 中的闭合符与赋值符；表达式中的比较和移位保持原规则。
-EBNF 的 BitOr 在 join / race 分支最外层禁用；进入括号、参数、字段、元组或块时恢复，退出时还原。
+EBNF 的 BitOr 在 join / race 中沿用普通表达式规则；旧前导 `|` 分支语法报告迁移诊断。
 数值 token 需要整体满足 Integer，不能把 `0b102` 拆成 `0b10` 和 `2`。
 枚举构造复用限定名 / Call 文法，由类型检查辨认；模式中的 `_` 不能被限定或带载荷。
 模式载荷递归解构元组、记录、枚举和序列；变体载荷有无必须与声明匹配。序列中的 rest 最多一个，let/var 中的序列项仅允许绑定模式。空枚举及不穷尽的空 match 在语义阶段拒绝。

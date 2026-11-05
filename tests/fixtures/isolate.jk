@@ -39,7 +39,7 @@ fn main() @suspends {
     let pair = isolate { ("tuple owner", 42) }.unwrap()
     assert(pair.0.equals("tuple owner") && pair.1 == 42)
     scope { branch { caught() }; branch { survivor() } }
-    let winner = race { | cancelled() | answer() }
+    let winner = race { cancelled(), answer() }
     assert(winner == 42)
     let value = alloc(1)
     let loan = &mut *value

@@ -6,20 +6,20 @@ struct Payload { text: String }
 fn text(value: &String) @suspends @noescape -> Int32 { task.yield_now(); int32(value.byte_length()) }
 fn read(value: &Payload) @suspends @noescape -> Int32 {
     let callback = text
-    let (a, b) = join { | callback(&value.text) | text(&value.text) }
+    let (a, b) = join { callback(&value.text), text(&value.text) }
     a + b
 }
 fn extra(value: &Payload) @suspends @noescape -> Int32 { read(value) + 1 }
 fn select(flag: Bool) -> fn(&Payload) @suspends @noescape -> Int32 { if flag { read } else { extra } }
 fn forward(callback: fn(&Payload) @suspends @noescape -> Int32, value: &Payload) @suspends @noescape -> Int32 {
-    let (a, b) = join { | callback(value) | read(value) }
+    let (a, b) = join { callback(value), read(value) }
     a + b
 }
 fn main() @suspends -> Int32 {
     var value = Payload { text: "abc" }
     let first = select(true)
     let second = select(false)
-    let (a, b) = join { | first(&value) | second(&value) }
+    let (a, b) = join { first(&value), second(&value) }
     value.text = "changed"
     a + b
 }
@@ -30,7 +30,7 @@ fn dynamic() @suspends -> Int32 {
     scope {
         branch {
             let callback = select(false)
-            let (a, b) = join { | callback(view) | read(view) }
+            let (a, b) = join { callback(view), read(view) }
             check.assert(a + b == 13, "incorrect indirect result")
         }
     }
@@ -42,40 +42,40 @@ fn fail(value: &Payload) @suspends @noescape -> Int32 { task.yield_now(); check.
 fn failed() @suspends -> Int32 {
     let value = Payload { text: "abc" }
     let wait = forever; let stop = fail
-    let (a, b) = join { | wait(&value) | stop(&value) }
+    let (a, b) = join { wait(&value), stop(&value) }
     a + b
 }
 fn parked() @suspends {
     let value = Payload { text: "abc" }; let view = &value
-    scope { branch { let wait = forever; let (a, b) = join { | wait(view) | read(view) }; } }
+    scope { branch { let wait = forever; let (a, b) = join { wait(view), read(view) }; } }
 }
 fn raced() @suspends -> Int32 {
     let value = Payload { text: "abc" }
     let wait = forever; let ready = select(true)
-    race { | ready(&value) | wait(&value) }
+    race { ready(&value), wait(&value) }
 }
 fn isolated() @suspends -> Int32 {
     let value = Payload { text: "abc" }; let view = &value
     let result = isolate {
         let wait = forever; let stop = fail
-        let (a, b) = join { | wait(view) | stop(view) }; a + b
+        let (a, b) = join { wait(view), stop(view) }; a + b
     }
     match result { Ok(_) => 0, Err(_) => int32(value.text.byte_length()) }
 }
 fn copy_text(value: &String) @suspends @noescape -> String { task.yield_now(); value.clone() }
 fn owned_result() @suspends -> Int32 {
     let value = "abc"; let callback = copy_text
-    let (a, b) = join { | callback(&value) | callback(&value) }
+    let (a, b) = join { callback(&value), callback(&value) }
     int32(a.byte_length() + b.byte_length())
 }
 fn number() @suspends -> Int32 { task.yield_now(); 10 }
 fn mixed() @suspends -> Int32 {
     let value = Payload { text: "abc" }; let callback = select(true)
-    let (a, b) = join { | callback(&value) | number() }
+    let (a, b) = join { callback(&value), number() }
     a + b
 }
 fn generic<T>(value: &T, callback: fn(&T) @suspends @noescape -> Int32) @suspends @noescape -> Int32 {
-    let (a, b) = join { | callback(value) | callback(value) }
+    let (a, b) = join { callback(value), callback(value) }
     a + b
 }
 fn generic_forwarded() @suspends -> Int32 {

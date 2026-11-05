@@ -8,15 +8,16 @@ impl Parser<'_> {
         self.expect(&TokenKind::LBrace)?;
         let previous_newlines = std::mem::replace(&mut self.newlines, Newlines::Separate);
         let mut branches = Vec::new();
-        while self.peek() == &TokenKind::Pipe {
-            self.advance(); // Consume the branch separator.
-            let previous_pipe = std::mem::replace(&mut self.allow_pipe, false);
-            let branch = self.parse_assignment()?;
-            self.allow_pipe = previous_pipe;
-            branches.push(branch);
-            while self.peek() == &TokenKind::Semi {
-                self.advance();
+        while self.peek() != &TokenKind::RBrace {
+            if self.peek() == &TokenKind::Pipe {
+                return Err(self.error(
+                    "Use commas or newlines between join/race branches; remove the leading '|'"
+                        .into(),
+                ));
             }
+            let branch = self.parse_assignment()?;
+            branches.push(branch);
+            self.expect_braced_separator("join/race branches")?;
         }
         self.expect(&TokenKind::RBrace)?;
         self.newlines = previous_newlines;
@@ -152,11 +153,7 @@ impl Parser<'_> {
             // `join` is contextual so ordinary functions such as string.join remain valid.
             TokenKind::Ident(ref name)
                 if name == "join"
-                    && (self.allow_record
-                        || self
-                            .tokens
-                            .get(self.pos + 2)
-                            .is_some_and(|t| t.kind == TokenKind::Pipe))
+                    && self.allow_record
                     && self
                         .tokens
                         .get(self.pos + 1)
@@ -192,7 +189,9 @@ impl Parser<'_> {
                         .get(self.pos + 2)
                         .is_some_and(|t| t.kind == TokenKind::Pipe)
                 {
-                    return Err(self.error("Use join for pipe-separated branches".into()));
+                    return Err(
+                        self.error("Use join with comma- or newline-separated branches".into())
+                    );
                 }
                 self.advance();
                 let body = self.parse_block()?;
@@ -327,7 +326,6 @@ impl Parser<'_> {
                 } else if self.starts_record_body() {
                     let name = Self::name_path(&expr).expect("identifier path");
                     self.advance();
-                    let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
                     let previous_newlines =
                         std::mem::replace(&mut self.newlines, Newlines::Separate);
                     let mut fields = Vec::new();
@@ -365,7 +363,6 @@ impl Parser<'_> {
                         self.expect_braced_separator("record fields")?;
                     }
                     self.expect(&TokenKind::RBrace)?;
-                    self.allow_pipe = previous_pipe;
                     self.newlines = previous_newlines;
                     Ok(Expr::Record {
                         name,
@@ -391,7 +388,6 @@ impl Parser<'_> {
             TokenKind::LParen => {
                 self.advance();
                 let previous = std::mem::replace(&mut self.allow_record, true);
-                let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
                 let previous_newlines =
                     std::mem::replace(&mut self.newlines, Newlines::Joined { minus: None });
                 let first = self.parse_expr()?;
@@ -413,7 +409,6 @@ impl Parser<'_> {
                 };
                 self.expect(&TokenKind::RParen)?;
                 self.allow_record = previous;
-                self.allow_pipe = previous_pipe;
                 self.newlines = previous_newlines;
                 Ok(expr.with_span(self.span(start, self.last_span.end())))
             }
@@ -526,13 +521,11 @@ impl Parser<'_> {
             if self.peek() == &TokenKind::LBracket {
                 self.advance();
                 let record = std::mem::replace(&mut self.allow_record, true);
-                let pipe = std::mem::replace(&mut self.allow_pipe, true);
                 let newlines =
                     std::mem::replace(&mut self.newlines, Newlines::Joined { minus: None });
                 let index = self.parse_expr()?;
                 self.expect(&TokenKind::RBracket)?;
                 self.allow_record = record;
-                self.allow_pipe = pipe;
                 self.newlines = newlines;
                 let span = self.span(expr.span().start(), self.last_span.end());
                 expr = Expr::Index {
@@ -660,7 +653,6 @@ impl Parser<'_> {
     fn parse_call_arguments(&mut self) -> Result<Vec<Expr>, Diagnostic> {
         self.expect(&TokenKind::LParen)?;
         let previous = std::mem::replace(&mut self.allow_record, true);
-        let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
         let previous_newlines =
             std::mem::replace(&mut self.newlines, Newlines::Joined { minus: None });
         let mut args = Vec::new();
@@ -671,7 +663,6 @@ impl Parser<'_> {
         }
         self.expect(&TokenKind::RParen)?;
         self.allow_record = previous;
-        self.allow_pipe = previous_pipe;
         self.newlines = previous_newlines;
         Ok(args)
     }
@@ -683,7 +674,6 @@ impl Parser<'_> {
         let start = self.peek_span().start();
         self.advance();
         let previous = std::mem::replace(&mut self.allow_record, true);
-        let pipe = std::mem::replace(&mut self.allow_pipe, true);
         let newlines = std::mem::replace(&mut self.newlines, Newlines::Joined { minus: None });
         let mut elements = Vec::new();
         while self.peek() != &TokenKind::RBracket {
@@ -706,7 +696,6 @@ impl Parser<'_> {
         }
         self.expect(&TokenKind::RBracket)?;
         self.allow_record = previous;
-        self.allow_pipe = pipe;
         self.newlines = newlines;
         Ok(Expr::Array {
             elements,

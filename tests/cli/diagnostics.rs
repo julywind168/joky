@@ -193,7 +193,10 @@ fn renamed_concurrent_constructs_report_join_migration() {
         "fn wait() @suspends {}\nfn main() @suspends { scope { | wait() } }\n",
     );
     let output = work.cli(&["run", "old_scope.jk"]);
-    failure(&output, "Use join for pipe-separated branches");
+    failure(
+        &output,
+        "Use join with comma- or newline-separated branches",
+    );
 
     work.write(
         "old_parallel.jk",
@@ -565,7 +568,7 @@ fn main() @suspends {{
     assert(vm.load_source(h,&source)==0)
     let owner=domain.directory(2)
     let directory=owner.handle()
-    join {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    join {{ h.call::<domain.DirectoryHandle,Unit>("hold",directory), control(&h,directory) }};
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
     assert(vm.error_code()==0)
@@ -657,11 +660,11 @@ fn explain_parallel_reports_groups_captures_and_runtime_conditions_without_runni
         fn main() @suspends {
             let values = [1, 2]
             var scalar = 1
-            let (a, b) = join { | read(&values) | owned() }
-            let c = race { | local(&mut scalar) | owned() }
+            let (a, b) = join { read(&values), owned() }
+            let c = race { local(&mut scalar), owned() }
             let view = &values
             scope { branch { read(view); } }
-            let (e, f) = join { | owned() | owned() }
+            let (e, f) = join { owned(), owned() }
             println("PROGRAM_EXECUTED")
         }
     "#,

@@ -273,12 +273,12 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
                 before + string.byte_length(text)
             }
             fn relay(text: &String) @suspends -> UInt64 {
-                let (a, b) = join { | reader(text) | task.yield_now() }
+                let (a, b) = join { reader(text), task.yield_now() }
                 a
             }
             fn peer() @suspends -> UInt64 { PEER; 0 }
             fn helper(text: &String) @suspends {
-                let (a, b) = join { | relay(text) | peer() }
+                let (a, b) = join { relay(text), peer() }
             }
             fn root() @suspends {
                 let source = Source { text: "source destroyed" }
@@ -288,7 +288,7 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
         .replace("PEER", if scenario == 0 { "fail_parent()" } else { "{}" });
         let source = if dynamic {
             source.replace(
-                "let (a, b) = join { | relay(text) | peer() }",
+                "let (a, b) = join { relay(text), peer() }",
                 "scope { branch { relay(text); }; peer(); }",
             )
         } else {
@@ -418,8 +418,8 @@ fn scoped_borrow_readers_drain_before_source_drop_on_failure_cancel_and_close() 
         // entry, including the old module snapshot after reload and VM drop.
         let source = if kind == 6 {
             source.replace(
-                "let (a, b) = join { | callback(text)",
-                "let target = callback; let (a, b) = join { | target(text)",
+                "let (a, b) = join { callback(text)",
+                "let target = callback; let (a, b) = join { target(text)",
             )
         } else {
             source
@@ -710,7 +710,7 @@ fn scoped_borrow_host_reference_abi_keeps_the_whole_group_local() {
             fn transit(text: &String) @suspends -> Int32 { view(text) }
             fn root() @suspends -> Int32 {
                 let text = "local host reference"
-                let (value, _) = join { | transit(&text) | task.yield_now() }
+                let (value, _) = join { transit(&text), task.yield_now() }
                 value
             }
         "#,
@@ -836,12 +836,12 @@ fn scoped_borrow_local_race_and_isolate_wait_for_remote_readers() {
                 before + string.byte_length(text)
             }
             fn relay(text: &String) @suspends -> UInt64 {
-                let (a, b) = join { | reader(text) | task.yield_now() }
+                let (a, b) = join { reader(text), task.yield_now() }
                 a
             }
             fn owned() @suspends -> Int32 {
                 let source = Source { text: "source destroyed" }
-                let (a, b) = join { | relay(&source.text) | task.yield_now() }
+                let (a, b) = join { relay(&source.text), task.yield_now() }
                 0
             }
             fn dynamic_owned() @suspends -> Int32 {
@@ -869,7 +869,7 @@ fn scoped_borrow_local_race_and_isolate_wait_for_remote_readers() {
             fn winning(anchor: &Int32) @suspends -> Int32 { selected(); 7 }
             fn local_race() @suspends -> Int32 {
                 let anchor = 1
-                let value = race { | losing(&anchor) | winning(&anchor) }
+                let value = race { losing(&anchor), winning(&anchor) }
                 resumed()
                 value
             }

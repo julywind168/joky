@@ -326,7 +326,7 @@ mod tests {
             extern fn first() @suspends -> Int32
             extern fn pending() @suspends -> Int32
             fn root() @suspends -> Int32 {
-                let value = race { | first() | pending() }
+                let value = race { first(), pending() }
                 value + 2
             }
         "#,
@@ -481,7 +481,7 @@ mod tests {
             extern fn wait() @suspends -> Int32
             fn ready() @suspends -> Int32 { 40 }
             fn root() @suspends -> Int32 {
-                let (a, b) = join { | ready() | wait() }
+                let (a, b) = join { ready(), wait() }
                 a + b
             }
         "#,

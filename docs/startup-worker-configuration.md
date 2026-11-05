@@ -1049,7 +1049,7 @@ while（0／1000）和 Map（0／32）短输入三后端正确性检查。之后
 
 ### 13.20 W6n：受检间接 join/race 借用入口
 
-让 `let callback = reader; join { | callback(view) | reader(view) }` 使用既有只读借用派发协议。
+让 `let callback = reader; join { callback(view), reader(view) }` 使用既有只读借用派发协议。
 语法、来源类型和公开任务 ABI 不变；挂起函数值转发引用仍需符合已有 `@noescape` 契约。
 
 共享 IR 冻结全部同签名、同挂起效果的语言目标，检查传递调用与清理依赖，并比较展开后的任务布局。

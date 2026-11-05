@@ -59,7 +59,7 @@ fn main() {
 
 ```joky
 fn main() @suspends {
-    let r = join { | { let g = || -> Int32 { 1 }; g() } | { 2 } }
+    let r = join { { let g = || -> Int32 { 1 }; g() }, { 2 } }
 }
 ```
 
@@ -82,7 +82,7 @@ struct R { id: Int32, d: Array<Int32> }
 impl Drop for R { fn drop(&mut self) { println("drop {self.id}") } }
 fn hold(r: R, ms: UInt64) @suspends -> Int32 { task.sleep_ms(ms); r.id }
 fn main() @suspends {
-    let w = race { | hold(R { id: 1, d: [] }, 1) | hold(R { id: 2, d: [] }, 50) | hold(R { id: 3, d: [] }, 50) }
+    let w = race { hold(R { id: 1, d: [] }, 1), hold(R { id: 2, d: [] }, 50), hold(R { id: 3, d: [] }, 50) }
     println("winner {w}")
 }
 ```
@@ -158,7 +158,7 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | K2-8 | `let v: &Int32 = a.alloc(3)`；`fn mkg<T: Copy>(t: T) -> &mut T` 后 `let w: &Int32 = mkg(3)`；`Array.new::<dyn Get>()` 后 `xs.push(S { .. })` | expected &mut T / Conflicting types | 泛型调用结果和实参在期望位置未执行 `&mut T → &T` 收窄与拥有型 dyn 擦除；非泛型位置已支持 |
 | K2-9 | 挂起函数 `fn bump(r: &mut P) @suspends { task.yield_now(); inc(&mut r.x) }` | Local borrowing is only supported in synchronous functions | `locals.rs`（及 `memory.rs` 同一诊断）只接受 Copy 绑定或 suspend-safe owner 字段；经 `&mut` 引用投影出的字段不是局部存储，应走引用重借用路径。同步函数与 `&r.x` 已可用 |
 | K2-10 | 挂起函数内 `Some(41).map::<Int32>(\|x\| { x + 1 })` | Only reference-free move closure environments can enter suspending functions | 不跨挂起点、或零捕获的非 move 闭包应允许；至少诊断提示改用 `move`。需先确认放宽条件（闭包活跃区间内无挂起点）与借用分析的配合 |
-| K2-11 | `let f = move \|\| @suspends { .. }` 后 `race { \| f() \| { .. } }` | Undeclared function 'f' | 调用分支应解析局部可调用值（函数值已可用，块分支 `\| { f() } \|` 已可用） |
+| K2-11 | `let f = move \|\| @suspends { .. }` 后 `race { f(), { .. } }` | Undeclared function 'f' | 调用分支应解析局部可调用值（函数值已可用，块分支 `{ f() }` 已可用） |
 | K2-12 | 两个模块各有**私有** `impl Int32 { fn twice(self) .. }`，同时导入 | Duplicate associated member `Int32.twice` | `members.rs` 只按（目标名, 成员名）去重；私有成员只在其模块内可见，不应跨模块冲突。公开成员冲突的规则见 D3 |
 
 验收：每行一条三后端运行测试（或共享前端接受测试 + 一次运行），并保留/补充相邻的拒绝用例

@@ -161,7 +161,7 @@ fn explicit_arena_rejects_escaping_references_and_capability_forgery() {
         "struct Hidden { arena: Arena }",
         "fn bad() { let arena = Arena.new(); let f = move || { arena }; }",
         "fn child(arena: Arena) @suspends {} fn bad() @suspends { let arena = Arena.new(); scope { branch { child(arena) } } }",
-        "fn child(p: &Int32) @suspends {} fn bad() @suspends { let arena = Arena.new(); let p = arena.alloc(1); let (a, b) = join { | child(p) | child(p) } }",
+        "fn child(p: &Int32) @suspends {} fn bad() @suspends { let arena = Arena.new(); let p = arena.alloc(1); let (a, b) = join { child(p), child(p) } }",
         "fn bad() -> Arena { Arena.new() }",
         "fn bad() { let arena = Arena.new(); let copy = (arena,); }",
         "fn identity<T>(value: T) -> T { value } fn bad() { identity(Arena.new()); }",

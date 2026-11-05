@@ -612,7 +612,7 @@ fn tcp_host_endpoints_try_candidates_and_preserve_last_error() {
                 Err(Resolve(error)) => error.message.equals("controlled resolution failure"),
                 _ => false
             }, "DNS failure preserves its diagnostic")
-            join { | receive(&mut listener) | send(address.port()) }
+            join { receive(&mut listener), send(address.port()) }
             42
         }
     "#;
@@ -653,7 +653,7 @@ fn net6_dns_parallel_completion_cancellation_and_pool_close() {
             if addresses.len() == 1 { 42 } else { 1 }
         }
         fn pending(service: UInt64) @suspends -> Int32 {
-            let (value, _) = join { | lookup(&service) | task.yield_now() }
+            let (value, _) = join { lookup(&service), task.yield_now() }
             value
         }
         fn next(service: UInt64) @suspends -> Int32 {

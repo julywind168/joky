@@ -15,7 +15,7 @@ fn endpoint(host: String) @suspends {
     var listener = tcp.listen(host, 0)!
     let port = listener.local_addr()!.port()
     check.assert(port != 0, "port zero allocates an endpoint")
-    join { | receive(&mut listener) | send(port) }
+    join { receive(&mut listener), send(port) }
 }
 fn invalid(kind: ErrorKind) -> Bool { match kind { InvalidInput => true, _ => false } }
 fn errors() @suspends {

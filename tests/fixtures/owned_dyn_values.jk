@@ -75,9 +75,9 @@ fn main() @suspends -> Int32 {
     table.insert(1, make(false))
     let key = 1
     check.assert(table.borrow_ref(&key).value() == 7, "map object")
-    let (a, b) = join { | relay(make(true)) | relay(make(false)) }
+    let (a, b) = join { relay(make(true)), relay(make(false)) }
     check.assert(a.value() + b.value() == 28, "parallel returns")
-    let winner = race { | relay(make(false)) | slow(Owned { n: 1, text: "loser" }) }
+    let winner = race { relay(make(false)), slow(Owned { n: 1, text: "loser" }) }
     check.assert(winner.value() == 7, "dynamic race")
     let captured = make(false)
     scope { branch { check.assert(captured.value() == 7, "branch capture") } }

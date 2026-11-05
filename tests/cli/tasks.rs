@@ -10,7 +10,7 @@ fn local_task_width_is_independent_of_recursion_depth() {
         import joky/task
         fn fib(n: Int32) @suspends -> Int32 {
             if n < 2 { task.yield_now(); return n }
-            let (a, b) = join { | fib(n - 1) | fib(n - 2) }
+            let (a, b) = join { fib(n - 1), fib(n - 2) }
             a + b
         }
         fn main() @suspends {
@@ -85,8 +85,8 @@ fn helper(id: Int32) @suspends {
 fn relay(id: Int32) @suspends { helper(id) }
 fn main() @suspends {
     relay(10)
-    join { | relay(20) | relay(30) }
-    race { | relay(40) | relay(50) }
+    join { relay(20), relay(30) }
+    race { relay(40), relay(50) }
 }
 "#,
     );
@@ -179,8 +179,8 @@ fn suspending_cli_entries_match_jit_interpreter_and_standalone() {
             fn loser() @suspends { task.sleep_ms(1); report_int32(-1) }
             fn main() @suspends {
                 let f: fn(Int32) @suspends -> Unit = worker
-                join { | f(1) | f(2) }
-                race { | winner() | loser() }
+                join { f(1), f(2) }
+                race { winner(), loser() }
                 task.sleep_ms(1)
                 report_int32(42)
             }
@@ -356,8 +356,8 @@ fn task_pool_cli_explicit_mode_and_standalone_driver() {
         fn leaf(n: Int32) @suspends -> Int32 { task.sleep_ms(2); n }
         fn main() @suspends -> Int32 {
             scope { branch { task.yield_now() }; task.sleep_ms(1) }
-            let (a, b) = join { | leaf(20) | leaf(22) }
-            let winner = race { | leaf(0) | leaf(0) }
+            let (a, b) = join { leaf(20), leaf(22) }
+            let winner = race { leaf(0), leaf(0) }
             a + b + winner
         }
     "#,

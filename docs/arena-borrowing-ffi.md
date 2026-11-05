@@ -474,8 +474,8 @@ fn handle() @suspends {
     let point = alloc(Point { x: 1, y: 2 })
 
     join {
-        | inspect_left(point)
-        | inspect_right(point)
+        inspect_left(point)
+        inspect_right(point)
     }
 }
 ```

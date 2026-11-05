@@ -34,7 +34,7 @@ fn compute(n: Int32) @suspends -> Int32 {
     total
 }
 fn main() @suspends -> Int32 {
-    let (a, b) = join { | compute(20) | compute(18) }
+    let (a, b) = join { compute(20), compute(18) }
     check.assert(a + b == 42 * 128, "parallel scratch regions")
     0
 }

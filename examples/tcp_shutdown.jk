@@ -12,7 +12,7 @@ fn stopped_read(stop: &shutdown.Controller) @suspends -> Option<String> { stop.w
 fn read(stream: &mut BufferedTcp) @suspends -> Option<String> { stream.read_line(128).unwrap_or(None) }
 fn connection(stream: TcpStream, stop: &shutdown.Controller) @suspends {
     var stream = BufferedTcp.new(stream)
-    let line = match race { | stopped_read(stop) | read(&mut stream) } {
+    let line = match race { stopped_read(stop), read(&mut stream) } {
         Some(line) => line,
         None => return,
     }
@@ -30,7 +30,7 @@ fn connection(stream: TcpStream, stop: &shutdown.Controller) @suspends {
 fn serve(stop: &shutdown.Controller, var listener: TcpListener) @suspends -> Int32 {
     scope {
         while !stop.requested() {
-            let stream = match race { | stopped(stop) | accept(&mut listener) } {
+            let stream = match race { stopped(stop), accept(&mut listener) } {
                 Some(stream) => stream,
                 None => break,
             }
@@ -57,7 +57,7 @@ fn main() @suspends -> Int32 {
     }
     var listener = tcp.listen("127.0.0.1", 0).unwrap()
     println("listening {listener.local_addr().unwrap().port()}")
-    let result = race { | serve(&stop, listener) | deadline(&stop) }
+    let result = race { serve(&stop, listener), deadline(&stop) }
     println(if result == 0 { "drained" } else { "deadline reached" })
     result
 }

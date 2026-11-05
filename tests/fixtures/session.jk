@@ -52,12 +52,12 @@ fn run(scenario: UInt64) @suspends {
     let ctx = Context { counts: owner.handle(), output: connection.output() }
     let local = {}
     if scenario == 3 {
-        race { | session.run(connection, stream, &ctx, &local, line, closed) | task.sleep_ms(1) }
+        race { session.run(connection, stream, &ctx, &local, line, closed), task.sleep_ms(1) }
         peer(peer_stream, scenario)
         var batch = outbox.batch(1, 0)
         check.assert(match outbox.stage(&mut batch, control, "".into_bytes()) { Err(Closed) => true, _ => false }, "cancellation releases queue ownership")
     } else {
-        join { | session.run(connection, stream, &ctx, &local, line, closed) | peer(peer_stream, scenario) }
+        join { session.run(connection, stream, &ctx, &local, line, closed), peer(peer_stream, scenario) }
     }
     let counts = owner.handle()
     let (lines, closed_count) = when (counts) { (counts.lines, counts.closed) }!

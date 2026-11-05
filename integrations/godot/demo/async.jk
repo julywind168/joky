@@ -60,9 +60,9 @@ fn task_access() @suspends {
 }
 fn task_race(seconds: Float64) @suspends {
     race {
-        | task.sleep_real(seconds)
-        | task.sleep_game(100.0)
-        | task_signal()
+        task.sleep_real(seconds)
+        task.sleep_game(100.0)
+        task_signal()
     }
     let method = "bump_reals"
     task.call(&method)

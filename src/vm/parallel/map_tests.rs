@@ -314,7 +314,7 @@ fn task_parallel_map_cancel_after_children_install_their_captures() {
         extern fn entered() @suspends
         fn observed(value: Bundle) @suspends -> Bundle { entered(); parked(value) }
         fn active(value: Bundle) @suspends -> Bundle {
-            let (a, b) = join { | observed(value) | observed((make(), make_set())) }
+            let (a, b) = join { observed(value), observed((make(), make_set())) }
             a
         }
     "#

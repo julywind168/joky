@@ -26,7 +26,7 @@ fn read_list(values: &List<String>) @suspends -> Int32 {
     var index: UInt64 = 0
     while index < values.len() {
         let value = values.borrow_ref(index)
-        let (a, b) = join { | text(value) | text(value) }
+        let (a, b) = join { text(value), text(value) }
         total += int32(index + 1) * (a + b)
         index += 1
     }
@@ -34,7 +34,7 @@ fn read_list(values: &List<String>) @suspends -> Int32 {
 }
 fn main() @suspends -> Int32 {
     var values = make_list()
-    let (a, b) = join { | read_list(&values) | read_list(&values) }
+    let (a, b) = join { read_list(&values), read_list(&values) }
     values.clear()
     a + b
 }
@@ -63,13 +63,13 @@ fn read_map(table: &Map<Key, Option<String>>) @suspends -> Int32 {
         total += key.id * match value { Some(s) => int32(s.byte_length()), None => 0 }
     }
     match table.borrow_ref(&third) {
-        Some(s) => { let (a, b) = join { | text(s) | text(s) }; total + a + b }
+        Some(s) => { let (a, b) = join { text(s), text(s) }; total + a + b }
         None => 0
     }
 }
 fn maps() @suspends -> Int32 {
     var table = make_map()
-    let (a, b) = join { | read_map(&table) | read_map(&table) }
+    let (a, b) = join { read_map(&table), read_map(&table) }
     table.insert(Key { id: 3 }, Some("changed"))
     a + b
 }
@@ -89,19 +89,19 @@ fn read_set(values: &Set<String>) @suspends -> Int32 {
 }
 fn sets() @suspends -> Int32 {
     var values = make_set()
-    let (a, b) = join { | read_set(&values) | read_set(&values) }
+    let (a, b) = join { read_set(&values), read_set(&values) }
     values.clear()
     a + b
 }
 struct Bundle { lists: Array<List<String>>, table: Map<Key, Option<String>>, selected: Option<Set<String>> }
 fn make_bundle() -> Bundle { Bundle { lists: [make_list()], table: make_map(), selected: Some(make_set()) } }
 fn bundle(value: &Bundle) @suspends -> Int32 {
-    let (a, b) = join { | read_list(value.lists.borrow_ref(0)) | read_map(&value.table) }
+    let (a, b) = join { read_list(value.lists.borrow_ref(0)), read_map(&value.table) }
     a + b + match &value.selected { Some(s) => read_set(s), None => 0 }
 }
 fn nested() @suspends -> Int32 {
     let value = make_bundle()
-    let (a, b) = join { | bundle(&value) | bundle(&value) }
+    let (a, b) = join { bundle(&value), bundle(&value) }
     a + b
 }
 fn dynamic() @suspends -> Int32 {
@@ -123,18 +123,18 @@ fn empty_read(a: &List<String>, b: &Map<Int32, String>, c: &Set<String>) @suspen
 }
 fn empty() @suspends -> Int32 {
     let a = List.new::<String>(); let b = Map.new::<Int32, String>(); let c = Set.new::<String>()
-    let (x, y) = join { | empty_read(&a, &b, &c) | empty_read(&a, &b, &c) }
+    let (x, y) = join { empty_read(&a, &b, &c), empty_read(&a, &b, &c) }
     x + y
 }
 fn forever(value: &Bundle) @suspends -> Int32 { while true { task.yield_now(); bundle(value); } }
 fn fail(value: &Bundle) @suspends -> Int32 { task.yield_now(); check.panic("collection reader failed") }
-fn failed() @suspends -> Int32 { let value = make_bundle(); let (a, b) = join { | forever(&value) | fail(&value) }; a + b }
+fn failed() @suspends -> Int32 { let value = make_bundle(); let (a, b) = join { forever(&value), fail(&value) }; a + b }
 fn parked() @suspends { let value = make_bundle(); let view = &value; scope { branch { forever(view); } } }
-fn raced() @suspends -> Int32 { let value = make_bundle(); race { | bundle(&value) | forever(&value) } }
+fn raced() @suspends -> Int32 { let value = make_bundle(); race { bundle(&value), forever(&value) } }
 fn isolated() @suspends -> Int32 {
     let value = make_bundle()
     let view = &value
-    let result = isolate { let (a, b) = join { | forever(view) | fail(view) }; a + b }
+    let result = isolate { let (a, b) = join { forever(view), fail(view) }; a + b }
     match result { Ok(_) => 0, Err(_) => bundle(&value) }
 }
 
@@ -146,7 +146,7 @@ fn local_cursor() @suspends -> Int32 {
     var table = Map.new::<Int32, Int32>()
     table.insert(1, 10); table.insert(2, 20)
     let cursor = table.iter()
-    let (a, b) = join { | cursor_next(cursor) | cursor_next(cursor) }
+    let (a, b) = join { cursor_next(cursor), cursor_next(cursor) }
     a + b
 }
 
@@ -166,6 +166,6 @@ fn swapped_views() @suspends -> Int32 {
     mem.swap(&mut left, &mut right)
     let old = mem.replace(&mut right, ["ccc"])
     mem.drop(old)
-    let (a, b) = join { | array_texts(&left) | slice_texts(right.slice(0, 1)) }
+    let (a, b) = join { array_texts(&left), slice_texts(right.slice(0, 1)) }
     a + b
 }

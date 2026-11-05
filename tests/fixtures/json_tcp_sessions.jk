@@ -27,7 +27,7 @@ fn pressure(port: UInt16) @suspends -> Int32 {
     let text = match json.encode_with_limits(&value, limits()) { Ok(text) => text, _ => { return 1 } }
     let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port)) { Ok(stream) => stream, _ => { return 2 } }
     var (reader, writer) = BufferedTcp.new(stream).split()
-    join { | flood(&mut writer, &text) | pushed(&mut reader) }
+    join { flood(&mut writer, &text), pushed(&mut reader) }
     // Both the borrowed encoded string and the original tree survive suspension.
     let after = match json.encode_with_limits(&value, limits()) { Ok(text) => text, _ => { return 3 } }
     ensure(text.equals(&after))

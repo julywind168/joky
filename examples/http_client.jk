@@ -16,6 +16,6 @@ fn main() @suspends {
     var listener = tcp.listen("127.0.0.1", 0)!
     let port = listener.local_addr()!.port()
     let stop = shutdown.create()
-    let (served, _) = join { | http.serve(listener, &stop, http.Options.default(), handle) | call_service(port, &stop) }
+    let (served, _) = join { http.serve(listener, &stop, http.Options.default(), handle), call_service(port, &stop) }
     served!
 }

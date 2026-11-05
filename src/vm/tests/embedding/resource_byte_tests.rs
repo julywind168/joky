@@ -89,7 +89,7 @@ fn resource_bytes_move_binary_data_and_hold_permission_until_stop() {
 #[test]
 fn resource_bytes_reject_conflicting_loans_escapes_and_wrong_descriptors() {
     for source in [
-        "fn bad() @suspends { var socket=byte_make(1); join { | hold(&mut socket) | hold(&mut socket) } }",
+        "fn bad() @suspends { var socket=byte_make(1); join { hold(&mut socket), hold(&mut socket) } }",
         "fn bad() @suspends { var socket=byte_make(1); let bytes=read(&socket,4) }",
         "fn bad() @suspends -> &mut Socket { var socket=byte_make(1); &mut socket }",
         "fn consume(socket:Socket) {} fn bad() @suspends { var socket=byte_make(1); scope { let view=&mut socket; branch {hold(view)}; consume(socket) } }",

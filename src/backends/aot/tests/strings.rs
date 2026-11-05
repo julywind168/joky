@@ -349,9 +349,9 @@ fn owning_text_v2_c_roots_copy_inputs_results_and_pending_descriptors() {
         fn ready(text: String) @suspends { text.release() }
         fn forever(text: String) @suspends { while true { task.yield_now() } }
         fn compete() @suspends -> Int32 {
-            race { | ready("winner") | forever("unpolled") }
-            race { | forever("pending") | ready("winner") }
-            join { | ready("left") | ready("right") }
+            race { ready("winner"), forever("unpolled") }
+            race { forever("pending"), ready("winner") }
+            join { ready("left"), ready("right") }
             42
         }
         fn optional(flag: Bool) -> Option<String> { if flag { Some("中🙂") } else { None } }

@@ -145,7 +145,7 @@ extern fn timeout() @suspends
 
 fn run() @suspends -> Int32 {
     let sample = alloc(Sample { value: 0 })
-    race { | read_sample(sample) | timeout() }
+    race { read_sample(sample), timeout() }
     sample.value = 42
     sample.value
 }
@@ -466,13 +466,13 @@ fn increase(counter: &mut Counter) @suspends {
 fn update_pair() @suspends -> Int32 {
     let left = alloc(Counter { value: 20 })
     let right = alloc(Counter { value: 20 })
-    join { | increase(left) | increase(right) }
+    join { increase(left), increase(right) }
     left.value + right.value
 }
 ```
 
 - 分支可以共享读取同一对象，也可以像上例一样独占修改不同对象；同一对象的独占/独占或独占/共享
-  分支会在编译时被拒绝，即使运行时是单线程。`join { | increase(left) | increase(left) }` 不合法。
+  分支会在编译时被拒绝，即使运行时是单线程。`join { increase(left), increase(left) }` 不合法。
 - 参数按分支顺序从左到右求值，全部准备好后才开始分支。先前参数的借用在后续参数求值和挂起时
   已经生效；不能在后续参数中冲突地读写或移动其对象。
 - 普通分支借用持续到整个 join 的所有分支完成，包括多次 Pending；单个分支提前完成不缩短借用。
@@ -1759,8 +1759,8 @@ fn example() -> Int64 {
 `&` / `|` 不接受 Bool，也不短路；Bool 逻辑继续使用 `&&` / `||` / `!`。
 
 `match` 分支之间用逗号或真实换行分隔，分支结果可直接写按位或，如 `Empty => a | b`。
-`join` / `race` 分支最外层的 `|` 仍是分隔符，按位或须加括号或块。
-调用参数、元组元素、记录字段及块内部可直接使用 `|`，如 `join { | worker(a | b) | worker(c) }`。
+`join` / `race` 分支用逗号或真实换行分隔，按位或沿用普通表达式规则。
+调用参数、元组元素、记录字段及块内部可直接使用 `|`，如 `join { worker(a | b), worker(c) }`。
 示例见 [bitwise.jk](../examples/bitwise.jk)。
 
 ### 显式整数转换
@@ -3546,7 +3546,7 @@ fn safe_divide(value: Int32, divisor: Int32) -> Int32 {
 恢复时继续当前表达式，不重算条件或重放此前的副作用。
 
 if 表达式可直接参与运算：`if true { 1 } else { 9 } + 2` 为 3。
-else 可以换行，但不能用分号与 then 块分开。`||` 按最长匹配分词，不是两个 join 分支符。
+else 可以换行，但不能用分号与 then 块分开。`||` 按最长匹配分词，用于逻辑或或无参数闭包。
 完整可运行示例见 [examples/conditionals.jk](../examples/conditionals.jk)。
 
 ## 整数范围模式
@@ -4238,7 +4238,7 @@ let length = text
 返回值按非序列表达式解析：`return (a; b)` 返回整个序列的值；`return a; b` 中的 `b`
 不可达并报错。块内 `return` 后换行解析为裸 return，下一行的值不属于返回值；
 跨行返回值使用 `return (` 后换行写表达式，再关闭 `)`。圆括号内部换行仍为空白。
-在 `;`、`}`、`)`、`,`、join/race 分支符 `|` 或输入末尾前也解析为裸 return。
+在 `;`、`}`、`)`、`,` 或输入末尾前也解析为裸 return。
 二元或一元运算中使用跳转需加括号或块。
 
 ```joky
@@ -5986,21 +5986,25 @@ branch 在发布后可立即与主体重叠。父流程在子树全部停止且�
 
 `parallel` 已改名为 `join`；旧写法会提示 `Use join instead of parallel`，行为不变。
 `join` 仅在表达式位置后接 `{` 时作为并发构造，普通函数声明、调用和 `string.join(...)` 仍有效。
+条件和 match 被匹配表达式中的并发 join 需用括号包围，如 `match (join { left(), right() }) { ... }`；
+`if join { ... }` 仍将 `join` 视为普通变量。
 
 `@suspends` 函数可以用 `join` 并发等待多个分支；下面是分支均返回 Unit 的写法：
 
 ```joky
 fn main() @suspends {
     join {
-        | fetch_left()
-        | fetch_right()
+        fetch_left()
+        fetch_right()
     }
 }
 ```
 
+分支以逗号或真实换行分隔，允许尾随逗号；同一行不能只靠空白或分号分隔。
+旧的前导 `|` 分支语法已移除，使用时会提示迁移；`|` 继续用于按位或及闭包参数。
 每个分支可以是 `@suspends` 的函数调用或块；Local 依次轮询，Parallel 按资格调度，全部完成并清理后继续执行。
 分支可返回不同的无引用类型，结果按源码顺序组成元组，与完成先后无关。
-例如 `let (left, right) = join { | read_left() | read_right() }`。
+例如 `let (left, right) = join { read_left(), read_right() }`。
 单个非 Unit 分支返回 `(T,)`；混合结果保留 Unit 位置，例如 `(Int32, Unit, String)`；
 全部分支均为 Unit 时，整个表达式仍返回 Unit。结果范围与下文 race 相同，调用分支沿用函数签名，块分支推导结果类型。
 已完成分支的拥有结果先进入独立结果包；汇合清理屏障通过后父任务才收取，失败或取消会回收未领取结果。
@@ -6014,8 +6018,8 @@ fn main() @suspends {
 ```joky
 fn first() @suspends {
     race {
-        | fetch_left()
-        | fetch_right()
+        fetch_left()
+        fetch_right()
     }
 }
 ```
@@ -6025,7 +6029,7 @@ fn first() @suspends {
   Unit 分支仍返回 Unit；不返回获胜编号，也不自动把不同分支类型合成为枚举。
 - 支持现有 CPS 可返回的无引用标量、Copy 聚合、String 及完整存储树无引用的拥有聚合与容器。
   引用、含引用结果及函数／闭包值结果不开放；调用分支沿用已确定的函数签名，块分支可接收期望类型上下文。
-  可以用 `let value = race { | first() | second() }` 接收结果，用尾随分号丢弃结果。
+  可以用 `let value = race { first(), second() }` 接收结果，用尾随分号丢弃结果。
   定时器返回 Unit，和返回数据的请求组合时，可用分支块把两者包装成同一枚举类型。
   `Result.Err` 是正常返回的数据，同样可以胜出；race 不会自动等待第一个 Ok。
   可运行的结果与清理用例见 [race_values.jk](../tests/fixtures/race_values.jk)。
@@ -6046,7 +6050,7 @@ fn first() @suspends {
 
 ## join/race 的分支块
 
-`join` / `race` 的每个 `|` 后可写挂起函数调用或 `{ ... }` 块，两种形式可混用。
+`join` / `race` 的每个分支可写挂起函数调用或 `{ ... }` 块，两种形式可混用，分支间用逗号或换行。
 分支块可包含局部声明、同步或挂起调用、循环及嵌套并发；外层函数仍须标注 `@suspends`。
 `join`、`race`、`branch` 和 `isolate` 块内都可以定义并调用闭包。闭包使用块外绑定时，
 该绑定也算作分支捕获，仍须通过分支之间的借用冲突检查。挂起上下文中，无预期类型的普通
@@ -7180,7 +7184,7 @@ Mio 的句柄析构没有可取回的 OS close 状态，当前正常 close 返�
 就绪登记另有 4096 上限，字节请求及任务存储预算继续独立生效。
 
 [组合示例](../tests/fixtures/tcp_composition.jk) 包含三个并发客户端、write_all、
-`race { | pending(&mut listener) | task.sleep_ms(2) }` 超时取消、监听器复用和发送取消前缀验证。
+`race { pending(&mut listener), task.sleep_ms(2) }` 超时取消、监听器复用和发送取消前缀验证。
 该例使用 Unit 分支和真实单调时间取消操作；返回数据时可将请求与定时器包装成相同的 Result 类型，
 拥有式挂起闭包也可使用 `task.timeout(duration, operation)`；借用监听器的场景继续使用直接 race。
 [Godot 网络示例](../integrations/godot/demo/network.jk) 与 GDScript 对端收发并验证引擎生命周期。

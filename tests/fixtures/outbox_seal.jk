@@ -44,6 +44,6 @@ fn main() @suspends {
     check.assert(reject.receive().is_none(), "explicit close still discards sealed output")
     var empty = outbox.create(1, 0)
     let handle = empty.handle()
-    let (message, _) = join { | empty.receive() | seal_later(handle) }
+    let (message, _) = join { empty.receive(), seal_later(handle) }
     check.assert(message.is_none(), "seal wakes a parked receiver")
 }

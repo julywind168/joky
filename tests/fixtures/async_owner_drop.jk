@@ -26,7 +26,7 @@ fn fail(value: &mut Owned) @suspends {
 fn instant() @suspends {}
 fn pending() @suspends { var value = make(1); hold(&mut value) }
 fn failed() @suspends { var value = make(1); fail(&mut value) }
-fn cancelled() @suspends { var value = make(1); race { | hold(&mut value) | instant() } }
-fn replaced() @suspends { var value = make(1); race { | replace_hold(&mut value) | instant() } }
-fn unstarted() @suspends { var value = make(1); race { | instant() | hold(&mut value) } }
+fn cancelled() @suspends { var value = make(1); race { hold(&mut value), instant() } }
+fn replaced() @suspends { var value = make(1); race { replace_hold(&mut value), instant() } }
+fn unstarted() @suspends { var value = make(1); race { instant(), hold(&mut value) } }
 fn main() @suspends -> Int32 { cancelled(); replaced(); unstarted(); 0 }

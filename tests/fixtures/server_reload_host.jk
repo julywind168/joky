@@ -58,7 +58,7 @@ fn server(h:&vm.Vm,ctx:Context,stream:TcpReader) @suspends {
         let command=bytes.get(0).unwrap_or(0)
         if command==2 || command==3 {
             let before=h.call::<Context,Int32>("probe",ctx)
-            join { | award(h,ctx,command) | hotfix(h,ctx,command) }
+            join { award(h,ctx,command), hotfix(h,ctx,command) }
             // The incompatible block leaves both roots healthy and unchanged.
             assert(h.call::<Context,Int32>("probe",ctx)==before+if command==2 {2} else {0})
             assert(vm.module_count(h)==2)
@@ -133,7 +133,7 @@ fn connection(h:&vm.Vm,ctx:Context,queue:outbox.Mailbox) @suspends {
     listener.close()
     let (reader,output)=accepted.split()
     checkpoint(1)
-    join { | server(h,ctx,reader) | writer(queue,output) | peer(client) }
+    join { server(h,ctx,reader), writer(queue,output), peer(client) }
 }
 fn run() @suspends {
     let h=vm.Vm.__CREATE__()
@@ -141,11 +141,11 @@ fn run() @suspends {
     assert(vm.load_source(h,&old)==0)
     let directory=domain.directory(3); let timer=domain.timer(); let queue=outbox.create(4,4)
     let ctx=Context{directory:directory.handle(),output:queue.handle(),timer:timer.handle()}
-    race { | h.call::<Context,Unit>("hold",ctx) | connection(&h,ctx,queue) };
+    race { h.call::<Context,Unit>("hold",ctx), connection(&h,ctx,queue) };
     assert(h.call::<Context,Int32>("probe",ctx)==-1)
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
     timer.close(); directory.close()
 }
 fn watchdog() @suspends {task.sleep_ms(30000); assert(false)}
-fn main() @suspends ->Int32 {race { | run() | watchdog() }; 0}
+fn main() @suspends ->Int32 {race { run(), watchdog() }; 0}

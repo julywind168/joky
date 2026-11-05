@@ -24,24 +24,24 @@ fn scope_and_race_reject_overlapping_loans_and_conflicting_argument_evaluation()
         fn change(p: &mut Point) -> Int32 { p.x = 2; p.x }
         fn view(p: &Point) -> &Point { p }
         fn aggregate<T: Copy>(p: (Option<&T>,)) @suspends {}
-        fn nested(p: &mut Point) @suspends { join { | write(p) } }
+        fn nested(p: &mut Point) @suspends { join { write(p) } }
     "#;
     for body in [
-        "join { | write(p) | write(p) }",
-        "join { | write(p) | read(p) }",
-        "join { | read(p) | write(p) }",
-        "join { | pair(p, p) }",
-        "join { | read(p) | tick({ p.x = 2; 0 }) }",
-        "join { | read(p) | tick(change(p)) }",
-        "join { | read(p) | tick({ let q = p; q.x }) }",
-        "join { | tagged(p, change(p)) }",
-        "let q = (&*p); join { | read(q) | write(p) }",
-        "let q = view(p); join { | write(p) | read(q) }",
-        "join { | read(view(p)) | write(p) }",
-        "join { | nested(p) | read(p) }",
-        "let values = (Some((&*p)),); join { | aggregate(values) | write(p) }",
-        "let values = (Some((&*p)),); join { | write(p) | aggregate(values) }",
-        "join { | read(p) | tick({ join { | write(p) }; 0 }) }",
+        "join { write(p), write(p) }",
+        "join { write(p), read(p) }",
+        "join { read(p), write(p) }",
+        "join { pair(p, p) }",
+        "join { read(p), tick({ p.x = 2; 0 }) }",
+        "join { read(p), tick(change(p)) }",
+        "join { read(p), tick({ let q = p; q.x }) }",
+        "join { tagged(p, change(p)) }",
+        "let q = (&*p); join { read(q), write(p) }",
+        "let q = view(p); join { write(p), read(q) }",
+        "join { read(view(p)), write(p) }",
+        "join { nested(p), read(p) }",
+        "let values = (Some((&*p)),); join { aggregate(values), write(p) }",
+        "let values = (Some((&*p)),); join { write(p), aggregate(values) }",
+        "join { read(p), tick({ join { write(p) }; 0 }) }",
     ] {
         let source =
             format!("{prefix} fn f() @suspends {{ let p = alloc(Point {{ x: 1 }}); {body} }}");
@@ -75,17 +75,17 @@ fn scope_and_race_retained_parameters_keep_input_loans_after_completion() {
         struct Stored { point: &Point }
         fn store(p: &Point) @suspends { alloc(Stored { point: p }); }
         fn indirect(p: &Point) @suspends { store(p) }
-        fn nested(p: &Point) @suspends { join { | indirect(p) } }
+        fn nested(p: &Point) @suspends { join { indirect(p) } }
         fn generic<T: Copy>(p: &T) @suspends { alloc((p,)); }
         fn aggregate(p: (Option<&Point>,)) @suspends { alloc(p); }
     "#;
     for body in [
-        "join { | store(p) }; p.x = 2;",
-        "join { | indirect(p) }; p.x = 2;",
-        "join { | nested(p) }; p.x = 2;",
-        "join { | generic(p) }; p.x = 2;",
-        "join { | aggregate((Some((&*p)),)) }; p.x = 2;",
-        "join { | store(p) | store(p) }; p.x = 2;",
+        "join { store(p) }; p.x = 2;",
+        "join { indirect(p) }; p.x = 2;",
+        "join { nested(p) }; p.x = 2;",
+        "join { generic(p) }; p.x = 2;",
+        "join { aggregate((Some((&*p)),)) }; p.x = 2;",
+        "join { store(p), store(p) }; p.x = 2;",
     ] {
         let source =
             format!("{prefix} fn f() @suspends {{ let p = alloc(Point {{ x: 1 }}); {body} }}");
@@ -305,16 +305,16 @@ fn arena_scope_imported_aliases_preserve_branch_and_storage_contracts() {
         pub fn read(p: View) @suspends { p.x; }
         pub fn write(p: &mut Point) @suspends { p.x = p.x + 1; }
         pub fn keep<T: Copy>(p: &T) @suspends { alloc((p,)); }
-        pub fn nested<T: Copy>(p: &T) @suspends { join { | keep(p) } }
+        pub fn nested<T: Copy>(p: &T) @suspends { join { keep(p) } }
         pub fn allocate() @suspends { alloc(42); }
     "#,
         )
         .unwrap();
     let prefix = "import data as d.{make as new, read as inspect, write as change}\n";
     for body in [
-        "let p = new(20); let q = new(20); join { | change(p) | change(q) }; join { | inspect(p) | inspect(p) }; p.x + q.x",
-        "let p = new(21); join { | d.nested(p) | d.keep(p) }; p.x + p.x",
-        "join { | d.allocate() | d.allocate() }; 42",
+        "let p = new(20); let q = new(20); join { change(p), change(q) }; join { inspect(p), inspect(p) }; p.x + q.x",
+        "let p = new(21); join { d.nested(p), d.keep(p) }; p.x + p.x",
+        "join { d.allocate(), d.allocate() }; 42",
     ] {
         let source = format!("{prefix} fn f() @suspends -> Int32 {{ {body} }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -327,9 +327,9 @@ fn arena_scope_imported_aliases_preserve_branch_and_storage_contracts() {
         crate::aot::AotCompiler::new("arena-scope-imports").unwrap().compile_module(&ast).unwrap();
     }
     for body in [
-        "join { | inspect(p) | change(p) }",
-        "join { | change(p) | inspect(p) }",
-        "join { | d.nested(p) }; p.x = 2;",
+        "join { inspect(p), change(p) }",
+        "join { change(p), inspect(p) }",
+        "join { d.nested(p) }; p.x = 2;",
     ] {
         let source = format!("{prefix} fn f() @suspends {{ let p = new(1); {body} }}");
         let ast = crate::TypeRegistry::default()
@@ -376,7 +376,7 @@ fn arena_scope_interpreter_slices_preserve_loans_and_cleanup_on_exhaustion() {
     vm.load_source(
         r#"
         fn spin(p: &mut Int32) @suspends { while true { (*(p) = (*p) + 1); } }
-        fn f() @suspends { let a = alloc(0); let b = alloc(0); join { | spin(a) | spin(b) } }
+        fn f() @suspends { let a = alloc(0); let b = alloc(0); join { spin(a), spin(b) } }
     "#,
     )
     .unwrap();

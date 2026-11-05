@@ -72,8 +72,6 @@ struct Parser<'src> {
     /// Parentheses ignore newlines; nested brace bodies restore separation.
     newlines: Newlines,
     allow_record: bool,
-    // An ungrouped pipe ends a join or race branch.
-    allow_pipe: bool,
     type_params: Vec<std::sync::Arc<TypeParameter>>,
     expression_depth: usize,
     type_depth: usize,
@@ -99,7 +97,6 @@ impl<'src> Parser<'src> {
             last_line: 0,
             newlines: Newlines::Separate,
             allow_record: true,
-            allow_pipe: true,
             type_params: Vec::new(),
             expression_depth: 0,
             type_depth: 0,

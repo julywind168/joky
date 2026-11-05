@@ -292,7 +292,7 @@ mod tests {
             fn read(pool: &admission.Pool) @suspends { pool.handle(); }
             fn main() @suspends {
                 let pool = admission.create(1, 1)
-                join { | read(&pool) | read(&pool) };
+                join { read(&pool), read(&pool) };
             }
         "#,
             "main",
@@ -333,10 +333,10 @@ mod tests {
             fn change(value: &mut Int32) @suspends { *value += 1 }
             fn main() @suspends {
                 let queue = outbox.create(1, 0)
-                join { | shared(&queue) | shared(&queue) };
+                join { shared(&queue), shared(&queue) };
                 var a = 1
                 var b = 2
-                join { | change(&mut a) | change(&mut b) };
+                join { change(&mut a), change(&mut b) };
             }
         "#,
             "main",
@@ -381,8 +381,8 @@ mod tests {
             fn idle() @suspends {}
             fn main() @suspends {
                 var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
-                join { | shared(&listener) | shared(&listener) };
-                race { | accept(&mut listener) | idle() };
+                join { shared(&listener), shared(&listener) };
+                race { accept(&mut listener), idle() };
             }
         "#,
             "main",
@@ -434,11 +434,11 @@ mod tests {
             }
             fn main() @suspends {
                 let values = [1]
-                join { | reader(&values) | recurse(&values, 1) };
-                join { | printer(&values) | recurse(&values, 1) };
-                isolate { join { | recurse(&values, 1) | recurse(&values, 2) }; };
+                join { reader(&values), recurse(&values, 1) };
+                join { printer(&values), recurse(&values, 1) };
+                isolate { join { recurse(&values, 1), recurse(&values, 2) }; };
             }
-            fn unreachable() @suspends { let values = [1]; join { | recurse(&values, 1) | recurse(&values, 2) }; }
+            fn unreachable() @suspends { let values = [1]; join { recurse(&values, 1), recurse(&values, 2) }; }
         "#,
             "main",
         );
@@ -496,7 +496,7 @@ mod tests {
                 fn reader(values: &Array<Int32>, callback: fn(Int32) -> Int32) @suspends -> Int32 {{ callback(values[0]) }}
                 fn main() @suspends {{
                     let values = [1]
-                    join {{ | reader(&values, safe) | reader(&values, safe) }};
+                    join {{ reader(&values, safe), reader(&values, safe) }};
                 }}
             "#
             );
@@ -563,7 +563,7 @@ mod tests {
             fn main() @suspends {
                 let values = [Point { x: 1, y: 2.5 }]
                 let view = &values
-                join { | read(view) | read(view) };
+                join { read(view), read(view) };
                 scope { branch { read(view) } }
             }
         "#,
@@ -593,7 +593,7 @@ mod tests {
 
     #[test]
     fn parallel_report_distinguishes_entry_rejection_from_local_fallback() {
-        let source = "extern fn unknown() fn helper() @suspends { unknown() } fn main() @suspends { join { | helper() | helper() }; }";
+        let source = "extern fn unknown() fn helper() @suspends { unknown() } fn main() @suspends { join { helper(), helper() }; }";
         let rejected = report(source, "main");
         assert!(rejected
             .entry_error

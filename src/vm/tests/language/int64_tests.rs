@@ -284,7 +284,7 @@ fn int64_suspensions_keep_full_width_snapshots_across_reload_failure_and_cancel(
             42
         }
         fn sibling(n: Int64) @suspends { record(delay(n)); }
-        fn scoped() @suspends -> Int64 { join { | sibling(3000000000) | sibling(-4000000000) }; 42 }
+        fn scoped() @suspends -> Int64 { join { sibling(3000000000), sibling(-4000000000) }; 42 }
         fn unit(n: Int64) @suspends { delay(n); }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {

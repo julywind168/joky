@@ -101,9 +101,9 @@ fn driver_failure_stops_borrowing_hosts_before_releasing_arena() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for body in [
             "wait(value)",
-            "race { | task.yield_now() | task.sleep_ms(60000) }; wait(value)",
-            "join { | wait(value) | task.sleep_ms(1) }",
-            "join { | wait(value) | fail() }",
+            "race { task.yield_now(), task.sleep_ms(60000) }; wait(value)",
+            "join { wait(value), task.sleep_ms(1) }",
+            "join { wait(value), fail() }",
         ] {
             STOPS.with(|count| count.set(0));
             READY.with(|ready| ready.set(false));
@@ -167,7 +167,7 @@ fn driver_cancels_unknown_race_loser_after_supported_wake() {
             extern fn wait(value: &mut Int32) @suspends
             fn main() @suspends -> Int32 {
                 let value = alloc(42)
-                race { | wait(value) | task.sleep_ms(1) }
+                race { wait(value), task.sleep_ms(1) }
                 42
             }
         "#,
@@ -413,7 +413,7 @@ fn wake_vm(mode: VmMode) -> VmEngine {
         )
         .unwrap();
     }
-    vm.load_source("import joky/task extern fn wait(value:&mut Int32) @suspends fn main() @suspends -> Int32 {let value=alloc(42); wait(value); 42} fn timer_race() @suspends -> Int32 {let value=alloc(42); race { | wait(value) | task.sleep_ms(10000) }; 42}").unwrap();
+    vm.load_source("import joky/task extern fn wait(value:&mut Int32) @suspends fn main() @suspends -> Int32 {let value=alloc(42); wait(value); 42} fn timer_race() @suspends -> Int32 {let value=alloc(42); race { wait(value), task.sleep_ms(10000) }; 42}").unwrap();
     vm
 }
 fn reset_wake(mode: u8) {

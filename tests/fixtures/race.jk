@@ -14,61 +14,61 @@ fn slow(id: Int32) @suspends {
 fn immediate(id: Int32) @suspends { record(id); }
 
 fn race_first() @suspends -> Int32 {
-    race { | wait(1) | wait(2) }
+    race { wait(1), wait(2) }
     42
 }
 fn race_later() @suspends -> Int32 {
-    race { | slow(1) | wait(2) | wait(3) }
+    race { slow(1), wait(2), wait(3) }
     delayed_value(9)
     42
 }
 fn race_immediate() @suspends -> Int32 {
-    race { | wait(record(1)) | immediate(record(2)) | immediate(record(3)) }
+    race { wait(record(1)), immediate(record(2)), immediate(record(3)) }
     42
 }
 fn race_skip_failure() @suspends -> Int32 {
-    race { | immediate(1) | fail_now() }
+    race { immediate(1), fail_now() }
     42
 }
 fn nested_scope() @suspends {
-    join { | slow(1) | slow(2) }
+    join { slow(1), slow(2) }
     record(999);
 }
 fn nested_race() @suspends {
-    race { | slow(3) | slow(4) }
+    race { slow(3), slow(4) }
     record(998);
 }
 fn race_nested() @suspends -> Int32 {
-    race { | nested_scope() | nested_race() | wait(5) }
+    race { nested_scope(), nested_race(), wait(5) }
     delayed_value(9)
     42
 }
 fn winner() @suspends {
-    race { | wait(1) | wait(2) }
+    race { wait(1), wait(2) }
     record(700);
 }
 fn race_inside_scope() @suspends -> Int32 {
-    join { | winner() | slow(6) }
+    join { winner(), slow(6) }
     42
 }
 fn race_loop() @suspends -> Int32 {
     var i = 0
     while i < 3 {
-        race { | wait(1) | wait(2) }
+        race { wait(1), wait(2) }
         i = i + 1
     }
     42
 }
 fn race_arguments() @suspends -> Int32 {
-    race { | wait(record(1)) | wait(delayed_value(record(2))) }
+    race { wait(record(1)), wait(delayed_value(record(2))) }
     42
 }
 fn race_return_argument() @suspends -> Int32 {
-    race { | wait(record(1)) | wait(if true { return 42 } else { 0 }) }
+    race { wait(record(1)), wait(if true { return 42 } else { 0 }) }
     0
 }
 fn race_single() @suspends -> Int32 {
-    race { | wait((1 | 2)); }
+    race { wait((1 | 2)) }
     42
 }
 
@@ -83,7 +83,7 @@ fn generic<T: Copy>(value: (Option<&T>,), id: Int32) @suspends { delayed_value(i
 fn race_generic() @suspends -> Int32 {
     let p = alloc(Point { x: 42 })
     let values = (Some((&*p)),)
-    race { | generic(values, 0) | (*p).wait(1) | generic::<Point>((None,), 2) }
+    race { generic(values, 0), (*p).wait(1), generic::<Point>((None,), 2) }
     p.x = 42
     p.x
 }
@@ -96,7 +96,7 @@ fn write_slow(p: &mut Point) @suspends {
 }
 fn race_reference() @suspends -> Int32 {
     let p = alloc(Point { x: 20 })
-    race { | write_slow(p) | wait(2) }
+    race { write_slow(p), wait(2) }
     p.x = 42
     delayed_value(9)
     p.x
@@ -113,7 +113,7 @@ fn allocate_wait() @suspends {
     record((*p));
 }
 fn race_allocations() @suspends -> Int32 {
-    race { | allocate_slow() | allocate_wait() }
+    race { allocate_slow(), allocate_wait() }
     delayed_value(9)
     42
 }
@@ -123,15 +123,15 @@ fn failing(divisor: Int32) @suspends {
     record((*p) / divisor);
 }
 fn race_failure(divisor: Int32) @suspends -> Int32 {
-    race { | slow(1) | failing(divisor) | wait(3) }
+    race { slow(1), failing(divisor), wait(3) }
     42
 }
 fn race_host_failure() @suspends -> Int32 {
-    race { | wait(1) | fail_now() | immediate(3) }
+    race { wait(1), fail_now(), immediate(3) }
     42
 }
 fn race_argument_failure(divisor: Int32) @suspends -> Int32 {
     let p = alloc(Point { x: 42 })
-    race { | (*p).wait(0) | (*p).wait(delayed_value(1) / divisor) }
+    race { (*p).wait(0), (*p).wait(delayed_value(1) / divisor) }
     42
 }

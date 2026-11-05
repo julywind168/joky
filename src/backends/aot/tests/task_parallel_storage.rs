@@ -422,7 +422,7 @@ fn parallel_aot_frozen_code_and_owning_capture() {
                 r#"
         fn echo(text: String) @suspends -> String { text }
         fn root(text: String) @suspends -> String {
-            let (a, b) = join { | echo(text) | echo("temporary") }
+            let (a, b) = join { echo(text), echo("temporary") }
             a
         }
         fn local(value: Ptr) @suspends -> Ptr { value }
@@ -557,21 +557,21 @@ fn task_pool_generated_branches_overlap_and_cancel_on_all_backends() {
             consume(text)
             n + sum - 8128
         }
-        fn joined() @suspends -> Int32 { let (a, b) = join { | leaf(41) | leaf(42) }; a + b }
-        fn raced() @suspends -> Int32 { race { | leaf(41) | leaf(42) } }
+        fn joined() @suspends -> Int32 { let (a, b) = join { leaf(41), leaf(42) }; a + b }
+        fn raced() @suspends -> Int32 { race { leaf(41), leaf(42) } }
         fn branched() @suspends -> Int32 { scope { branch { leaf(41); }; leaf(42) } }
         fn burn() -> Int32 { var n = 0; while true { n = n + 1 } }
         fn slow() @suspends -> Int32 { overlap(); burn() }
         fn fast() @suspends -> Int32 { overlap(); 42 }
-        fn cancel_loop() @suspends -> Int32 { race { | slow() | fast() } }
+        fn cancel_loop() @suspends -> Int32 { race { slow(), fast() } }
         fn losing_text() @suspends -> String {
             let guard = Guard { zero: 0, text: "cleanup owner" }
             overlap()
             while true { }
         }
         fn winning_text() @suspends -> String { overlap(); "winner" }
-        fn cleanup_race() @suspends -> String { race { | losing_text() | winning_text() } }
-        fn cancel_cleanup() @suspends -> String { let (a, b) = join { | losing_text() | losing_text() }; a }
+        fn cleanup_race() @suspends -> String { race { losing_text(), winning_text() } }
+        fn cancel_cleanup() @suspends -> String { let (a, b) = join { losing_text(), losing_text() }; a }
         fn cancel_body() @suspends -> String {
             scope { branch { losing_text(); }; branch { losing_text(); }; while true { } }
         }

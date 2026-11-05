@@ -11,5 +11,5 @@ fn empty_success() @suspends -> Int32 { let socket=acquire(5); 42 }
 fn runtime_failure() @suspends -> Int32 { let socket=acquire(6); 42 }
 fn pending() @suspends { let socket=acquire(7) }
 fn instant() @suspends {}
-fn race_cancel() @suspends -> Int32 { race { | pending() | instant() }; 42 }
-fn race_unstarted() @suspends -> Int32 { race { | instant() | pending() }; 42 }
+fn race_cancel() @suspends -> Int32 { race { pending(), instant() }; 42 }
+fn race_unstarted() @suspends -> Int32 { race { instant(), pending() }; 42 }

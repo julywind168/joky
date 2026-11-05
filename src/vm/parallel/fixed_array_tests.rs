@@ -151,7 +151,7 @@ fn task_fixed_array_cancel_after_children_install_their_captures() {
         extern fn entered() @suspends
         fn observed(value: Choice) @suspends -> Choice { entered(); cancelled(value) }
         fn active(value: Choice) @suspends -> Choice {
-            let (a, b) = join { | observed(value) | observed(value) }
+            let (a, b) = join { observed(value), observed(value) }
             a
         }
     "#

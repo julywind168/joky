@@ -25,7 +25,7 @@ fn exercise(settings: &Settings) @suspends -> Int32 {
     let text = String.from_utf8(message)!
     if !text.equals("中\0🙂") { return -1 }
     if !queue.receive()!.is_empty() { return -5 }
-    let (_, end) = join { | closed(target) | queue.receive() }
+    let (_, end) = join { closed(target), queue.receive() }
     if end.is_some() { return -2 }
     var control = outbox.create(1, 1)
     var other = outbox.create_with_policy(1, 1, outbox.Overflow.Disconnect(control.handle()))
@@ -43,21 +43,21 @@ fn blocked(settings: &Settings) @suspends -> Int32 {
     -1
 }
 fn nested(settings: &Settings) @suspends -> Int32 {
-    let (a, b) = join { | exercise(settings) | exercise(settings) }
+    let (a, b) = join { exercise(settings), exercise(settings) }
     a + b
 }
 fn main() @suspends -> Int32 {
     let settings = Settings { messages: 2, bytes: 64 }
-    let (a, b) = join { | nested(&settings) | nested(&settings) }
+    let (a, b) = join { nested(&settings), nested(&settings) }
     if a + b != 84 { return 1 }
     let view = &settings
     scope { branch { if exercise(view) != 21 { check.panic("bad outbox result") } } }
-    if (race { | blocked(view) | exercise(view) }) != 21 { return 2 }
+    if (race { blocked(view), exercise(view) }) != 21 { return 2 }
     0
 }
 fn parked() @suspends -> Int32 {
     let settings = Settings { messages: 2, bytes: 64 }
-    let (a, b) = join { | blocked(&settings) | blocked(&settings) }
+    let (a, b) = join { blocked(&settings), blocked(&settings) }
     a + b
 }
 fn allocate(settings: &Settings) @suspends -> Int32 {
@@ -71,6 +71,6 @@ fn allocate(settings: &Settings) @suspends -> Int32 {
 }
 fn allocation_budget() @suspends -> Int32 {
     let settings = Settings { messages: 2, bytes: 64 }
-    let (a, b) = join { | allocate(&settings) | allocate(&settings) }
+    let (a, b) = join { allocate(&settings), allocate(&settings) }
     a + b
 }

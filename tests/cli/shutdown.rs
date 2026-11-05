@@ -103,7 +103,7 @@ fn main() @suspends {
     let stop = shutdown.create()
     var i = 0
     while i < 10 {
-        race { | subscribed_wait(&stop) | { task.yield_now(); 0 } };
+        race { subscribed_wait(&stop), { task.yield_now(); 0 } };
         i += 1
     }
     var subscriptions: Array<shutdown.Signals> = []

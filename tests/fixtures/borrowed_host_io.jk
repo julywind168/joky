@@ -75,7 +75,7 @@ fn startup_failure() @suspends -> Int32 { receive(1); borrowed_host_io_event(99)
 fn pending_failure() @suspends -> Int32 { receive(2); borrowed_host_io_event(99); 0 }
 fn discard_read() @suspends { receive(0); }
 fn timeout() @suspends -> Int32 {
-    race { | discard_read() | task.sleep_ms(10) }
+    race { discard_read(), task.sleep_ms(10) }
     borrowed_host_io_event(11)
     42
 }
@@ -85,12 +85,12 @@ fn fail_now() {
 }
 fn fail_later() @suspends { task.sleep_ms(10); fail_now() }
 fn sibling_failure() @suspends -> Int32 {
-    join { | discard_read() | fail_later() }
+    join { discard_read(), fail_later() }
     borrowed_host_io_event(99); 0
 }
 fn instant() @suspends {}
 fn unstarted() @suspends -> Int32 {
-    race { | instant() | discard_read() }
+    race { instant(), discard_read() }
     42
 }
 struct State { label: String }

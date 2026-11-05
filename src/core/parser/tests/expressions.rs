@@ -199,7 +199,7 @@ fn return_preserves_newlines_grouping_and_sequence_boundaries() {
         "return;",
         "(return)",
         "f(return, 1)",
-        "join { | return | f() }",
+        "join { return, f() }",
     ] {
         let mut parser = Parser::from_source(source).unwrap();
         parser.parse_expr().unwrap();
@@ -212,12 +212,6 @@ fn return_preserves_newlines_grouping_and_sequence_boundaries() {
             Expr::Return { value: None, .. }
         ));
     }
-    let mut parser = Parser::from_source("return|").unwrap();
-    parser.allow_pipe = false;
-    assert!(matches!(
-        parser.parse_assignment().unwrap(),
-        Expr::Return { value: None, .. }
-    ));
 }
 
 #[test]
@@ -437,8 +431,8 @@ fn pipe_closures_distinguish_logical_or_and_join_branches() {
         "let f = || { true || false }",
         "let f = || { || { 42 } }",
         "(|| { 42 })()",
-        "join { | use_fn(|| { 42 }) | use_fn(|x: Int32| { x }) }",
-        "race { | use_fn(move || { 42 }) | other() }",
+        "join { use_fn(|| { 42 }), use_fn(|x: Int32| { x }) }",
+        "race { use_fn(move || { 42 }), other() }",
         "match e { A => || { 42 }, B => move || { 0 } }",
     ] {
         let source = format!("fn test() {{ {body} }}");
@@ -464,11 +458,11 @@ fn join_is_contextual_and_old_parallel_has_a_migration_span() {
     for source in [
         "fn join() {} fn f() { join(); string.join(); let join = true; if join {}; while join {} }",
         "fn f() { let join = 1; match join { _ => {} } }",
-        "fn f() @suspends { join { | f() } }",
-        "fn f() @suspends { join\n{ | f() } }",
-        "fn f() @suspends { let value = (join { | f() }); }",
+        "fn f() @suspends { join { f() } }",
+        "fn f() @suspends { join\n{ f() } }",
+        "fn f() @suspends { let value = (join { f() }); }",
         "fn f() @suspends { join {} }",
-        "fn f() @suspends { match join { | f() } { _ => {} } }",
+        "fn f() @suspends { match (join { f() }) { _ => {} } }",
         "import joky/string.{join} fn f() { join() }",
     ] {
         parse(source).unwrap_or_else(|error| panic!("{source}: {error}"));
@@ -478,6 +472,39 @@ fn join_is_contextual_and_old_parallel_has_a_migration_span() {
     assert_eq!(error.message, "Use join instead of parallel");
     assert_eq!(error.line, 2);
     assert_eq!(error.span.slice(source), Some("parallel"));
+}
+
+#[test]
+fn concurrent_branches_use_commas_or_newlines() {
+    for body in [
+        "join { first(), second(), }",
+        "race { first()\nsecond() }",
+        "join { first() /* separator\n */ second(), { third(); fourth() } }",
+        "race { first(1 | 2), { join { third()\nfourth() }; true } }",
+    ] {
+        let source = format!("fn f() @suspends {{ {body} }}");
+        parse(&source).unwrap_or_else(|error| panic!("{source}: {error}"));
+    }
+    for body in [
+        "join { first() second() }",
+        "race { first(); second() }",
+        "join { , first() }",
+        "race { first(),, second() }",
+    ] {
+        assert!(
+            parse(&format!("fn f() @suspends {{ {body} }}")).is_err(),
+            "{body}"
+        );
+    }
+    for body in [
+        "join { | first() | second() }",
+        "race {\n | first()\n | second() }",
+    ] {
+        let source = format!("fn f() @suspends {{ {body} }}");
+        let error = parse(&source).unwrap_err();
+        assert!(error.message.contains("Use commas or newlines"));
+        assert_eq!(error.span.slice(&source), Some("|"));
+    }
 }
 
 #[test]

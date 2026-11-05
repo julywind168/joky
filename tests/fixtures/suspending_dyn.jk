@@ -76,7 +76,7 @@ fn dyn_failure() @suspends -> Int32 {
 fn immediate() @suspends -> Int32 { 42 }
 fn dyn_race() @suspends -> Int32 {
     let store = open(true)
-    race { | { store.read(40) } | immediate() }
+    race { { store.read(40) }, immediate() }
 }
 
 fn dyn_nested() @suspends -> Int32 { let store = open(true); store.nested() }

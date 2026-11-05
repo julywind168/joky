@@ -131,12 +131,12 @@ fn scoped_borrow_received_ranges_reject_widening_and_unproven_views() {
             fn sum(values: &Slice<(Int32, Float64)>) @suspends -> Int32 { task.yield_now(); values[0].0 + values[1].0 }
             fn reader(values: &Slice<(Int32, Float64)>) @suspends -> Int32 {
                 let checked = inspect()
-                let (a, b) = join { | sum(values) | sum(values) }
+                let (a, b) = join { sum(values), sum(values) }
                 checked + a + b
             }
             fn root() @suspends -> Int32 {
                 let values = [(2, 1.5), (3, 2.5), (5, 3.5), (7, 4.5)]
-                let (a, b) = join { | reader(values.slice(1, 3)) | task.yield_now() }
+                let (a, b) = join { reader(values.slice(1, 3)), task.yield_now() }
                 a
             }
         "#;

@@ -204,7 +204,7 @@ fn task_parallel_list_cancel_after_children_install_their_captures() {
         extern fn entered() @suspends
         fn observed(value: List<Payload>) @suspends -> List<Payload> { entered(); parked(value) }
         fn active(value: List<Payload>) @suspends -> List<Payload> {
-            let (a, b) = join { | observed(value) | observed(List.from_array([Payload.Items([Item { code: int8(9), text: "other", flag: false }])])) }
+            let (a, b) = join { observed(value), observed(List.from_array([Payload.Items([Item { code: int8(9), text: "other", flag: false }])])) }
             a
         }
     "#

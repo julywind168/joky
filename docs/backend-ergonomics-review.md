@@ -145,14 +145,13 @@ Copy／拥有型 struct 已支持 `Options { field: value, ..base }`，可直接
 
 改关键词代价高，若决定改，应在仍是非公开开发阶段时一次完成，并保留旧词的迁移诊断（同 `parallel` 的做法）。
 
-### 5.2 并发关键词
+### 5.2 并发关键词【join／race 分隔符已调整】
 
 - `branch` 与业务名词、Git 术语冲突（"branch"在订单、银行、代码仓库领域都是常见词），
   且不如 `spawn` 直观。`scope { spawn { ... } }` 与 Kotlin/Trio/Swift 的心智模型一致。
   按 [syntax.md §3](syntax.md#3-词法与名称) 它是保留字，占用了一个常用业务标识符；`join`、`isolate` 已是上下文词，`branch`/`scope`/`race` 也可照此处理。
-- `join { | a | b }`、`race { | a | b }` 的前导竖线与闭包 `|x|` 视觉冲突，
-  `race { | stopped(stop) | accept(&mut listener) }` 第一眼像闭包参数列表。
-  建议接受逗号或换行分隔的形式：`race { stopped(stop), accept(&mut listener) }`，前导 `|` 作为兼容写法保留。
+- join／race 已统一使用逗号或换行分隔，例如 `race { stopped(stop), accept(&mut listener) }`。
+  旧前导 `|` 分支写法已移除并提供迁移诊断，避免与闭包参数和按位或混淆。
 - `race` 要求各分支同型，导致示例里大量出现只为凑类型的函数（见 §9）。
 
 ### 5.3 可变性拼写

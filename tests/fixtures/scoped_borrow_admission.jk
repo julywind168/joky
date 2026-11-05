@@ -24,7 +24,7 @@ fn exercise(settings: &Settings) @suspends -> Int32 {
     settings.answer
 }
 fn nested(settings: &Settings) @suspends -> Int32 {
-    let (a, b) = join { | exercise(settings) | exercise(settings) }
+    let (a, b) = join { exercise(settings), exercise(settings) }
     a + b
 }
 fn blocked(settings: &Settings) @suspends -> Int32 {
@@ -42,21 +42,21 @@ fn fail(settings: &Settings) @suspends -> Int32 {
 }
 fn main() @suspends -> Int32 {
     let settings = Settings { capacity: 1, answer: 21 }
-    let (a, b) = join { | nested(&settings) | nested(&settings) }
+    let (a, b) = join { nested(&settings), nested(&settings) }
     if a + b != 84 { return 1 }
     let view = &settings
     scope {
         branch { if exercise(view) != 21 { check.panic("bad admission result") } }
     }
-    let winner = race { | blocked(&settings) | exercise(&settings) }
+    let winner = race { blocked(&settings), exercise(&settings) }
     if winner != 21 { return 2 }
-    let failure = isolate { join { | fail(view) | blocked(view) } }
+    let failure = isolate { join { fail(view), blocked(view) } }
     if failure.is_ok() { return 3 }
     if exercise(&settings) != 21 { return 4 }
     0
 }
 fn parked() @suspends -> Int32 {
     let settings = Settings { capacity: 1, answer: 21 }
-    let (a, b) = join { | blocked(&settings) | blocked(&settings) }
+    let (a, b) = join { blocked(&settings), blocked(&settings) }
     a + b
 }

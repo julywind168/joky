@@ -47,7 +47,7 @@ fn control(engine: &vm.Vm, directory: domain.DirectoryHandle, kind: Int32) @susp
         session.begin(schema, @INCREMENTAL_NEW@, "start", "advance")!
     }
     // The owning session moves to a branch; no Local handle crosses worker threads.
-    join { | finish(session) | task.yield_now() };
+    join { finish(session), task.yield_now() };
     check.assert(engine.call::<domain.DirectoryHandle, Int32>("probe", directory) == if kind == 2 { 194 } else { 43 }, "migration preserves owning payloads")
 }
 fn run_case(kind: Int32) @suspends {
@@ -55,7 +55,7 @@ fn run_case(kind: Int32) @suspends {
     let directory = directory_owner.handle()
     let engine = vm.Vm.interpreter()
     engine.load_source(if kind == 0 { @OLD@ } else { if kind == 1 { @INCREMENTAL_OLD@ } else { @BATCH_OLD@ } })!
-    race { | engine.call::<domain.DirectoryHandle, Unit>("hold", directory) | control(&engine, directory, kind) };
+    race { engine.call::<domain.DirectoryHandle, Unit>("hold", directory), control(&engine, directory, kind) };
     check.assert(engine.close() == 0, "VM closes after migration")
 }
 fn detached() @suspends -> vm.Migration {

@@ -7,9 +7,9 @@ fn main() @suspends -> Int32 {
     engine.load_source("extern fn __joky_task_sleep_ms(milliseconds: UInt64) @suspends\nfn answer(value: Int32) @suspends -> Int32 {{ value + 1 }}\nfn slow(value: Int32) @suspends -> Int32 {{ __joky_task_sleep_ms(60000); value }}")!
     let first = engine.share()
     let second = engine.share()
-    let (a, b) = join { | call(first, 20) | call(second, 20) }
+    let (a, b) = join { call(first, 20), call(second, 20) }
     if a + b != 42 { return 1 }
-    let winner = race { | borrowed(&engine, "slow") | borrowed(&engine, "answer") }
+    let winner = race { borrowed(&engine, "slow"), borrowed(&engine, "answer") }
     if winner != 42 { return 5 }
     engine.load_source("fn echo(value: String) @suspends -> String {{ value }}")!
     if !engine.call::<String, String>("echo", "worker → control → worker").equals("worker → control → worker") { return 2 }

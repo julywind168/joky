@@ -280,7 +280,7 @@ fn tuple_construction_and_destructuring_resume_once_after_reload_and_cancellatio
             if flag { record(value); }
         }
         fn scoped() @suspends -> Int32 {
-            join { | child((2, true)) | child((3, true)) }
+            join { child((2, true)), child((3, true)) }
             42
         }
     "#;

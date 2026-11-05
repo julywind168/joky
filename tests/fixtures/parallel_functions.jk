@@ -8,7 +8,7 @@ fn later(value: Int32) @suspends -> Int32 { value + 1 }
 fn main() @suspends -> Int32 {
     let callback = Callback { call: plus }
     let target = later
-    let (a, b, c) = join { | invoke(callback, 20) | invoke(choose(), 21) | target(20) }
+    let (a, b, c) = join { invoke(callback, 20), invoke(choose(), 21), target(20) }
     let result = a + b + c
     if result == 84 { 0 } else { 1 }
 }
@@ -18,5 +18,5 @@ fn slow(text: String) @suspends -> String { __joky_task_sleep_ms(60000); text }
 fn fast(text: String) @suspends -> String { text }
 fn cancelled() @suspends -> String {
     let target = slow
-    race { | target("cancelled owner") | fast("winner") }
+    race { target("cancelled owner"), fast("winner") }
 }

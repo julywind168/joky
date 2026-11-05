@@ -31,13 +31,13 @@ fn connection(engine: &vm.Vm, path: &String, stream: TcpStream) @suspends -> Boo
 pub fn serve(engine: &vm.Vm, path: String, var listener: TcpListener, stop: &shutdown.Controller) @suspends -> Int32 {
     var status: Int32 = 0
     while !stop.requested() {
-        let stream = match race { | stopped_accept(stop) | accept(&mut listener) } {
+        let stream = match race { stopped_accept(stop), accept(&mut listener) } {
             Ok(Some(stream)) => stream,
             Ok(None) => break,
             Err(_) => { status = 1; break }
         }
         if stop.requested() { break }
-        if race { | connection(engine, &path, stream) | stopped(stop) } { stop.request(); break }
+        if race { connection(engine, &path, stream), stopped(stop) } { stop.request(); break }
     }
     listener.close();
     stop.request();

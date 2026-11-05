@@ -68,7 +68,7 @@ fn immediate() @suspends -> Int32 { 42 }
 fn closure_race() @suspends -> Int32 {
     let owner = resource(1)
     let operation = move || @suspends { delayed_value(40) + owner.id }
-    race { | apply(operation) | immediate() }
+    race { apply(operation), immediate() }
 }
 fn apply_ref<F: FnOnce(&Int32) @suspends @noescape -> Int32>(operation: F, value: &Int32) @suspends @noescape -> Int32 {
     operation(value)

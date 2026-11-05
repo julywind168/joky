@@ -63,7 +63,7 @@ fn client(address: Address) @suspends -> Int32 {
 fn roundtrip(address: Address) @suspends -> Int32 {
     var listener = match TcpListener.bind(address) { Ok(listener) => listener, Err(error) => { return 10 } }
     let bound = match listener.local_addr() { Ok(bound) => bound, Err(error) => { return 11 } }
-    join { | serve(&mut listener) | send(bound) }
+    join { serve(&mut listener), send(bound) }
     assert_ok(listener.close())
     42
 }
@@ -86,8 +86,8 @@ fn pending() @suspends -> Int32 {
 fn reuse() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
     let bound = match listener.local_addr() { Ok(bound) => bound, Err(error) => { return 2 } }
-    race { | wait_accept(&mut listener) | task.yield_now() }
-    join { | serve(&mut listener) | send(bound) }
+    race { wait_accept(&mut listener), task.yield_now() }
+    join { serve(&mut listener), send(bound) }
     42
 }
 fn main() @suspends -> Int32 { addresses(); if ipv4() != 42 {return 1}; if ipv6() != 42 {return 2}; if errors() != 42 {return 3}; if reuse() != 42 {return 4}; if all() != 42 {return 5}; 0 }
@@ -111,6 +111,6 @@ fn send_all(address: Address) @suspends {
 fn all() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
     let bound = match listener.local_addr() { Ok(bound) => bound, Err(error) => { return 2 } }
-    join { | serve(&mut listener) | send_all(bound) }
+    join { serve(&mut listener), send_all(bound) }
     42
 }

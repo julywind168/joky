@@ -20,7 +20,7 @@ fn array_task() @suspends -> Int32 { array_inspect(relay(array_value())) }
 fn partial() @suspends -> Int32 { let a=make(1); let b=make(99); 42 }
 fn hold(socket: Socket) @suspends { task.yield_now() }
 fn instant() @suspends {}
-fn unstarted() @suspends -> Int32 { race { | instant() | hold(make(1)) }; 42 }
+fn unstarted() @suspends -> Int32 { race { instant(), hold(make(1)) }; 42 }
 fn dynamic() @suspends -> Int32 { scope { var n: UInt64=1; while n<4 { let socket=make(n); branch { hold(socket) }; n=n+1 }; task.yield_now() }; 42 }
 struct State { socket: Socket, id: Int32 }
 fn create() -> State { State { socket: make(1), id: 42 } }

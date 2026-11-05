@@ -64,7 +64,7 @@ fn scope_accepts_native_and_user_branches_and_preserves_poll_order() {
             extern fn wait(x: Int32) @suspends
             fn wrapped(x: Int32) @suspends { wait(x) }
             fn f() @suspends -> Int32 {
-                join { | wait(record(1)) | wrapped(record(2)) | wait(record(3)) }
+                join { wait(record(1)), wrapped(record(2)), wait(record(3)) }
                 record(7)
             }
         "#,
@@ -88,7 +88,7 @@ fn scope_accepts_native_and_user_branches_and_preserves_poll_order() {
 fn scope_host_failure_is_terminal_and_skips_later_siblings() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = engine(mode);
-        vm.load_source("extern fn wait(x: Int32) @suspends extern fn fail() @suspends fn f() @suspends { join { | fail() | wait(2) } }").unwrap();
+        vm.load_source("extern fn wait(x: Int32) @suspends extern fn fail() @suspends fn f() @suspends { join { fail(), wait(2) } }").unwrap();
         let mut task = vm.call_async("f", &[]).unwrap();
         task.resume().unwrap();
         assert!(task.resume().is_err());
@@ -219,7 +219,7 @@ fn scope_native_string_arguments_survive_pending_and_module_drop() {
         )
         .unwrap();
     }
-    vm.load_source(r#"extern fn check(u: Unit, s: String) @suspends fn f() @suspends { join { | check({}, "héllo") } }"#).unwrap();
+    vm.load_source(r#"extern fn check(u: Unit, s: String) @suspends fn f() @suspends { join { check({}, "héllo") } }"#).unwrap();
     let mut task = vm.call_async("f", &[]).unwrap();
     drop(vm);
     task.resume().unwrap();
@@ -248,7 +248,7 @@ fn deep_nested_scopes_resume_or_cancel_without_recursive_drop() {
         for cancel in [false, true] {
             let mut vm = engine(VmMode::Interpreter);
             vm.set_interpreter_limits(InterpreterLimits { max_frames: 6000, max_call_depth: 6000, ..Default::default() }).unwrap();
-            vm.load_source("extern fn wait(n: Int32) @suspends fn f(n: Int32) @suspends { var k=n; while k>0 { join { | f(k-1) }; k=0; }; wait(n) }").unwrap();
+            vm.load_source("extern fn wait(n: Int32) @suspends fn f(n: Int32) @suspends { var k=n; while k>0 { join { f(k-1) }; k=0; }; wait(n) }").unwrap();
             let mut task = vm.call_async("f", &[3000]).unwrap();
             assert!(!task.is_finished());
             drop(vm);
@@ -283,7 +283,7 @@ fn interpreter_depth_and_total_frame_limits_reject_before_starting_children() {
     })
     .unwrap();
     vm.load_source(
-        "extern fn wait(n: Int32) @suspends fn f() @suspends { join { | wait(1) | wait(2) } }",
+        "extern fn wait(n: Int32) @suspends fn f() @suspends { join { wait(1), wait(2) } }",
     )
     .unwrap();
     let error = vm.call_async("f", &[]).unwrap_err();
@@ -412,7 +412,7 @@ fn poll_budget_yields_without_replaying_calls_assignments_or_scope_branches() {
             fn branch_task(n: Int32) @suspends { record(count(n)); }
             fn f() @suspends -> Int32 {
                 var i=0; while i<3 { record(i); i=i+1; }
-                join { | branch_task(7) | branch_task(9) }
+                join { branch_task(7), branch_task(9) }
                 record(42)
             }
         "#,
@@ -566,7 +566,7 @@ fn tiny_poll_slices_preserve_nested_scope_host_poll_order() {
             ..Default::default()
         })
         .unwrap();
-        vm.load_source("extern fn wait(n: Int32) @suspends fn inner() @suspends { join { | wait(1) | wait(2) } } fn f() @suspends { join { | inner() | wait(3) } }").unwrap();
+        vm.load_source("extern fn wait(n: Int32) @suspends fn inner() @suspends { join { wait(1), wait(2) } } fn f() @suspends { join { inner(), wait(3) } }").unwrap();
         let mut task = vm.call_async("f", &[]).unwrap();
         for _ in 0..100 {
             if task.is_finished() {
@@ -623,7 +623,7 @@ fn frame_capacity_is_reused_after_completed_calls_and_scopes() {
         ..Default::default()
     })
     .unwrap();
-    vm.load_source("fn unit() @suspends {} fn value() -> Int32 { 1 } fn f() @suspends -> Int32 { var n=0; while n<2000 { join { | unit() }; n=n+value(); }; n }").unwrap();
+    vm.load_source("fn unit() @suspends {} fn value() -> Int32 { 1 } fn f() @suspends -> Int32 { var n=0; while n<2000 { join { unit() }; n=n+value(); }; n }").unwrap();
     assert_eq!(vm.call_async("f", &[]).unwrap().cps_result(), Some(2000));
 }
 
@@ -636,7 +636,7 @@ fn budget_exhaustion_is_shared_by_nested_calls_and_scope_branches() {
         ..Default::default()
     })
     .unwrap();
-    vm.load_source("extern fn record(n: Int32) -> Int32 fn work() { var n=0; while n<100 { n=n+1; } } fn branch_task() @suspends { work() } fn f() @suspends { join { | branch_task() | branch_task() }; record(9); }").unwrap();
+    vm.load_source("extern fn record(n: Int32) -> Int32 fn work() { var n=0; while n<100 { n=n+1; } } fn branch_task() @suspends { work() } fn f() @suspends { join { branch_task(), branch_task() }; record(9); }").unwrap();
     let mut task = vm.call_async("f", &[]).unwrap();
     for _ in 0..20 {
         if task.is_finished() {
@@ -884,7 +884,7 @@ fn interpreter_preserves_cps_frames_and_scope_branches() {
         fn right(value: Int32) @suspends { delayed_value(value); {} }
         fn all(x: Int32) @suspends -> Int32 {
             let y = delayed_value(x)
-            join { | left(y) | right(y + 1) }
+            join { left(y), right(y + 1) }
             y + 10
         }
     "#,

@@ -36,6 +36,6 @@ fn client(address: Address) @suspends {
 fn main() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, _ => { return 1 } }
     let address = match listener.local_addr() { Ok(address) => address, _ => { return 2 } }
-    join { | serve(&mut listener) | client(address) }
+    join { serve(&mut listener), client(address) }
     match listener.close() { Ok(_) => 0, Err(_) => 3 }
 }

@@ -134,7 +134,7 @@ fn cancel() @suspends -> Int32 {
         var peer = peer
         ensure(peer.write_all(bytes("x")).is_ok())
         var buffered = BufferedTcp.new(stream)
-        race { | wait(&mut buffered, mode) | task.sleep_ms(1) }
+        race { wait(&mut buffered, mode), task.sleep_ms(1) }
         ensure(buffered.buffered_len() <= buffered.capacity())
         ensure(buffered.close().is_ok())
         ensure(peer.close().is_ok())
@@ -202,7 +202,7 @@ fn streaming() @suspends -> Int32 {
     let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => { return 3 } }
     var peer = match listener.accept() { Ok(stream) => stream, _ => { return 4 } }
     var buffered = match BufferedTcp.with_capacity(stream, 2) { Ok(b) => b, _ => { return 2 } }
-    join { | consume(&mut buffered) | produce(&mut peer) }
+    join { consume(&mut buffered), produce(&mut peer) }
     ensure(buffered.close().is_ok())
     ensure(peer.close().is_ok())
     42

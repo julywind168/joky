@@ -30,7 +30,7 @@ fn closed(ctx: &Context, _: &Unit) @suspends @noescape {
 fn deadline(stop: &shutdown.Controller) @suspends { stop.wait(); task.sleep(2ms) }
 fn server(connection: session.Connection, stream: TcpStream, ctx: &Context, local: &Unit) @suspends {
     if ctx.slow {
-        race { | session.run_draining(connection, stream, ctx, local, line, closed, &ctx.stop) | deadline(&ctx.stop) }
+        race { session.run_draining(connection, stream, ctx, local, line, closed, &ctx.stop), deadline(&ctx.stop) }
     } else { session.run_draining(connection, stream, ctx, local, line, closed, &ctx.stop) }
 }
 fn peer(stream: TcpStream, scenario: Int32) @suspends {
@@ -56,7 +56,7 @@ fn scenario(which: Int32) @suspends {
     if which == 1 { stop.request(); }
     let ctx = Context { counts: owner.handle(), output: connection.output(), stop, slow: which == 2 }
     let local = {}
-    join { | server(connection, stream, &ctx, &local) | peer(remote, which) }
+    join { server(connection, stream, &ctx, &local), peer(remote, which) }
     let counts = owner.handle()
     let (lines, closed) = when(counts) { (counts.lines, counts.closed) }!
     check.assert(lines == if which == 1 { 0 } else { 1 }, "no second request after shutdown")

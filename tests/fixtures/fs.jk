@@ -82,7 +82,7 @@ fn boundaries() @suspends -> Int32 {
 fn pending_read(file: &mut fs.File) @suspends { let ignored = file.read_text_limited(8) }
 fn after_cancel(expected: Int32) @suspends -> Int32 {
     var file = match fs.open("cancel", fs.OpenOptions.default()) { Ok(f) => f, Err(_) => { return 1 } }
-    race { | pending_read(&mut file) | task.yield_now() }
+    race { pending_read(&mut file), task.yield_now() }
     match file.read(0) { Err(e) => { if error_code(e) != expected { return 2 } }, Ok(_) => { return 3 } }
     let empty = ""
     match file.write(empty.bytes()) {

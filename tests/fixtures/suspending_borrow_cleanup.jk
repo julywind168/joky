@@ -34,14 +34,14 @@ fn failed() @suspends {
 fn cancelled() @suspends {
     var local = 0
     var values = [make(1)]
-    race { | hold(&mut local, values.borrow_mut_ref(0)) | instant() }
+    race { hold(&mut local, values.borrow_mut_ref(0)), instant() }
     assert(local == 42, "cancelled child finished its mutation")
     values.clear()
 }
 fn unstarted() @suspends {
     var local = 0
     var values = [make(1)]
-    race { | instant() | hold(&mut local, values.borrow_mut_ref(0)) }
+    race { instant(), hold(&mut local, values.borrow_mut_ref(0)) }
     assert(local == 0, "unpolled child has no effects")
 }
 fn dynamic() @suspends {

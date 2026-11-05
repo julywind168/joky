@@ -17,16 +17,16 @@ fn shutdown_broadcast() @suspends -> Int32 {
     assert(!stop.requested(), "initial state")
     assert(stop.reason().is_none(), "initial reason")
     let copy = stop.share()
-    let (a, b, _) = join { | observe(&stop) | observe(&copy) | trigger(&stop) }
+    let (a, b, _) = join { observe(&stop), observe(&copy), trigger(&stop) }
     assert(stop.requested(), "latched state")
     assert(observe(&copy) == 21, "late waiter")
     a + b
 }
 fn shutdown_cancel_waiter() @suspends -> Int32 {
     let stop = shutdown.create()
-    race { | observe(&stop) | { task.yield_now(); 0 } };
+    race { observe(&stop), { task.yield_now(); 0 } };
     assert(!stop.requested(), "wait cancellation must not request shutdown")
-    let (value, _) = join { | observe(&stop) | trigger(&stop) }
+    let (value, _) = join { observe(&stop), trigger(&stop) }
     value + 21
 }
 fn shutdown_shared_owner() @suspends -> Int32 {
@@ -54,7 +54,7 @@ fn delayed_request(stop: &shutdown.Controller) @suspends -> Int32 {
 }
 fn shutdown_deadline_start() @suspends -> Int32 {
     let stop = shutdown.create()
-    race { | short_deadline(&stop) | delayed_request(&stop) }
+    race { short_deadline(&stop), delayed_request(&stop) }
 }
 fn main() @suspends {
     assert(shutdown_branch_wakes_parent() == 42, "branch progresses before scope joins")
@@ -70,9 +70,9 @@ fn transferred_request(stop: shutdown.Controller) @suspends -> Int32 { trigger(&
 fn shutdown_parallel_transfer() @suspends -> Int32 {
     let stop = shutdown.create()
     let (a, b, _) = join {
-        | transferred_wait(stop.share())
-        | transferred_wait(stop.share())
-        | transferred_request(stop.share())
+        transferred_wait(stop.share())
+        transferred_wait(stop.share())
+        transferred_request(stop.share())
     }
     a + b
 }
@@ -83,7 +83,7 @@ fn shutdown_branch_wakes_parent() @suspends -> Int32 {
     let copy = stop.share()
     scope {
         branch { copy.request(); }
-        let value = race { | observe(&stop) | branch_timeout() }
+        let value = race { observe(&stop), branch_timeout() }
         assert(value == 21, "owned controller branch must run while parent is waiting")
     }
     42

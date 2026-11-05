@@ -26,12 +26,12 @@ fn recursive(n: Int32) @suspends -> Int32 {
     if n == 0 { 1 } else { let again = recursive; again(n - 1) }
 }
 fn relay(values: &Array<Int32>) @suspends -> Int32 {
-    let (a, b) = join { | invoke(values) | wrapped(values, Callback { call: increment }) }
+    let (a, b) = join { invoke(values), wrapped(values, Callback { call: increment }) }
     a + b + recursive(2)
 }
 fn main() @suspends -> Int32 {
     var values = [1, 2, 3]
-    let (a, b) = join { | relay(&values) | invoke(&values) }
+    let (a, b) = join { relay(&values), invoke(&values) }
     values[0] = 7
     a + b + values[0]
 }
@@ -58,7 +58,7 @@ fn indirect_forever(values: &Array<Int32>) @suspends -> Int32 {
 }
 fn failed() @suspends -> Int32 {
     let values = [1, 2, 3]
-    let (a, b) = join { | invoke(&values) | indirect_fail(&values) }
+    let (a, b) = join { invoke(&values), indirect_fail(&values) }
     a + b
 }
 fn parked() @suspends {
@@ -69,7 +69,7 @@ fn parked() @suspends {
 fn isolated() @suspends -> Int32 {
     let values = [1, 2, 3]
     let view = &values
-    match isolate { race { | invoke(view) | indirect_forever(view) } } {
+    match isolate { race { invoke(view), indirect_forever(view) } } {
         Ok(value) => value, Err(_) => -1
     }
 }
@@ -79,7 +79,7 @@ fn safe(n: Int64) @suspends -> Int32 { int32(n) }
 fn leaf() @suspends -> Int32 { 1 }
 fn nested_candidate(n: Int64) @suspends -> Int32 {
     let target = leaf
-    let (a, b) = join { | target() | leaf() }
+    let (a, b) = join { target(), leaf() }
     a + b
 }
 fn expose_nested_candidate() -> fn(Int64) @suspends -> Int32 { nested_candidate }
@@ -88,12 +88,12 @@ fn conservative(values: &Array<Int32>, callback: fn(Int64) @suspends -> Int32) @
 }
 fn nested_indirect_candidates() @suspends -> Int32 {
     let values = [1, 2, 3]
-    let (a, b) = join { | conservative(&values, safe) | invoke(&values) }
+    let (a, b) = join { conservative(&values, safe), invoke(&values) }
     a + b
 }
 fn indirect_group() @suspends -> Int32 {
     let values = [1, 2, 3]
     let callback: fn(&Array<Int32>) @suspends @noescape -> Int32 = sum
-    let (a, b) = join { | callback(&values) | invoke(&values) }
+    let (a, b) = join { callback(&values), invoke(&values) }
     a + b
 }

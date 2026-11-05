@@ -170,7 +170,7 @@ fn task_parallel_aggregate_cancel_after_children_install_their_captures() {
         extern fn entered() @suspends
         fn observed(value: Batch<Choice>) @suspends -> Batch<Choice> { entered(); parked(value) }
         fn active(value: Batch<Choice>) @suspends -> Batch<Choice> {
-            let (a, b) = join { | observed(value) | observed(Batch { head: Choice.Other(("other", int64(9))), tail: (false, "tail") }) }
+            let (a, b) = join { observed(value), observed(Batch { head: Choice.Other(("other", int64(9))), tail: (false, "tail") }) }
             a
         }
     "#

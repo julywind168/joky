@@ -22,34 +22,34 @@ fn outcome() @suspends -> Result<Int32, String> {
     Result.Err::<Int32, String>("error payload")
 }
 fn root(value: Batch<Choice>) @suspends -> (Batch<Choice>, Option<String>, Result<Int32, String>) {
-    let (a, b) = join { | echo(value) | optional() }
+    let (a, b) = join { echo(value), optional() }
     let background = Batch { head: Choice.Other(("branch capture", int64(9))), tail: (true, "tail capture") }
     scope { branch { consume(echo(background)) }; task.yield_now() }
-    let selected = race { | outcome() | outcome() }
+    let selected = race { outcome(), outcome() }
     (a, b, selected)
 }
 fn identity(value: Batch<Choice>) @suspends -> Batch<Choice> { echo(value) }
 fn single_child(value: One) @suspends -> One { task.yield_now(); value }
 fn single(value: One) @suspends -> One {
-    let (a, b) = join { | single_child(value) | single_child(One { value: 7 }) }
+    let (a, b) = join { single_child(value), single_child(One { value: 7 }) }
     a
 }
 fn empty_child(value: Empty) @suspends -> Empty { task.yield_now(); value }
-fn empty(value: Empty) @suspends -> Empty { race { | empty_child(value) | empty_child(Empty { }) } }
+fn empty(value: Empty) @suspends -> Empty { race { empty_child(value), empty_child(Empty { }) } }
 fn copy_child(value: (Int8, UInt16, Float32, Unit)) @suspends -> (Int8, UInt16, Float32, Unit) { task.yield_now(); value }
 fn copied(value: (Int8, UInt16, Float32, Unit)) @suspends -> (Int8, UInt16, Float32, Unit) {
-    let (a, b) = join { | copy_child(value) | copy_child(value) }
+    let (a, b) = join { copy_child(value), copy_child(value) }
     a
 }
-fn nested_empty() @suspends -> (Unit, Empty) { let (a, b) = join { | empty_child(Empty { }) | empty_child(Empty { }) }; ({}, a) }
+fn nested_empty() @suspends -> (Unit, Empty) { let (a, b) = join { empty_child(Empty { }), empty_child(Empty { }) }; ({}, a) }
 fn mixed_child(unit: Unit, text: String, n: Int32) @suspends -> (String, Int32) { task.yield_now(); (text, n) }
 fn mixed(unit: Unit, text: String, n: Int32) @suspends -> (String, Int32) {
-    let (a, b) = join { | mixed_child(unit, text, n) | optional() }
+    let (a, b) = join { mixed_child(unit, text, n), optional() }
     a
 }
 fn fail(value: Batch<Choice>) @suspends -> Batch<Choice> { task.yield_now(); 1 / 0; value }
 fn failed(value: Batch<Choice>) @suspends -> Batch<Choice> {
-    let (a, b) = join { | fail(value) | echo(Batch { head: Choice.Empty, tail: (false, "loser") }) }
+    let (a, b) = join { fail(value), echo(Batch { head: Choice.Empty, tail: (false, "loser") }) }
     a
 }
 fn parked(value: Batch<Choice>) @suspends -> Batch<Choice> { task.sleep_ms(60000); value }

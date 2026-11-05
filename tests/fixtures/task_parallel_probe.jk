@@ -22,13 +22,13 @@ fn work(id: Int32) -> Int32 {
 }
 
 fn joined() @suspends -> Int32 {
-    let values = join { | probe_dispatch(0) | probe_dispatch(1) }
+    let values = join { probe_dispatch(0), probe_dispatch(1) }
     probe_parent()
     values.0 + values.1
 }
 
 fn raced() @suspends -> Int32 {
-    let value = race { | probe_dispatch(0) | probe_dispatch(1) }
+    let value = race { probe_dispatch(0), probe_dispatch(1) }
     probe_parent()
     value
 }

@@ -22,13 +22,13 @@ fn score(value: &Choice) -> Int32 {
 fn read(value: &Choice) @suspends -> Int32 {
     task.yield_now()
     match value {
-        Choice.Text(s) => { let (a, b) = join { | text(s) | text(s) }; a + b }
+        Choice.Text(s) => { let (a, b) = join { text(s), text(s) }; a + b }
         _ => score(value)
     }
 }
 fn main() @suspends -> Int32 {
     var value = Choice.Text("abc")
-    let (a, b) = join { | read(&value) | read(&value) }
+    let (a, b) = join { read(&value), read(&value) }
     value = Choice.Empty
     a + b + score(&value)
 }
@@ -41,7 +41,7 @@ fn rows(values: &Slice<Choice>) @suspends -> Int32 {
 }
 fn arrays() @suspends -> Int32 {
     var data = values()
-    let (a, b) = join { | rows(data.slice(0, 4)) | rows(data.slice(0, 0)) }
+    let (a, b) = join { rows(data.slice(0, 4)), rows(data.slice(0, 0)) }
     data[1] = Choice.Empty
     a + b
 }
@@ -52,7 +52,7 @@ fn read_result(value: &Result<Option<String>, Array<Choice>>) @suspends -> Int32
 fn results() @suspends -> Int32 {
     let a: Result<Option<String>, Array<Choice>> = Ok(Some("hello"))
     let b: Result<Option<String>, Array<Choice>> = Err(values())
-    let (x, y) = join { | read_result(&a) | read_result(&b) }
+    let (x, y) = join { read_result(&a), read_result(&b) }
     x + y
 }
 fn plain(value: &Plain) @suspends -> Int32 {
@@ -63,7 +63,7 @@ fn plain_values() @suspends -> Int32 {
     let a = Plain.Empty
     let b = Plain.Number(41)
     let c = Plain.Zero({})
-    let (x, y, z) = join { | plain(&a) | plain(&b) | plain(&c) }
+    let (x, y, z) = join { plain(&a), plain(&b), plain(&c) }
     x + y + z
 }
 fn read_column(values: &Array<Plain>) @suspends -> Int32 {
@@ -73,7 +73,7 @@ fn read_column(values: &Array<Plain>) @suspends -> Int32 {
 fn plain_column() @suspends -> Int32 {
     var values = [Plain.Number(7), Plain.Empty]
     values[1] = Plain.Other(21)
-    let (a, b) = join { | read_column(&values) | read_column(&values) }
+    let (a, b) = join { read_column(&values), read_column(&values) }
     a + b
 }
 fn dynamic() @suspends -> Int32 {
@@ -93,13 +93,13 @@ fn fixed_score(value: &FixedArray<Option<String>, 3>) @suspends -> Int32 {
 }
 fn fixed_borrow() @suspends -> Int32 {
     let value = make_fixed()
-    let (a, b) = join { | fixed_score(&value) | fixed_score(&value) }
+    let (a, b) = join { fixed_score(&value), fixed_score(&value) }
     a + b
 }
 fn fixed_move() @suspends -> Int32 {
     var value = make_fixed()
     value.set(0, Some("xy"))
-    let (a, b) = join { | relay(value) | relay(make_fixed()) }
+    let (a, b) = join { relay(value), relay(make_fixed()) }
     fixed_score(&a) + fixed_score(&b)
 }
 fn fixed_buffered() @suspends -> Int32 {
@@ -109,15 +109,15 @@ fn fixed_buffered() @suspends -> Int32 {
 }
 fn forever(value: &Choice) @suspends -> Int32 { while true { task.yield_now(); score(value); } }
 fn fail(value: &Choice) @suspends -> Int32 { task.yield_now(); score(value); check.panic("reader failed") }
-fn failed() @suspends -> Int32 { let value = Choice.Text("abc"); let (a, b) = join { | forever(&value) | fail(&value) }; a + b }
+fn failed() @suspends -> Int32 { let value = Choice.Text("abc"); let (a, b) = join { forever(&value), fail(&value) }; a + b }
 fn parked() @suspends { let value = Choice.Text("abc"); let view = &value; scope { branch { forever(view); } } }
 fn isolated() @suspends -> Int32 {
     let value = Choice.Text("abc")
     let view = &value
-    let result = isolate { let (a, b) = join { | forever(view) | fail(view) }; a + b }
+    let result = isolate { let (a, b) = join { forever(view), fail(view) }; a + b }
     match result { Ok(_) => 0, Err(_) => score(&value) }
 }
 fn raced() @suspends -> Int32 {
     let value = Choice.Detail(Detail { marker: 1, text: Some("abc") })
-    race { | read(&value) | forever(&value) }
+    race { read(&value), forever(&value) }
 }

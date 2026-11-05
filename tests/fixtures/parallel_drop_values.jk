@@ -17,20 +17,20 @@ fn discard<F>(value: F) @suspends { task.yield_now() }
 fn main() @suspends -> Int32 {
     {
         let (a, b) = join {
-            | keep(Item { id: 1, text: "a" })
-            | keep(Item { id: 2, text: "b" })
+            keep(Item { id: 1, text: "a" })
+            keep(Item { id: 2, text: "b" })
         }
         check.assert(a.id + b.id == 3, "joined")
     }
     {
         let items: Array<Item> = [Item { id: 3, text: "array" }]
-        let (returned, _) = join { | keep_array(items) | task.yield_now() }
+        let (returned, _) = join { keep_array(items), task.yield_now() }
         check.assert(returned.len() == 1, "array")
     }
     {
         let winner = race {
-            | keep(Item { id: 4, text: "winner" })
-            | slow(Item { id: 5, text: "loser" })
+            keep(Item { id: 4, text: "winner" })
+            slow(Item { id: 5, text: "loser" })
         }
         check.assert(winner.id == 4, "race")
     }
@@ -63,7 +63,7 @@ fn produced() @suspends -> dyn Value {
     item
 }
 fn pending_result() @suspends {
-    let (a, b) = join { | produced() | slow(Item { id: 9, text: "pending-peer" }) }
+    let (a, b) = join { produced(), slow(Item { id: 9, text: "pending-peer" }) }
 }
 fn dynamic_lifecycle() @suspends -> Int32 {
     var value: dyn Value = Item { id: 10, text: "first" }

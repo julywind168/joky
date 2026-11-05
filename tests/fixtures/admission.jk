@@ -40,7 +40,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(domain.read_from(sh.read_only(),read).unwrap()==23)
     let held=take(h)
     // The losing acquisition must remove its bounded wait registration.
-    race { | wait_cancel(h) | win_cancel() }
+    race { wait_cancel(h), win_cancel() }
     held.release()
     let again=take(h)
     scope {

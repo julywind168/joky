@@ -42,12 +42,12 @@ fn main() @suspends -> Int32 {
     let empty_values: Array<Int32> = []
     let empty_text = ""
     let (whole, overlap, bytes, empty, empty_array, empty_string) = join {
-        | array_sum(&values)
-        | slice_sum(values.slice(1, 4))
-        | text_size(&text)
-        | slice_sum(values.slice(4, 4))
-        | array_sum(&empty_values)
-        | text_size(&empty_text)
+        array_sum(&values)
+        slice_sum(values.slice(1, 4))
+        text_size(&text)
+        slice_sum(values.slice(4, 4))
+        array_sum(&empty_values)
+        text_size(&empty_text)
     }
     values[0] = 42
     whole + overlap + bytes + empty + empty_array + empty_string + values[0]
@@ -61,8 +61,8 @@ fn keep(values: &Array<Int32>, text: String) @suspends -> String {
 }
 fn inspect(values: &Array<Int32>, text: &String) @suspends -> UInt64 {
     let (kept, count) = join {
-        | keep(values, "kept")
-        | text_size(text)
+        keep(values, "kept")
+        text_size(text)
     }
     string.byte_length(&kept) + uint64(count)
 }
@@ -71,7 +71,7 @@ fn moved(values: Array<Int32>, text: String) @suspends -> UInt64 {
 }
 fn advanced() @suspends -> UInt64 {
     let values = [3, 5, 7, 11]
-    let (count, _) = join { | moved(values, "héllo 世界") | task.yield_now() }
+    let (count, _) = join { moved(values, "héllo 世界"), task.yield_now() }
     count
 }
 
@@ -81,7 +81,7 @@ fn invalid_index(values: &Array<Int32>) @suspends -> Int32 {
 }
 fn failed() @suspends -> Int32 {
     let values = [3, 5, 7, 11]
-    let (a, b) = join { | array_sum(&values) | invalid_index(&values) }
+    let (a, b) = join { array_sum(&values), invalid_index(&values) }
     a + b
 }
 fn forever(values: &Array<Int32>) @suspends -> Int32 {
@@ -89,24 +89,24 @@ fn forever(values: &Array<Int32>) @suspends -> Int32 {
 }
 fn parked() @suspends -> Int32 {
     let values = [3, 5, 7, 11]
-    let (a, b) = join { | array_sum(&values) | forever(&values) }
+    let (a, b) = join { array_sum(&values), forever(&values) }
     a + b
 }
 
 fn nested_owned(anchor: &Int32) @suspends -> Int32 {
     var values = [3, 5, 7, 11]
-    let (a, b) = join { | array_sum(&values) | slice_sum(values.slice(1, 4)) }
+    let (a, b) = join { array_sum(&values), slice_sum(values.slice(1, 4)) }
     values[0] = 42
     a + b + values[0]
 }
 fn local_forever(anchor: &Int32) @suspends -> Int32 { while true { task.yield_now() } }
 fn nested_race() @suspends -> Int32 {
     let anchor = 1
-    race { | nested_owned(&anchor) | local_forever(&anchor) }
+    race { nested_owned(&anchor), local_forever(&anchor) }
 }
 fn borrowed_race() @suspends -> Int32 {
     var values = [3, 5, 7, 11]
-    let result = race { | array_sum(&values) | forever(&values) }
+    let result = race { array_sum(&values), forever(&values) }
     values[0] = 42
     result + values[0]
 }
@@ -114,7 +114,7 @@ fn nested_isolate() @suspends -> Int32 {
     var values = [3, 5, 7, 11]
     let view = &values
     let result = isolate {
-        let (a, b) = join { | array_sum(view) | invalid_index(view) }
+        let (a, b) = join { array_sum(view), invalid_index(view) }
         a + b
     }
     values[0] = 42
@@ -133,7 +133,7 @@ fn delayed_failure(text: &String) @suspends {
 fn isolated_results() @suspends -> Int32 {
     let text = "retained source"
     let result = isolate {
-        let (a, b) = join { | produced(&text) | delayed_failure(&text) }
+        let (a, b) = join { produced(&text), delayed_failure(&text) }
     }
     task.yield_now()
     match result { Ok(_) => 0, Err(_) => 7 }
@@ -148,41 +148,41 @@ fn nested_isolated_success() @suspends -> Int32 {
 fn relay_slice(values: &Slice<Int32>, depth: Int32) @suspends -> Int32 {
     if depth == 0 { return slice_sum(values) }
     let (a, b) = join {
-        | relay_slice(slice.slice(values, 1, slice.len(values)), depth - 1)
-        | slice_sum(slice.slice(values, 0, 2))
+        relay_slice(slice.slice(values, 1, slice.len(values)), depth - 1)
+        slice_sum(slice.slice(values, 0, 2))
     }
     a + b
 }
 fn relay_array(values: &Array<Int32>) @suspends -> Int32 {
-    let (a, b) = join { | relay_slice(values.slice(0, values.len()), 2) | array_sum(values) }
+    let (a, b) = join { relay_slice(values.slice(0, values.len()), 2), array_sum(values) }
     a + b
 }
 fn relay_text(text: &String, depth: Int32) @suspends -> Int32 {
     if depth == 0 { return text_size(text) }
-    let (a, b) = join { | relay_text(text, depth - 1) | text_size(text) }
+    let (a, b) = join { relay_text(text, depth - 1), text_size(text) }
     a + b
 }
 fn relay_empty(values: &Slice<Int32>) @suspends -> Int32 {
-    let (a, b) = join { | slice_sum(values) | slice_sum(slice.slice(values, 0, 0)) }
+    let (a, b) = join { slice_sum(values), slice_sum(slice.slice(values, 0, 0)) }
     a + b
 }
 fn forwarded() @suspends -> Int32 {
     var values = [3, 5, 7, 11]
     let text = "héllo 世界"
     let (a, b, c) = join {
-        | relay_array(&values)
-        | relay_text(&text, 2)
-        | relay_empty(values.slice(4, 4))
+        relay_array(&values)
+        relay_text(&text, 2)
+        relay_empty(values.slice(4, 4))
     }
     values[0] = 42
     a + b + c + values[0]
 }
 fn relay_race(values: &Array<Int32>) @suspends -> Int32 {
-    race { | array_sum(values) | forever(values) }
+    race { array_sum(values), forever(values) }
 }
 fn forwarded_race() @suspends -> Int32 {
     var values = [3, 5, 7, 11]
-    let (a, b) = join { | relay_race(&values) | array_sum(&values) }
+    let (a, b) = join { relay_race(&values), array_sum(&values) }
     values[0] = 42
     a + b + values[0]
 }
@@ -190,28 +190,28 @@ fn relay_isolate(values: &Array<Int32>) @suspends -> Int32 {
     match isolate { failed_reader(values) } { Ok(_) => 0, Err(_) => array_sum(values) }
 }
 fn failed_reader(values: &Array<Int32>) @suspends -> Int32 {
-    let (a, b) = join { | array_sum(values) | invalid_index(values) }
+    let (a, b) = join { array_sum(values), invalid_index(values) }
     a + b
 }
 fn forwarded_isolate() @suspends -> Int32 {
     var values = [3, 5, 7, 11]
-    let (a, b) = join { | relay_isolate(&values) | array_sum(&values) }
+    let (a, b) = join { relay_isolate(&values), array_sum(&values) }
     values[0] = 42
     a + b + values[0]
 }
 
 fn forwarded_failed() @suspends -> Int32 {
     let values = [3, 5, 7, 11]
-    let (a, b) = join { | failed_reader(&values) | array_sum(&values) }
+    let (a, b) = join { failed_reader(&values), array_sum(&values) }
     a + b
 }
 fn parked_reader(values: &Array<Int32>) @suspends -> Int32 {
-    let (a, b) = join { | array_sum(values) | forever(values) }
+    let (a, b) = join { array_sum(values), forever(values) }
     a + b
 }
 fn forwarded_parked() @suspends -> Int32 {
     let values = [3, 5, 7, 11]
-    let (a, b) = join { | parked_reader(&values) | array_sum(&values) }
+    let (a, b) = join { parked_reader(&values), array_sum(&values) }
     a + b
 }
 
@@ -328,7 +328,7 @@ fn cell_sum(values: &Slice<Cell>) @suspends -> Int32 {
 }
 fn cell_forward(values: &Array<Cell>) @suspends -> Int32 {
     let part = values.slice(1, 3)
-    let (a, b) = join { | cell_sum(part) | cell_sum(slice.slice(part, 0, 1)) }
+    let (a, b) = join { cell_sum(part), cell_sum(slice.slice(part, 0, 1)) }
     a + b
 }
 fn cell_forever(values: &Slice<Cell>) @suspends -> Int32 {
@@ -336,11 +336,11 @@ fn cell_forever(values: &Slice<Cell>) @suspends -> Int32 {
 }
 fn aggregate_readers() @suspends -> Int32 {
     var values = [cell(1), cell(2), cell(3)]
-    let (a, b) = join { | cell_forward(&values) | cell_sum(values.slice(0, 3)) }
+    let (a, b) = join { cell_forward(&values), cell_sum(values.slice(0, 3)) }
     let view = values.slice(0, 3)
     scope { branch { if cell_sum(view) != 30 { check.panic("bad aggregate capture") } } }
     let c = match isolate {
-        race { | cell_sum(view) | cell_forever(view) }
+        race { cell_sum(view), cell_forever(view) }
     } { Ok(value) => value, Err(_) => return -1 }
     values[0] = cell(4)
     a + b + c + cell_sum(values.slice(0, 1))
@@ -351,7 +351,7 @@ fn cell_fail(values: &Slice<Cell>) @suspends -> Int32 {
 }
 fn aggregate_failed() @suspends -> Int32 {
     let values = [cell(1)]
-    let (a, b) = join { | cell_sum(values.slice(0, 1)) | cell_fail(values.slice(0, 1)) }
+    let (a, b) = join { cell_sum(values.slice(0, 1)), cell_fail(values.slice(0, 1)) }
     a + b
 }
 fn aggregate_parked() @suspends -> Int32 {
@@ -368,12 +368,12 @@ fn empty_count(values: &Slice<Empty>) @suspends -> Int32 {
 }
 fn empty_forward(values: &Array<Empty>) @suspends -> Int32 {
     let part = values.slice(1, 3)
-    let (a, b) = join { | empty_count(part) | empty_count(slice.slice(part, 1, 1)) }
+    let (a, b) = join { empty_count(part), empty_count(slice.slice(part, 1, 1)) }
     a + b
 }
 fn aggregate_zero() @suspends -> Int32 {
     var values = [Empty { value: {} }, Empty { value: {} }, Empty { value: {} }]
-    let (a, b) = join { | empty_forward(&values) | empty_count(values.slice(0, 3)) }
+    let (a, b) = join { empty_forward(&values), empty_count(values.slice(0, 3)) }
     values.push(Empty { value: {} })
     a + b + int32(values.len())
 }
@@ -390,7 +390,7 @@ fn row_sum(values: &Array<FixedArray<Int32, 2>>) @suspends -> Int32 {
 fn aggregate_layouts() @suspends -> Int32 {
     let pairs = [(uint8(2), int64(4))]
     let rows = [fixed_array.repeat::<Int32, 2>(3)]
-    let (a, b) = join { | tuple_sum(&pairs) | row_sum(&rows) }
+    let (a, b) = join { tuple_sum(&pairs), row_sum(&rows) }
     a + b
 }
 

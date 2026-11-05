@@ -123,8 +123,8 @@ fn split_rejects_forged_and_conflicting_directions_in_all_backends() {
         "extern fn __tcp_write_half(writer: &mut tcp.ReaderOwner, bytes: UInt64, error: &mut UInt64) @suspends -> UInt64",
         "import joky/tcp.{type TcpReader} fn fake() -> TcpReader { TcpReader { owner: 1 } }",
         "import joky/tcp.{type TcpReader} fn copy(reader: TcpReader) { let left = reader; let right = reader }",
-        "import joky/tcp.{type TcpReader} fn read(reader: &mut TcpReader) @suspends { reader.read(1); } fn bad(reader: &mut TcpReader) @suspends { join { | read(reader) | read(reader) } }",
-        "import joky/tcp.{type TcpWriter} import joky/array.{type Array} fn write(writer: &mut TcpWriter) @suspends { let empty = Array.new::<UInt8>(); writer.write(empty.slice(0, 0)); } fn bad(writer: &mut TcpWriter) @suspends { join { | write(writer) | write(writer) } }",
+        "import joky/tcp.{type TcpReader} fn read(reader: &mut TcpReader) @suspends { reader.read(1); } fn bad(reader: &mut TcpReader) @suspends { join { read(reader), read(reader) } }",
+        "import joky/tcp.{type TcpWriter} import joky/array.{type Array} fn write(writer: &mut TcpWriter) @suspends { let empty = Array.new::<UInt8>(); writer.write(empty.slice(0, 0)); } fn bad(writer: &mut TcpWriter) @suspends { join { write(writer), write(writer) } }",
         "import joky/tcp.{type TcpStream} fn bad(stream: TcpStream) @suspends { stream.split(); stream.close(); }",
     ];
     for source in invalid {

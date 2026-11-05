@@ -588,7 +588,7 @@ fn main() @suspends {{
     let owner=domain.directory(1); let directory=owner.handle()
     let h=vm.Vm.{create}(); let source={source:?}
     assert(vm.load_source(h,&source)==0)
-    race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    race {{ h.call::<domain.DirectoryHandle,Unit>("hold",directory), control(&h,directory) }};
     assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1)
     assert(vm.close(h)==0)
 }}
@@ -659,7 +659,7 @@ fn main() @suspends {{
     let owner=domain.directory(4); let directory=owner.handle()
     let h=vm.Vm.{create}(); let old={old:?}
     assert(vm.load_source(h,&old)==0)
-    race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    race {{ h.call::<domain.DirectoryHandle,Unit>("hold",directory), control(&h,directory) }};
     assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1)
     assert(vm.close(h)==0)
 }}
@@ -1103,7 +1103,7 @@ fn main() @suspends {{
     let h=vm.Vm.{create}()
     let source={source:?}
     assert(vm.load_source(h,&source)==0)
-    race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    race {{ h.call::<domain.DirectoryHandle,Unit>("hold",directory), control(&h,directory) }};
     assert(h.call::<domain.DirectoryHandle,Int32>("probe",directory)==-1)
     assert(vm.close(h)==0)
 }}
@@ -1165,7 +1165,7 @@ fn main() @suspends {{
     let h=vm.Vm.{create}(); let old={old}
     assert(vm.load_source(h,&old)==0)
     let directory=domain.directory(1); let d=directory.handle()
-    join {{ | call(&h,d) | reload(&h,d) }}
+    join {{ call(&h,d), reload(&h,d) }}
     assert(vm.module_count(h)==1)
     assert(vm.close(h)==0)
 }}

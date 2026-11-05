@@ -56,24 +56,24 @@ fn concurrent_blocks_resume_without_replay_and_return_branch_results() {
 #[test]
 fn concurrent_blocks_reject_conflicting_captures_and_escaping_control_flow() {
     for source in [
-        "fn bad() { join { | {} } }",
-        "fn bad() @suspends { race { | { 1 } | { false } }; }",
-        "fn bad() @suspends { let text = \"owned\"; join { | { text } | { text } }; }",
-        "fn bad() @suspends { var n = 0; let r = &mut n; join { | { *r = 1 } | { *r = 2 } } }",
-        "fn bad() @suspends { let n = 1; join { | { &n } }; }",
-        "fn bad() @suspends { let n = 1; let view = &n; join { | { let read = move || { *view }; read() } }; }",
-        "fn value() -> Int32 { 1 } fn bad() @suspends { race { | { value } }; }",
-        "fn bad() @suspends { while true { join { | { break } } } }",
-        "fn bad() @suspends { while true { race { | { continue } } } }",
-        "fn bad() @suspends { var n = 0; join { | { n = 1 } } }",
-        "fn bad<F: FnOnce() @suspends -> Int32>(f: F) @suspends { join { | { f(); f() } }; }",
+        "fn bad() { join { {} } }",
+        "fn bad() @suspends { race { { 1 }, { false } }; }",
+        "fn bad() @suspends { let text = \"owned\"; join { { text }, { text } }; }",
+        "fn bad() @suspends { var n = 0; let r = &mut n; join { { *r = 1 }, { *r = 2 } } }",
+        "fn bad() @suspends { let n = 1; join { { &n } }; }",
+        "fn bad() @suspends { let n = 1; let view = &n; join { { let read = move || { *view }; read() } }; }",
+        "fn value() -> Int32 { 1 } fn bad() @suspends { race { { value } }; }",
+        "fn bad() @suspends { while true { join { { break } } } }",
+        "fn bad() @suspends { while true { race { { continue } } } }",
+        "fn bad() @suspends { var n = 0; join { { n = 1 } } }",
+        "fn bad<F: FnOnce() @suspends -> Int32>(f: F) @suspends { join { { f(); f() } }; }",
     ] {
         assert!(
             crate::core::prepared::check_source(source, &Default::default()).is_err(),
             "{source}"
         );
     }
-    let source = "fn bad() @suspends { var n = 0; let r = &mut n; join { | { let read = move || { n }; read() } | { *r = 2; 0 } }; }";
+    let source = "fn bad() @suspends { var n = 0; let r = &mut n; join { { let read = move || { n }; read() }, { *r = 2; 0 } }; }";
     let error = crate::core::prepared::check_source(source, &Default::default()).unwrap_err();
     assert!(
         error.message().contains("conflicts with a live borrow"),
@@ -93,11 +93,11 @@ fn concurrent_blocks_freeze_and_dispatch_on_parallel_workers() {
             let view = &number
             let text = "ok"
             let (a, b) = join {
-                | { task.yield_now(); *view }
-                | {
+                { task.yield_now(); *view }
+                {
                     let (x, y) = join {
-                        | { task.yield_now(); *view }
-                        | { task.yield_now(); int32(text.byte_length()) }
+                        { task.yield_now(); *view }
+                        { task.yield_now(); int32(text.byte_length()) }
                     }
                     x + y
                 }

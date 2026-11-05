@@ -68,9 +68,9 @@ fn main() @suspends {
     match domain.request_read(r,work,packet(5)) {Err(domain.RequestError.Failed)=>{},_=>{assert(false)}}
     match domain.request(h,broken,packet(0)) {Err(domain.RequestError.Failed)=>{},_=>{assert(false)}}
     assert(domain.read_from(r,read).unwrap()==10)
-    race {| waiting(h) | ready()};
+    race {waiting(h), ready()};
     assert(domain.read_from(r,read).unwrap()==10)
-    join {| closing(h) | close(o)};
+    join {closing(h), close(o)};
     match domain.request(h,echo,packet(1)) {Err(domain.RequestError.Closed)=>{},_=>{assert(false)}}
     let failed=domain.create(make,1); let f=failed.handle()
     match domain.request(f,poison,packet(0)) {Err(domain.RequestError.DomainFailed)=>{},_=>{assert(false)}}

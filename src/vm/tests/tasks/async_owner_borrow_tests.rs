@@ -159,13 +159,13 @@ fn detached_owners_keep_alias_and_escape_checks() {
         fn append(values: &mut Array<Int32>) @suspends { task.yield_now(); values.push(42) }
     "#;
     for (body, message) in [
-        ("fn bad() @suspends { var (a, b) = pair(); join { | append(&mut a) | append(&mut a) } }", "conflicts"),
+        ("fn bad() @suspends { var (a, b) = pair(); join { append(&mut a), append(&mut a) } }", "conflicts"),
         ("fn bad() { var (a, b) = pair(); let view = &a; let (c, d) = relay(a); view.len(); }", "conflicts"),
         ("fn bad(input: &Array<Int32>) -> &Array<Int32> { let (a, b) = pair(); return &a }", "outlive its owner"),
         ("fn bad() { let (a, b) = pair(); let moved = a; a.len(); }", "moved"),
         ("fn first(values: Array<&Int32>) -> Option<&Int32> { let (values, _) = (values, Array.new::<Int32>()); values.get(0) } fn bad() { var values = Array.new::<&Int32>(); values.push(&*(alloc(0))); let local = 42; let _ = first({ values.push(&local); values }) }", "local borrow"),
         ("fn first(value: &Int32) -> Option<&Int32> { var values = Array.new::<&Int32>(); values.push(value); let (values, _) = (values, Array.new::<Int32>()); values.get(0) } fn bad() -> Option<&Int32> { let local = 42; first(&local) }", "local"),
-        ("fn bad() @suspends { let (left, right) = pair(); var buckets = Buckets { left: left, right: right }; join { | append(&mut buckets.left) | append(&mut buckets.right) } }", "conflicts"),
+        ("fn bad() @suspends { let (left, right) = pair(); var buckets = Buckets { left: left, right: right }; join { append(&mut buckets.left), append(&mut buckets.right) } }", "conflicts"),
     ] {
         let source = format!("{prefix}{body}");
         let ast = crate::parser::parse(&source).unwrap();
@@ -247,8 +247,8 @@ fn async_owner_views_reject_aliases_and_escapes() {
         fn write(value: &mut Packet) @suspends { task.yield_now(); value.tag = 2 }
     "#;
     for body in [
-        "fn bad() @suspends { var value = make(); join { | write(&mut value) | read(&value) } }",
-        "fn bad() @suspends { var value = make(); join { | write(&mut value) | write(&mut value) } }",
+        "fn bad() @suspends { var value = make(); join { write(&mut value), read(&value) } }",
+        "fn bad() @suspends { var value = make(); join { write(&mut value), write(&mut value) } }",
         "fn bad() @suspends { var value = make(); scope { let r = &mut value; branch { write(r) }; value.tag = 3 } }",
         "fn bad() @suspends { var value = make(); scope { let r = &value; branch { read(r) }; let moved = value } }",
         "fn bad() @suspends { let r = { let value = make(); &value }; read(r) }",

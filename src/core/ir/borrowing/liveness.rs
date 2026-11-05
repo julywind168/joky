@@ -180,7 +180,7 @@ mod tests {
             }
             fn read(x:&Int32) @suspends -> Int32 { *x }
             fn both(x:&Int32, y:&Int32) @suspends -> Int32 {
-                let (a,b) = join { | read(x) | read(y) }
+                let (a,b) = join { read(x), read(y) }
                 a + b
             }
         "#,

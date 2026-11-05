@@ -62,10 +62,10 @@ fn duplex() @suspends {
     assert(local_read.port() == local_write.port(), &message)
     assert(read_client.peer_addr().is_ok() && write_client.peer_addr().is_ok(), &message)
     join {
-        | receive(&mut read_client, 16401)
-        | send(&mut write_client, 32769)
-        | receive(&mut read_server, 32769)
-        | send(&mut write_server, 16401)
+        receive(&mut read_client, 16401)
+        send(&mut write_client, 32769)
+        receive(&mut read_server, 32769)
+        send(&mut write_server, 16401)
     }
     read_client.close();
     checked(write_client.close())
@@ -79,7 +79,7 @@ fn eof_reply() @suspends {
     var (client, server) = connected()
     var (reader, writer) = server.split()
     // Cancel just the read operation; the owners and write direction survive.
-    race { | pending_read(&mut reader) | task.yield_now() }
+    race { pending_read(&mut reader), task.yield_now() }
     checked(client.shutdown(Shutdown.Write))
     let message = "EOF leaves the writer usable"
     assert(match reader.read(1) { Ok(bytes) => bytes.len() == 0, Err(_) => false }, &message)
@@ -121,7 +121,7 @@ fn handoff() @suspends -> Int32 {
 fn pending() @suspends {
     var (client, server) = connected()
     var (reader, writer) = client.split()
-    join { | pending_read(&mut reader) | task.sleep_ms(100000) }
+    join { pending_read(&mut reader), task.sleep_ms(100000) }
     writer.peer_addr();
     server.peer_addr();
 }
@@ -171,6 +171,6 @@ fn state_owners() @suspends {
     let (reader, writer) = client.split()
     var state = create(reader, writer, peer)
     state_write(&mut state)
-    race { | state_read(&mut state) | task.yield_now() }
+    race { state_read(&mut state), task.yield_now() }
     state_write(&mut state)
 }

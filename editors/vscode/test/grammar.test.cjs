@@ -196,7 +196,7 @@ test('numeric literals, ranges and tuple indices remain separate', () => {
 });
 
 test('contextual concurrency forms preserve ordinary method calls', () => {
-  const result = tokenize('join { first() | second() }\ntext.join(values)\nisolate { work() }\nwhen "update" (mut state) {}\naliased {}\naliased()');
+  const result = tokenize('join { first(), second() }\ntext.join(values)\nisolate { work() }\nwhen "update" (mut state) {}\naliased {}\naliased()');
   has(result, 0, 'join', 'keyword.control');
   has(result, 1, 'join', 'entity.name.function');
   has(result, 2, 'isolate', 'keyword.control');

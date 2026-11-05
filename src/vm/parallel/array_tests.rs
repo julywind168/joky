@@ -156,7 +156,7 @@ fn task_parallel_array_cancel_after_children_install_their_captures() {
         extern fn entered() @suspends
         fn observed(value: Array<Payload>) @suspends -> Array<Payload> { entered(); parked(value) }
         fn active(value: Array<Payload>) @suspends -> Array<Payload> {
-            let (a, b) = join { | observed(value) | observed([Payload.Items([Item { code: int8(9), text: "other", flag: false }])]) }
+            let (a, b) = join { observed(value), observed([Payload.Items([Item { code: int8(9), text: "other", flag: false }])]) }
             a
         }
     "#

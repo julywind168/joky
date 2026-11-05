@@ -213,9 +213,9 @@ fn bitwise_pending_operands_keep_snapshots_after_reload_drop_and_cancel() {
         fn direct(n: UInt64) -> UInt64 { 1 >> n }
         fn through_call(n: UInt64) @suspends -> UInt64 { direct(delay(n)) | record(99) }
         fn sibling(n: UInt64) @suspends { record(delay(n)); }
-        fn scoped() @suspends -> UInt64 { join { | sibling(1 | 2) | sibling(4 | 8) }; 42 }
+        fn scoped() @suspends -> UInt64 { join { sibling(1 | 2), sibling(4 | 8) }; 42 }
         fn failed_branch(n: UInt64) @suspends { direct(delay(n)); }
-        fn failed_scope() @suspends -> UInt64 { join { | failed_branch(64 | 0) | sibling(7 | 8) }; record(99) }
+        fn failed_scope() @suspends -> UInt64 { join { failed_branch(64 | 0), sibling(7 | 8) }; record(99) }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         READY.with(|ready| ready.set(false));

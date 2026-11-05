@@ -503,12 +503,12 @@ mod tests {
             }
             fn borrowed_branches() @suspends -> Bool {
                 let value = Map.new::<BadHash, Int32>()
-                let (a, b) = join { | borrowed_hash(&value) | borrowed_hash(&value) }
+                let (a, b) = join { borrowed_hash(&value), borrowed_hash(&value) }
                 a
             }
             fn child(value: Map<BadHash, Int32>) @suspends -> Bool { hash_map(value) }
             fn branches(value: Map<BadHash, Int32>) @suspends -> Bool {
-                let (a, b) = join { | child(value) | child(Map.new::<BadHash, Int32>()) }
+                let (a, b) = join { child(value), child(Map.new::<BadHash, Int32>()) }
                 a
             }
         "#;
@@ -688,13 +688,13 @@ mod tests {
             fn inspect(value: &Tracked) @suspends -> Int32 { value.value }
             fn destructor_borrow() @suspends -> Int32 {
                 let value = Tracked { value: 1, text: "owned" }
-                let (a, b) = join { | inspect(&value) | inspect(&value) }; a + b
+                let (a, b) = join { inspect(&value), inspect(&value) }; a + b
             }
             fn even(n: Int32) -> Int32 { if n == 0 { 42 } else { odd(n - 1) } }
             fn odd(n: Int32) -> Int32 { even(n - 1) }
             fn bad_a(n: Int32) -> Int32 { if n == 0 { local(n) } else { bad_b(n - 1) } }
             fn bad_b(n: Int32) -> Int32 { bad_a(n) }
-            fn children() @suspends -> Int32 { let (a, b) = join { | first() | second() }; a + b }
+            fn children() @suspends -> Int32 { let (a, b) = join { first(), second() }; a + b }
             fn first() @suspends -> Int32 { even(2) }
             fn second() @suspends -> Int32 { bad_b(2) }
             fn indirect(f: fn(Int32) -> Int32) -> Int32 { f(2) }

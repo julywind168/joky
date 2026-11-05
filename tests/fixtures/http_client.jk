@@ -95,5 +95,5 @@ fn calls(port: UInt16) @suspends {
 fn main() @suspends {
     var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
     let port = listener.local_addr()!.port()
-    join { | peer(listener, port) | calls(port) }
+    join { peer(listener, port), calls(port) }
 }

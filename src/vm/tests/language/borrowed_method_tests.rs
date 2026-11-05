@@ -200,7 +200,7 @@ fn borrowed_receivers_preserve_evaluation_order_pending_errors_and_cancellation(
         fn branches() @suspends -> Int32 {{
             let left = alloc(Counter {{ value: 0 }})
             let right = alloc(Counter {{ value: 0 }})
-            join {{ | left.wait(20) | right.wait(22) }}
+            join {{ left.wait(20), right.wait(22) }}
             left.read() + right.read()
         }}
     "#
@@ -320,7 +320,7 @@ fn receiver_reservations_reject_mutation_retained_borrows_and_suspending_argumen
         "fn bad() { var a = [1, 2]; a.push({ a = [3]; 4 }) }",
         "impl Counter { fn merge(&mut self, other: &Self) { self.value += other.value } } fn bad() { var c = Counter { value: 1 }; c.merge(c.view()) }",
         "fn bad() @suspends { var c = Counter { value: 1 }; c.add({ task.yield_now(); c.read() }) }",
-        "fn bad() @suspends { var c = Counter { value: 1 }; c.add({ join { | task.yield_now() | task.yield_now() }; c.read() }) }",
+        "fn bad() @suspends { var c = Counter { value: 1 }; c.add({ join { task.yield_now(), task.yield_now() }; c.read() }) }",
     ] {
         let error = super::support::frontend_error(&format!("{prefix} {body}"), &crate::ModuleSources::new());
         assert!(matches!(error.code(), ErrorCode::InvalidAssignment | ErrorCode::InvalidCall), "{error}");

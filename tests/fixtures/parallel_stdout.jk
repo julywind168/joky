@@ -6,14 +6,14 @@ fn emit(payload: &String, id: Int32) @suspends {
     var item = 0
     while item < 8 {
         let line = "worker={id};item={item};{payload}\0🙂\n"
-        join { | write(&line) | task.yield_now() };
+        join { write(&line), task.yield_now() };
         task.yield_now()
         item += 1
     }
 }
 fn main() @suspends {
     let header = "42\n"
-    join { | write(&header) | task.yield_now() };
+    join { write(&header), task.yield_now() };
     let payload = "__PAYLOAD__"
     let view = &payload
     scope {

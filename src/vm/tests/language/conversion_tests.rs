@@ -175,7 +175,7 @@ fn integer_conversion_diagnostics_preserve_spans_and_failed_reload() {
             "delay(1)",
         ),
         (
-            "fn f() @suspends { join { | int32(1) } }",
+            "fn f() @suspends { join { int32(1) } }",
             ErrorCode::InvalidCall,
             "int32(1)",
         ),
@@ -295,9 +295,9 @@ fn integer_conversions_preserve_pending_snapshots_failures_and_cancellation() {
         fn discarded(n: UInt64) -> UInt64 { int32(bad(n)); record(99) }
         fn lazy(n: UInt64) -> UInt64 { if true || int32(bad(n)) == 0 { 42 } else { 0 } }
         fn branch_task(n: UInt64) @suspends { record(uint64(uint32(delay(n)))); }
-        fn scoped() @suspends -> UInt64 { join { | branch_task(uint64(-1)) | branch_task(uint64(42)) }; 42 }
+        fn scoped() @suspends -> UInt64 { join { branch_task(uint64(-1)), branch_task(uint64(42)) }; 42 }
         fn failed_branch(n: UInt64) @suspends { int32(bad(delay(n))); }
-        fn failed_scope() @suspends -> UInt64 { join { | failed_branch(uint64(64)) | branch_task(uint64(7)) }; record(99) }
+        fn failed_scope() @suspends -> UInt64 { join { failed_branch(uint64(64)), branch_task(uint64(7)) }; record(99) }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         READY.with(|ready| ready.set(false));

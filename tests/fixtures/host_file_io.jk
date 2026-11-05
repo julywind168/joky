@@ -26,24 +26,24 @@ fn third() @suspends -> Int32 {
 fn timeout_running() @suspends -> Int32 {
     let file = host_file_io_file(0)
     race {
-        | hold(0)
-        | task.sleep_ms(10)
+        hold(0)
+        task.sleep_ms(10)
     }
     if host_file_io_closed(0) == 1 { 42 } else { 0 }
 }
 fn timeout_queued() @suspends -> Int32 {
     let file = host_file_io_file(1)
     race {
-        | hold(1)
-        | task.sleep_ms(10)
+        hold(1)
+        task.sleep_ms(10)
     }
     if host_file_io_closed(1) == 0 { 42 } else { 0 }
 }
 fn queued_reuse() @suspends -> Int32 {
     let file = host_file_io_file(1)
     race {
-        | hold(1)
-        | task.sleep_ms(10)
+        hold(1)
+        task.sleep_ms(10)
     }
     if host_file_io_closed(1) != 0 { return 0 }
     operation(1)

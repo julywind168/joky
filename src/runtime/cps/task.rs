@@ -602,7 +602,7 @@ mod tests {
             fn increment(value: Int32) @suspends -> Int32 { value + 1 }
             fn replacement(value: Int32) @suspends -> Int32 { value + 100 }
             fn root(f: fn(Int32) @suspends -> Int32, value: Int32) @suspends -> Int32 {
-                let (a, b) = join { | probe(value) | f(value) }
+                let (a, b) = join { probe(value), f(value) }
                 a + b
             }
             fn invoke(value: Int32) @suspends -> Int32 {

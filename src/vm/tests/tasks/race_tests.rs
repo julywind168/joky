@@ -160,7 +160,7 @@ fn race_cancellation_reload_and_vm_drop_keep_tasks_independent() {
 fn race_requires_suspending_calls_with_matching_reference_free_results() {
     for (source, message) in [
         (
-            "fn f() { race { | f() } }",
+            "fn f() { race { f() } }",
             "race must be inside an @suspends function",
         ),
         (
@@ -168,31 +168,31 @@ fn race_requires_suspending_calls_with_matching_reference_free_results() {
             "race requires at least one branch",
         ),
         (
-            "fn f() @suspends { race { | 1 } }",
+            "fn f() @suspends { race { 1 } }",
             "race branches must be function calls",
         ),
         (
-            "fn branch_task() {} fn f() @suspends { race { | branch_task() } }",
+            "fn branch_task() {} fn f() @suspends { race { branch_task() } }",
             "must be an @suspends function",
         ),
         (
-            "fn branch_task() @suspends -> Int32 { 1 } fn other() @suspends {} fn f() @suspends { race { | branch_task() | other() } }",
+            "fn branch_task() @suspends -> Int32 { 1 } fn other() @suspends {} fn f() @suspends { race { branch_task(), other() } }",
             "same type",
         ),
         (
-            "fn f() @suspends { race { | int32(1) } }",
+            "fn f() @suspends { race { int32(1) } }",
             "race branches must be @suspends functions",
         ),
         (
-            "fn value(x: &Int32) @suspends -> &Int32 { x } fn f() @suspends { let p = alloc(1); race { | value(p) }; }",
+            "fn value(x: &Int32) @suspends -> &Int32 { x } fn f() @suspends { let p = alloc(1); race { value(p) }; }",
             "race results must not contain references",
         ),
         (
-            "struct View { value: &Int32 } fn value(x: &Int32) @suspends -> View { View { value: x } } fn f() @suspends { let p = alloc(1); race { | value(p) }; }",
+            "struct View { value: &Int32 } fn value(x: &Int32) @suspends -> View { View { value: x } } fn f() @suspends { let p = alloc(1); race { value(p) }; }",
             "race results must not contain references",
         ),
         (
-            "fn a() @suspends -> Int32 { 1 } fn b() @suspends -> Bool { true } fn f() @suspends { let first = a; let second = b; race { | first() | second() }; }",
+            "fn a() @suspends -> Int32 { 1 } fn b() @suspends -> Bool { true } fn f() @suspends { let first = a; let second = b; race { first(), second() }; }",
             "same type",
         ),
     ] {
@@ -284,7 +284,7 @@ fn race_interpreter_cancels_deep_losers_iteratively() {
             if n == 0 {{ slow(1) }} else {{ deep(n - 1) }}
         }}
         fn run() @suspends -> Int32 {{
-            race {{ | deep(4000) | wait(2) }}
+            race {{ deep(4000), wait(2) }}
             42
         }}
     "#
@@ -314,7 +314,7 @@ fn race_imports_keep_generic_borrows_and_first_completion_semantics() {
         pub struct Point { pub x: Int32 }
         pub fn write(p: &mut Point, value: Int32) @suspends { p.x = value; }
         pub fn keep<T: Copy>(value: &T) @suspends { alloc((value,)); }
-        pub fn nested<T: Copy>(value: &T) @suspends { race { | keep(value) } }
+        pub fn nested<T: Copy>(value: &T) @suspends { race { keep(value) } }
     "#,
         )
         .unwrap();
@@ -324,7 +324,7 @@ fn race_imports_keep_generic_borrows_and_first_completion_semantics() {
         fn run() @suspends -> Int32 {{
             let p = alloc(w.Point {{ x: 0 }})
             let q = alloc(w.Point {{ x: 0 }})
-            race {{ | change(p, 42) | change(q, 99) }}
+            race {{ change(p, 42), change(q, 99) }}
             p.x + q.x
         }}
     "#
@@ -343,8 +343,8 @@ fn race_imports_keep_generic_borrows_and_first_completion_semantics() {
         .compile_module(&ast)
         .unwrap();
     for body in [
-        "race { | change(p, 1) | change(p, 2) }",
-        "race { | w.nested(p) }; p.x = 2;",
+        "race { change(p, 1), change(p, 2) }",
+        "race { w.nested(p) }; p.x = 2;",
     ] {
         let source =
             format!("{prefix} fn f() @suspends {{ let p = alloc(w.Point {{ x: 0 }}); {body} }}");

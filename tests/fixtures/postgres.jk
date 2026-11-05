@@ -76,13 +76,13 @@ fn main() @suspends {
     assert(scalar(&pool, "SELECT count(*) FROM joky_test_abandon") == 0, "failure rolls back")
     let before = scalar(&pool, "SELECT pg_backend_pid()")
     assert(scalar(&pool, "SELECT pg_backend_pid()") == before, "healthy connection reused")
-    let (a, b) = join { | shared_session(pool.share()) | shared_session(pool.share()) }
+    let (a, b) = join { shared_session(pool.share()), shared_session(pool.share()) }
     assert(a == before && b == before, "independent handles share one bounded pool")
     let held = pool.begin()!
-    race { | queued(&pool) | task.sleep(25ms) }
+    race { queued(&pool), task.sleep(25ms) }
     held.rollback()!
     assert(scalar(&pool, "SELECT pg_backend_pid()") == before, "cancelling pool wait leaves active connection intact")
-    race { | sleep_query(&pool) | await_sleep(&observer, before) }
+    race { sleep_query(&pool), await_sleep(&observer, before) }
     assert(scalar(&pool, "SELECT pg_backend_pid()") != before, "cancelled connection retired")
     assert(scalar(&pool, "SELECT count(*) FROM joky_test_abandon") == 0, "cancelled writes did not commit")
 }

@@ -47,12 +47,12 @@ fn echo_set(value: Set<Key>) @suspends -> Set<Key> { task.yield_now(); value }
 fn consume(value: Bundle) { }
 fn roundtrip(value: Bundle) @suspends -> Bundle {
     let (table, values) = value
-    join { | echo_map(table) | echo_set(values) }
+    join { echo_map(table), echo_set(values) }
 }
 fn root() @suspends -> Bundle {
-    let (a, b) = join { | make() | make_set() }
+    let (a, b) = join { make(), make_set() }
     scope { branch { consume(roundtrip((make(), make_set()))) }; task.yield_now() }
-    let winner = race { | echo_map(a) | make() }
+    let winner = race { echo_map(a), make() }
     (winner, b)
 }
 fn factory(entries: Array<(Key, Payload)>) @suspends -> Map<Key, Payload> {
@@ -81,7 +81,7 @@ fn cancelled(value: Bundle) @suspends -> Bundle {
 }
 fn fail(value: Bundle) @suspends -> Bundle { task.yield_now(); 1 / 0; value }
 fn failed(value: Bundle) @suspends -> Bundle {
-    let (a, b) = join { | fail(value) | make() }
+    let (a, b) = join { fail(value), make() }
     a
 }
 fn verify(value: Bundle) @suspends -> Int32 {

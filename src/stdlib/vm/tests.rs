@@ -627,7 +627,7 @@ fn main() @suspends ->Int32 {{
     let h=vm.Vm.interpreter()
     let source={old:?}
     assert(vm.load_source(h,&source)==0)
-    race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    race {{ h.call::<domain.DirectoryHandle,Unit>("hold",directory), control(&h,directory) }};
     assert(vm.close(h)==0)
     0
 }}"#
@@ -769,7 +769,7 @@ fn main() @suspends ->Int32 {{
     let owner=domain.directory(4); let directory=owner.handle()
     let h=vm.Vm.interpreter(); let old={old:?}
     assert(vm.load_source(h,&old)==0)
-    race {{ | h.call::<domain.DirectoryHandle,Unit>("hold",directory) | control(&h,directory) }};
+    race {{ h.call::<domain.DirectoryHandle,Unit>("hold",directory), control(&h,directory) }};
     assert(vm.close(h)==0)
     0
 }}"#
@@ -853,7 +853,7 @@ fn vm_resource_rejects_copy_double_close_and_close_during_borrow() {
     for body in [
         "let h = vm.Vm.new(); let moved = h; vm.module_count(h)",
         "let h = vm.Vm.new(); h.close(); h.close()",
-        "let h = vm.Vm.new(); join { | h.call::<Int32,Int32>(\"run\",0) | h.close() };",
+        "let h = vm.Vm.new(); join { h.call::<Int32,Int32>(\"run\",0), h.close() };",
         "let h = vm.Vm.new(); let raw = h.owner",
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
