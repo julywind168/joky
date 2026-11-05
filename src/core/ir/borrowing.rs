@@ -348,18 +348,45 @@ pub(super) fn call_arguments<'a>(
     name: &str,
     args: &'a [Option<Slot>],
 ) -> Vec<(Option<usize>, &'a Option<Slot>)> {
-    let known_layout = !info
-        .signature
-        .params
-        .iter()
-        .flat_map(Type::scalar_types)
-        .any(|ty| matches!(ty, Type::Parameter(_) | Type::Projection(_)));
+    let mut callable_parameter = None;
+    let mut callable_count = 0;
+    let mut unknown = false;
+    let mut minimum_slots = 0;
+    for (index, ty) in info.signature.params.iter().enumerate() {
+        minimum_slots += ty.parameter_slots();
+        let mut callable = false;
+        for lane in ty.scalar_types() {
+            if lane.is_callable_parameter() {
+                callable = true;
+            } else if matches!(lane, Type::Parameter(_) | Type::Projection(_)) {
+                unknown = true;
+            }
+        }
+        if callable {
+            callable_parameter = Some(index);
+            callable_count += 1;
+        }
+    }
+    // Abstract callable values occupy one lane, but a concrete closure passed
+    // while checking a template includes its capture lanes too. One flexible
+    // source parameter can absorb all extra lanes without guessing boundaries.
+    // Multiple flexible parameters remain conservative unless none expands.
+    let extra = args.len().checked_sub(minimum_slots);
+    let known_layout = !unknown && (extra == Some(0) || (extra.is_some() && callable_count == 1));
     if known_layout {
         info.signature
             .params
             .iter()
             .enumerate()
-            .flat_map(|(index, ty)| std::iter::repeat_n(Some(index), ty.parameter_slots()))
+            .flat_map(|(index, ty)| {
+                let width = ty.parameter_slots()
+                    + if callable_parameter == Some(index) {
+                        extra.unwrap_or(0)
+                    } else {
+                        0
+                    };
+                std::iter::repeat_n(Some(index), width)
+            })
             .zip(args)
             .collect()
     } else {

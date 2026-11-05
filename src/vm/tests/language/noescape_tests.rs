@@ -75,6 +75,33 @@ fn noescape_inference_checks_generic_bodies_and_references_inside_aggregates() {
 }
 
 #[test]
+fn noescape_inference_maps_callable_parameters_through_generic_wrappers() {
+    executes(
+        r#"
+        import joky/array.{type Array}
+        fn select<F: Fn(&String) @noescape -> Bool>(prefix: (Int32, Int32), unit: Unit,
+                values: &Array<String>, predicate: F) -> Option<&String> {
+            values.find(predicate)
+        }
+        fn query<T>() -> Int32 {
+            let words = ["skip", "hit"]
+            let found = {
+                let needle = "hit"
+                let excluded = "skip"
+                select((1, 2), (), &words, |word| { word == &needle && word != &excluded })
+            }
+            if found! == "hit" { 42 } else { 0 }
+        }
+        fn probe() -> Int32 { query::<Unit>() }
+    "#,
+        42,
+    );
+    rejects(
+        "fn relay<F: Fn(&Int32) -> &Int32>(value: &Int32, callback: F) -> &Int32 { callback(value) } fn probe() -> &Int32 { let value = 42; relay(&value, |item| { item }) }",
+    );
+}
+
+#[test]
 fn noescape_inference_rejects_retention_forwarding_and_implicit_escaping_borrows() {
     for source in [
         "struct Saved { value: &Int32 } fn retain(value: &Int32) { let saved = alloc(Saved { value: value }) } fn first(value: &Int32, n: Int32) { if n == 0 { retain(value) } else { second(value, n - 1) } } fn second(value: &Int32, n: Int32) { first(value, n) } fn probe() { let local = 42; first(&local, 2) }",

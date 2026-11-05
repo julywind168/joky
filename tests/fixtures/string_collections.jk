@@ -103,8 +103,8 @@ fn array_queries<T>() -> Int32 {
     let needle = "hit"
     let found = values.find(|value| { value == &needle })
     let module_found = array.find(&values, |value| { value == &needle })
-    if found! != "hit" || module_found! != "hit" { return 9 }
     needle.release()
+    if found! != "hit" || module_found! != "hit" { return 9 }
     let single = [42]
     if *array.first(&single)! != 42 || *array.last(&single)! != 42 { return 10 }
     if single.position(|value| { *value == 42 }).unwrap_or(99) != 0 { return 11 }

@@ -223,8 +223,8 @@ chat 的 `parse()` 已改用 split_once 和 contains，保留原命令的空格�
 Array 已补齐 `any`、`all`、`find`、`position`、`first` / `last`，同时提供方法与模块函数。
 谓词同步借用元素，按顺序短路；find/first/last 返回 Option<&T>，支持 String 等拥有值。
 chat 的 Room.has_member 已使用 any，remove_member 使用 position 加 swap_remove，保留原删除语义。
-find 的返回引用目前受泛型来源分析的保守约束，借用捕获值需保留到结果最后使用；
-更精确地排除谓词捕获来源需要后续单独修正编译器推导。
+已修复泛型调用中闭包参数的借用效果映射；find 的返回引用只依赖数组，
+捕获的查询值可在查询结束后释放，无需保留到结果最后使用。
 
 后续分批推进：
 
