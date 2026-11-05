@@ -3,19 +3,23 @@ import joky/json
 import joky/shutdown
 import joky/tcp
 
+#derive(ToJson)
+struct Health { ok: Bool }
+
 pub fn handle(request: http.Request) @suspends -> http.Response {
     let path = request.path()
     let http.Request { context, method, target, headers, body } = request
     if (method == "GET" || method == "HEAD") && path == "/health" {
-        return http.Response { headers: [], status: http.Status.Success, content_type: http.ContentType.Json, body: "{{\"ok\":true}}".into_bytes() }
+        let health = Health { ok: true }
+        return http.json(http.Status.Ok, &health)!
     }
     if method == "POST" && path == "/echo" {
         if let Ok(value) = json.decode_bytes(body) {
-            return http.Response { headers: [], status: http.Status.Success, content_type: http.ContentType.Json, body: json.encode(&value)!.into_bytes() }
+            return http.Response { headers: [], status: http.Status.Ok, content_type: http.ContentType.Json, body: json.encode(&value)!.into_bytes() }
         }
-        return http.Response { headers: [], status: http.Status.BadRequest, content_type: http.ContentType.Text, body: "invalid JSON".into_bytes() }
+        return http.text(http.Status.BadRequest, "invalid JSON")
     }
-    http.Response { headers: [], status: http.Status.NotFound, content_type: http.ContentType.Text, body: "not found".into_bytes() }
+    http.text(http.Status.NotFound, "not found")
 }
 fn main() @suspends -> Int32 {
     let stop = shutdown.create()

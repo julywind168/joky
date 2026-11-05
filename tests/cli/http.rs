@@ -25,9 +25,9 @@ fn http_reply(port: u16, fragments: &[&[u8]]) -> String {
 }
 
 #[test]
-fn url_components_and_query_pairs_preserve_boundaries() {
+fn http_request_and_response_helpers_preserve_boundaries() {
     let work = Workspace::new();
-    work.write("url.jk", r#"
+    work.write("url.jk", r##"
 import joky/url
 import joky/http
 import joky/log
@@ -83,8 +83,35 @@ fn requests() {
     assert(request("/bad?x=%FF").query_pairs().is_err(), "request decode error")
     pairs(request("/path?x=a?b").query_pairs()!, [("x", "a?b")])
 }
-fn main() { components(); queries(); requests() }
-"#);
+#derive(ToJson)
+struct ErrorBody { error: String }
+fn helpers() {
+    var value = request("/")
+    value.headers.push(http.Header { name: "X-Item", value: "first" })
+    value.headers.push(http.Header { name: "x-item", value: "second" })
+    value.headers.push(http.Header { name: "Empty", value: "" })
+    let first = { let name = "X-ITEM"; value.header(&name)! }
+    assert(first == "first", "borrowed first value, independent of name lifetime")
+    assert(value.header("empty")! == "" && value.header("missing").is_none(), "empty and missing headers")
+    var all = value.header_all("X-item")
+    assert(all.len() == 2 && all.take_last() == "second" && all.take_last() == "first", "header order and duplicates")
+    assert(value.header_all("missing").is_empty(), "missing header list")
+    let response = http.text(http.Status.Ok, "hello")
+        .with_header("Set-Cookie", "a=1").with_header("Set-Cookie", "b=2")
+    assert(response.headers.len() == 2 && response.headers[0].value == "a=1" && response.headers[1].value == "b=2", "append headers")
+    let http.Response { status, content_type, headers, body } = response
+    assert(String.from_utf8(body)! == "hello", "text body")
+    assert(http.empty(http.Status.NoContent).body.is_empty(), "empty body")
+    let payload = ErrorBody { error: "quote\"\n" }
+    let response = http.json(http.Status.BadRequest, &payload)!
+    let http.Response { status, content_type, headers, body } = response
+    assert(match content_type { Json => true, _ => false }, "JSON content type")
+    assert(String.from_utf8(body)! == r#"{"error":"quote\"\n"}"#, "JSON escaping")
+    assert(payload.error == "quote\"\n", "JSON borrows input")
+    assert(http.json(http.Status.Ok, Float64.NAN).is_err(), "encoding failure remains observable")
+}
+fn main() { components(); queries(); requests(); helpers() }
+"##);
     work.assert_all_backends("url.jk", &[], b"", 0);
 }
 
@@ -201,22 +228,25 @@ import joky/shutdown
 import joky/task
 import joky/tcp
 fn handle(request: http.Request) @suspends -> http.Response {
+    if let Some(code) = request.target.strip_prefix("/status/") {
+        return http.empty(http.Status.from_code(UInt16.parse(&code)!)!)
+    }
     if request.target == "/created" {
-        return http.Response { headers: [http.Header { name: "Location", value: "/items/42" }], status: http.Status.Created, content_type: http.ContentType.Text, body: [] }
+        return http.empty(http.Status.Created).with_header("Location", "/items/42")
     }
     if request.target == "/empty" {
         request.context.warn("app.empty", [])
-        return http.Response { headers: [], status: http.Status.from_code(204)!, content_type: http.ContentType.Text, body: [] }
+        return http.empty(http.Status.from_code(204)!)
     }
     if request.target == "/invalid" {
-        return http.Response { headers: [http.Header { name: "CONTENT-length", value: "99" }], status: http.Status.Success, content_type: http.ContentType.Text, body: [] }
+        return http.empty(http.Status.Ok).with_header("CONTENT-length", "99")
     }
     if request.target == "/bytes" {
-        return http.Response { headers: [], status: http.Status.Success, content_type: http.ContentType.custom("image/png")!, body: request.body }
+        return http.Response { headers: [], status: http.Status.Ok, content_type: http.ContentType.custom("image/png")!, body: request.body }
     }
     println("admitted")
     task.sleep(if request.target == "/stuck" { 60s } else { 300ms })
-    http.Response { headers: [], status: http.Status.Success, content_type: http.ContentType.Text, body: "done".into_bytes() }
+    http.text(http.Status.Ok, "done")
 }
 fn main() @suspends -> Int32 {
     assert(http.ContentType.custom("text/html; charset=utf-8").is_some(), "valid media type parameter")
@@ -254,6 +284,18 @@ fn main() @suspends -> Int32 {
         (server, port)
     };
     let (mut server, port) = start(false);
+    for (code, reason) in [
+        (401, "Unauthorized"),
+        (403, "Forbidden"),
+        (405, "Method Not Allowed"),
+        (422, "Unprocessable Content"),
+        (429, "Too Many Requests"),
+        (500, "Internal Server Error"),
+    ] {
+        let request = format!("GET /status/{code} HTTP/1.1\r\nHost: a\r\n\r\n");
+        assert!(http_reply(port, &[request.as_bytes()])
+            .starts_with(&format!("HTTP/1.1 {code} {reason}\r\n")));
+    }
     let created = http_reply(port, &[b"POST /created HTTP/1.1\r\nHost: a\r\n\r\n"]);
     assert!(
         created.starts_with("HTTP/1.1 201 Created\r\n")

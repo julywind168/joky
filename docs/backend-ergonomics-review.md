@@ -296,12 +296,12 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 | 没有路由 | handler 内手写 `if method == "POST" && target == "/orders"`，`route()` 再写一遍同样的判断 | `http.Router`：`router.post("/orders/:id", handler)`，自动提供 route 标签、405/404 |
 | 方法是字符串 | `Request.method: String`，客户端却用 `Method` 枚举 | 服务端也用 `http.Method`，与客户端统一 |
 | target 含查询串 | 已补 `request.path()` 和 `request.query_pairs()`，HTTP 示例已迁移 | 查询保留重复键和错误，由调用者选择取值策略 |
-| 标头查找 | `for field in &headers { if field.name == "idempotency-key" ... }`（示例第 28 行） | `request.header("idempotency-key") -> Option<&String>`，`header_all` 处理重复 |
-| 响应构造冗长 | 每次写 `http.Response { headers: [], status, content_type, body: text.into_bytes() }`，示例各自封装 `reply()` | `http.json(status, &value)`（ToJson）、`http.text(status, s)`、`http.empty(status)`；`Response.with_header(name, value)` |
-| JSON 错误体手写 | `r#"{"error":"not found"}"#` 遍布示例 | 配合 `http.json` 与 `#derive(ToJson)` 错误结构体 |
-| 状态码命名 | `Status.Success` 表示 200，`InternalError` 表示 500 | 用标准原因短语：`Status.Ok`、`InternalServerError`、`UnprocessableContent`、`TooManyRequests`、`Unauthorized`、`Forbidden`、`MethodNotAllowed`；补齐常用码 |
+| 标头查找 | 已补 `header` 首值借用、`header_all` 全部值副本，ASCII 忽略大小写 | 订单示例保留重复 Idempotency-Key 拒绝 |
+| 响应构造冗长 | 已补 `http.text`、`http.empty`、`http.json<T: ToJson>`、`Response.with_header` | JSON 保留编码错误；标头追加，发送时校验 |
+| JSON 错误体手写 | 订单示例已用 `http.json` 与派生 ToJson 的错误/订单结构体 | 编码失败显式返回空 500 响应 |
+| 状态码命名 | 已改为 `Status.Ok`、`InternalServerError`，补齐常用成功、重定向及错误码 | `from_code` 与原因短语同步；其他 200–599 保留 Other |
 | 请求体解码 | `typed.decode_bytes::<Purchase>(body)` 可用 | 补 `request.json::<T>()`，失败返回可直接转成 400 的错误 |
-| 函数 handler 不能带状态 | 有状态时必须实现 `Service`，含 `share`、`route`、`handle` 三个方法 | 路由器持有共享状态 `Router.with_state(state)`，handler 签名 `fn(&S, Request)` |
+| 函数 handler 不能带状态 | 有状态时实现 `Service.share/handle`；`route` 已有默认实现 | 路由器持有共享状态 `Router.with_state(state)`，handler 签名 `fn(&S, Request)` |
 | 连接模型 | 每连接一次请求、`Connection: close`、无 chunked | 记为已知限制即可，keep-alive 在压测和反向代理后会成为瓶颈，排入后续计划 |
 | 中间件 | 无 | 至少提供请求前后钩子：鉴权、请求日志已内置、CORS |
 

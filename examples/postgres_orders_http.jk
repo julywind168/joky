@@ -9,12 +9,20 @@ import joky/tcp
 
 #derive(FromJson)
 struct Purchase { qty: Int64 }
+#derive(ToJson)
+struct ErrorBody { error: String }
+#derive(ToJson)
+struct OrderBody { order_id: Int64 }
 pub struct Orders { pool: postgres.Pool }
 impl Orders {
     pub fn new(pool: postgres.Pool) -> Self { Orders { pool } }
 }
-fn reply(status: http.Status, text: String) -> http.Response {
-    http.Response { headers: [], status, content_type: http.ContentType.Json, body: text.into_bytes() }
+fn error_reply(status: http.Status, error: String) -> http.Response {
+    let body = ErrorBody { error }
+    match http.json(status, &body) {
+        Ok(response) => response
+        Err(_) => http.empty(http.Status.InternalServerError)
+    }
 }
 impl Service for Orders {
     fn share(&self) @suspends -> Self { Orders { pool: self.pool.share() } }
@@ -22,39 +30,39 @@ impl Service for Orders {
         if request.method == "POST" && request.path() == "/orders" { Some("/orders") } else { None }
     }
     fn handle(&self, request: http.Request) @suspends -> http.Response {
-        let path = request.path()
+        if request.method != "POST" || request.path() != "/orders" { return error_reply(http.Status.NotFound, "not found") }
+        var keys = request.header_all("Idempotency-Key")
+        if keys.is_empty() { return error_reply(http.Status.BadRequest, "missing Idempotency-Key") }
+        if keys.len() != 1 { return error_reply(http.Status.BadRequest, "invalid Idempotency-Key") }
+        let key = keys.take_last()
+        if key.is_empty() || key.byte_length() > 128 { return error_reply(http.Status.BadRequest, "invalid Idempotency-Key") }
         let http.Request { context, method, target, headers, body } = request
-        if method != "POST" || path != "/orders" { return reply(http.Status.NotFound, r#"{"error":"not found"}"#) }
-        var key = ""
-        for field in &headers {
-            if field.name == "idempotency-key" {
-                if !key.is_empty() || field.value.is_empty() || field.value.byte_length() > 128 {
-                    return reply(http.Status.BadRequest, r#"{"error":"invalid Idempotency-Key"}"#)
-                }
-                key = field.value.clone()
-            }
-        }
-        if key.is_empty() { return reply(http.Status.BadRequest, r#"{"error":"missing Idempotency-Key"}"#) }
         let input = match typed.decode_bytes::<Purchase>(body) {
-            Ok(input) => input, Err(_) => return reply(http.Status.BadRequest, r#"{"error":"expected a positive integer qty"}"#)
+            Ok(input) => input, Err(_) => return error_reply(http.Status.BadRequest, "expected a positive integer qty")
         }
-        if input.qty <= 0 { return reply(http.Status.BadRequest, r#"{"error":"expected a positive integer qty"}"#) }
+        if input.qty <= 0 { return error_reply(http.Status.BadRequest, "expected a positive integer qty") }
         order_reply(context, orders.place(&self.pool, 1, key, input.qty))
     }
 }
 fn order_reply(context: http.RequestContext, result: Result<orders.Order, postgres.DbError>) -> http.Response {
     match result {
-        Ok(Confirmed(id)) => reply(http.Status.Success, "{{\"order_id\":{id}}}"),
-        Ok(Conflict) => reply(http.Status.Conflict, r#"{"error":"key already used with another quantity"}"#),
-        Ok(Insufficient) => reply(http.Status.Conflict, r#"{"error":"insufficient stock"}"#),
+        Ok(Confirmed(id)) => {
+            let body = OrderBody { order_id: id }
+            match http.json(http.Status.Ok, &body) {
+                Ok(response) => response
+                Err(_) => http.empty(http.Status.InternalServerError)
+            }
+        },
+        Ok(Conflict) => error_reply(http.Status.Conflict, "key already used with another quantity"),
+        Ok(Insufficient) => error_reply(http.Status.Conflict, "insufficient stock"),
         Err(OutcomeUnknown) => {
             context.warn("order.commit_unknown", [log.field("route", "/orders")])
-            reply(http.Status.ServiceUnavailable, r#"{"error":"outcome unknown; retry with the same Idempotency-Key"}"#)
+            error_reply(http.Status.ServiceUnavailable, "outcome unknown; retry with the same Idempotency-Key")
         },
-        Err(AcquireFailed) => reply(http.Status.ServiceUnavailable, r#"{"error":"database checkout failed"}"#),
-        Err(AcquireTimeout) => reply(http.Status.ServiceUnavailable, r#"{"error":"database checkout timed out"}"#),
-        Err(Unavailable) => reply(http.Status.ServiceUnavailable, r#"{"error":"database unavailable; retry with the same Idempotency-Key"}"#),
-        Err(_) => reply(http.Status.InternalError, r#"{"error":"order failed"}"#)
+        Err(AcquireFailed) => error_reply(http.Status.ServiceUnavailable, "database checkout failed"),
+        Err(AcquireTimeout) => error_reply(http.Status.ServiceUnavailable, "database checkout timed out"),
+        Err(Unavailable) => error_reply(http.Status.ServiceUnavailable, "database unavailable; retry with the same Idempotency-Key"),
+        Err(_) => error_reply(http.Status.InternalServerError, "order failed")
     }
 }
 fn main() @suspends -> Int32 {

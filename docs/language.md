@@ -7078,8 +7078,38 @@ Duration 显式选择单位，例如 `log.field("duration_ms", duration.as_milli
 `request.query_pairs() -> Result<Array<(String, String)>, url.DecodeError>` 解析第一个 `?` 后的完整查询串，
 规则同 `url.parse_query`；没有查询串或查询串为空时返回空数组。两者共享借用 Request，保留原始 target。
 
-Response 提供 status、content_type、headers 和 body 字段。没有附加响应头时传 `headers: []`。
-可用 Status.Created、Status.NoContent 等预设状态，也可用 Status.from_code(code) 校验 200–599 的最终状态码。
+标头查询按 ASCII 忽略名称大小写：`request.header(name: &String) -> Option<&String>` 借用第一个匹配值，
+缺失为 None，空值仍为 Some；结果依赖 Request 的存活，不依赖 name。
+`request.header_all(name: &String) -> Array<String>` 返回全部匹配值的独立副本，保留顺序及重复项，缺失为空数组。
+它不会按逗号拆分单个值。对于 Idempotency-Key 等要求唯一的标头，使用 header_all 检查数量，不能仅取第一个值。
+
+Response 提供 status、content_type、headers 和 body 字段，也提供下列便捷入口：
+
+| API | 语义 |
+| --- | --- |
+| `http.text(status: Status, body: String) -> Response` | 消费文本，设置 ContentType.Text，初始 headers 为空 |
+| `http.empty(status: Status) -> Response` | 空正文、ContentType.Text、空 headers |
+| `http.json<T: ToJson>(status: Status, value: &T) -> Result<Response, typed.CodecError>` | 借用值，按 typed.encode 默认选项编码；设置 ContentType.Json，编码错误原样返回 |
+| `response.with_header(name: String, value: String) -> Response` | 消费并返回响应，追加一个标头，支持链式调用；不替换同名项 |
+
+with_header 不提前校验或自动合并重复项，最终发送时仍执行标头与正文限制；非法响应沿用发送前转为 500 的规则。
+JSON 构造成功只表示编码成功，HTTP 正文大小等限制仍在发送时检查。自定义结构体可使用 `#derive(ToJson)`。
+JSON String 值会编码成 JSON 字符串，并非未经处理的 JSON 文本。
+
+状态码命名统一为 `Status.Ok`（原 Success）和 `Status.InternalServerError`（原 InternalError）。
+`Status.from_code(code)` 接受 200–599，已知码返回对应变体，其他码返回受检 Other，原因短语为空。
+常用预设及原因短语如下：
+
+| 代码 | Status 变体 / 原因短语 |
+| --- | --- |
+| 200 / 201 / 202 / 204 | Ok / OK；Created / Created；Accepted / Accepted；NoContent / No Content |
+| 301 / 302 / 303 / 304 | MovedPermanently / Moved Permanently；Found / Found；SeeOther / See Other；NotModified / Not Modified |
+| 307 / 308 | TemporaryRedirect / Temporary Redirect；PermanentRedirect / Permanent Redirect |
+| 400 / 401 / 403 / 404 | BadRequest / Bad Request；Unauthorized / Unauthorized；Forbidden / Forbidden；NotFound / Not Found |
+| 405 / 408 / 409 | MethodNotAllowed / Method Not Allowed；RequestTimeout / Request Timeout；Conflict / Conflict |
+| 413 / 415 / 422 / 429 | ContentTooLarge / Content Too Large；UnsupportedMediaType / Unsupported Media Type；UnprocessableContent / Unprocessable Content；TooManyRequests / Too Many Requests |
+| 500 / 501 / 502 / 503 / 504 | InternalServerError / Internal Server Error；NotImplemented / Not Implemented；BadGateway / Bad Gateway；ServiceUnavailable / Service Unavailable；GatewayTimeout / Gateway Timeout |
+
 handler 可以提供 Location 等响应头。定界字段、Content-Type 和 X-Request-Id 由服务端生成。
 HEAD 只发响应头。204、205、304 的正文必须为空，204 和 304 省略 Content-Length。
 非法头字段、超限响应或禁止的正文在发送前转为 500。
