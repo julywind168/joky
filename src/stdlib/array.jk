@@ -2,7 +2,7 @@
 // all container policies live in Joky and use checked storage/move primitives.
 import joky/internal/buffer.{type Buffer}
 import joky/clone as cloning.{type Clone}
-import joky/eq.{type BorrowEq}
+import joky/eq.{type Eq}
 import joky/ord.{type Ord}
 import joky/mem
 import joky/element.{type Element}
@@ -215,11 +215,11 @@ pub fn clone<T: Clone>(values: &Array<T>) -> Array<T> {
     for value in values { copy.push(Clone.clone(value)) }
     copy
 }
-impl<T: BorrowEq> Array<T> {
+impl<T: Eq> Array<T> {
     pub fn contains(&self, value: &T) -> Bool { contains(self, value) }
 }
-pub fn contains<T: BorrowEq>(values: &Array<T>, value: &T) -> Bool {
-    for item in values { if BorrowEq.eq_ref(item, value) { return true } }
+pub fn contains<T: Eq>(values: &Array<T>, value: &T) -> Bool {
+    for item in values { if Eq.eq(item, value) { return true } }
     false
 }
 

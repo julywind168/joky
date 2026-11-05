@@ -4,15 +4,15 @@ import joky/set.{type Set}
 import joky/list.{type List}
 import joky/array.{type Array}
 import joky/option.{Some, None}
-import joky/eq.{type BorrowEq}
-import joky/hash.{type BorrowHash}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
 
 struct Key { id: Int32, label: String }
-impl BorrowEq for Key {
-    fn eq_ref(&self, other: &Self) -> Bool { self.id == other.id }
+impl Eq for Key {
+    fn eq(&self, other: &Self) -> Bool { self.id == other.id }
 }
-impl BorrowHash for Key {
-    fn hash_ref(&self) -> UInt64 { 18446744073709551615 }
+impl Hash for Key {
+    fn hash(&self) -> UInt64 { 18446744073709551615 }
 }
 enum Payload { Text(String), Items(List<String>), Nested(Map<Int32, String>) }
 type Bundle = (Map<Key, Payload>, Set<Key>)

@@ -7,9 +7,9 @@ import joky/hash.{type Hash}
 import joky/drop.{type Drop}
 extern fn record_int(value: Int32)
 struct Key { id: Int32, distribution: Int32 }
-impl Eq for Key { fn eq(self, other: Key) -> Bool { self.id == other.id && self.distribution == other.distribution } }
+impl Eq for Key { fn eq(&self, other: &Key) -> Bool { self.id == other.id && self.distribution == other.distribution } }
 impl Hash for Key {
-    fn hash(self) -> UInt64 {
+    fn hash(&self) -> UInt64 {
         if self.distribution == 2 { return 0 }
         if self.distribution == 1 { return uint64(self.id) << 12 }
         Hash.hash(self.id)

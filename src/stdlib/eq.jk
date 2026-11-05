@@ -1,25 +1,19 @@
 import joky/internal/text
 
-// By-value equality for reference-free Copy keys. Equality must be stable.
-pub trait Eq { fn eq(self, other: Self) -> Bool }
-impl Eq for Int8 { fn eq(self, other: Self) -> Bool { self == other } }
-impl Eq for Int16 { fn eq(self, other: Self) -> Bool { self == other } }
-impl Eq for Int32 { fn eq(self, other: Self) -> Bool { self == other } }
-impl Eq for Int64 { fn eq(self, other: Self) -> Bool { self == other } }
-impl Eq for UInt8 { fn eq(self, other: Self) -> Bool { self == other } }
-impl Eq for UInt16 { fn eq(self, other: Self) -> Bool { self == other } }
-impl Eq for UInt32 { fn eq(self, other: Self) -> Bool { self == other } }
-impl Eq for UInt64 { fn eq(self, other: Self) -> Bool { self == other } }
-impl Eq for Bool { fn eq(self, other: Self) -> Bool { self == other } }
-impl Eq for Rune { fn eq(self, other: Self) -> Bool { self == other } }
-impl Eq for Unit { fn eq(self, other: Self) -> Bool { true } }
-
-// Borrowed equality must not retain either argument beyond this call.
-pub trait BorrowEq { fn eq_ref(&self, other: &Self) @noescape -> Bool }
-impl<T: Copy + Eq> BorrowEq for T {
-    fn eq_ref(&self, other: &Self) -> Bool { Eq.eq((*self), (*other)) }
-}
-impl BorrowEq for String { fn eq_ref(&self, other: &String) -> Bool { text.equals(self, other) } }
-// IEEE comparisons deliberately do not grant the stable Eq contract to floats.
-impl BorrowEq for Float32 { fn eq_ref(&self, other: &Self) -> Bool { (*self) == (*other) } }
-impl BorrowEq for Float64 { fn eq_ref(&self, other: &Self) -> Bool { (*self) == (*other) } }
+// Equality borrows both values. Map/Set keys additionally require an equivalence relation.
+pub trait Eq { fn eq(&self, other: &Self) @noescape -> Bool }
+impl Eq for Int8 { fn eq(&self, other: &Self) -> Bool { (*self) == (*other) } }
+impl Eq for Int16 { fn eq(&self, other: &Self) -> Bool { (*self) == (*other) } }
+impl Eq for Int32 { fn eq(&self, other: &Self) -> Bool { (*self) == (*other) } }
+impl Eq for Int64 { fn eq(&self, other: &Self) -> Bool { (*self) == (*other) } }
+impl Eq for UInt8 { fn eq(&self, other: &Self) -> Bool { (*self) == (*other) } }
+impl Eq for UInt16 { fn eq(&self, other: &Self) -> Bool { (*self) == (*other) } }
+impl Eq for UInt32 { fn eq(&self, other: &Self) -> Bool { (*self) == (*other) } }
+impl Eq for UInt64 { fn eq(&self, other: &Self) -> Bool { (*self) == (*other) } }
+impl Eq for Bool { fn eq(&self, other: &Self) -> Bool { (*self) == (*other) } }
+impl Eq for Rune { fn eq(&self, other: &Self) -> Bool { (*self) == (*other) } }
+impl Eq for Unit { fn eq(&self, other: &Self) -> Bool { true } }
+impl Eq for String { fn eq(&self, other: &Self) -> Bool { text.equals(self, other) } }
+// IEEE equality is available without granting floats a Hash implementation.
+impl Eq for Float32 { fn eq(&self, other: &Self) -> Bool { (*self) == (*other) } }
+impl Eq for Float64 { fn eq(&self, other: &Self) -> Bool { (*self) == (*other) } }

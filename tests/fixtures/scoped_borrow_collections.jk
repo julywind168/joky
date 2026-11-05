@@ -3,8 +3,8 @@ import joky/list.{type List}
 import joky/map.{type Map}
 import joky/set.{type Set}
 import joky/option.{type Option, Some, None}
-import joky/hash.{type BorrowHash}
-import joky/eq.{type BorrowEq}
+import joky/hash.{type Hash}
+import joky/eq.{type Eq}
 import joky/string
 import joky/task
 import joky/check
@@ -40,8 +40,8 @@ fn main() @suspends -> Int32 {
 }
 
 struct Key { id: Int32 }
-impl BorrowHash for Key { fn hash_ref(&self) -> UInt64 { 0 } }
-impl BorrowEq for Key { fn eq_ref(&self, other: &Self) -> Bool { self.id == other.id } }
+impl Hash for Key { fn hash(&self) -> UInt64 { 0 } }
+impl Eq for Key { fn eq(&self, other: &Self) -> Bool { self.id == other.id } }
 fn make_map() -> Map<Key, Option<String>> {
     var table = Map.with_capacity::<Key, Option<String>>(17)
     table.insert(Key { id: 1 }, Some("abc"))

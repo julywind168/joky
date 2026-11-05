@@ -5,8 +5,8 @@ import joky/slice.{type Slice}
 import joky/option.{type Option, Some, None}
 import joky/internal/buffer
 import joky/check.{panic}
-import joky/eq.{type BorrowEq}
-import joky/hash.{type BorrowHash}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
 import joky/internal/types
 
 // Single-owner, unordered Map. All table policies execute in Joky.
@@ -36,7 +36,7 @@ impl<K, V> Map<K, V> {
     pub fn pop(&mut self) -> Option<(K, V)> { pop(self) }
     pub fn into_entries(self) -> Array<(K, V)> { into_entries(self) }
 }
-impl<K: BorrowEq + BorrowHash, V> Map<K, V> {
+impl<K: Eq + Hash, V> Map<K, V> {
     pub fn from_entries(entries: Array<(K, V)>) -> Self { from_entries(entries) }
     pub fn extend(&mut self, entries: Array<(K, V)>) { extend(self, entries) }
     pub fn insert(&mut self, key: K, value: V) -> Option<V> { insert(self, key, value) }
@@ -83,12 +83,12 @@ pub fn into_entries<K, V>(var table: Map<K, V>) -> Array<(K, V)> {
     while let Some(entry) = pop(&mut table) { entries.push(entry) }
     entries
 }
-pub fn from_entries<K: BorrowEq + BorrowHash, V>(entries: Array<(K, V)>) -> Map<K, V> {
+pub fn from_entries<K: Eq + Hash, V>(entries: Array<(K, V)>) -> Map<K, V> {
     var table = new::<K, V>()
     extend(&mut table, entries)
     table
 }
-pub fn extend<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, entries: Array<(K, V)>) {
+pub fn extend<K: Eq + Hash, V>(table: &mut Map<K, V>, entries: Array<(K, V)>) {
     reserve(table, entries.len())
     for (key, value) in entries {
         // Drop an overwritten value before processing the next input entry.
@@ -155,7 +155,7 @@ pub fn reserve<K, V>(table: &mut Map<K, V>, additional: UInt64) {
     }
 }
 // A full traversal terminates even with adversarial protocol implementations.
-fn find<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K, cached_hash: UInt64) @noescape -> Option<UInt64> {
+fn find<K: Eq + Hash, V>(table: &Map<K, V>, key: &K, cached_hash: UInt64) @noescape -> Option<UInt64> {
     let count = table.buckets.len()
     if count == 0 { return None }
     let mask = count - 1
@@ -168,7 +168,7 @@ fn find<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K, cached_hash: UI
             Bucket.Deleted => {}
             Bucket.Full(i) => {
                 let stored_hash = table.hashes[i]
-                if stored_hash == cached_hash && BorrowEq.eq_ref(array.borrow_ref(&table.keys, i), key) {
+                if stored_hash == cached_hash && Eq.eq(array.borrow_ref(&table.keys, i), key) {
                     return Some(i)
                 }
             }
@@ -178,34 +178,34 @@ fn find<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K, cached_hash: UI
     }
     None
 }
-fn require_entry<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> UInt64 {
-    match find(table, key, BorrowHash.hash_ref(key)) {
+fn require_entry<K: Eq + Hash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> UInt64 {
+    match find(table, key, Hash.hash(key)) {
         Some(i) => i
         None => panic("Map key not found")
     }
 }
-pub fn borrow<K: BorrowEq + BorrowHash, V: Copy>(table: &Map<K, V>, key: &K) @noescape(key) -> &Element<V> {
+pub fn borrow<K: Eq + Hash, V: Copy>(table: &Map<K, V>, key: &K) @noescape(key) -> &Element<V> {
     let i = require_entry(table, key)
     table.values.borrow(i)
 }
-pub fn borrow_mut<K: BorrowEq + BorrowHash, V: Copy>(table: &mut Map<K, V>, key: &K) @noescape(key) -> &mut Element<V> {
+pub fn borrow_mut<K: Eq + Hash, V: Copy>(table: &mut Map<K, V>, key: &K) @noescape(key) -> &mut Element<V> {
     let i = require_entry(table, key)
     table.values.borrow_mut(i)
 }
-pub fn contains_key<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Bool {
-    !find(table, key, BorrowHash.hash_ref(key)).is_none()
+pub fn contains_key<K: Eq + Hash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Bool {
+    !find(table, key, Hash.hash(key)).is_none()
 }
-pub fn get<K: BorrowEq + BorrowHash, V: Copy>(table: &Map<K, V>, key: &K) @noescape(key) -> Option<V> {
-    match find(table, key, BorrowHash.hash_ref(key)) { Some(i) => table.values.get(i), None => None }
+pub fn get<K: Eq + Hash, V: Copy>(table: &Map<K, V>, key: &K) @noescape(key) -> Option<V> {
+    match find(table, key, Hash.hash(key)) { Some(i) => table.values.get(i), None => None }
 }
-pub fn remove<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) -> Option<V> {
-    match find(table, key, BorrowHash.hash_ref(key)) { Some(i) => remove_entry(table, i), None => None }
+pub fn remove<K: Eq + Hash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) -> Option<V> {
+    match find(table, key, Hash.hash(key)) { Some(i) => remove_entry(table, i), None => None }
 }
-pub fn borrow_ref<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> &V {
+pub fn borrow_ref<K: Eq + Hash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> &V {
     let i = require_entry(table, key)
     table.values.borrow_ref(i)
 }
-pub fn borrow_mut_ref<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) -> &mut V {
+pub fn borrow_mut_ref<K: Eq + Hash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) -> &mut V {
     let i = require_entry(table, key)
     table.values.borrow_mut_ref(i)
 }
@@ -225,10 +225,10 @@ fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) @noescape -> UIn
     }
     panic("Map index has no free bucket")
 }
-pub fn insert<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: K, value: V) -> Option<V> {
+pub fn insert<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K, value: V) -> Option<V> {
     types.require_reference_free::<K>()
     // All user protocol calls finish before storage or metadata is modified.
-    let cached_hash = BorrowHash.hash_ref(&key)
+    let cached_hash = Hash.hash(&key)
     if let Some(i) = find(table, &key, cached_hash) {
         return table.values.replace(i, value)
     }
@@ -267,7 +267,7 @@ pub fn clear<K, V>(table: &mut Map<K, V>) {
     table.deleted = 0
 }
 
-impl<K: BorrowEq + BorrowHash, V: Copy> Map<K, V> {
+impl<K: Eq + Hash, V: Copy> Map<K, V> {
     pub fn borrow(&self, key: &K) @noescape(key) -> &Element<V> { borrow(self, key) }
     pub fn borrow_mut(&mut self, key: &K) @noescape(key) -> &mut Element<V> { borrow_mut(self, key) }
     pub fn get(&self, key: &K) @noescape(key) -> Option<V> { get(self, key) }
@@ -285,6 +285,6 @@ pub fn entry_key<K, V>(entry: &Entry<K, V>) -> &K { buffer.entry_key(entry) }
 pub fn entry_value<K, V>(entry: &Entry<K, V>) -> &V { buffer.entry_value(entry) }
 pub fn entry_value_mut<K, V>(entry: &mut Entry<K, V>) -> &mut V { buffer.entry_value_mut(entry) }
 
-pub fn get_ref<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Option<&V> {
-    match find(table, key, BorrowHash.hash_ref(key)) { Some(i) => table.values.get_ref(i), None => None }
+pub fn get_ref<K: Eq + Hash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Option<&V> {
+    match find(table, key, Hash.hash(key)) { Some(i) => table.values.get_ref(i), None => None }
 }

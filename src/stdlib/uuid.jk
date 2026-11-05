@@ -137,9 +137,9 @@ pub fn v7_at(timestamp: Timestamp) -> Result<Uuid, V7Error> {
             })
     }
 }
-impl Eq for Uuid { fn eq(self, other: Uuid) -> Bool { self.high == other.high && self.low == other.low } }
+impl Eq for Uuid { fn eq(&self, other: &Uuid) -> Bool { self.high == other.high && self.low == other.low } }
 impl Hash for Uuid {
-    fn hash(self) -> UInt64 { Hash.hash(self.high ^ Hash.hash(self.low)) }
+    fn hash(&self) -> UInt64 { Hash.hash(self.high ^ Hash.hash(self.low)) }
 }
 impl Show for Uuid {
     fn show(&self, output: &mut StringBuilder) @noescape { output.push_str((*self).to_text()) }

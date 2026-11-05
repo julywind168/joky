@@ -15,7 +15,7 @@ fn comparison_assertions_report_values_and_the_actual_call_site() {
     work.write(
         "assertions_test.jk",
         r#"import joky/task
-import joky/eq.{type BorrowEq}
+import joky/eq.{type Eq}
 import joky/show.{type Show}
 import joky/string.{type StringBuilder}
 #test
@@ -32,11 +32,11 @@ fn unequal_values() @suspends {
 fn empty_text() { assert_eq("", " ") }
 struct Value { number: Int32 }
 impl Value {
-    fn eq_ref(&self, other: &Self) -> Bool { false }
+    fn eq(&self, other: &Self) -> Bool { false }
     fn to_text(&self) -> String { "wrong inherent method" }
 }
-impl BorrowEq for Value {
-    fn eq_ref(&self, other: &Self) -> Bool { self.number == other.number }
+impl Eq for Value {
+    fn eq(&self, other: &Self) -> Bool { self.number == other.number }
 }
 impl Show for Value {
     fn show(&self, output: &mut StringBuilder) @noescape {
@@ -115,7 +115,7 @@ fn comparison_assertions_require_matching_types_and_both_traits() {
         "fn main() { assert_eq(1, true) }",
         "struct Missing { value: Int32 } fn main() { assert_eq(Missing { value: 1 }, Missing { value: 1 }) }",
         "fn main() { assert_ne(1) }",
-        "import joky/eq.{type BorrowEq} struct OnlyEq {} impl BorrowEq for OnlyEq { fn eq_ref(&self, other: &Self) -> Bool { true } } fn main() { assert_eq(OnlyEq {}, OnlyEq {}) }",
+        "import joky/eq.{type Eq} struct OnlyEq {} impl Eq for OnlyEq { fn eq(&self, other: &Self) -> Bool { true } } fn main() { assert_eq(OnlyEq {}, OnlyEq {}) }",
         "import joky/show.{type Show} import joky/string.{type StringBuilder} struct OnlyShow {} impl Show for OnlyShow { fn show(&self, output: &mut StringBuilder) @noescape {} } fn main() { assert_ne(OnlyShow {}, OnlyShow {}) }",
     ] {
         work.write("invalid.jk", source);

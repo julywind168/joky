@@ -3,8 +3,8 @@ import joky/array.{type Array}
 import joky/slice
 import joky/drop.{type Drop}
 import joky/option.{type Option, Some, None}
-import joky/eq.{type BorrowEq}
-import joky/hash.{type BorrowHash}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
 import joky/check.{assert}
 import joky/mem
 import joky/string
@@ -12,8 +12,8 @@ extern fn record_int(value: Int32)
 fn ensure(condition: Bool, message: String) { assert(condition, &message) }
 struct Key { id: Int32, group: Int32, data: String }
 impl Drop for Key { fn drop(&mut self) { record_int(self.id) } }
-impl BorrowEq for Key { fn eq_ref(&self, other: &Self) -> Bool { self.group == other.group } }
-impl BorrowHash for Key { fn hash_ref(&self) -> UInt64 { 0 } }
+impl Eq for Key { fn eq(&self, other: &Self) -> Bool { self.group == other.group } }
+impl Hash for Key { fn hash(&self) -> UInt64 { 0 } }
 fn key(id: Int32, group: Int32) -> Key {
     let value = Key { id: id, group: group, data: "owned" }
     record_int(-id)
@@ -165,8 +165,8 @@ fn no_protocols<Tag>() -> Int32 {
 }
 struct Broken { id: Int32, mode: Int32, data: String }
 impl Drop for Broken { fn drop(&mut self) { record_int(self.id); ensure(self.mode != 3, "Set Drop failure") } }
-impl BorrowHash for Broken { fn hash_ref(&self) -> UInt64 { ensure(self.mode != 1, "Set Hash failure"); 0 } }
-impl BorrowEq for Broken { fn eq_ref(&self, other: &Self) -> Bool { ensure(self.mode != 2 && other.mode != 2, "Set Eq failure"); self.id == other.id } }
+impl Hash for Broken { fn hash(&self) -> UInt64 { ensure(self.mode != 1, "Set Hash failure"); 0 } }
+impl Eq for Broken { fn eq(&self, other: &Self) -> Bool { ensure(self.mode != 2 && other.mode != 2, "Set Eq failure"); self.id == other.id } }
 fn hash_failure<Tag>() -> Int32 {
     var set = Set.new::<Broken>(); set.insert(Broken { id: 1, mode: 0, data: "old" })
     set.insert(Broken { id: 2, mode: 1, data: "new" }); record_int(99); 0

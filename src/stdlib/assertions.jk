@@ -1,5 +1,5 @@
 import joky/check
-import joky/eq.{type BorrowEq}
+import joky/eq.{type Eq}
 import joky/show.{type Show}
 import joky/string.{type StringBuilder}
 import joky/option.{Some, None}
@@ -44,14 +44,14 @@ fn hex_digit(value: UInt32) -> Rune {
 }
 
 // Ordinary borrowed calls evaluate each argument once and render only on failure.
-pub fn assert_eq<T: BorrowEq + Show>(actual: &T, expected: &T) @noescape {
-    if !BorrowEq.eq_ref(actual, expected) {
+pub fn assert_eq<T: Eq + Show>(actual: &T, expected: &T) @noescape {
+    if !Eq.eq(actual, expected) {
         check.panic("assert_eq failed\n  actual: {quoted(actual)}\nexpected: {quoted(expected)}")
     }
 }
 
-pub fn assert_ne<T: BorrowEq + Show>(actual: &T, expected: &T) @noescape {
-    if BorrowEq.eq_ref(actual, expected) {
+pub fn assert_ne<T: Eq + Show>(actual: &T, expected: &T) @noescape {
+    if Eq.eq(actual, expected) {
         check.panic("assert_ne failed (values must differ)\n  actual: {quoted(actual)}\nexpected: {quoted(expected)}")
     }
 }

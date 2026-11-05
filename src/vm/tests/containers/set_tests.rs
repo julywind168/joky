@@ -280,7 +280,7 @@ fn set_rejects_invalid_keys_mutable_elements_escapes_and_consuming_aliases() {
         ("enum Shared { Empty, Value(&Int32) } fn bad() { Set.new::<Shared>(); }","reference"),
         ("fn bad() { Set.new::<&mut Int32>(); }","Copy"),
         ("struct Owned { data: String, value: &Int32 } fn bad() { Set.new::<Owned>(); }","reference"),
-        ("struct Key { id: Int32 } fn bad(s: &Set<Key>) { s.contains(Key { id: 1 }); }","Borrow"),
+        ("struct Key { id: Int32 } fn bad(s: &Set<Key>) { s.contains(Key { id: 1 }); }","joky/eq.Eq"),
         ("fn bad(s: &Set<String>) { slice.get(s.elements(),0); }","Copy"),
         ("fn bad(s: &Set<String>) { slice.borrow_mut_ref(s.elements(),0); }","type mismatch"),
         ("fn bad(s: &Set<Int32>) { slice.set(s.elements(),0,42); }","type mismatch"),

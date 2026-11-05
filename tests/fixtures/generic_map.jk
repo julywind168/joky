@@ -37,8 +37,8 @@ fn units<Tag>() -> Int32 {
 }
 
 struct Collision { n: Int32 }
-impl Eq for Collision { fn eq(self, other: Self) -> Bool { self.n == other.n } }
-impl Hash for Collision { fn hash(self) -> UInt64 { 7 } }
+impl Eq for Collision { fn eq(&self, other: &Self) -> Bool { self.n == other.n } }
+impl Hash for Collision { fn hash(&self) -> UInt64 { 7 } }
 fn collisions<Tag>() -> Int32 {
     var m = Map.new::<Collision, Int32>()
     var i = 0
@@ -59,14 +59,14 @@ fn collisions<Tag>() -> Int32 {
 }
 enum Choice { Zero, Number(Int32) }
 impl Eq for Choice {
-    fn eq(self, other: Self) -> Bool {
+    fn eq(&self, other: &Self) -> Bool {
         match self {
             Choice.Zero => match other { Choice.Zero => true, Choice.Number(_) => false }
-            Choice.Number(n) => match other { Choice.Zero => false, Choice.Number(m) => n == m }
+            Choice.Number(n) => match other { Choice.Zero => false, Choice.Number(m) => Eq.eq(n, m) }
         }
     }
 }
-impl Hash for Choice { fn hash(self) -> UInt64 { match self { Choice.Zero => 0, Choice.Number(n) => Hash.hash(n) } } }
+impl Hash for Choice { fn hash(&self) -> UInt64 { match self { Choice.Zero => 0, Choice.Number(n) => Hash.hash(n) } } }
 fn enums<Tag>() -> Int32 {
     var m = Map.new::<Choice, Int32>(); m.insert(Choice.Zero, 20); m.insert(Choice.Number(0), 22)
     { let assertion_condition = m.len() == 2 && !m.contains_key(Choice.Number(1)); let assertion_message = "Enum collision variants"; assert(assertion_condition, &assertion_message) }
@@ -75,9 +75,9 @@ fn enums<Tag>() -> Int32 {
 
 struct Retained { identity: Int32, representation: Int32 }
 impl Eq for Retained {
-    fn eq(self, other: Self) -> Bool { record_int(self.representation); self.identity == other.identity }
+    fn eq(&self, other: &Self) -> Bool { record_int(self.representation); self.identity == other.identity }
 }
-impl Hash for Retained { fn hash(self) -> UInt64 { 7 } }
+impl Hash for Retained { fn hash(&self) -> UInt64 { 7 } }
 fn retained_key<Tag>() -> Int32 {
     var m = Map.new::<Retained, Int32>()
     m.insert(Retained { identity: 1, representation: 11 }, 20)
@@ -112,8 +112,8 @@ fn map_of_maps<Tag>() -> Int32 {
 }
 
 struct Traced { n: Int32 }
-impl Hash for Traced { fn hash(self) -> UInt64 { record_int(100 + self.n); 7 } }
-impl Eq for Traced { fn eq(self, other: Self) -> Bool { record_int(200 + self.n); self.n == other.n } }
+impl Hash for Traced { fn hash(&self) -> UInt64 { record_int(100 + self.n); 7 } }
+impl Eq for Traced { fn eq(&self, other: &Self) -> Bool { record_int(200 + self.n); self.n == other.n } }
 fn cached_rehash<Tag>() -> Int32 {
     var m = Map.new::<Traced, Int32>(); m.insert(Traced { n: 1 }, 20); m.insert(Traced { n: 2 }, 22)
     record_int(900); m.reserve(20); record_int(901)
@@ -124,10 +124,10 @@ impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
 fn resource(id: Int32) -> Resource { var values = Array.new::<Int32>(); values.push(id); Resource { id: id, values: values } }
 struct Fallible { n: Int32, mode: Int32 }
 impl Hash for Fallible {
-    fn hash(self) -> UInt64 { { let assertion_condition = self.mode != 1; let assertion_message = "Map Hash failure"; assert(assertion_condition, &assertion_message) }; 7 }
+    fn hash(&self) -> UInt64 { { let assertion_condition = self.mode != 1; let assertion_message = "Map Hash failure"; assert(assertion_condition, &assertion_message) }; 7 }
 }
 impl Eq for Fallible {
-    fn eq(self, other: Self) -> Bool { { let assertion_condition = other.mode != 2; let assertion_message = "Map Eq failure"; assert(assertion_condition, &assertion_message) }; self.n == other.n }
+    fn eq(&self, other: &Self) -> Bool { { let assertion_condition = other.mode != 2; let assertion_message = "Map Eq failure"; assert(assertion_condition, &assertion_message) }; self.n == other.n }
 }
 fn hash_failure<Tag>() -> Int32 {
     var m = Map.new::<Fallible, Resource>(); m.insert(Fallible { n: 1, mode: 0 }, resource(1))

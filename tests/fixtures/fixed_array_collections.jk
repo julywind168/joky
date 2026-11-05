@@ -4,8 +4,8 @@ import joky/list.{type List}
 import joky/map.{type Map}
 import joky/set.{type Set}
 import joky/option.{type Option, Some, None}
-import joky/eq.{type BorrowEq}
-import joky/hash.{type BorrowHash}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
 import joky/string
 import joky/mem
 import joky/task
@@ -18,9 +18,9 @@ type Sets = FixedArray<Set<String>, 2>
 fn row() -> Row { ["a", "bb"] }
 fn row_size(value: &Row) -> Int32 { int32(value.borrow_ref(0).byte_length() + value.borrow_ref(1).byte_length()) }
 struct Key { id: Int32, value: Row }
-impl BorrowHash for Key { fn hash_ref(&self) -> UInt64 { 0 } }
-impl BorrowEq for Key {
-    fn eq_ref(&self, other: &Self) -> Bool {
+impl Hash for Key { fn hash(&self) -> UInt64 { 0 } }
+impl Eq for Key {
+    fn eq(&self, other: &Self) -> Bool {
         let left = &self.value; let right = &other.value
         self.id == other.id && string.equals(left.borrow_ref(0), right.borrow_ref(0)) && string.equals(left.borrow_ref(1), right.borrow_ref(1))
     }

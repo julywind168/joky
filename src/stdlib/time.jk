@@ -50,7 +50,7 @@ impl Duration {
         output.finish()
     }
 }
-impl Eq for Duration { fn eq(self, other: Duration) -> Bool { self.nanos == other.nanos } }
+impl Eq for Duration { fn eq(&self, other: &Duration) -> Bool { self.nanos == other.nanos } }
 impl Show for Duration {
     fn show(&self, output: &mut StringBuilder) @noescape {
         let n = self.nanos
@@ -188,7 +188,7 @@ fn from_units(value: Int64, scale: Int64) -> Option<Timestamp> {
     if remainder < 0 { seconds -= 1; remainder += scale }
     Timestamp.from_unix_parts(seconds, uint32(remainder * (1000000000 / scale)))
 }
-impl Eq for Timestamp { fn eq(self, other: Timestamp) -> Bool { self.compare(other) == 0 } }
+impl Eq for Timestamp { fn eq(&self, other: &Timestamp) -> Bool { self.seconds == other.seconds && self.nanos == other.nanos } }
 fn leap(year: Int64) -> Bool { year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) }
 fn month_days(year: Int64, month: Int64) -> Int64 {
     if month == 2 { if leap(year) { 29 } else { 28 } }

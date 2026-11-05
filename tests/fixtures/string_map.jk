@@ -1,8 +1,8 @@
 import joky/mem
 import joky/map.{type Map}
 import joky/array.{type Array}
-import joky/eq.{type BorrowEq}
-import joky/hash.{type BorrowHash}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
 import joky/drop.{type Drop}
 import joky/check.{assert}
 import joky/string
@@ -48,15 +48,15 @@ fn key(id: Int32, text: String, fail: Int32) -> Key {
     record_drop(-id)
     result
 }
-impl BorrowEq for Key {
-    fn eq_ref(&self, other: &Self) -> Bool {
+impl Eq for Key {
+    fn eq(&self, other: &Self) -> Bool {
         let message = "String key Eq failure"
         assert(self.fail != 2 && other.fail != 2, &message)
         self.text.equals(&other.text)
     }
 }
-impl BorrowHash for Key {
-    fn hash_ref(&self) -> UInt64 {
+impl Hash for Key {
+    fn hash(&self) -> UInt64 {
         let message = "String key Hash failure"
         assert(self.fail != 1, &message)
         7

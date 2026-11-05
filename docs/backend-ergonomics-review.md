@@ -52,7 +52,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 | --- | --- | --- |
 | 已完成 | 经 `&mut` 替换拥有型字段 | §4.2 |
 | P0 | String 基础方法：trim / split_once / contains / strip_prefix / replace / lines / 大小写 / parse | §6.1 |
-| 已完成 | 标准库公开错误与无载荷枚举实现 Show | §4.4 |
+| 已完成 | 标准库公开错误与无载荷枚举实现 Show；Eq／Hash 统一为借用协议 | §4.4 |
 | 待设计 | 调试输出派生、Eq／Hash 派生及运算符接入 | §4.4 |
 | P0 | PostgreSQL 参数与结果：`ToSql`/`FromSql` 协议、按列名读取、`#derive(FromRow)`、更多类型 | §8 |
 | P0 | HTTP：路由、标头/查询查询、响应构造助手、`Status` 命名 | §7 |
@@ -88,7 +88,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 跨模块枚举的裸变体查找降为 P2。订单示例用 `import joky/postgres.{IntValue, TextValue}` 声明所需变体，SQL 参数列表即可写成 `[IntValue(customer), TextValue(key)]`。表达式中的裸构造器须在作用域内唯一；即使是本地枚举，也不会按期望类型消除歧义。以后若扩展这条规则，需同时确定与同名函数、显式导入和泛型推导的优先关系。[订单示例](../examples/postgres_orders.jk)
 
-### 4.4 派生与 Show【标准库 Show 已补齐】
+### 4.4 派生与 Show【Show 已补齐，Eq／Hash 协议已统一】
 
 Show 是面向用户的显示协议，对应 Rust Display：String 原样输出，普通 struct／enum
 仍需手写实现。标准库公开错误与无载荷枚举已补齐 Show，包括 `task.Failure`、HTTP、
@@ -99,12 +99,16 @@ TCP／TLS、JSON／typed、编码、状态域与 VM 错误；原有文件 I/O、
 错误显示保留底层原因、字节偏移、JSON Pointer、路径及可用的诊断区间；仅借用错误，
 显示后仍可检查字段或再次匹配。格式示例与具体约定见 [Show 参考](language.md#showprint--println-与字符串插值)。
 
+Eq／Hash 已统一为共享借用、noescape 协议；Copy 与拥有型记录使用同一套实现，
+BorrowEq／BorrowHash 及其 blanket 适配已删除。浮点 Eq 保持 IEEE 行为且不提供 Hash；
+Map／Set 的 key 另要求等价关系、相等值同哈希及驻留期间结果稳定。
+
 以下事项分开设计，尚未实现：
 
 1. 当前仅能派生 `Clone`、`ToJson`、`FromJson`。原建议的类型名、字段名及带引号字符串
    属于 Debug 风格，不直接混入 Show；调试协议及其派生另议。
-2. Eq／Hash 按值接收参数；Copy 类型通过 blanket impl 获得 BorrowEq／BorrowHash，
-   拥有型记录需考虑直接派生借用协议。实现 Eq 不会自动启用记录的 `==`，运算符接入须独立设计。
+2. Eq／Hash 派生以统一后的借用协议为目标。实现 Eq 不会自动启用记录的 `==`，
+   运算符接入与自动派生分两步进行。
 3. 标准 Default trait、Default 派生和 `Options { field: value, ..base }` 结构更新均未实现。
    普通 `Type.default()` 可手写，业务配置的非零默认值不应被逐字段默认派生替代。
 

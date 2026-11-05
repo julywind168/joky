@@ -464,38 +464,22 @@ mod tests {
         let source = r#"
             import joky/map.{type Map}
             import joky/set.{type Set}
-            import joky/eq.{type Eq, type BorrowEq}
-            import joky/hash.{type Hash, type BorrowHash}
+            import joky/eq.{type Eq}
+            import joky/hash.{type Hash}
             extern fn local(value: Int32) -> UInt64
             struct BadHash { id: Int32 }
             struct BadEq { id: Int32 }
-            impl BorrowEq for BadHash {
-                fn eq_ref(&self, other: &Self) -> Bool { self.id == other.id }
+            impl Eq for BadHash {
+                fn eq(&self, other: &Self) -> Bool { self.id == other.id }
             }
-            impl BorrowHash for BadHash {
-                fn hash_ref(&self) -> UInt64 { local(self.id) }
+            impl Hash for BadHash {
+                fn hash(&self) -> UInt64 { local(self.id) }
             }
-            impl BorrowEq for BadEq {
-                fn eq_ref(&self, other: &Self) -> Bool { local(self.id) == local(other.id) }
+            impl Eq for BadEq {
+                fn eq(&self, other: &Self) -> Bool { local(self.id) == local(other.id) }
             }
-            impl BorrowHash for BadEq {
-                fn hash_ref(&self) -> UInt64 { 7 }
-            }
-            struct ValueHash { id: Int32 }
-            struct ValueEq { id: Int32 }
-            impl BorrowEq for ValueHash {
-                fn eq_ref(&self, other: &Self) -> Bool { self.id == other.id }
-            }
-            impl Hash for ValueHash { fn hash(self) -> UInt64 { local(self.id) } }
-            impl Eq for ValueEq { fn eq(self, other: Self) -> Bool { local(self.id) == local(other.id) } }
-            impl BorrowHash for ValueEq { fn hash_ref(&self) -> UInt64 { 7 } }
-            fn hash_value_map(value: Map<ValueHash, Int32>) @suspends -> Bool {
-                let key = ValueHash { id: 1 }
-                value.contains_key(&key)
-            }
-            fn eq_value_set(value: Set<ValueEq>) @suspends -> Bool {
-                let key = ValueEq { id: 1 }
-                value.contains(&key)
+            impl Hash for BadEq {
+                fn hash(&self) -> UInt64 { 7 }
             }
             fn carry(value: Map<BadHash, Int32>) @suspends -> Map<BadHash, Int32> { value }
             fn hash_map(value: Map<BadHash, Int32>) @suspends -> Bool {
@@ -506,7 +490,7 @@ mod tests {
                 let key = BadEq { id: 1 }
                 value.contains(&key)
             }
-            fn query<K: BorrowHash + BorrowEq, V>(value: &Map<K, V>, key: &K) @noescape(key) -> Bool {
+            fn query<K: Hash + Eq, V>(value: &Map<K, V>, key: &K) @noescape(key) -> Bool {
                 value.contains_key(key)
             }
             fn borrowed_hash(value: &Map<BadHash, Int32>) @suspends -> Bool {
@@ -545,8 +529,6 @@ mod tests {
         for name in [
             "hash_map",
             "eq_set",
-            "hash_value_map",
-            "eq_value_set",
             "branches",
             "borrowed_hash",
             "borrowed_eq",
@@ -558,8 +540,6 @@ mod tests {
         for name in [
             "hash_map",
             "eq_set",
-            "hash_value_map",
-            "eq_value_set",
             "branches",
             "borrowed_hash",
             "borrowed_eq",

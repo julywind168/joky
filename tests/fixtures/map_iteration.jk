@@ -51,8 +51,8 @@ fn consuming<Tag>() -> Int32 {
     sum + value
 }
 struct Key { id: Int32, tag: Int32 }
-impl Eq for Key { fn eq(self, other: Key) -> Bool { self.id == other.id } }
-impl Hash for Key { fn hash(self) -> UInt64 { 0 } }
+impl Eq for Key { fn eq(&self, other: &Key) -> Bool { self.id == other.id } }
+impl Hash for Key { fn hash(&self) -> UInt64 { 0 } }
 fn batches<Tag>() -> Int32 {
     var input = Array.new::<(Key, Int32)>()
     input.push((Key { id: 1, tag: 10 }, 1)); input.push((Key { id: 2, tag: 20 }, 2))
@@ -138,8 +138,8 @@ fn unbounded<Tag>() -> Int32 {
     if entries.is_empty() { 42 } else { 0 }
 }
 struct LoggedKey { id: Int32 }
-impl Eq for LoggedKey { fn eq(self, other: LoggedKey) -> Bool { self.id == other.id } }
-impl Hash for LoggedKey { fn hash(self) -> UInt64 { record_int(100 + self.id); 0 } }
+impl Eq for LoggedKey { fn eq(&self, other: &LoggedKey) -> Bool { self.id == other.id } }
+impl Hash for LoggedKey { fn hash(&self) -> UInt64 { record_int(100 + self.id); 0 } }
 fn protocol_free_export<Tag>() -> Int32 {
     var m = Map.new::<LoggedKey, Int32>()
     m.insert(LoggedKey { id: 1 }, 20); m.insert(LoggedKey { id: 2 }, 22)

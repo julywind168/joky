@@ -3,8 +3,8 @@ import joky/map.{type Map}
 import joky/array.{type Array}
 import joky/slice.{type Slice}
 import joky/option.{type Option, Some, None}
-import joky/eq.{type BorrowEq}
-import joky/hash.{type BorrowHash}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
 
 pub struct Set<T> { items: Map<T, Unit> }
 impl<T> Set<T> {
@@ -20,7 +20,7 @@ impl<T> Set<T> {
     pub fn pop(&mut self) -> Option<T> { pop(self) }
     pub fn into_array(self) -> Array<T> { into_array(self) }
 }
-impl<T: BorrowEq + BorrowHash> Set<T> {
+impl<T: Eq + Hash> Set<T> {
     pub fn contains(&self, value: &T) @noescape(value) -> Bool { contains(self, value) }
     pub fn insert(&mut self, value: T) -> Bool { insert(self, value) }
     pub fn remove(&mut self, value: &T) @noescape(value) -> Bool { remove(self, value) }
@@ -45,11 +45,11 @@ pub fn elements<T>(set: &Set<T>) -> &Slice<T> { set.items.keys() }
 pub fn pop<T>(set: &mut Set<T>) -> Option<T> {
     match set.items.pop() { None => None, Some((value, _)) => Some(value) }
 }
-pub fn contains<T: BorrowEq + BorrowHash>(set: &Set<T>, value: &T) @noescape(value) -> Bool { set.items.contains_key(value) }
-pub fn insert<T: BorrowEq + BorrowHash>(set: &mut Set<T>, value: T) -> Bool { set.items.insert(value, {}).is_none() }
-pub fn remove<T: BorrowEq + BorrowHash>(set: &mut Set<T>, value: &T) @noescape(value) -> Bool { set.items.remove(value).is_some() }
-pub fn from_array<T: BorrowEq + BorrowHash>(values: Array<T>) -> Set<T> { var set = new::<T>(); extend(&mut set, values); set }
-pub fn extend<T: BorrowEq + BorrowHash>(set: &mut Set<T>, values: Array<T>) {
+pub fn contains<T: Eq + Hash>(set: &Set<T>, value: &T) @noescape(value) -> Bool { set.items.contains_key(value) }
+pub fn insert<T: Eq + Hash>(set: &mut Set<T>, value: T) -> Bool { set.items.insert(value, {}).is_none() }
+pub fn remove<T: Eq + Hash>(set: &mut Set<T>, value: &T) @noescape(value) -> Bool { set.items.remove(value).is_some() }
+pub fn from_array<T: Eq + Hash>(values: Array<T>) -> Set<T> { var set = new::<T>(); extend(&mut set, values); set }
+pub fn extend<T: Eq + Hash>(set: &mut Set<T>, values: Array<T>) {
     reserve(set, values.len())
     // Visit the input in order, retaining its first equal instance.
     for value in values { insert(set, value) }
@@ -60,7 +60,7 @@ pub fn into_array<T>(set: Set<T>) -> Array<T> {
     while !entries.is_empty() { let (value, _) = entries.take_last(); values.push(value) }
     values
 }
-pub fn is_subset<T: BorrowEq + BorrowHash>(set: &Set<T>, other: &Set<T>) -> Bool {
+pub fn is_subset<T: Eq + Hash>(set: &Set<T>, other: &Set<T>) -> Bool {
     if len(set) > len(other) { return false }
     let values = elements(set)
     var i: UInt64 = 0
@@ -70,7 +70,7 @@ pub fn is_subset<T: BorrowEq + BorrowHash>(set: &Set<T>, other: &Set<T>) -> Bool
     }
     true
 }
-pub fn is_disjoint<T: BorrowEq + BorrowHash>(set: &Set<T>, other: &Set<T>) -> Bool {
+pub fn is_disjoint<T: Eq + Hash>(set: &Set<T>, other: &Set<T>) -> Bool {
     // Iterating the smaller input saves queries; neither borrow can escape.
     if len(set) > len(other) { return is_disjoint(other, set) }
     let values = elements(set)
@@ -81,12 +81,12 @@ pub fn is_disjoint<T: BorrowEq + BorrowHash>(set: &Set<T>, other: &Set<T>) -> Bo
     }
     true
 }
-pub fn union<T: BorrowEq + BorrowHash>(var set: Set<T>, var other: Set<T>) -> Set<T> {
+pub fn union<T: Eq + Hash>(var set: Set<T>, var other: Set<T>) -> Set<T> {
     reserve(&mut set, len(&other))
     while !is_empty(&other) { match pop(&mut other) { Some(value) => { insert(&mut set, value); }, None => {} } }
     set
 }
-fn filter<T: BorrowEq + BorrowHash>(var set: Set<T>, other: &Set<T>, present: Bool) -> Set<T> {
+fn filter<T: Eq + Hash>(var set: Set<T>, other: &Set<T>, present: Bool) -> Set<T> {
     var output = with_capacity::<T>(len(&set))
     while !is_empty(&set) {
         match pop(&mut set) {
@@ -100,9 +100,9 @@ fn filter<T: BorrowEq + BorrowHash>(var set: Set<T>, other: &Set<T>, present: Bo
     }
     output
 }
-pub fn intersection<T: BorrowEq + BorrowHash>(set: Set<T>, other: &Set<T>) -> Set<T> { filter(set, other, true) }
-pub fn difference<T: BorrowEq + BorrowHash>(set: Set<T>, other: &Set<T>) -> Set<T> { filter(set, other, false) }
-pub fn symmetric_difference<T: BorrowEq + BorrowHash>(var set: Set<T>, var other: Set<T>) -> Set<T> {
+pub fn intersection<T: Eq + Hash>(set: Set<T>, other: &Set<T>) -> Set<T> { filter(set, other, true) }
+pub fn difference<T: Eq + Hash>(set: Set<T>, other: &Set<T>) -> Set<T> { filter(set, other, false) }
+pub fn symmetric_difference<T: Eq + Hash>(var set: Set<T>, var other: Set<T>) -> Set<T> {
     reserve(&mut set, len(&other))
     while !is_empty(&other) {
         match pop(&mut other) {

@@ -9,8 +9,8 @@ import joky/string.{type StringBuilder}
 import joky/slice
 import joky/integer
 import joky/float
-import joky/eq.{type BorrowEq}
-import joky/hash.{type BorrowHash}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
 
 pub enum MappingErrorKind {
     ExpectedNull, ExpectedBoolean, ExpectedNumber, ExpectedString, ExpectedArray, ExpectedObject,
@@ -390,7 +390,7 @@ impl<K: ObjectKey, T: ToJson> ToJson for Map<K, T> {
         Ok(Value.Object(fields))
     }
 }
-impl<K: ObjectKey + BorrowEq + BorrowHash, T: FromJson> FromJson for Map<K, T> {
+impl<K: ObjectKey + Eq + Hash, T: FromJson> FromJson for Map<K, T> {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
         var fields = context.read_object(value)?
         var output = map.new::<K, T>()

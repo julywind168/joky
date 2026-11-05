@@ -2,7 +2,7 @@ import joky/time.{type Duration, type Instant, type Timestamp}
 import joky/task
 import joky/option.{Some, None}
 import joky/array.{type Array}
-import joky/eq.{type Eq, type BorrowEq}
+import joky/eq.{type Eq}
 import joky/check.{assert, panic}
 
 fn stamp(text: &String) -> Timestamp {

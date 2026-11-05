@@ -588,8 +588,8 @@ append 的节点转移次数对源元素数量线性；扩容还可能搬迁目�
 默认 prelude 提供 `Set` 类型名；关闭 prelude 时可显式导入 `joky/set.{type Set}`。Set 是非 Copy 拥有者，
 由私有 `Map<T, Unit>` 保存元素；模块函数和方法共用 [set.jk](../src/stdlib/set.jk) 的算法。
 T 沿用 Map key 的存储准入：递归无引用的 Copy 值、String、拥有型记录或枚举；
-构造不要求相等/哈希协议，插入、查询、批量导入、关系及集合运算要求 `BorrowEq + BorrowHash`。
-旧 Copy `Eq + Hash` 通过 blanket impl 适配。相等元素须具有相同哈希，驻留期间协议结果须稳定。
+构造不要求相等/哈希协议，插入、查询、批量导入、关系及集合运算要求 `Eq + Hash`。
+Copy 与拥有型元素使用同一套借用协议。相等元素须具有相同哈希，驻留期间协议结果须稳定。
 
 | 方法（模块函数增加首个 Set 参数） | 行为 |
 | --- | --- |
@@ -637,7 +637,7 @@ Set 不保证遍历、导出或 Drop 次序，也不提供稳定元素地址、�
 
 K 必须可存储且递归无引用，支持 Copy 数据、String 和无引用拥有型记录/枚举。
 构造与 insert 实例化时检查真实存储资格；协议本身不会赋予存储权限。
-插入与查询使用 `K: BorrowEq + BorrowHash`。已有的 Copy key 可通过 Eq、Hash 的 blanket impl 满足约束。
+插入与查询使用 `K: Eq + Hash`，统一借用 Copy 与拥有型 key。
 空表构造、长度、容量、reserve、clear、release、切片视图、pop 和 into_entries 不要求协议。
 直接/嵌套引用 key 被拒绝；元组 key 可先用名义记录包装。
 V 支持普通 Copy 数据、普通共享引用及含共享引用的 Copy 记录/枚举/元组，
@@ -703,7 +703,7 @@ Hash/Eq 在相关查找完成、修改开始前调用；重建只用缓存哈希
 分配失败和用户 Hash/Eq/Drop 失败沿用首错保留及完整清理，不承诺错误后继续使用旧 Map。
 Map 无稳定顺序、元素地址或业务可依赖的析构顺序。
 
-四种要求命中的元素借用方法需要 `K: BorrowEq + BorrowHash`，未命中产生 `Map key not found` 终止性错误；
+四种要求命中的元素借用方法需要 `K: Eq + Hash`，未命中产生 `Map key not found` 终止性错误；
 保留标准库检查位置及实际 Map 调用位置。解释器提供调用轨迹，JIT 提供源码调用点，
 独立 AOT 程序输出来源 ID 和字节范围。查询 Hash/Eq 失败同样传播并清理拥有者。
 无引用 Copy V 可使用 Element 或直接引用接口；含普通共享引用的 Copy V 使用 Element。
@@ -741,35 +741,30 @@ Map 不能隐式复制或部分移出字段。示例 [maps.jk](../examples/maps.
 显式导入 `joky/eq.{type Eq}`、`joky/hash.{type Hash}` 可使用普通静态 trait：
 
 ```joky
-pub trait Eq { fn eq(self, other: Self) -> Bool }
-pub trait Hash { fn hash(self) -> UInt64 }
+pub trait Eq { fn eq(&self, other: &Self) @noescape -> Bool }
+pub trait Hash { fn hash(&self) @noescape -> UInt64 }
 ```
 
-Eq 标准实现覆盖所有整数宽度、Bool、Rune、Unit；Hash 标准实现覆盖 Int32、Int64、UInt32、UInt64、Bool、Unit。
-无引用 Copy 记录/枚举可自行实现。
-Eq 必须是等价关系，相等 key 必须有相同 hash，存储期间结果应保持稳定。
-这些 trait 本身不改变 Copy 或引用分类；需要无引用 Copy 存储的容器还会检查真实类型资格。
-整数使用 UInt64 wrapping 混合，Int32 符号扩展、UInt32 零扩展；Bool 映射 0/1、Unit 映射 0。
-hash 输出不作为持久化格式，也不承诺抵抗碰撞攻击。
-泛型可写 `K: Eq + Hash`，模块/成员别名、条件 impl 和固定 trait 方法选择沿用普通语言规则。
+两个协议都只借用输入，不消费、不隐式 clone；Copy 与拥有型记录/枚举使用同一套实现形式。
+实现继承 trait 的 noescape 约束，编译器检查返回、存储及转交调用的引用来源。
+泛型可写 `K: Eq + Hash`；只有实际复制值的代码才额外要求 Copy。
+模块/成员别名、条件 impl 和固定 trait 方法选择沿用普通语言规则。
+旧 BorrowEq／BorrowHash 和 eq_ref／hash_ref 已移除；旧按值实现需改为共享引用签名。
+标准协议仍不接管自定义类型的 `==`／`!=`，也没有自动派生。
+
+Eq 表示支持相等比较，不单独承诺数学等价关系。标准实现覆盖所有整数宽度、Float32、Float64、
+Bool、Rune、Unit、String，以及 Duration、Timestamp、Uuid。
+浮点沿用 IEEE `==`：NaN 不等于自身，正负零相等；String 按 UTF-8 字节比较，不做规范化。
+Array.contains 和 assert_eq/assert_ne 使用该协议，因此浮点比较与直接比较保持一致。
+
+Hash 标准实现覆盖 Int32、Int64、UInt32、UInt64、Bool、Unit、String 与 Uuid；
+原始浮点不提供 Hash，不能直接作为 Map/Set 的 key。
+作为 Map/Set key 时，Eq 必须构成等价关系，相等 key 必须有相同 hash，驻留期间两者结果必须稳定；
+这些代数契约由实现者保证。协议不改变 Copy、引用分类或真实存储资格。
+
+整数继续使用 UInt64 wrapping 混合，Int32 符号扩展、UInt32 零扩展；Bool 输入为 0/1，Unit 为 0。
+String 继续使用 64 位 FNV-1a wrapping hash。哈希输出不作为持久化格式，不承诺抗碰撞攻击。
 实现见 [eq.jk](../src/stdlib/eq.jk)、[hash.jk](../src/stdlib/hash.jk)。
-
-借用协议位于相同模块，均为普通静态 trait：
-
-```joky
-pub trait BorrowEq { fn eq_ref(&self, other: &Self) @noescape -> Bool }
-pub trait BorrowHash { fn hash_ref(&self) @noescape -> UInt64 }
-```
-
-标准库提供 `impl<T: Eq> BorrowEq for T` 与 `impl<T: Hash> BorrowHash for T`，
-适配时只读取 Copy 值；拥有型 key 应直接实现借用协议。String 已实现 UTF-8 字节相等和
-64 位 FNV-1a wrapping hash；不做规范化，不承诺抗碰撞或持久化格式。
-实现自动继承 trait 的 noescape 约束，编译器检查返回、存储及转交调用的引用来源。
-同一 key 的相等和 hash 必须稳定，代数一致性由实现者保证。
-
-Float32 / Float64 另有直接的 BorrowEq 实现，沿用 IEEE `==`：NaN 不等于自身，正负零相等。
-它们没有 Eq / Hash 实现，不能因此用作标准 Map/Set 的 key。
-
 
 ## 数组字面值
 
@@ -1445,7 +1440,7 @@ Copy 元素嵌套数组的 `get` 返回独立的 `Option<FixedArray<…>>`；fro
 未优化的头部仍计入任务预算并保留到根任务结束，反复创建仍可能耗尽预算。
 所有头部均不拥有或保活载荷，载荷仍按作用域及时回收。
 List 元素、Map 的键／值及 Set 元素可包含上述固定数组，支持有限嵌套与泛型包装。
-键操作仍要求现有 Hash/Eq 或 BorrowHash/BorrowEq 协议：FixedArray 本身没有这些实现，
+键操作仍要求现有 Hash/Eq 协议：FixedArray 本身没有这些实现，
 可以使用含固定数组字段并实现借用键协议的普通记录；空 Set<FixedArray<…>> 的构造不代表支持插入。
 自定义 Drop、循环元素图及含引用存储仍不接受此组合。
 支持 Local 挂起函数中的数组值、参数/返回、join/race 结果及 branch 按值捕获；已有
@@ -1790,7 +1785,7 @@ fn tiny() -> Float32 { 1.5e-3 }
   x86_64 保护的是标量 SSE 的 MXCSR，不修改宿主的 x87 环境；其他架构目前不支持构建。
 - 常量折叠按目标精度执行：`Float32` 表达式不先经 Float64 舍入再窄化，
   `0.1 + 0.2` 在两种宽度下产生各自的标准位模式。
-- 原始浮点不提供 Eq / Hash，不能直接作为 Map 键；可作为 Map 值与 Array 元素。
+- 原始浮点提供 IEEE 相等比较的 Eq，但不提供 Hash，不能直接作为 Map 键；可作为 Map 值与 Array 元素。
   Float32 / Float64 也可作记录字段、元组元素与枚举载荷，参与同步 / CPS 参数、
   返回值和函数值调用；挂起与恢复保留全部位模式，含 NaN 与有符号零。
 
@@ -2384,12 +2379,12 @@ false 产生终止性 RuntimeError，跳过后续普通执行并完成资源清�
 默认 prelude 还提供 `joky/assertions` 的两个普通泛型函数：
 
 ```joky
-pub fn assert_eq<T: BorrowEq + Show>(actual: &T, expected: &T) @noescape
-pub fn assert_ne<T: BorrowEq + Show>(actual: &T, expected: &T) @noescape
+pub fn assert_eq<T: Eq + Show>(actual: &T, expected: &T) @noescape
+pub fn assert_ne<T: Eq + Show>(actual: &T, expected: &T) @noescape
 ```
 
 关闭 prelude 时显式导入 `joky/assertions.{assert_eq, assert_ne}`。两侧必须同型并实现
-`joky/eq.BorrowEq` 和 `joky/show.Show`；支持所有整数、Bool、Rune、Unit、String 及浮点数，
+`joky/eq.Eq` 和 `joky/show.Show`；支持所有整数、Bool、Rune、Unit、String 及浮点数，
 用户类型可实现这两个 trait。容器仅有 Show 不足以用于相等断言，不隐式添加递归相等规则。
 它们借用参数，可直接写 `assert_eq(text, "ready")`，之后继续使用 text；实参从左到右各求值一次。
 拥有型下标元素仍须显式借用，如 `assert_eq(&values[0], "first")`。
@@ -2972,7 +2967,7 @@ fn example() -> Int32 {
 关闭 prelude 时显式导入 `joky/clone.{type Clone}`。整数、浮点、Bool、Rune、Unit 和 String 已实现 Clone，
 `Array<T>` 在 T: Clone 时支持 `.clone()`，也可显式调用 `array.clone(&values)`。
 Array 逐元素复制，副本与原值独立，长度相同，不承诺保留原容量；失败时清理已复制元素。
-`Array<T>.contains(&value)`／`array.contains(&values, &value)` 要求 T: BorrowEq，按元素顺序
+`Array<T>.contains(&value)`／`array.contains(&values, &value)` 要求 T: Eq，按元素顺序
 借用比较，不消费数组或查询值，空数组返回 false。
 
 `#derive(Clone)` 支持命名字段 struct 和 enum，生成受检 Clone 实现：记录逐字段复制，
@@ -5784,8 +5779,7 @@ Rust TaskValue 和宿主函数 ABI 不接纳函数值，不能用原始地址或
 FixedArray 及包含它的普通无引用聚合使用独立位置快照；其中 String／Array／List／Map／Set 拥有字段移动真实 Buffer 树。
 Array／List／Map／Set 可存储这些值，混合普通拥有字段与 FixedArray 的记录也支持；仍遵守固定数组元素限制。
 Array/List/Map/Set 的键与元素递归满足同一规则；空容器和 Unit 元素可用。
-仅传递 Map/Set 不调用键协议；实际查询、插入和删除的 Hash/Eq（含 BorrowHash/BorrowEq
-及泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
+仅传递 Map/Set 不调用键协议；实际查询、插入和删除的 Hash/Eq（含泛型转发）必须通过同一调用图检查，不能借容器类型资格绕过 Local 绑定限制。
 一般 Transfer/Share 分析通过不能代替包准入。分支内可使用已获资格的临时数据。
 
 静态 `join`／`race` 的直接语言函数调用和受检函数值入口支持私有作用域借用输入：`&String`、`&Array<T>`、`&Slice<T>`，
@@ -5830,7 +5824,7 @@ split、shutdown 与 close。TCP 引用仅在调用任务内部使用，挂起�
 每个视图和游标属于接收 worker，不直接读取其他 worker 的控制块；视图销毁不执行原对象的析构。
 Array 的 `capacity()` 保留来源容量，切片与索引访问仍受初始化长度限制。
 List 的顺序／空闲槽、Map 的桶／缓存哈希／键值列、Set 的内部 Map 使用相同字段图保存，容量与删除标记保持原义。
-查询和已有遍历 API 可在读者 worker 中调用；Map/Set 实际调用的 Hash/Eq、BorrowHash/BorrowEq 及泛型转发
+查询和已有遍历 API 可在读者 worker 中调用；Map/Set 实际调用的 Hash/Eq 及泛型转发
 仍须通过完整调用图检查，容器类型获准不会授予用户协议额外权限。
 各读者本地创建游标；已有游标和 Entry 不能作为跨 worker 借用输入，投影出的合格键／值引用可继续再借用。
 字段／元素和 slice 再借用只能保持或缩小收到的区间，可继续交给静态 join/race 或动态 branch 子任务。
@@ -6148,7 +6142,7 @@ Duration 是独立的 Copy 记录类型，内部表示非负的 UInt64 纳秒数
 `as_nanos`、`as_micros`、`as_millis`、`as_secs`、`as_mins`、`as_hours` 返回 UInt64，
 换算到较粗单位时向下取整。`is_zero()` 判断零时长，`compare(other)` 返回 -1、0 或 1；
 `checked_add(other)` / `checked_sub(other)` 返回 Option，溢出或不足时返回 None。
-支持 Eq / BorrowEq 等值比较，以及通过 `joky/ops.Add` 派发的 `+`：`1h + 30min`。
+支持 Eq 等值比较，以及通过 `joky/ops.Add` 派发的 `+`：`1h + 30min`。
 加法溢出时报 `Duration addition overflow` 运行时错误，不环绕；需要恢复时使用 `checked_add`。
 其他时长算术运算符、大小比较运算符及 `+=` 尚不支持；`#every` 仍只接受单个字面量。
 
@@ -6187,7 +6181,7 @@ Instant 不用于持久化或跨进程传递，也不能转换为 Unix 时间；
 | `subsec_nanos()` | 返回 UInt32，范围 0..999999999 |
 | `checked_add/sub(Duration)` | 返回 Option，超出日期范围返回 None |
 | `duration_since(earlier)` | 返回 `Option<Duration>`，逆序或超过 UInt64 纳秒时返回 None |
-| `compare(other)` | 返回 -1、0 或 1；还支持 Eq / BorrowEq |
+| `compare(other)` | 返回 -1、0 或 1；还支持 Eq |
 | `parse(&String)` | 返回 Option，解析下述 RFC 3339 子集 |
 | `to_text()` / Show | 输出 UTC `YYYY-MM-DDTHH:MM:SS[.fraction]Z`，省略零小数和小数尾零 |
 
@@ -6533,7 +6527,7 @@ fn sample() -> UInt64 {
 String 的 `==` / `!=` 按 UTF-8 字节内容比较，支持拥有值、共享/独占引用、内联字段、
 数组下标与临时字符串；按从左到右各求值一次，仅在比较期间借用，两侧仍可继续使用。
 无需 prelude 或显式导入；不进行 Unicode 规范化、隐式转换或排序，String 默认没有 Add 实现。
-`equals` 和 `BorrowEq` 继续保留，与相等运算复用同一内容比较实现。
+`equals` 和 `Eq` 继续保留，与相等运算复用同一内容比较实现。
 
 byte_length、equals、find 等只读查询不消费输入、不创建新的拥有文本，偏移不表示字符数或显示宽度。
 非法 UTF-8 与空句柄不能成为合法语言 String。命名借用阻止移动、release 与冲突替换；
@@ -7549,7 +7543,7 @@ struct Envelope<T> { value: T }
 - 支持命名字段 struct，包括空 struct、泛型及经拥有容器间接存储的有限递归树。
   所有字段按声明顺序映射，JSON 键就是原字段名；私有字段在定义模块内处理，可跨模块使用派生实现。
   字段类型须已有对应 trait 实现，用户自定义嵌套类型可以分别派生或手写。
-- 泛型实现按字段义务推导条件约束，例如 `Map<K, V>` 的解码要求 K 满足 ObjectKey、BorrowEq、BorrowHash，
+- 泛型实现按字段义务推导条件约束，例如 `Map<K, V>` 的解码要求 K 满足 ObjectKey、Eq、Hash，
   V 满足 FromJson；未被字段使用的参数不额外要求 JSON trait。支持可转写到类型参数上的关联类型等式，
   无法表达或存在多个可适用约束方案时拒绝，使用手写 impl 表达该情况。
 - 生成普通 ToJson/FromJson 方法，复用下面的 Context、缺失/未知字段、null、错误路径与限额规则。
@@ -7608,7 +7602,7 @@ Context 不可从外部构造。嵌套映射必须经过 `context.write` / `cont
 
 Map 实现通过 `ObjectKey` 表达字符串键，内置仅为 String 提供实现。
 `to_key(&self) @noescape -> String` 返回独立拥有的完整键名，`from_key(String) -> Self` 消费键名；
-自定义键须保证转换互逆且不改写拼写，解码还要求 BorrowEq + BorrowHash，转换后键冲突返回 DuplicateField。
+自定义键须保证转换互逆且不改写拼写，解码还要求 Eq + Hash，转换后键冲突返回 DuplicateField。
 这使用现有完整泛型 impl；没有引入 `Map<String, T>` 部分特化。
 类型化映射沿用每次编译 4096 个泛型实例与隐藏闭包入口的合计预算，标准库内部实例也计入。
 嵌套 `Map<String, Array<Option<UInt64>>>` 的同程序双向往返由三后端回归覆盖；

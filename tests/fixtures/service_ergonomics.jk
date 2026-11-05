@@ -5,7 +5,7 @@ import joky/domain
 import joky/fs
 import joky/string.{type Utf8Error, type Utf8ErrorCode}
 import joky/check
-import joky/eq.{type BorrowEq}
+import joky/eq.{type Eq}
 import service_clone_model as model
 
 #derive(Clone)
@@ -30,10 +30,10 @@ fn rejected(c: domain.WriteHandle<Counter>) @suspends -> domain.Outcome<Int32, S
 struct Different { value: Int32 }
 impl Different {
     fn clone(&self) -> Self { Different { value: -1 } }
-    fn eq_ref(&self, other: &Self) -> Bool { false }
+    fn eq(&self, other: &Self) -> Bool { false }
 }
-impl BorrowEq for Different {
-    fn eq_ref(&self, other: &Self) -> Bool { self.value == other.value }
+impl Eq for Different {
+    fn eq(&self, other: &Self) -> Bool { self.value == other.value }
 }
 impl Clone for Different { fn clone(&self) -> Self { Different { value: self.value } } }
 fn clone_values() {

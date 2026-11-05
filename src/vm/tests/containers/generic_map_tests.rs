@@ -122,7 +122,7 @@ fn generic_map_rejects_reference_bearing_keys() {
     ] {
         rejected(&format!("import joky/map.{{type Map}} import joky/array.{{type Array}} {decl} fn bad() {{ Map.new::<{ty},Int32>(); }}"),&ModuleSources::new(),expected);
     }
-    rejected("import joky/map.{type Map} import joky/eq.{type Eq} import joky/hash.{type Hash} struct Key { target: &Int32 } impl Eq for Key { fn eq(self,other:Self)->Bool { true } } impl Hash for Key { fn hash(self)->UInt64 { 0 } } fn bad(m:&mut Map<Key,Int32>,key:Key) { m.insert(key,1); }",&ModuleSources::new(),"reference-free storage");
+    rejected("import joky/map.{type Map} import joky/eq.{type Eq} import joky/hash.{type Hash} struct Key { target: &Int32 } impl Eq for Key { fn eq(&self, other: &Self)->Bool { true } } impl Hash for Key { fn hash(&self)->UInt64 { 0 } } fn bad(m:&mut Map<Key,Int32>,key:Key) { m.insert(key,1); }",&ModuleSources::new(),"reference-free storage");
     let mut modules = ModuleSources::new();
     modules
         .insert(
@@ -139,8 +139,8 @@ fn generic_map_rejects_reference_bearing_keys() {
 #[test]
 fn generic_map_rejects_missing_bounds_private_storage_and_conflicting_loans() {
     for (body,expected) in [
-        ("struct Key { n: Int32 } impl Eq for Key { fn eq(self, other: Self) -> Bool { true } } fn bad() { var m = Map.new::<Key,Int32>(); m.insert(Key { n: 1 },1) }","does not satisfy trait bound"),
-        ("struct Key { n: Int32 } impl Hash for Key { fn hash(self) -> UInt64 { 0 } } fn bad() { var m = Map.new::<Key,Int32>(); m.insert(Key { n: 1 },1) }","does not satisfy trait bound"),
+        ("struct Key { n: Int32 } impl Eq for Key { fn eq(&self, other: &Self) -> Bool { true } } fn bad() { var m = Map.new::<Key,Int32>(); m.insert(Key { n: 1 },1) }","does not satisfy trait bound"),
+        ("struct Key { n: Int32 } impl Hash for Key { fn hash(&self) -> UInt64 { 0 } } fn bad() { var m = Map.new::<Key,Int32>(); m.insert(Key { n: 1 },1) }","does not satisfy trait bound"),
         ("fn bad<K: Copy,V>(m: &Map<K,V>,k: K) -> Bool { m.contains_key(k) }","does not satisfy trait bound"),
         ("fn bad(m: &Map<Int32,Int32>) { m.keys; }","private"),
         ("fn bad(m: &Map<Int32,Int32>) { map.invariant(m); }","invariant"),
@@ -160,9 +160,9 @@ fn generic_map_cross_module_aliases_and_conditional_impls_preserve_identity() {
         import joky/eq.{type Eq as Equality}
         import joky/hash.{type Hash as Hashing}
         pub struct Key<T> { pub value: T }
-        impl<T: Equality> Equality for Key<T> { fn eq(self,other: Self)->Bool { Equality.eq(self.value,other.value) } }
-        impl<T: Hashing> Hashing for Key<T> { fn hash(self)->UInt64 { Hashing.hash(self.value) } }
-        impl<T> Key<T> { fn eq(self,other:Self)->Bool { false } fn hash(self)->UInt64 { 0 } }
+        impl<T: Equality> Equality for Key<T> { fn eq(&self, other: &Self)->Bool { Equality.eq(self.value,other.value) } }
+        impl<T: Hashing> Hashing for Key<T> { fn hash(&self)->UInt64 { Hashing.hash(self.value) } }
+        impl<T> Key<T> { fn eq(&self, other: &Self)->Bool { false } fn hash(&self)->UInt64 { 0 } }
         pub type Dictionary<V> = Table<Key<Int32>, V>
         pub fn make<V>() -> Dictionary<V> { Table.new::<Key<Int32>,V>() }
         pub fn put<V>(m: &mut Dictionary<V>,key: Int32,value: V) { m.insert(Key { value: key },value); }

@@ -274,8 +274,8 @@ fn map_iteration_pop_preserves_dense_indices_and_tombstones() {
         import joky/eq.{type Eq}
         import joky/hash.{type Hash}
         struct Key { id: Int32 }
-        impl Eq for Key { fn eq(self, other: Key) -> Bool { self.id == other.id } }
-        impl Hash for Key { fn hash(self) -> UInt64 { 0 } }
+        impl Eq for Key { fn eq(&self, other: &Key) -> Bool { self.id == other.id } }
+        impl Hash for Key { fn hash(&self) -> UInt64 { 0 } }
         fn test() -> Int32 {
             var m = Map.new::<Key, Int32>()
             var round = 0

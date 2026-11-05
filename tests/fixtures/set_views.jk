@@ -2,15 +2,15 @@ import joky/set as sets.{type Set as Table}
 import joky/array.{type Array}
 import joky/slice.{type Slice}
 import joky/option.{type Option}
-import joky/eq.{type BorrowEq}
-import joky/hash.{type BorrowHash}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
 pub type Collection<T> = Table<T>
 pub fn new<T>() -> Collection<T> { Table.new::<T>() }
 pub fn elements<T>(set: &Collection<T>) -> &Slice<T> { set.elements() }
 pub fn export<T>(set: Collection<T>) -> Array<T> { set.into_array() }
 pub fn pop<T>(set: &mut Collection<T>) -> Option<T> { set.pop() }
-pub fn contains<T: BorrowEq + BorrowHash>(set: &Collection<T>, value: &T) @noescape(value) -> Bool { sets.contains(set, value) }
-pub fn remove<T: BorrowEq + BorrowHash>(set: &mut Collection<T>, value: &T) @noescape(value) -> Bool { sets.remove(set, value) }
-pub fn insert<T: BorrowEq + BorrowHash>(set: &mut Collection<T>, value: T) -> Bool { set.insert(value) }
-pub fn import_array<T: BorrowEq + BorrowHash>(values: Array<T>) -> Collection<T> { Table.from_array(values) }
-pub fn intersection<T: BorrowEq + BorrowHash>(set: Collection<T>, other: &Collection<T>) -> Collection<T> { set.intersection(other) }
+pub fn contains<T: Eq + Hash>(set: &Collection<T>, value: &T) @noescape(value) -> Bool { sets.contains(set, value) }
+pub fn remove<T: Eq + Hash>(set: &mut Collection<T>, value: &T) @noescape(value) -> Bool { sets.remove(set, value) }
+pub fn insert<T: Eq + Hash>(set: &mut Collection<T>, value: T) -> Bool { set.insert(value) }
+pub fn import_array<T: Eq + Hash>(values: Array<T>) -> Collection<T> { Table.from_array(values) }
+pub fn intersection<T: Eq + Hash>(set: Collection<T>, other: &Collection<T>) -> Collection<T> { set.intersection(other) }

@@ -2782,8 +2782,8 @@ trait 实现继承显式契约，具体实现和未实例化模板都必须通�
 `joky/map.Map<K, V>` 是五个私有 Array 拥有字段与删除计数构成的普通名义记录。
 桶使用既有 Empty/Deleted/Full(UInt64) tagged enum 布局，数量与字节上限始终查询目标布局。
 Joky 源码实现有界线性探测、缓存哈希重建、四个载荷同步 swap_remove 与被搬末项的桶修正。
-new 与 insert 调用通用 ReferenceFree 存储资格检查；核心查找/插入使用 BorrowEq + BorrowHash，
-Copy key 的 Eq/Hash 通过普通源码 blanket impl 适配，
+new 与 insert 调用通用 ReferenceFree 存储资格检查；核心查找/插入使用 Eq + Hash，
+Copy 与拥有型 key 使用同一套共享借用协议，
 生命周期函数无协议约束。重建只交换索引拥有字段，不调用用户协议、不析构 value；
 各个中断点的清理由既有 Array 初始化前缀和拥有临时量登记承担，不增加 Map ABI。
 真实生产算法的双向索引检查由 cfg(test) 标准库加载附加的同模块用例执行；
@@ -3176,7 +3176,7 @@ worker 创建独立 VmEngine，直接调用同步 Unit 入口或驱动 prepare_a
 Joky 源码测试覆盖标准库与应用的公开行为；Rust 保留前端拒绝、ABI、内部资源计数、取消穷举和 CLI 路由责任。
 当前 CLI 只开放 JIT / 解释器测试运行；AOT 的生产排除语义由相关编译执行回归覆盖。
 
-`joky/assertions.assert_eq/assert_ne` 是普通的借用泛型函数，显式调用 BorrowEq / Show，
+`joky/assertions.assert_eq/assert_ne` 是普通的借用泛型函数，显式调用 Eq / Show，
 成功分支不构造诊断；失败复用 `check.panic` 和普通调用的清理、传播路径，不增加 intrinsic 或 ABI。
 断言模块独立于作为底层依赖的 `joky/check`，避免 Show、容器与 check 之间形成导入环。
 CLI 仅在原始失败位置是该模块的 `check.panic` 时，将主显示位置选为调用轨迹中的外部调用点；

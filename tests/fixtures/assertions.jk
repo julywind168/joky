@@ -1,6 +1,6 @@
 import joky/assertions.{assert_eq as equal, assert_ne as different}
 import joky/check.{assert, panic}
-import joky/eq.{type BorrowEq}
+import joky/eq.{type Eq}
 import joky/show.{type Show}
 import joky/string.{type StringBuilder}
 import joky/float
@@ -8,10 +8,10 @@ import joky/task
 
 struct Quiet { value: Int32 }
 impl Quiet {
-    fn eq_ref(&self, other: &Self) -> Bool { panic("must use BorrowEq") }
+    fn eq(&self, other: &Self) -> Bool { panic("must use Eq") }
 }
-impl BorrowEq for Quiet {
-    fn eq_ref(&self, other: &Self) -> Bool { self.value == other.value }
+impl Eq for Quiet {
+    fn eq(&self, other: &Self) -> Bool { self.value == other.value }
 }
 impl Show for Quiet {
     fn show(&self, output: &mut StringBuilder) @noescape {

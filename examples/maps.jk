@@ -17,8 +17,8 @@ fn frequencies() -> Int32 {
         counts.get(2).unwrap_or(0) + counts.get(3).unwrap_or(0)
 }
 struct Coordinate { x: Int32, y: Int32 }
-impl Eq for Coordinate { fn eq(self, other: Self) -> Bool { self.x == other.x && self.y == other.y } }
-impl Hash for Coordinate { fn hash(self) -> UInt64 { Hash.hash(self.x) ^ (Hash.hash(self.y) >> 1) } }
+impl Eq for Coordinate { fn eq(&self, other: &Self) -> Bool { self.x == other.x && self.y == other.y } }
+impl Hash for Coordinate { fn hash(&self) -> UInt64 { Hash.hash(self.x) ^ (Hash.hash(self.y) >> 1) } }
 fn custom_keys() -> Int32 {
     var scores = Map.new::<Coordinate, Int32>()
     scores.insert(Coordinate { x: 3, y: 7 }, 20)

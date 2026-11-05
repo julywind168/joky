@@ -1,5 +1,5 @@
-import joky/eq.{type BorrowEq}
-import joky/hash.{type BorrowHash}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
 import joky/json/typed.{type ToJson, type FromJson, type Context, type MappingError, type MappingErrorKind, type Options, type CodecError, type ObjectKey}
 import joky/json.{type Value, type Number}
 import joky/result.{type Result, Ok, Err}
@@ -49,8 +49,8 @@ impl ObjectKey for Key {
     fn from_key(value: String) -> Self { Key { text: value } }
 }
 // This equivalence deliberately collapses distinct, reversibly named keys.
-impl BorrowEq for Key { fn eq_ref(&self, other: &Self) @noescape -> Bool { true } }
-impl BorrowHash for Key { fn hash_ref(&self) @noescape -> UInt64 { 0 } }
+impl Eq for Key { fn eq(&self, other: &Self) @noescape -> Bool { true } }
+impl Hash for Key { fn hash(&self) @noescape -> UInt64 { 0 } }
 fn main() {
     let single = "{{\"a\":1}}"
     ensure(typed.decode::<Map<Key, UInt8>>(&single).is_ok())
