@@ -333,9 +333,27 @@ impl FunctionPlan {
         path.reverse();
         let field = self.field_target(target.clone(), &path, expr.span())?;
         if assigning && field.is_owner() {
-            self.check_owner_projection(target, &path, expr.span())?;
+            self.check_owner_projection(target.clone(), &path, expr.span())?;
         }
+        let handle = target.is_owner() && !target.is_inline_owner() && field.is_owner();
         let dst = self.slot(Type::reference(field, mutable))?;
+        if handle {
+            // Single-field owner wrappers already borrow the underlying handle,
+            // not storage containing that handle. Preserve assignment reservation.
+            self.emit(if assigning {
+                Op::Reserve {
+                    dst: dst.clone(),
+                    src: reference,
+                }
+            } else {
+                Op::Reference {
+                    dst: dst.clone(),
+                    src: reference,
+                    moving: false,
+                }
+            });
+            return Ok(Some(Flow::Value(Some(dst))));
+        }
         self.emit(Op::Project {
             dst: dst.clone(),
             src: reference,

@@ -2,6 +2,8 @@ import joky/array.{type Array}
 import joky/check.{assert, panic}
 
 struct Label { text: String }
+struct Wrapper<T> { value: T }
+struct Tagged { tag: Int32, text: String }
 fn next(var count: &mut Int32, expected: Int32) -> String {
     assert(*count == expected, "left-to-right comparison")
     *count += 1
@@ -18,6 +20,15 @@ fn compute() -> Int32 {
     let label = Label { text: "中🙂\0tail" }
     let values = ["中🙂\0tail", "different"]
     assert(label.text == values[0] && values[1] != label.text, "places")
+    var labels = [Wrapper { value: Label { text: "中🙂\0tail" } }]
+    assert(labels[0].value.text == left && labels[0].value.text != "different", "nested wrapper projection")
+    assert(&mut labels[0].value.text == right, "mutable wrapper projection")
+    let wrapped = &labels[0]
+    assert(&(*wrapped).value.text == left, "dereferenced wrapper projection")
+    labels[0].value.text = { assert(labels[0].value.text == left, "reserved wrapper read"); "replaced" }
+    assert(labels[0].value.text == "replaced", "wrapper field replacement")
+    let tagged = [Tagged { tag: 7, text: "中🙂\0tail" }]
+    assert(tagged[0].text == left && tagged[0].tag == 7, "inline owner projection")
     var count = 0
     assert(next(&mut count, 0) == next(&mut count, 1), "temporary equality")
     assert(count == 2 && left == right && label.text == left, "values survive")

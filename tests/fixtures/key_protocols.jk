@@ -66,8 +66,7 @@ fn protocols() -> Int32 {
     assert(&owner == &mut other && equal(&owner, &other), "Borrowed equality")
     let values = [Key { value: "owned" }]
     assert(values[0] == owner && owner == values[0], "Owning indexed operands")
-    let stored = &values[0]
-    assert(owner.value == "owned" && stored.value == "owned", "Operators preserve owners")
+    assert(owner.value == "owned" && values[0].value == "owned", "Operators preserve owners")
     var count = 0
     assert(next(&mut count, 0) == next(&mut count, 1) && count == 2, "Operands evaluated once")
     assert(Choice.Text("a") == Choice.Text("a") && Choice.Text("a") != Choice.Empty, "Payload enum equality")

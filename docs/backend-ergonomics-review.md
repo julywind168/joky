@@ -105,8 +105,8 @@ Map／Set 的 key 另要求等价关系、相等值同哈希及驻留期间结�
 实现标准 Eq 的类型已支持 `==`／`!=`，比较借用两侧，`!=` 对 Eq.eq 的结果取反。
 调用处不依赖 trait 导入或 prelude；详见 [Eq／Hash 参考](language.md#key-协议)。
 
-本轮核验另发现下标字段借用缺口：`Array<Key<String>>` 的 `values[0].value == "text"`
-可能触发无效 String 引用；先写 `let stored = &values[0]` 再比较 `stored.value` 可用，待独立修复。
+下标字段借用已修复：`Array<Key<String>>` 的 `values[0].value == "text"` 可直接使用。
+单字段拥有型包装的字段投影复用已有句柄，不再把句柄当作存储地址重复读取；多字段记录仍按实际布局投影。
 
 以下事项分开设计，尚未实现：
 
