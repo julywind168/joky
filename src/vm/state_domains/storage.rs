@@ -46,7 +46,7 @@ impl Root {
             module.invoke_instance(constructor, input, limits, arena)
         })
     }
-    fn construct_with(
+    pub(super) fn construct_with(
         info: &FunctionInfo,
         words: &[u64],
         budget: std::sync::Arc<Budget>,

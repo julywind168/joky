@@ -962,13 +962,39 @@ fn create_words(
     {
         return Err(invalid("Domain constructor requires a proved state entry"));
     }
+    let budget = registry.borrow().creation_budget()?;
+    let root = Root::construct(&module, &info, constructor, words, limits, budget)?;
+    insert_root(registry, module, info.signature.ret, limits, root)
+}
+
+impl Domains {
+    fn creation_budget(&self) -> Result<std::sync::Arc<Budget>, Error> {
+        if self.shutting_down {
+            return Err(invalid("Domain VM is shutting down"));
+        }
+        if self.entries.len() >= self.limits.max_domains {
+            return Err(limited("State domain count limit exceeded"));
+        }
+        Ok(self.budget.clone())
+    }
+
+    fn source_module(&self, key: usize) -> Option<LoadedModule> {
+        self.entries
+            .values()
+            .find(|domain| domain.source_module == key)
+            .map(|domain| domain.module.clone())
+    }
+}
+
+fn insert_root(
+    registry: &Rc<RefCell<Domains>>,
+    module: LoadedModule,
+    ty: Type,
+    limits: InterpreterLimits,
+    root: Root,
+) -> Result<DomainOwner, Error> {
     let mut domains = registry.borrow_mut();
-    if domains.shutting_down {
-        return Err(invalid("Domain VM is shutting down"));
-    }
-    if domains.entries.len() >= domains.limits.max_domains {
-        return Err(limited("State domain count limit exceeded"));
-    }
+    domains.creation_budget()?;
     let sequence = domains.next_domain;
     let next = sequence
         .checked_add(1)
@@ -977,14 +1003,6 @@ fn create_words(
         .entries
         .try_reserve(1)
         .map_err(|_| limited("State domain registry allocation failed"))?;
-    let root = Root::construct(
-        &module,
-        &info,
-        constructor,
-        words,
-        limits,
-        domains.budget.clone(),
-    )?;
     domains.entries.insert(
         sequence,
         Domain {
@@ -992,7 +1010,7 @@ fn create_words(
             module,
             source_module: 0,
             source_token: source::next_token()?,
-            ty: info.signature.ret,
+            ty,
             code: 0,
             revision: 0,
             schema: source::next_token()?,

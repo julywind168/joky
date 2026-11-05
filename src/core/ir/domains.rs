@@ -116,7 +116,10 @@ impl FunctionPlan {
                 self.domain_calls.push((operation.clone(), span));
             }
             let module = self.slot(crate::runtime::domain::module_type())?;
-            self.emit(Op::DomainModule(module.clone()));
+            self.emit(Op::DomainModule {
+                slot: module.clone(),
+                parallel: false,
+            });
             let Flow::Value(text) = self.expr(
                 &Expr::Literal {
                     literal: Literal::String(operation),
@@ -186,7 +189,10 @@ impl FunctionPlan {
                 self.domain_calls.push((operation.clone(), args[3].span()));
             }
             let module = self.slot(crate::runtime::domain::module_type())?;
-            self.emit(Op::DomainModule(module.clone()));
+            self.emit(Op::DomainModule {
+                slot: module.clone(),
+                parallel: false,
+            });
             let Flow::Value(text) = self.expr(
                 &Expr::Literal {
                     literal: Literal::String(operation),
@@ -288,7 +294,10 @@ impl FunctionPlan {
         }
         if matches!(kind, DomainModule) {
             let slot = self.slot(crate::runtime::domain::module_type())?;
-            self.emit(Op::DomainModule(slot.clone()));
+            self.emit(Op::DomainModule {
+                slot: slot.clone(),
+                parallel: false,
+            });
             return Ok(Some(Flow::Value(Some(slot))));
         }
         if matches!(kind, DomainSnapshotValue) && !checking && scalar(&info.signature.ret) {
@@ -373,7 +382,10 @@ impl FunctionPlan {
             }
             self.domain_calls.push((operation.clone(), args[2].span()));
             let module = self.slot(crate::runtime::domain::module_type())?;
-            self.emit(Op::DomainModule(module.clone()));
+            self.emit(Op::DomainModule {
+                slot: module.clone(),
+                parallel: false,
+            });
             let handle = values[1].as_ref().unwrap();
             let mut captures = vec![
                 Some(module),
@@ -582,7 +594,20 @@ impl FunctionPlan {
         let mut captures = Vec::new();
         if !ambient {
             let module = self.slot(crate::runtime::domain::module_type())?;
-            self.emit(Op::DomainModule(module.clone()));
+            self.emit(Op::DomainModule {
+                slot: module.clone(),
+                parallel: matches!(kind, DomainCreate)
+                    && !functions.values().any(|f| {
+                        f.every.is_some()
+                            && f.signature
+                                .params
+                                .first()
+                                .and_then(Type::reference_type)
+                                .is_some_and(|r| {
+                                    r.target.nominal() == target.signature.ret.nominal()
+                                })
+                    }),
+            });
             captures.push(Some(module));
         }
         if pair {

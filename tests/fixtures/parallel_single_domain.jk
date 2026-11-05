@@ -1,0 +1,55 @@
+import joky/domain
+import joky/shutdown
+
+#state
+struct Stock { available: UInt64 }
+fn stock(available: UInt64) -> Stock { Stock { available } }
+
+fn reserve(handle: domain.WriteHandle<Stock>, ready: shutdown.Controller, peer: shutdown.Controller) @suspends -> Bool {
+    ready.request()
+    peer.wait()
+    when (mut handle) {
+        if handle.available == 0 { false } else {
+            handle.available -= 1
+            true
+        }
+    }!
+}
+
+#state
+struct Label { text: String }
+fn label(text: String) -> Label { Label { text } }
+
+fn packets(ready: shutdown.Controller, peer: shutdown.Controller) @suspends {
+    let owner = domain.create(label, "original")
+    let handle = owner.handle()
+    ready.request()
+    peer.wait()
+    let next = "replacement with a longer UTF-8 value 库存"
+    let rejected = when (mut handle) {
+        handle.text = next
+        let decision: Result<Unit, String> = Err("rollback")
+        decision
+    }
+    assert(match rejected { Rejected(reason) => reason == "rollback", _ => false }, "owned business error")
+    assert(when (handle) { handle.text.clone() }! == "original", "rollback preserves the owned field")
+    owner.close()
+    assert(match when (handle) { handle.text.clone() } { Err(Closed) => true, _ => false }, "closed handle")
+}
+
+fn main() @suspends {
+    let owner = domain.create(stock, 1)
+    let handle = owner.handle()
+    let first = shutdown.create()
+    let second = shutdown.create()
+    let (a, b) = join {
+        reserve(handle, first.share(), second.share()),
+        reserve(handle, second.share(), first.share())
+    }
+    assert(a != b, "exactly one request reserves the last item")
+    assert(when (handle) { handle.available }! == 0, "stock is exhausted")
+    owner.close()
+    let left = shutdown.create()
+    let right = shutdown.create()
+    join { packets(left.share(), right.share()), packets(right.share(), left.share()) };
+}

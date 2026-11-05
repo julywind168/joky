@@ -2932,7 +2932,7 @@ fn lower_ops(
                 };
                 slots.write(builder, dst, value);
             }
-            Op::DomainModule(dst) => {
+            Op::DomainModule { slot: dst, .. } => {
                 let value = builder
                     .ins()
                     .symbol_value(ptr_ty, data.domain.expect("domain module descriptor"));

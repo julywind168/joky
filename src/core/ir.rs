@@ -401,7 +401,11 @@ pub(crate) enum Op {
     },
     Literal(Slot, Constant),
     FunctionRef(Slot, String),
-    DomainModule(Slot),
+    DomainModule {
+        slot: Slot,
+        // The direct Parallel bridge admits creation and static single-domain when.
+        parallel: bool,
+    },
     /// Encode/decode one nullable owner lane in a domain-owned wire packet.
     DomainOwner {
         owner: Type,

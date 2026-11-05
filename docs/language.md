@@ -6006,7 +6006,7 @@ worker 内部使用资格单独检查：Array／Slice 的 Iter、Map 的成对 I
 这不授予游标 Transfer／Share：宿主根参数和结果、跨 worker 参数和结果、branch 捕获仍拒绝
 游标及其引用。原有来源、独占借用、结构性修改和逃逸限制保持不变；取消由容器拥有者清理元素。
 完整调用图必须证明安全；内置 stdout 绑定已获并行资格，`print`／`println` 还要求实际使用的
-Show 实现及其调用图通过检查。未知 extern、直接状态域操作、持久实例和 Godot 对象仍保持 Local。
+Show 实现及其调用图通过检查。未知 extern、持久实例和 Godot 对象仍保持 Local。
 内置 DNS 支持 Parallel：解析线程只持有输入副本和完成通知，任务存储仍由所属 worker 访问。
 内置 VM 类型化调用／源码方法、文件操作、目录拥有者、准入池和邮箱通过下述 Local 控制桥接开放。
 
@@ -6022,6 +6022,12 @@ R7c 的控制代理绑定同一任务树。`Vm.share()` 返回独立拥有句柄
 共享的是控制身份，跨线程包不包含 `&Vm`、Rc 或调用帧地址。最后一个句柄释放时关闭 VM，
 显式 `close` 关闭所有别名；给已关闭的身份再创建别名不会重新打开它。
 `Vm.call`／`try_call`、类型化 Entry 的普通流程以及源码加载／契约声明／发布由该树唯一控制线程驱动。
+Parallel 主程序可以直接 `domain.create`、取得读写句柄，并执行静态单域 `when`。
+Owner 归创建任务所有，子任务可携带弱句柄竞争同一个域。控制线程登记域身份，按读写权限授权，
+worker 执行受检构造器和块体，控制线程提交成功的写候选。业务拒绝回滚，关闭后旧句柄返回 Closed。
+直接多域 `when`、动态路径和带 `#every` 的域创建仍要求 Local。库存竞争示例见
+[parallel_single_domain.jk](../tests/fixtures/parallel_single_domain.jk)。
+
 R8 将业务脚本中的 `when`（含生成的状态方法与创建回退）交给同一 worker 池：完整访问集一起授权，
 冲突写入排队，共享读可并行，不相交域可同时计算；只复制写域。根、目录条目和 outbox 消息由控制端一次提交。
 `publish_source`／`publish_file` 挂起等待已授权尝试排空，期间阻止新授权；不等待旧普通流程整体结束。

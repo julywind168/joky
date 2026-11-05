@@ -279,6 +279,7 @@ enum FrozenCallee {
     Unavailable(FunctionSignature, bool),
 }
 pub(crate) struct FrozenEntry {
+    pub(crate) limits: crate::vm::InterpreterLimits,
     dispatch_key: Arc<()>,
     pub(crate) files: Option<crate::runtime::fs::FileService>,
     pub(crate) info: FunctionInfo,
@@ -314,6 +315,7 @@ impl BytecodeModule {
     }
     fn freeze_function(&self, function: &BytecodeFunction) -> Result<FrozenEntry, Error> {
         Ok(FrozenEntry {
+            limits: Default::default(),
             dispatch_key: Arc::new(()),
             files: self.files.clone(),
             info: function.info.clone(),
@@ -765,7 +767,7 @@ fn lower_unoptimized(
                 target: dst.ty.clone(),
                 decode: *decode,
             },
-            Op::DomainModule(slot) => Instruction::Const {
+            Op::DomainModule { slot, .. } => Instruction::Const {
                 dst: slot.index,
                 value: ConstantValue::UInt64(0),
             },

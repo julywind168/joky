@@ -75,6 +75,75 @@ pub(super) fn completed_computation(method: &str) -> Result<(), Error> {
     }
     Ok(())
 }
+#[test]
+fn direct_parallel_when_discards_a_cancelled_candidate() {
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    unsafe extern "C" fn candidate_ready(frame: *mut CpsFrame) -> i32 {
+        let probe = PROBE.lock().unwrap().as_ref().unwrap().clone();
+        if probe.state.lock().unwrap().threads.is_empty() {
+            (*frame).wake = Some(crate::runtime::driver::Wake::Immediate);
+            return 1;
+        }
+        0
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        unsafe {
+            vm.register_parallel_suspending_fn(
+                "candidate_ready",
+                crate::FunctionSignature::new(vec![], Type::Unit),
+                candidate_ready,
+                0,
+                Arc::new(()),
+            )
+            .unwrap();
+        }
+        vm.load_source(
+            r#"
+            import joky/domain
+            extern fn candidate_ready() @suspends
+            #state
+            struct Stock { count: Int32 }
+            fn stock(n: Int32) -> Stock { Stock { count: n } }
+            fn reserve(h: domain.WriteHandle<Stock>) @suspends {
+                when "r8probe" (mut h) { h.count -= 1 }!;
+            }
+            fn main() @suspends -> Int32 {
+                let owner = domain.create(stock, 1)
+                let h = owner.handle()
+                race { reserve(h), candidate_ready() }
+                when (h) { h.count }!
+            }
+        "#,
+        )
+        .unwrap();
+        let budget = TaskBudget::new(64 << 20);
+        let root = vm
+            .prepare_parallel_task("main", vec![], vec![budget.clone()])
+            .unwrap();
+        let mut pool = ParallelExecutor::new(4, 32).unwrap();
+        let _reset = Reset(Probe::install());
+        let task = root.submit(&pool).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !task.is_finished() {
+            assert!(
+                Instant::now() < deadline,
+                "cancelled domain candidate did not drain"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            task.take_result().unwrap().value(),
+            &crate::vm::parallel::TaskValue::Scalar(InstanceValue::Int32(1))
+        );
+        drop(task);
+        pool.wait_closed();
+        assert_eq!(budget.used(), 0);
+    }
+}
+
 struct Park;
 impl pool::Job for Park {
     fn poll(&mut self) -> Poll<Result<pool::Output, Error>> {

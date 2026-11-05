@@ -121,7 +121,7 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                 }
                 Type::Resource(ref name)
                     if worker_local
-                        && matches!(name.as_ref(), "arena.Arena" | "shutdown.SignalsOwner") => {}
+                        && matches!(name.as_ref(), "arena.Arena" | "shutdown.SignalsOwner" | "domain.StateOwner") => {}
                 Type::Resource(ref name)
                     if !share
                         && (crate::runtime::tcp::transferable_type(name)
@@ -132,6 +132,7 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                             || crate::runtime::shutdown::transferable_type(name)) => {}
                 Type::Named(ref name)
                     if matches!(name.as_str(), "domain.Handle" | "admission.Token") => {}
+                Type::Named(ref name) if worker_local && name == "domain.Module" => {}
                 Type::String | Type::Function(_) => {}
                 Type::DynTrait(_) if worker_local || !share => {}
                 ref scalar if crate::core::instance::scalar(scalar) => {}
@@ -401,7 +402,7 @@ pub(crate) fn analyse(
                 Op::FunctionRef(slot, _) if !matches!(slot.ty, Type::Function(_)) => {
                     Some("raw function address lacks immutable thread evidence")
                 }
-                Op::DomainModule(_) | Op::OutboxEmit { .. } => {
+                Op::DomainModule { parallel: false, .. } | Op::OutboxEmit { .. } => {
                     Some("state domain operation is Local")
                 }
                 _ => None,

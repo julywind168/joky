@@ -3,6 +3,17 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn direct_parallel_single_domain_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write(
+        "stock.jk",
+        include_str!("../fixtures/parallel_single_domain.jk"),
+    );
+    work.assert_native("stock.jk", &["--task-workers", "2"], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
 fn state_domain_probe_owned_snapshots_replacement_and_cancellation_run_on_all_backends() {
     let work = Workspace::new();
     work.write(

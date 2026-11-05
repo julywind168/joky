@@ -12,9 +12,11 @@ use crate::{
     Error, ErrorCode, ErrorPhase, Type,
 };
 use std::{
+    any::Any,
     collections::{HashMap, VecDeque},
     ffi::c_void,
     ptr::NonNull,
+    rc::Rc,
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex, MutexGuard, OnceLock, Weak,
@@ -42,6 +44,7 @@ pub(crate) enum Operation {
 #[derive(Clone, Copy)]
 enum Kind {
     Word,
+    Module,
     Bytes(usize, bool),
     Resource,
 }
@@ -50,7 +53,12 @@ impl Operation {
         use crate::runtime::domain::Operation::*;
         matches!(
             op,
-            DirectoryCreate
+            Create
+                | CreateValues
+                | When
+                | Handle
+                | Close
+                | DirectoryCreate
                 | DirectoryHandle
                 | DirectoryClose
                 | AdmissionCreate
@@ -118,6 +126,16 @@ impl Operation {
             Self::Domain(crate::runtime::domain::Operation::OutboxReceiveBytes) => {
                 (vec![Resource], Bytes(1, false))
             }
+            Self::Domain(crate::runtime::domain::Operation::Create) => {
+                (vec![Module, Bytes(1, false), Word], Resource)
+            }
+            Self::Domain(crate::runtime::domain::Operation::CreateValues) => {
+                (vec![Module, Bytes(1, false), Bytes(8, false)], Resource)
+            }
+            Self::Domain(crate::runtime::domain::Operation::When) => (
+                vec![Module, Bytes(1, false), Bytes(8, false), Bytes(8, true)],
+                Word,
+            ),
             Self::Domain(op) => {
                 fn kind(ty: &Type) -> Kind {
                     match ty {
@@ -168,6 +186,10 @@ pub(crate) fn resource_type(name: &str) -> bool {
 }
 enum Value {
     Word(u64),
+    // Only compiler-emitted module slots use this lane. Native code supplies
+    // its immutable descriptor; interpreted code supplies its frozen program.
+    Module(u64),
+    AccessResult([u64; 2]),
     Bytes(Vec<u8>, usize),
     // Reply-only: an empty message is distinct from a closed mailbox.
     Received(Vec<u8>, bool),
@@ -187,7 +209,7 @@ struct RequestState {
 struct Request {
     op: Operation,
     core: Weak<Core>,
-    _receipt: Option<pool::ControlReceipt>,
+    receipt: Option<pool::ControlReceipt>,
     _sequence: u64,
     state: Mutex<RequestState>,
     wake: Option<pool::IoWaker>,
@@ -367,7 +389,7 @@ impl Core {
         let request = Arc::new(Request {
             op,
             core: Arc::downgrade(self),
-            _receipt: pool::control_receipt(),
+            receipt: pool::control_receipt(),
             _sequence: sequence,
             state: Mutex::new(RequestState {
                 input: Some(input),
@@ -538,6 +560,13 @@ pub(crate) unsafe fn poll(
         return Err(invalid("Control operation is already terminal"));
     }
     if frame.host_context.is_null() {
+        if matches!(
+            op,
+            Operation::Domain(crate::runtime::domain::Operation::When)
+        ) && byte_len(frame.slots[2], 8)? != 8
+        {
+            return Err(invalid("Direct parallel when requires exactly one domain"));
+        }
         let core = pool::control()?;
         let (kinds, _) = op.layout();
         let mut bytes = std::mem::size_of::<Request>()
@@ -545,8 +574,10 @@ pub(crate) unsafe fn poll(
             + std::mem::size_of::<Call>()
             + kinds.len() * (std::mem::size_of::<Value>() + 2 * std::mem::size_of::<u64>());
         for (kind, bits) in kinds.iter().zip(&frame.slots) {
-            if let Kind::Bytes(stride, _) = kind {
-                add_bytes(&mut bytes, byte_len(*bits, *stride)?)?;
+            match kind {
+                Kind::Bytes(stride, _) => add_bytes(&mut bytes, byte_len(*bits, *stride)?)?,
+                Kind::Module => add_bytes(&mut bytes, std::mem::size_of::<Program>())?,
+                _ => {}
             }
         }
         let charge = core.root.accounts().reserve(bytes)?;
@@ -556,6 +587,7 @@ pub(crate) unsafe fn poll(
             .map(|(kind, bits)| {
                 Ok(match kind {
                     Kind::Word => Value::Word(*bits),
+                    Kind::Module => Value::Module(*bits),
                     Kind::Bytes(stride, _) => Value::Bytes(copy_buffer(*bits, *stride)?, *stride),
                     Kind::Resource => Value::Resource(proxy(*bits, &core)?),
                 })
@@ -599,6 +631,11 @@ pub(crate) unsafe fn poll(
     }
     let result = match response.value {
         Value::Word(value) => value,
+        Value::Module(..) => unreachable!("modules are inputs"),
+        Value::AccessResult(lanes) => {
+            frame.slots[4..6].copy_from_slice(&lanes);
+            0
+        }
         Value::Bytes(bytes, stride) => buffer(arena, &bytes, stride)?,
         Value::Received(bytes, present) => {
             let output = buffer(arena, &bytes, 1)?;
@@ -627,7 +664,40 @@ impl Drop for LocalResource {
         }
     }
 }
+struct Program {
+    creation: Option<crate::vm::state_domains::parallel::create::Pending>,
+    caller: pool::DomainSpawner,
+    local: Rc<dyn Any>,
+    owner: Arc<dyn Any + Send + Sync>,
+    limits: crate::vm::InterpreterLimits,
+}
+impl Program {
+    fn new(descriptor: u64, receipt: &pool::ControlReceipt) -> Result<Self, Error> {
+        let (code, caller) = receipt.domain_program();
+        let (owner, limits): (Rc<dyn Any>, _) =
+            match code.downcast_ref::<crate::vm::parallel::Code>() {
+                Some(crate::vm::parallel::Code::Interpreted(entry)) if descriptor == 0 => {
+                    (entry.instantiate()?, entry.limits)
+                }
+                Some(crate::vm::parallel::Code::Native(_)) if descriptor != 0 => {
+                    (Rc::new(code.clone()), Default::default())
+                }
+                None if descriptor != 0 && code.is::<Files>() => {
+                    (Rc::new(code.clone()), Default::default())
+                }
+                _ => return Err(invalid("Domain module does not match its program")),
+            };
+        Ok(Self {
+            caller,
+            local: owner,
+            owner: code,
+            limits,
+            creation: None,
+        })
+    }
+}
 struct Call {
+    program: Option<Box<Program>>,
     frame: Box<CpsFrame>,
     buffers: Vec<u64>,
     keep: Vec<Arc<Proxy>>,
@@ -664,8 +734,13 @@ impl Call {
             .input
             .take()
             .ok_or_else(|| invalid("Control request already started"))?;
+        let result_lanes = match request.op {
+            Operation::Domain(crate::runtime::domain::Operation::When) => 2,
+            _ => 0,
+        };
         let mut call = Self {
-            frame: Box::new(CpsFrame::try_new(input.len())?),
+            program: None,
+            frame: Box::new(CpsFrame::try_new(input.len() + result_lanes)?),
             buffers: Vec::new(),
             keep: Vec::new(),
             prepared_reply: None,
@@ -687,7 +762,18 @@ impl Call {
         for (i, value) in input.into_iter().enumerate() {
             self.frame.slots[i] = match value {
                 Value::Word(value) => value,
-                Value::Received(_, _) => unreachable!("receive values are replies only"),
+                Value::AccessResult(_) | Value::Received(_, _) => {
+                    unreachable!("reply used as input")
+                }
+                Value::Module(descriptor) => {
+                    let receipt = self
+                        .request
+                        .receipt
+                        .as_ref()
+                        .ok_or_else(|| invalid("Missing domain call owner"))?;
+                    self.program = Some(Box::new(Program::new(descriptor, receipt)?));
+                    descriptor
+                }
                 Value::Bytes(bytes, stride) => {
                     let value = buffer(&mut *cps::arena(&mut *self.frame), &bytes, stride)?;
                     self.buffers.push(value);
@@ -782,7 +868,31 @@ impl Call {
                     })
                 })
             }
-            Operation::Domain(op) => crate::runtime::domain::poll(arena, frame, op),
+            Operation::Domain(op) => {
+                if let Some(program) = &mut self.program {
+                    let _program = crate::runtime::suspension::enter_code(
+                        program.local.clone(),
+                        program.limits,
+                    );
+                    if matches!(
+                        op,
+                        crate::runtime::domain::Operation::Create
+                            | crate::runtime::domain::Operation::CreateValues
+                    ) {
+                        return crate::vm::state_domains::parallel::create::poll(
+                            &mut program.creation,
+                            arena,
+                            frame,
+                            op,
+                            &program.owner,
+                            &program.caller,
+                        );
+                    }
+                    crate::runtime::domain::poll(arena, frame, op)
+                } else {
+                    crate::runtime::domain::poll(arena, frame, op)
+                }
+            }
             Operation::Fs(op) => crate::runtime::fs::poll(arena, frame, op),
         };
         // Cancellation probes wait for a registered waiter, not just submission.
@@ -854,6 +964,15 @@ impl Call {
             }
         }
         let value = match result {
+            Kind::Module => unreachable!("modules are inputs"),
+            Kind::Word
+                if matches!(
+                    self.request.op,
+                    Operation::Domain(crate::runtime::domain::Operation::When)
+                ) =>
+            {
+                Value::AccessResult([self.frame.slots[4], self.frame.slots[5]])
+            }
             Kind::Word => Value::Word(value),
             Kind::Bytes(stride, _) => {
                 let bytes = copy_buffer(value, stride)?;
@@ -1147,7 +1266,7 @@ mod tests {
         let request = Arc::new(Request {
             op: Operation::VmSource,
             core: Weak::new(),
-            _receipt: None,
+            receipt: None,
             _sequence: 0,
             state: Mutex::new(RequestState {
                 // The second buffer cannot fit after a frame and first buffer
@@ -1189,7 +1308,7 @@ mod tests {
         let request = Arc::new(Request {
             op: Operation::VmMigration(crate::core::vm::MigrationOperation::Command),
             core: Arc::downgrade(&core),
-            _receipt: None,
+            receipt: None,
             _sequence: 0,
             state: Mutex::new(RequestState {
                 input: Some(vec![

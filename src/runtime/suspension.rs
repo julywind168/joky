@@ -22,6 +22,13 @@ thread_local! { static CURRENT_LIMITS: Cell<crate::vm::InterpreterLimits> = Cell
 pub(crate) fn current_limits() -> crate::vm::InterpreterLimits {
     CURRENT_LIMITS.with(Cell::get)
 }
+pub(crate) fn enter_code(code: Rc<dyn Any>, limits: crate::vm::InterpreterLimits) -> impl Drop {
+    RootGuard(
+        current_root(),
+        CURRENT_CODE.with(|current| current.replace(Some(code))),
+        CURRENT_LIMITS.with(|current| current.replace(limits)),
+    )
+}
 struct RootGuard(*const (), Option<Rc<dyn Any>>, crate::vm::InterpreterLimits);
 impl Drop for RootGuard {
     fn drop(&mut self) {

@@ -301,6 +301,16 @@ pub(crate) fn control_receipt() -> Option<ControlReceipt> {
         })
     })
 }
+impl ControlReceipt {
+    pub(crate) fn domain_program(&self) -> (Arc<dyn Any + Send + Sync>, DomainSpawner) {
+        (
+            self.0.code.clone(),
+            DomainSpawner {
+                parent: Arc::downgrade(&self.0),
+            },
+        )
+    }
+}
 impl Drop for ControlReceipt {
     fn drop(&mut self) {
         self.0.controls_pending.fetch_sub(1, Ordering::Release);

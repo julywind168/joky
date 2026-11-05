@@ -78,3 +78,64 @@ fn parallel_domains_optional_paths_and_owning_variants() {
         );
     }
 }
+
+#[test]
+fn direct_parallel_single_domain_survives_vm_drop() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../../tests/fixtures/parallel_single_domain.jk"
+        ))
+        .unwrap();
+        let budget = TaskBudget::new(64 << 20);
+        let root = vm
+            .prepare_parallel_task("main", vec![], vec![budget.clone()])
+            .unwrap();
+        drop(vm);
+        let mut pool = ParallelExecutor::new(3, 128).unwrap();
+        let task = root.submit(&pool).unwrap();
+        task.wait().unwrap();
+        assert_eq!(
+            task.take_result().unwrap().value(),
+            &TaskValue::Scalar(InstanceValue::Unit)
+        );
+        drop(task);
+        pool.wait_closed();
+        assert_eq!(budget.used(), 0);
+    }
+}
+
+#[test]
+fn direct_parallel_domains_reject_multi_domain_and_periodic_entries() {
+    let mut vm = VmEngine::new_interpreter();
+    vm.load_source(
+        r#"
+        import joky/domain
+        #state
+        struct Stock { count: Int32 }
+        #state
+        struct Clock { ticks: Int32 }
+        impl Clock { #every(1s) fn tick(&mut self) { self.ticks += 1 } }
+        fn stock(n: Int32) -> Stock { Stock { count: n } }
+        fn clock(n: Int32) -> Clock { Clock { ticks: n } }
+        fn pair() @suspends {
+            let owner = domain.create(stock, 1)
+            let a = owner.handle()
+            let b = owner.read_handle()
+            when (a, b) { a.count + b.count }!;
+        }
+        fn periodic() @suspends { domain.create(clock, 0).close() }
+    "#,
+    )
+    .unwrap();
+    for entry in ["pair", "periodic"] {
+        let error = vm
+            .prepare_parallel_task(entry, vec![], vec![])
+            .err()
+            .expect("Local entry");
+        assert!(
+            error.message().contains("state domain operation is Local"),
+            "{error}"
+        );
+    }
+}

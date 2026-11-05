@@ -308,11 +308,11 @@ pub(crate) fn compile<M: Module>(
             instance_ids.insert((*name).clone(), id);
         }
     }
-    let domain_data = if plan
-        .bodies
-        .values()
-        .any(|body| body.ops.iter().any(|op| matches!(op, Op::DomainModule(_))))
-    {
+    let domain_data = if plan.bodies.values().any(|body| {
+        body.ops
+            .iter()
+            .any(|op| matches!(op, Op::DomainModule { .. }))
+    }) {
         Some(domain::metadata(module, plan, &names, &ids, &instance_ids)?)
     } else {
         None

@@ -165,12 +165,13 @@ impl PreparedParallelTask {
         Self::new(Code::Native(Arc::new(entry)), name, input, budgets, limits)
     }
     pub(super) fn interpreted(
-        entry: interp::FrozenEntry,
+        mut entry: interp::FrozenEntry,
         name: &str,
         input: Vec<TaskValue>,
         budgets: Vec<TaskBudget>,
         limits: InterpreterLimits,
     ) -> Result<Self, Error> {
+        entry.limits = limits;
         Self::new(
             Code::Interpreted(Arc::new(entry)),
             name,

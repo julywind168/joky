@@ -1,4 +1,5 @@
 //! Control-thread grants and publication; workers own checked computation only.
+pub(crate) mod create;
 use super::*;
 use crate::runtime::parallel::pool;
 use std::{collections::BTreeMap, sync::Arc, task::Poll};
