@@ -98,8 +98,6 @@ TCP／TLS、JSON／typed、编码、状态域与 VM 错误；原有文件 I/O、
 
 错误显示保留底层原因、字节偏移、JSON Pointer、路径及可用的诊断区间；仅借用错误，
 显示后仍可检查字段或再次匹配。格式示例与具体约定见 [Show 参考](language.md#showprint--println-与字符串插值)。
-共享行为用例见 [standard_error_show.jk](../tests/fixtures/standard_error_show.jk)，
-CLI 回归在关闭 prelude 时覆盖 JIT、解释器、独立 AOT，并检查 stderr 输出。
 
 以下事项分开设计，尚未实现：
 

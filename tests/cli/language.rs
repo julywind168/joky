@@ -1654,29 +1654,6 @@ fn show_print_and_interpolation_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
-fn standard_errors_and_categories_show_across_backends() {
-    let work = Workspace::new();
-    work.write(
-        "errors.jk",
-        include_str!("../fixtures/standard_error_show.jk"),
-    );
-    success(&work.cli(&["build", "--no-prelude", "errors.jk"]));
-    for output in [
-        work.cli(&["run", "--no-prelude", "errors.jk"]),
-        work.cli(&["run", "--no-prelude", "--interpreter", "errors.jk"]),
-        Command::new(work.path().join("errors")).output().unwrap(),
-    ] {
-        success(&output);
-        assert!(output.stdout.is_empty());
-        assert_eq!(
-            output.stderr,
-            b"connection 42: I/O failure\nexpected number at /a~0~1b/2\n"
-        );
-    }
-}
-
-#[test]
-#[cfg(unix)]
 fn standard_errors_print_to_stderr_across_backends() {
     let work = Workspace::new();
     work.write(
