@@ -201,6 +201,7 @@ fn string_collections_interpreter_cancellation_reclaims_containers_and_bulk_part
     use super::support::{assert_cancellation, CancellationSweep};
     for entry in [
         "array_retain",
+        "array_dedup",
         "array_records",
         "enum_arrays",
         "nested",

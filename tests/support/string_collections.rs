@@ -41,6 +41,7 @@ pub fn ownership_groups() -> Vec<Group> {
             ("arrays", Some("A|tail"), &[], false),
             ("array_queries", None, &[], false),
             ("array_retain", None, &[40, 41, 42, 43, 44], false),
+            ("array_dedup", None, &[70, 71, 72, 80, 81], false),
             ("array_records", None, &[10, 11, 12, 13, 14, 15], false),
         ]),
         group(&[("nested", None, &[], false)]),

@@ -4,6 +4,7 @@ import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/slice
 import joky/drop.{type Drop}
+import joky/eq.{type Eq}
 
 extern fn record_drop(value: Int32)
 
@@ -13,6 +14,9 @@ impl Drop for Pair {
         if self.left.is_empty() || self.right.is_empty() { record_drop(999) }
         record_drop(self.id)
     }
+}
+impl Eq for Pair {
+    fn eq(&self, other: &Self) -> Bool { self.id / 10 == other.id / 10 }
 }
 fn pair(id: Int32) -> Pair {
     let value = Pair { id: id, left: "中", right: "🙂" }
@@ -137,6 +141,24 @@ fn array_retain_failure<T>() -> Int32 {
         assert(value.id != 63, "retain predicate failed after compaction")
         value.id % 2 != 0
     })
+    42
+}
+fn array_dedup<T>() -> Int32 {
+    var words = ["a", "a", "b", "b", "a"]
+    let capacity = words.capacity()
+    words.dedup()
+    if words.len() != 3 || words[0] != "a" || words[1] != "b" || words[2] != "a" { return 1 }
+    array.dedup(&mut words)
+    if words.len() != 3 || words.capacity() != capacity { return 2 }
+    words.truncate(1)
+    words.dedup()
+    if words.len() != 1 || words[0] != "a" { return 3 }
+    words.clear()
+    words.dedup()
+    if !words.is_empty() || words.capacity() != capacity { return 4 }
+    var values = [pair(70), pair(71), pair(80), pair(81), pair(72)]
+    values.dedup()
+    if values.len() != 3 || values[0].id != 70 || values[1].id != 80 || values[2].id != 72 { return 5 }
     42
 }
 fn array_records<T>() -> Int32 {

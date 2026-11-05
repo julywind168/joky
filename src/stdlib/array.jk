@@ -240,6 +240,22 @@ pub fn clone<T: Clone>(values: &Array<T>) -> Array<T> {
 }
 impl<T: Eq> Array<T> {
     pub fn contains(&self, value: &T) -> Bool { contains(self, value) }
+    pub fn dedup(&mut self) { dedup(self) }
+}
+// Keep the first element of each adjacent equal run. Swaps preserve an
+// initialized buffer even if equality fails; truncate destroys duplicates.
+pub fn dedup<T: Eq>(values: &mut Array<T>) {
+    let values = &mut values.storage
+    let length = buffer.len(values)
+    if length < 2 { return }
+    var kept: UInt64 = 1
+    for index in 1..length {
+        if !Eq.eq(buffer.borrow_ref(values, kept - 1), buffer.borrow_ref(values, index)) {
+            if kept != index { buffer.swap_elements(values, kept, index) }
+            kept += 1
+        }
+    }
+    buffer.truncate(values, kept)
 }
 pub fn contains<T: Eq>(values: &Array<T>, value: &T) -> Bool {
     for item in values { if Eq.eq(item, value) { return true } }
