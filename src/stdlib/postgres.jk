@@ -112,7 +112,7 @@ pub fn open(max_connections: UInt64) @suspends -> Result<Pool, DbError> {
     Ok(Pool { owner })
 }
 fn word(out: &mut Array<UInt8>, n: UInt64, width: UInt64) {
-    for i in uint64(0) .. width { out.push(uint8(n >> (8 * i))) }
+    for i in 0 .. width { out.push(uint8(n >> (8 * i))) }
 }
 fn blob(out: &mut Array<UInt8>, tag: UInt8, bytes: &Array<UInt8>) -> Result<Unit, DbError> {
     let size = bytes.len()
@@ -139,7 +139,7 @@ fn encode(params: Array<Value>) -> Result<Array<UInt8>, DbError> {
 }
 fn take(data: &Array<UInt8>, offset: &mut UInt64, width: UInt64) -> UInt64 {
     var value: UInt64 = 0
-    for i in uint64(0) .. width { value = value | (uint64(data[*offset + i]) << (8 * i)) }
+    for i in 0 .. width { value = value | (uint64(data[*offset + i]) << (8 * i)) }
     *offset = *offset + width
     value
 }
@@ -160,7 +160,7 @@ fn rows(data: Array<UInt8>) -> Array<Row> {
     while offset < data.len() {
         let count = take(&data, &mut offset, 4)
         var row: Row = []
-        for i in uint64(0) .. count { row.push(cell(&data, &mut offset)) }
+        for i in 0 .. count { row.push(cell(&data, &mut offset)) }
         result.push(row)
     }
     result

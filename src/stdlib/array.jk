@@ -265,7 +265,7 @@ pub fn sort_by<T, F: Fn(&T, &T) @noescape -> Int32>(values: &mut Array<T>, compa
     if size < 2 { return }
     var order = with_capacity::<UInt64>(size)
     var scratch = with_capacity::<UInt64>(size)
-    for index in uint64(0)..size { order.push(index) }
+    for index in 0..size { order.push(index) }
     var width: UInt64 = 1
     while width < size {
         scratch.clear()
@@ -292,7 +292,7 @@ pub fn sort_by<T, F: Fn(&T, &T) @noescape -> Int32>(values: &mut Array<T>, compa
 
     // order[destination] names its original source. Walk each cycle once,
     // marking fixed positions so that even owning elements only move by swap.
-    for start in uint64(0)..size {
+    for start in 0..size {
         var position = start
         while order[position] != start {
             let source = order[position]

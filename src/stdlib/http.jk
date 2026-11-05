@@ -516,7 +516,7 @@ fn status_code(bytes: &Array<UInt8>) -> Result<UInt16, ClientError> {
         if b < 48 || b > 57 { return Err(InvalidResponse) }
         result = result * 10 + uint16(b - 48)
     }
-    for i in uint64(13) .. bytes.len() { if bytes[i] < 32 && bytes[i] != 9 || bytes[i] == 127 { return Err(InvalidResponse) } }
+    for i in 13 .. bytes.len() { if bytes[i] < 32 && bytes[i] != 9 || bytes[i] == 127 { return Err(InvalidResponse) } }
     if result < 100 || result > 599 { return Err(InvalidResponse) }
     Ok(result)
 }
