@@ -182,10 +182,24 @@ fn finish(
     Ok(result)
 }
 
-// Type checking selects equality later; source modules with equality expressions
-// need the standard protocol. Embedded libraries declare their own dependencies.
+// Type checking selects equality later; equality expressions and string patterns
+// need the standard implementation. Embedded libraries declare their own dependencies.
 fn uses_equality(module: &Module) -> bool {
-    use crate::parser::ast::{BinOp, Expr};
+    use crate::parser::ast::{BinOp, Expr, Literal, PayloadPattern};
+    fn string_pattern(pattern: &PayloadPattern) -> bool {
+        match pattern {
+            PayloadPattern::Literal {
+                literal: Literal::String(_),
+                ..
+            } => true,
+            PayloadPattern::Sequence(p) => p.prefix.iter().chain(&p.suffix).any(string_pattern),
+            PayloadPattern::Tuple { elements, .. } => elements.iter().any(string_pattern),
+            PayloadPattern::Variant { payload, .. } => {
+                payload.as_deref().is_some_and(string_pattern)
+            }
+            _ => false,
+        }
+    }
     let mut pending: Vec<_> = module.expression_roots().collect();
     while let Some(expression) = pending.pop() {
         if matches!(
@@ -196,6 +210,14 @@ fn uses_equality(module: &Module) -> bool {
             }
         ) {
             return true;
+        }
+        if let Expr::Match { arms, .. } = expression {
+            if arms
+                .iter()
+                .any(|arm| arm.pattern.payload().is_some_and(string_pattern))
+            {
+                return true;
+            }
         }
         pending.extend(expression.children());
     }

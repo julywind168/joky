@@ -2,6 +2,51 @@
 use super::*;
 
 impl FunctionPlan {
+    pub(super) fn string_pattern_test(
+        &mut self,
+        actual: Slot,
+        text: &str,
+        failure: usize,
+    ) -> Result<(), Error> {
+        let expected = self.slot(Type::String)?;
+        self.emit(Op::Text {
+            dst: expected.clone(),
+            source: TextSource::Literal(text.into()),
+        });
+        self.register_owner(expected.clone(), None);
+        let reference = self.sequence_value_reference(&expected, false)?;
+        let condition = self.slot(Type::Bool)?;
+        let name = self
+            .scope
+            .functions
+            .get("$joky_text_equals")
+            .cloned()
+            .ok_or_else(|| {
+                type_error(
+                    &self.current_span,
+                    ErrorCode::UnknownName,
+                    "String patterns require the standard text implementation",
+                )
+            })?;
+        self.emit(Op::Call {
+            indirect: None,
+            name,
+            args: vec![Some(actual), Some(reference)],
+            result: Some(condition.clone()),
+            state: None,
+        });
+        self.emit(Op::EndLocal(expected));
+        let selected = self.label_count;
+        self.label_count += 1;
+        self.emit(Op::Branch {
+            condition,
+            then_label: selected,
+            else_label: failure,
+        });
+        self.emit(Op::Label(selected));
+        Ok(())
+    }
+
     pub(super) fn text_body(&mut self, f: &FnDef) -> Result<bool, Error> {
         let Some(intrinsic) = &f.compiler_intrinsic else {
             return Ok(false);

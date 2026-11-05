@@ -208,6 +208,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
                     let payload = v.payload.is_some();
                     let body = if capability == "Eq" {
                         let mut inner = vec![MatchArm {
+                            guard: None,
                             pattern: variant(&path, payload, "$right", v.span),
                             body: if payload {
                                 call(
@@ -223,6 +224,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
                         }];
                         if multiple {
                             inner.push(MatchArm {
+                                guard: None,
                                 pattern: Pattern::Wildcard { span: v.span },
                                 body: literal(Literal::Bool(false), v.span),
                                 span: v.span,
@@ -248,6 +250,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
                         hash(components, v.span)
                     };
                     arms.push(MatchArm {
+                        guard: None,
                         pattern: variant(&path, payload, "$left", v.span),
                         body,
                         span: v.span,

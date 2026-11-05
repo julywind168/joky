@@ -11,6 +11,7 @@ pub(super) struct CheckedPattern {
 pub(super) enum Kind {
     Sequence(Box<super::sequence_patterns::CheckedSequence>),
     Literal(Constant, u64),
+    String(String),
     Range(Box<IntegerRange>),
     Any(Option<String>),
     Tuple(Vec<CheckedPattern>),
@@ -70,7 +71,7 @@ impl CheckedPattern {
                 };
                 vars.insert(name.clone(), payload_binding(&ty, 0));
             }
-            Kind::Literal(..) | Kind::Range(_) => {}
+            Kind::Literal(..) | Kind::String(_) | Kind::Range(_) => {}
             Kind::Sequence(p) => {
                 for child in p.prefix.iter().chain(&p.suffix) {
                     child.hints(vars, borrowed);
@@ -95,7 +96,7 @@ impl CheckedPattern {
         use crate::memory_layout::MemoryLayoutShape;
         if matches!(
             self.kind,
-            Kind::Any(_) | Kind::Literal(..) | Kind::Range(_) | Kind::Sequence(_)
+            Kind::Any(_) | Kind::Literal(..) | Kind::String(_) | Kind::Range(_) | Kind::Sequence(_)
         ) {
             return Ok(Vec::new());
         }
@@ -111,7 +112,11 @@ impl CheckedPattern {
                 Kind::Tuple(elements) => elements.iter().map(|p| (p, 0)).collect(),
                 Kind::Variant { payload, .. } => payload.iter().map(|p| (p.as_ref(), 0)).collect(),
                 Kind::Record(fields) => fields.iter().map(|(_, p)| (p, 0)).collect(),
-                Kind::Any(_) | Kind::Literal(..) | Kind::Range(_) | Kind::Sequence(_) => {
+                Kind::Any(_)
+                | Kind::Literal(..)
+                | Kind::String(_)
+                | Kind::Range(_)
+                | Kind::Sequence(_) => {
                     unreachable!()
                 }
             });
@@ -140,7 +145,7 @@ impl CheckedPattern {
 
     pub(super) fn binds(&self) -> bool {
         match &self.kind {
-            Kind::Literal(..) | Kind::Range(_) => false,
+            Kind::Literal(..) | Kind::String(_) | Kind::Range(_) => false,
             Kind::Sequence(p) => {
                 p.rest.as_ref().is_some_and(Option::is_some)
                     || p.prefix.iter().chain(&p.suffix).any(Self::binds)
@@ -154,6 +159,7 @@ impl CheckedPattern {
     fn coverage(&self) -> Arc<Coverage> {
         Arc::new(match &self.kind {
             Kind::Literal(_, bits) => Coverage::Literal(*bits),
+            Kind::String(text) => Coverage::String(text.clone()),
             Kind::Range(range) => Coverage::Interval(range.lower, range.upper),
             Kind::Sequence(p) => Coverage::Sequence {
                 prefix: p.prefix.iter().map(Self::coverage).collect(),
@@ -305,6 +311,10 @@ impl FunctionPlan {
                     upper,
                 }))
             }
+            PayloadPattern::Literal {
+                literal: Literal::String(text),
+                ..
+            } if *ty == Type::String => Kind::String(text.clone()),
             PayloadPattern::Literal { literal, .. } => {
                 let (actual, constant, bits) = match literal {
                     Literal::Integer {
@@ -468,6 +478,14 @@ impl FunctionPlan {
         }
         match &pattern.kind {
             Kind::Sequence(_) => unreachable!(),
+            Kind::String(text) => {
+                let actual = Slot {
+                    index,
+                    ty: Type::String,
+                };
+                let reference = self.sequence_value_reference(&actual, false)?;
+                self.string_pattern_test(reference, text, failure)?;
+            }
             Kind::Range(range) => {
                 let actual = Slot {
                     index,
@@ -590,6 +608,10 @@ impl FunctionPlan {
         if let Kind::Sequence(p) = &pattern.kind {
             let root = self.sequence_root(root, &pattern.ty, offset, false, &[])?;
             return self.sequence_tests(p, &root, failure);
+        }
+        if let Kind::String(text) = &pattern.kind {
+            let reference = self.pattern_reference(root, &Type::String, offset, false, &[])?;
+            return self.string_pattern_test(reference, text, failure);
         }
         if matches!(&pattern.kind, Kind::Literal(..) | Kind::Range(_)) {
             let reference = self.pattern_reference(root, &pattern.ty, offset, false, &[])?;
@@ -748,7 +770,7 @@ impl FunctionPlan {
             value
         };
         match &pattern.kind {
-            Kind::Literal(..) | Kind::Range(_) | Kind::Sequence(_) => {}
+            Kind::Literal(..) | Kind::String(_) | Kind::Range(_) | Kind::Sequence(_) => {}
             Kind::Any(Some(name)) => {
                 let binding = self.local_binding(
                     name,
@@ -816,6 +838,7 @@ enum Coverage {
     Any,
     Ctor(usize, Vec<Arc<Coverage>>),
     Literal(u64),
+    String(String),
     Interval(i128, i128),
     Sequence {
         prefix: Vec<Arc<Coverage>>,
@@ -1085,6 +1108,40 @@ fn useful(
         }
         return Ok(false);
     }
+    if types[0] == Type::String {
+        let specialize = |value: Option<&str>, budget: &mut usize| {
+            let rows: Vec<_> = matrix
+                .iter()
+                .filter(|row| match row[0].as_ref() {
+                    Coverage::Any => true,
+                    Coverage::String(actual) => Some(actual.as_str()) == value,
+                    _ => false,
+                })
+                .map(|row| row[1..].to_vec())
+                .collect();
+            useful(&rows, &query[1..], &types[1..], budget, span, depth + 1)
+        };
+        if let Coverage::String(value) = query[0].as_ref() {
+            return specialize(Some(value), budget);
+        }
+        // A finite set of strings cannot exhaust the String domain.
+        if specialize(None, budget)? {
+            return Ok(true);
+        }
+        let values: HashSet<_> = matrix
+            .iter()
+            .filter_map(|row| match row[0].as_ref() {
+                Coverage::String(value) => Some(value.as_str()),
+                _ => None,
+            })
+            .collect();
+        for value in values {
+            if specialize(Some(value), budget)? {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
     let head = &query[0];
     let specialized = |tag: usize, args: Vec<Arc<Coverage>>, budget: &mut usize| {
         let fields: Vec<Type> = match &types[0] {
@@ -1111,7 +1168,10 @@ fn useful(
         useful(&rows, &candidate, &new_types, budget, span, depth + 1)
     };
     match head.as_ref() {
-        Coverage::Literal(_) | Coverage::Interval(..) | Coverage::Sequence { .. } => {
+        Coverage::Literal(_)
+        | Coverage::String(_)
+        | Coverage::Interval(..)
+        | Coverage::Sequence { .. } => {
             unreachable!("typed pattern coverage")
         }
         Coverage::Ctor(tag, args) => specialized(*tag, args.clone(), budget),
@@ -1182,16 +1242,19 @@ fn validate_integer_literals(
         let pattern = plan.check_match_pattern(&arm.pattern, ty, types)?;
         complete = match &pattern.kind {
             Kind::Literal(_, bits) => {
-                if !covered.insert(*bits) {
+                if covered.contains(bits) {
                     return Err(type_error(
                         &location,
                         ErrorCode::UnreachableCode,
                         "Duplicate match arm or unreachable pattern",
                     ));
                 }
+                if arm.guard.is_none() {
+                    covered.insert(*bits);
+                }
                 covered.len() as u128 == domain
             }
-            Kind::Any(_) => true,
+            Kind::Any(_) => arm.guard.is_none(),
             _ => unreachable!("scalar literal or binding"),
         };
         checked.push(pattern);
@@ -1264,7 +1327,9 @@ pub(super) fn validate(
                 "Duplicate match arm or unreachable pattern",
             ));
         }
-        matrix.push(vec![coverage]);
+        if arm.guard.is_none() {
+            matrix.push(vec![coverage]);
+        }
         checked.push(pattern);
     }
     let Type::Enum(enumeration) = ty else {

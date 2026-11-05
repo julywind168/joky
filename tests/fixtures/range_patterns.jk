@@ -1,5 +1,6 @@
+import joky/string
 import joky/check.{assert, panic}
-import joky/option.{Some, None}
+import joky/option.{type Option, Some, None}
 import joky/drop.{type Drop}
 fn expect(ok: Bool) { assert(ok, "Range pattern mismatch") }
 extern fn record(x: Int32) -> Int32
@@ -28,12 +29,17 @@ struct Item { id: Int32, text: String }
 impl Drop for Item { fn drop(&mut self) { record(self.id); } }
 enum Packet { Data((Int32, Item)), Empty }
 fn consume(packet: Packet) -> Int32 {
-    match packet { Data((0..10, item)) => item.id, Data((_, item)) => item.id + 1, Empty => 0 }
+    match packet {
+        Data((0..10, item)) if item.text == "skip" => -1,
+        Data((0..10, item)) if item.id > 0 => item.id,
+        Data((_, item)) => item.id + 1,
+        Empty => 0
+    }
 }
 fn borrowed() {
     var packet = Packet.Data((5, Item { id: 20, text: "owned" }))
     match &packet { Data((0..10, item)) => expect(item.id == 20), _ => expect(false) }
-    match &mut packet { Data((0..=5, item)) => { item.id += 1 }, _ => expect(false) }
+    match &mut packet { Data((0..=5, item)) if item.id == 20 => { item.id += 1 }, _ => expect(false) }
 }
 fn tuple_owners() {
     var pair = (3, Item { id: 30, text: "tuple" })
@@ -42,7 +48,68 @@ fn tuple_owners() {
     let id = match pair { (0..4, item) => item.id, _ => 0 }
     expect(id == 31)
 }
+fn classify(text: &String) -> Int32 {
+    match text {
+        "" => 0,
+        "中🙂" => 1,
+        "a\0b" => 2,
+        _ => 3
+    }
+}
+fn guarded_generic<T>(value: T) -> T {
+    match Some(value) {
+        Some(value) if { let witness: Option<T> = None; true } => value,
+        _ => panic("missing value")
+    }
+}
+fn guarded_return() -> Int32 {
+    match Some("return") {
+        Some(value) if { if value == "return" { return 42 }; false } => 0,
+        _ => 1
+    }
+}
+fn guarded_strings() -> Int32 {
+    expect(classify("") == 0 && classify("中🙂") == 1 && classify("a\0b") == 2)
+    expect(classify("a") == 3 && classify("中") == 3)
+    // No normalization, including raw literals and Unicode escapes.
+    expect(match "中🙂" { r"中🙂" => true, _ => false })
+    expect(match "é" { "é" => false, "\u{e9}" => true, _ => false })
+    expect(match Some(("join", "room")) { Some(("join", name)) if name.byte_length() == 4 => name == "room", _ => false })
+    let text = match Some("kept") {
+        Some(value) if value.is_empty() => value,
+        Some(value) if value.byte_length() == 4 => value,
+        _ => "wrong"
+    }
+    expect(text == "kept")
+    expect(guarded_generic("generic") == "generic" && guarded_return() == 42)
+    let limit: UInt64 = 4
+    let accepts = |value: &String| -> Bool {
+        match value { "kept" if value.byte_length() == limit => true, _ => false }
+    }
+    expect(accepts(&text))
+    var indexed = 0
+    for index, value in ["first", "second"] {
+        match value { "second" if index == limit - 3 => { indexed += 1 }, _ => {} }
+    }
+    expect(indexed == 1)
+    var mutable = "before"
+    match &mut mutable { "before" if true => {}, _ => expect(false) }
+    expect(mutable == "before")
+    match ["first", "second"] { ["first", value] if value == "second" => expect(value == "second"), _ => expect(false) }
+    var calls = 0
+    let result = match { calls += 1; Some(7) } {
+        Some(0) if { calls += 100; true } => 0,
+        Some(n) if { calls += n; false } => 0,
+        Some(n) if { calls += n; true } => n,
+        _ => 0
+    }
+    expect(calls == 15 && result == 7)
+    expect(match 1 { 1 if false => false, 1 => true, _ => false })
+    expect(match true { true if false => false, true => true, false => false })
+    if let Some("kept") = Some(text) { 42 } else { 0 }
+}
 fn compute() -> Int32 {
+    expect(guarded_strings() == 42)
     expect(signed8(-128) == 0 && signed8(127) == 1)
     expect(signed16(-32768) == 0 && signed16(32767) == 1)
     expect(signed32(-2147483648) == 0 && signed32(2147483647) == 1)
@@ -70,8 +137,8 @@ fn compute() -> Int32 {
 fn pending() @suspends -> Int32 {
     let item = Item { id: 99, text: "guard" }
     record(-99)
-    match (delayed_value(record(1)), item) {
-        (0..=2, item) => { let n = delayed_value(record(40)); expect(item.id == 99); n + 1 },
+    match (record(1), item) {
+        (0..=2, item) if delayed_value(1) == 2 && item.id == 99 => { let n = delayed_value(record(40)); expect(item.id == 99); n + 1 },
         _ => 0
     }
 }

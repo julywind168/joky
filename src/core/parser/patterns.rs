@@ -149,6 +149,7 @@ impl Parser<'_> {
                 | TokenKind::True
                 | TokenKind::False
                 | TokenKind::CharLit(_)
+                | TokenKind::StrLit(_)
         ) {
             let negative = self.peek() == &TokenKind::Minus;
             if negative {
@@ -159,6 +160,7 @@ impl Parser<'_> {
                     magnitude,
                     negative,
                 },
+                TokenKind::StrLit(value) if !negative => Literal::String(value),
                 TokenKind::True if !negative => Literal::Bool(true),
                 TokenKind::False if !negative => Literal::Bool(false),
                 TokenKind::CharLit(value) if !negative => Literal::Rune(value as u32),

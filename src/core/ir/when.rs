@@ -222,6 +222,7 @@ impl FunctionPlan {
                             }),
                             arms: vec![
                                 crate::parser::ast::MatchArm {
+                                    guard: None,
                                     pattern: crate::parser::ast::Pattern::Variant {
                                         name: "$when.option.Some".into(),
                                         binding: Some(Box::new(
@@ -236,6 +237,7 @@ impl FunctionPlan {
                                     span,
                                 },
                                 crate::parser::ast::MatchArm {
+                                    guard: None,
                                     pattern: crate::parser::ast::Pattern::Variant {
                                         name: "$when.option.None".into(),
                                         binding: None,

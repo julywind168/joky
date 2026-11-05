@@ -488,6 +488,15 @@ fn resolve_calls(
                     pattern.names(&mut names);
                     branch.extend(names);
                 }
+                if let Some(guard) = &mut arm.guard {
+                    resolve_calls(
+                        guard,
+                        functions,
+                        member_roots,
+                        call_forms,
+                        &mut branch.clone(),
+                    )?;
+                }
                 resolve_calls(
                     &mut arm.body,
                     functions,

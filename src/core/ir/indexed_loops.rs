@@ -527,6 +527,18 @@ impl Inference<'_> {
                             return Err(());
                         }
                     }
+                    if let Some(guard) = &arm.guard {
+                        let mut preview = local.clone();
+                        if let Some((ty, _)) = &matched {
+                            if let Ok(pattern) =
+                                self.plan.check_match_pattern(&arm.pattern, ty, self.types)
+                            {
+                                pattern.hints(&mut preview, Some(false));
+                            }
+                        }
+                        depends |=
+                            descend(guard, &mut preview, &mut names.clone(), Some(&Type::Bool))?;
+                    }
                     hints.push(self.hint(&arm.body, &local));
                     depends |= descend(&arm.body, &mut local, &mut names, ty.as_ref())?;
                 }

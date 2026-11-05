@@ -25,10 +25,17 @@ impl Parser<'_> {
                     "Or-patterns (`a | b`) are not supported; use separate match arms".into(),
                 ));
             }
+            let guard = if self.peek() == &TokenKind::If {
+                self.advance();
+                Some(self.parse_assignment()?)
+            } else {
+                None
+            };
             self.expect(&TokenKind::FatArrow)?;
             let body = self.parse_sequence(true)?;
             arms.push(MatchArm {
                 pattern,
+                guard,
                 body,
                 span: self.span(arm_start, self.last_span.end()),
             });
@@ -57,6 +64,7 @@ impl Parser<'_> {
                 | TokenKind::True
                 | TokenKind::False
                 | TokenKind::CharLit(_)
+                | TokenKind::StrLit(_)
         ) {
             return self
                 .parse_match_payload_pattern()
@@ -116,11 +124,13 @@ impl Parser<'_> {
             value: Box::new(value),
             arms: vec![
                 MatchArm {
+                    guard: None,
                     span: success.span(),
                     pattern,
                     body: success,
                 },
                 MatchArm {
+                    guard: None,
                     span: fallback.span(),
                     pattern: Pattern::Wildcard { span },
                     body: fallback,

@@ -281,7 +281,7 @@ while / if 条件中的序列使用括号，例如 `while (advance(); ready()) {
 `if let Pattern = value` 与 `while let Pattern = value` 复用枚举 `match` 模式与移动/借用规则。
 `if let` 只匹配一次，成功绑定只在 then 块有效；支持 else 与 else if let，分支结果规则与 if 一致。
 `while let` 每轮重新求值，失败退出；绑定限本轮，循环返回 Unit，支持 break / continue / return。
-右侧和成功块可挂起，恢复时不重放副作用；尚无 `&&` 模式链、守卫或顶层非枚举解构。
+右侧和成功块可挂起，恢复时不重放副作用；尚无 `&&` 模式链或顶层非枚举解构；附加条件可用 match 守卫。
 
 普通二元运算、调用实参按从左到右求值；已经读取的 Int32 等值不受后续赋值影响。
 引用是对原值的访问能力，不会自动复制其指向的数据；冲突访问由借用检查拒绝。
@@ -785,7 +785,7 @@ Array 与 Slice 提供返回 Option 的受检访问，不把越界转换成一�
 载荷支持 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Ptr / 共享引用及 Copy 或拥有型记录、枚举、元组与 Array；
 拥有型实例禁止混入引用，单个载荷可用记录或元组组合多个值。
 match 支持递归载荷模式，包括元组、嵌套枚举和 `_`；共享借用匹配将拥有载荷绑定为 `&T`、Copy 载荷绑定为快照，保留原值。
-独占匹配把每个载荷绑定为 `&mut T`，递归模式支持不重叠成员的同时借用；支持整数、Bool、Rune 和序列模式，暂不含 guard。
+独占匹配把每个载荷绑定为 `&mut T`，递归模式支持不重叠成员的同时借用；支持整数、Bool、Rune、String 和序列模式；match 守卫先以共享视图检查绑定，通过后再取得可变载荷。
 解析边界、存储成本、限额及完整规则见[当前枚举语义](language.md#枚举与模式匹配)。
 以下 Option / Result 声明已可编译，实例支持 Copy 或拥有型载荷，包括 String 和 StringBuilder；动态数据模型仍依赖后续能力：
 
@@ -816,8 +816,8 @@ fn present(result: Result<Int32, String>) -> String {
 
 整数 `to_string` 由文本库提供。match 是表达式，要求穷尽所有情况，
 正常完成的分支具有相同结果类型；不提供隐式贯穿。返回、失败等终止分支不参与结果类型合并。
-已实现整数/Bool/Rune 字面量、整数范围、序列、绑定、`_`、元组和枚举构造模式；`_` 覆盖尚未列举的情况。
-分支书写为 `pattern => expression`，多步分支可用块或括号序列，不要求尾随分号。相邻分支必须用逗号或真实换行分隔，块分支也遵循同一规则；允许尾逗号。
+已实现整数/Bool/Rune/String 字面量、整数范围、序列、绑定、`_`、元组和枚举构造模式；`_` 覆盖尚未列举的情况。
+分支书写为 `pattern => expression` 或 `pattern if condition => expression`，多步分支可用块或括号序列，不要求尾随分号。相邻分支必须用逗号或真实换行分隔，块分支也遵循同一规则；允许尾逗号。
 目标设计中同名构造项由被匹配类型或期望类型确定，无法唯一确定时需写 `Result.Ok` 等限定名。
 
 按值匹配会消费非 Copy 的被匹配值；匹配 `&value` 时，载荷绑定获得共享借用，
@@ -1204,16 +1204,18 @@ TaskScope    = "scope", Block ;
 Isolate      = "isolate", Block ;
 TaskBranch   = "branch", Block ;
 Match        = "match", NonSequence, "{", [ MatchArm, { BracedSep, MatchArm }, [ "," ] ], "}" ;
-MatchArm     = Pattern, "=>", Expression ;
+MatchArm     = Pattern, [ "if", NonSequence ], "=>", Expression ;
 BracedSep    = "," | Newline ;
 Pattern      = "_" | Name, [ "(", PayloadPattern, [ "," ], ")" ] | ScalarPattern | SequencePattern ;
 PayloadPattern = "_" | Name | Name, "(", PayloadPattern, [ "," ], ")"
                | "(", PayloadPattern, ",", [ PayloadPattern, { ",", PayloadPattern }, [ "," ] ], ")"
                | RecordPattern | ScalarPattern | SequencePattern ;
-ScalarPattern = [ "-" ], Integer | "true" | "false" | Rune ;
+ScalarPattern = [ "-" ], Integer | "true" | "false" | Rune | StringLiteral ;
 SequencePattern = "[", [ SequenceEntry, { ",", SequenceEntry }, [ "," ] ], "]" ;
 SequenceEntry = PayloadPattern | "..", [ Identifier ] ;
 ```
+
+模式中的 StringLiteral 不允许插值孔；守卫须返回 Bool，且不计入穷尽覆盖。
 
 字段默认私有，`pub` 修饰后跨模块可见；旧 `private` 修饰已拒绝并给出迁移诊断，
 `private: Int32` 仍是名为 private 的普通字段。

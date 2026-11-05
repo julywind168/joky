@@ -32,11 +32,13 @@ fn parse(line: String) -> Command {
     let argument = if separator < line.byte_length() {
         line.substring(separator + 1, line.byte_length())!
     } else { "" }
-    if verb == "join" && !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() { Command.Join(argument) }
-    else if line == "balance" { Command.Balance }
-    else if line == "leave" { Command.Leave }
-    else if verb == "say" && !argument.is_empty() { Command.Say(argument) }
-    else { Command.Invalid }
+    match verb {
+        "join" if !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() => Command.Join(argument),
+        "balance" if separator == line.byte_length() => Command.Balance,
+        "leave" if separator == line.byte_length() => Command.Leave,
+        "say" if !argument.is_empty() => Command.Say(argument),
+        _ => Command.Invalid
+    }
 }
 fn dispatch(call: Call) @suspends -> Bool {
     let Call { host, id, line } = call

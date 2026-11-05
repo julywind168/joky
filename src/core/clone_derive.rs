@@ -211,6 +211,7 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
                         }
                         let has_payload = v.payload.is_some();
                         MatchArm {
+                            guard: None,
                             pattern: Pattern::Variant {
                                 name: format!("{name}.{}", v.name),
                                 binding: has_payload.then(|| {

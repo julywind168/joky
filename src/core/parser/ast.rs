@@ -1223,6 +1223,7 @@ pub struct VariantDef {
 #[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub guard: Option<Expr>,
     pub body: Expr,
     pub span: Span,
 }
@@ -1513,7 +1514,10 @@ impl Expr {
                 .chain(else_branch.iter().map(Box::as_ref))
                 .collect(),
             Expr::Match { value, arms, .. } => std::iter::once(value.as_ref())
-                .chain(arms.iter().map(|a| &a.body))
+                .chain(
+                    arms.iter()
+                        .flat_map(|a| a.guard.iter().chain(std::iter::once(&a.body))),
+                )
                 .collect(),
             Expr::Record { fields, base, .. } => fields
                 .iter()

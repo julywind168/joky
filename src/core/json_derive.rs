@@ -149,6 +149,7 @@ fn propagate(value: Expr, result: &str, span: Span) -> Expr {
         value: Box::new(value),
         arms: vec![
             MatchArm {
+                guard: None,
                 pattern: Pattern::Variant {
                     name: format!("{result}.Result.Ok"),
                     binding: Some(Box::new(PayloadPattern::Name {
@@ -161,6 +162,7 @@ fn propagate(value: Expr, result: &str, span: Span) -> Expr {
                 span,
             },
             MatchArm {
+                guard: None,
                 pattern: Pattern::Variant {
                     name: format!("{result}.Result.Err"),
                     binding: Some(Box::new(PayloadPattern::Name {

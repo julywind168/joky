@@ -99,6 +99,8 @@ fn enums_and_match_preserve_spans_and_sequence_boundaries() {
         "fn f(e: E) { match e { A => match e { _ => 1 }, _ => 2 } }",
         "fn f(e: E) { match e { A(B(x)) => x } }",
         "fn f(e: E) { match e { _ => true || false } }",
+        "fn f(e: E) { match e { A(x) if x > 0 => x } }",
+        r#"fn f(s: String) { match s { "join" if true => 1, _ => 0 } }"#,
         "fn f() { E.Value(1; 2) }",
     ] {
         assert!(parse(source).is_ok(), "{source}");
@@ -115,7 +117,7 @@ fn enums_and_match_preserve_spans_and_sequence_boundaries() {
         "fn f(e: E) { match e { | A => 1 } }",
         "fn f(e: E) { match e { A() => 1 } }",
         "fn f(e: E) { match e { A(x, y) => x } }",
-        "fn f(e: E) { match e { A(x) if x > 0 => x } }",
+        "fn f(e: E) { match e { A(x) if => x } }",
         "fn f(e: E) { match e { _ => } }",
         "fn f(e: E) { match e { | 1 => 0 } }",
         "fn f(e: E) { match e { | A = 1 } }",

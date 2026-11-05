@@ -64,7 +64,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 | P1 | Option/Result 补 `ok_or`/`expect`/`map_or`/`filter`/`inspect_err` | §6.3 |
 | P1 | 结构化日志字段的泛型入口与级别快捷方法 | §6.5 |
 | 已核验 | 保留 Int32 默认与显式跨类型转换；表达式内字面量推导已支持，冗余 range 转换已清理 | §5.4 |
-| P1 | 字符串字面量模式、match 守卫 | §5.5 |
+| 已完成 | 字符串字面量模式、match 守卫 | §5.5 |
 | P2 | `Result?` 的自动错误转换（推迟至泛型 trait 设计） | §4.1 |
 | P2 | 关键词：`when`、`branch`、`var`/`mut` 双拼写、`Unit` 写作 `{}` | §5 |
 | P2 | 命名一致性：构造器、缩写、访问器族、`release` | §10 |
@@ -176,11 +176,11 @@ Copy／拥有型 struct 已支持 `Options { field: value, ..base }`，可直接
 
 ### 5.5 模式匹配
 
-- 不支持字符串字面量模式与 match 守卫（language.md「枚举与模式匹配」「条件模式与模式循环」）。
-  后端代码大量按字符串分派：HTTP 方法、命令动词、标头值、配置项。chat 的 `parse()` 与 admin 的命令
-  分派只能写成 `if verb == "join" && ... else if line == "balance"` 链。建议优先支持
-  `match verb { "join" => ..., "say" => ..., _ => ... }` 与 `Some(k) if k.byte_length() <= 128 => ...`。
-- `if let` 不支持 `&&` 链；可与守卫一同设计。
+- 已支持字符串字面量模式与 `pattern if condition => body` 守卫，覆盖按值及借用匹配、嵌套载荷和序列。
+  字符串按 UTF-8 内容精确比较；守卫先以共享视图检查绑定，通过后才移动拥有载荷或取得可变引用。
+  带守卫的分支不计入穷尽覆盖，需保留无守卫兜底。
+- chat 的 `parse()` 与 admin 命令分派已改为字符串 match；附加条件直接放在分支守卫中。
+- `if let` / `while let` 的 `&&` 模式链暂缓，当前可用 match 守卫表达附加条件。
 
 ### 5.6 其他
 
@@ -443,7 +443,7 @@ fn main() @suspends -> Int32 {
 }
 ```
 
-注：`Some(k) if ...` 依赖 §5.5 的 match 守卫，当前未支持；`transaction` 闭包内 `return` 返回闭包本身，与现有闭包规则一致。
+注：`Some(k) if ...` 使用 §5.5 已实现的 match 守卫；`transaction` 闭包内 `return` 返回闭包本身，与现有闭包规则一致。
 
 ## 12. 建议实施顺序
 
@@ -454,7 +454,7 @@ fn main() @suspends -> Int32 {
    `shutdown.with_signals`。均为标准库源码改动，不涉及编译器。
 3. **PostgreSQL 便利层**：Value 变体改名、按列名读取、`get::<T>`、timestamptz/uuid/jsonb、
    `pool.transaction`、Options。
-4. **语言特性**：调试协议及派生、Default 派生、字符串字面量模式与守卫、
+4. **语言特性**：调试协议及派生、Default 派生、字符串字面量模式与守卫（已完成）、
    `ToSql` 隐式装箱、非 pub 函数 `@suspends` 推导。
    每项按 AGENTS.md 的跨模块语义改动要求单独设计与验证。
 5. **关键词与命名迁移**（`when`→`atomic`、`branch`→`spawn`、`var`/`mut` 统一、

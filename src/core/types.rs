@@ -1343,6 +1343,7 @@ pub(crate) fn resolve_pattern_heads(
                         }
                     }
                     for arm in arms.iter_mut() {
+                        pending.extend(arm.guard.iter_mut());
                         pending.push(&mut arm.body);
                     }
                 }
@@ -1519,6 +1520,9 @@ pub(crate) fn map_syntax(
                 }
             }
             for arm in arms.iter_mut() {
+                if let Some(guard) = &mut arm.guard {
+                    map_syntax(guard, map, substitutions)?;
+                }
                 map_syntax(&mut arm.body, map, substitutions)?;
             }
         }

@@ -484,6 +484,11 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                         }
                     }
                     scopes.last_mut().expect("outermost layer").extend(names);
+                    if let Some(guard) = &arm.guard {
+                        scopes.push(std::collections::HashSet::new());
+                        visit(guard, scopes, walk);
+                        scopes.pop();
+                    }
                     visit(&arm.body, scopes, walk);
                     scopes.pop();
                 }

@@ -393,13 +393,13 @@ impl FunctionPlan {
         span: Span,
     ) -> Result<(Type, Option<bool>), Error> {
         match ty {
-            Type::Enum(_) | Type::Tuple(_) | Type::FixedArray(_) | Type::Bool | Type::Rune => Ok((ty.clone(), None)),
+            Type::Enum(_) | Type::Tuple(_) | Type::FixedArray(_) | Type::Bool | Type::Rune | Type::String => Ok((ty.clone(), None)),
             _ if ty.integer().is_some() || matches!(ty, Type::Record(r) if r.array) => {
                 Ok((ty.clone(), None))
             }
             Type::Reference(r) => {
                 let target = self.pointee(&r.target, types)?;
-                if matches!(target, Type::Enum(_) | Type::Tuple(_) | Type::Bool | Type::Rune)
+                if matches!(target, Type::Enum(_) | Type::Tuple(_) | Type::Bool | Type::Rune | Type::String)
                     || target.integer().is_some()
                     || super::arrays::element_type(&target).is_some()
                 {
@@ -408,13 +408,13 @@ impl FunctionPlan {
                 Err(type_error(
                     &span,
                     ErrorCode::TypeMismatch,
-                    "match requires an enum, tuple, integer, Bool, Rune, or sequence value or reference",
+                    "match requires an enum, tuple, integer, Bool, Rune, String, or sequence value or reference",
                 ))
             }
             _ => Err(type_error(
                 &span,
                 ErrorCode::TypeMismatch,
-                "match requires an enum, tuple, integer, Bool, Rune, or sequence value or reference",
+                "match requires an enum, tuple, integer, Bool, Rune, String, or sequence value or reference",
             )),
         }
     }
@@ -527,6 +527,71 @@ impl FunctionPlan {
             self.local_scopes.push(Vec::new());
             if value.ty.is_owner() || value.ty.is_place() {
                 self.local_scopes.last_mut().unwrap().push(value.clone());
+            }
+            if let Some(guard) = &arm.guard {
+                // Preview bindings through a shared borrow. Only the selected
+                // arm may detach owners or acquire mutable payload references.
+                self.local_scopes.push(Vec::new());
+                let root = if borrowed.is_some() {
+                    let root = self.slot(Type::reference(matched_type.clone(), false))?;
+                    self.emit(Op::Reference {
+                        dst: root.clone(),
+                        src: value.clone(),
+                        moving: false,
+                    });
+                    root
+                } else if value.ty.is_inline_owner() && !value.ty.is_place() {
+                    // A mixed owner borrows its inline storage, not its first
+                    // owning lane. This read-only preview leaves cleanup and
+                    // eventual detachment attached to the original value.
+                    let place = self.slot(Type::reference(value.ty.clone(), false))?;
+                    self.emit(Op::Local {
+                        dst: place.clone(),
+                        value: Some(value.clone()),
+                        target: value.ty.clone(),
+                    });
+                    self.local_scopes.last_mut().unwrap().push(place.clone());
+                    let root = self.slot(Type::reference(value.ty.clone(), false))?;
+                    self.emit(Op::Buffer(BufferOp::Borrow {
+                        reservation: false,
+                        dst: root.clone(),
+                        src: value.clone(),
+                        place: Some(place),
+                    }));
+                    root
+                } else {
+                    self.sequence_value_reference(&value, false)?
+                };
+                let mut preview = vars.clone();
+                self.bind_borrowed_pattern(
+                    &pattern,
+                    &root,
+                    0,
+                    &mut Vec::new(),
+                    false,
+                    &mut preview,
+                )?;
+                let condition = self.expr(guard, &mut preview, functions, suspends, types)?;
+                let Flow::Value(condition) = condition else {
+                    return Err(unreachable_error(&arm.body));
+                };
+                if slot_type(&condition) != Type::Bool {
+                    return Err(type_error(
+                        &guard.span(),
+                        ErrorCode::TypeMismatch,
+                        "match guard must be Bool",
+                    ));
+                }
+                let condition = self.snapshot(&condition)?.unwrap();
+                self.end_local_scope();
+                let selected = self.label_count;
+                self.label_count += 1;
+                self.emit(Op::Branch {
+                    condition,
+                    then_label: selected,
+                    else_label: next.expect("guarded arm requires a fallback"),
+                });
+                self.emit(Op::Label(selected));
             }
             if borrowed.is_some() {
                 self.bind_borrowed_pattern(

@@ -18,9 +18,11 @@ fn connection(engine: &vm.Vm, path: &String, stream: TcpStream) @suspends -> Boo
     while true {
         let command = match stream.read_line(128) { Ok(Some(line)) => line, _ => return false }
         let shutdown = command == "shutdown"
-        let reply = if shutdown { "shutting down\n" }
-            else if command == "reload" { reload(engine, path) }
-            else { "error use reload or shutdown\n" }
+        let reply = match command {
+            "shutdown" => "shutting down\n",
+            "reload" => reload(engine, path),
+            _ => "error use reload or shutdown\n"
+        }
         let written = stream.write_all(reply.into_bytes()).is_ok()
         // Once accepted, shutdown proceeds even if the administrator disconnects.
         if shutdown { return true }

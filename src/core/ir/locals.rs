@@ -191,7 +191,10 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
             }
             Expr::Match { value, arms, .. } => {
                 pending.push(value);
-                pending.extend(arms.iter().map(|arm| &arm.body));
+                pending.extend(
+                    arms.iter()
+                        .flat_map(|arm| arm.guard.iter().chain(std::iter::once(&arm.body))),
+                );
             }
             Expr::Record { fields, base, .. } => {
                 pending.extend(fields.iter().map(|field| &field.value));

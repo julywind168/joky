@@ -108,6 +108,9 @@ fn walk_free(
                         p.names(&mut names);
                         inner.extend(names);
                     }
+                    if let Some(guard) = &arm.guard {
+                        descend(guard, &mut inner.clone())?;
+                    }
                     descend(&arm.body, &mut inner)?;
                 }
             }
