@@ -3787,6 +3787,12 @@ Item 可以是受支持的普通值或拥有值；每项的移动、忽略、失
 不再调用源或回调。zip 右源先结束时，本轮已经取得的左项会被清理；不保证左源零额外消费。
 提前 break、return、失败或丢弃组合器会清理剩余输入和回调环境。
 
+`iter.count(input) -> UInt64` 与 `iter.fold(input, initial, combine) -> A` 是立即执行的终结操作：
+输入按值转换一次 IntoIterator，按顺序读取剩余元素，到第一个 None 停止并清理迭代状态。
+count 消费并清理每项；fold 接受 `FnMut(A, Item) -> A`，逐次移动累积值和元素到回调，
+支持拥有型元素、拥有型累积值与可变捕获。空输入分别返回 0 和原 initial，不调用 fold 回调。
+两者不创建中间数组；count 超出 UInt64 范围按普通整数溢出报错，不回绕。
+
 ```joky
 import joky/iter
 import joky/io.{println}
@@ -3915,6 +3921,8 @@ Array 的 `values.iter_shared()` / `array.iter_shared(&values)` 返回
 | `iter.filter_shared(input, predicate)` | 按原顺序保留满足条件的共享元素；输入元素须为 `&T` |
 | `iter.zip_shared(left, right)` | 返回两侧元素的元组，任一侧结束即永久耗尽；先推进左侧 |
 | `iter.step_shared(input)` | 返回 `(后继状态, Option<元素>)`，用于显式推进和泛型 helper |
+| `iter.count_shared(input) -> UInt64` | 立即遍历该共享状态副本并计数，不消费原容器 |
+| `iter.fold_shared(input, initial, combine) -> A` | 按顺序累积共享元素；空输入返回原 initial |
 
 ```joky
 import joky/array.{type Array}
@@ -3960,6 +3968,10 @@ filter_shared 接收 `fn(&T) @noescape -> Bool`，仅允许同步、不保存参
   修改捕获变量的 FnMut 闭包和拥有型 move 环境不满足此接口的 Copy + Fn 要求。
 - map 后可继续 filter、take 或 zip；此时回调接收转换后的值。
 - take/zip 保留既有共享组合规则；zip 接收另一个 SharedPipeline。
+- `.count() -> UInt64` / `.fold(initial, combine) -> A` 立即遍历当前管线副本，到第一个 None 停止。
+  fold 接受 `FnMut(A, Item) @noescape -> A`，A 必须不含引用，支持拥有型累积值与可变捕获；回调不能保存或返回参数中的借用。
+  例如可复制文本内容至 StringBuilder，但不能把借用元素收集进结果。count 和 fold 都不消费原容器；
+  空管线返回 0 或原 initial。底层对应 count_shared / fold_shared，累计项数为 UInt64。
 - 构造与组合不执行回调，也不创建中间数组。每次推进才按方法顺序执行；
   第一次 None 后永久耗尽。take(0) 不推进输入，失败与提前退出沿普通清理路径处理。
 - 状态可复制，但所有副本仍借用原容器；最后使用结束后才允许修改原容器。

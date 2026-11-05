@@ -285,6 +285,7 @@ fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
             ),
             ("cleanup", vec![1, 2, 3, 9]),
             ("zip_cleanup", vec![1, 3, 2]),
+            ("terminal_cleanup", vec![1, 2, 9, 3, 4]),
         ] {
             EVENTS.with(|events| events.borrow_mut().clear());
             vm.call_unit_0(name).unwrap();
@@ -294,7 +295,7 @@ fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
         EVENTS.with(|events| events.borrow_mut().clear());
         assert_eq!(vm.call_int32_0("early").unwrap(), 1);
         EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 9]));
-        for name in ["fail_map", "fail_filter"] {
+        for name in ["fail_map", "fail_filter", "fail_fold"] {
             EVENTS.with(|events| events.borrow_mut().clear());
             let error = vm.call_unit_0(name).unwrap_err();
             assert!(error.to_string().contains("callback failure"), "{error}");
@@ -338,7 +339,7 @@ fn iterator_adapters_reject_borrow_escape_consuming_callbacks_and_suspension() {
 fn adapter_cancellation(sweep: CancellationSweep) {
     let mut vm = parity_vm_with_prelude(ADAPTERS, VmMode::Interpreter, false);
     // Include synchronous closure frames reached from a suspending entry.
-    for entry in ["pending", "sync_pending"] {
+    for entry in ["pending", "sync_pending", "terminal_pending"] {
         assert_cancellation(
             &mut vm,
             entry,
@@ -460,6 +461,8 @@ fn shared_pipeline_chains_map_plain_results_and_preserve_lazy_borrowing() {
 #[test]
 fn shared_pipeline_rejects_nonplain_results_retaining_callbacks_and_owner_invalidation() {
     for source in [
+        "fn bad() { let a = [\"a\"]; iter.shared(&a).fold(0, |acc, value| { alloc(value); acc }) }",
+        "fn bad() { let a = [1]; let n = 0; iter.shared(&a).take(0).fold(&n, |acc, value| { acc }) }",
         "fn f(value: &String) @noescape -> String { \"new\" } fn bad() { let a = [\"a\"]; for _ in iter.shared(&a).map(f) {} }",
         "fn f(value: &String) -> &String { value } fn bad() { let a = [\"a\"]; for _ in iter.shared(&a).map(f) {} }",
         "fn f(value: &Int32) @noescape -> &Int32 { alloc(1) } fn bad() { let a = [1]; for _ in iter.shared(&a).map(f) {} }",

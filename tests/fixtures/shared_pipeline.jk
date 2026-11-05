@@ -1,7 +1,7 @@
 import joky/array.{type Array}
 import joky/check.{assert, panic}
 import joky/iter
-import joky/string
+import joky/string.{type StringBuilder}
 
 extern fn record(value: Int32) -> Int32
 fn keep(value: &String) @noescape -> Bool {
@@ -20,12 +20,33 @@ fn measure(value: &String) @noescape -> Measure {
 fn discard(value: &String) @noescape { }
 fn failed_length(value: &String) @noescape -> UInt64 { panic("pipeline callback failed") }
 fn count<I: Copy + iter.SharedIterator>(values: I) -> UInt64 {
-    var total: UInt64 = 0
-    for _ in values { total += 1 }
-    total
+    iter.count_shared(values)
 }
 fn compute() -> Int32 {
     var names = ["Alice", "", "Bob", "Carol"]
+    assert(iter.shared(&names).filter(|name| { name != "" }).count() == 3, "filtered count")
+    assert(iter.shared(&names).take(0).fold(42, |acc, name| { assert(false, "empty fold"); acc }) == 42, "empty fold")
+    let built = iter.shared(&names).take(1).fold(StringBuilder.new(), |var acc, name| {
+        acc.push_str(name)
+        acc
+    })
+    let text = built.finish()
+    assert(text == "Alice", "owning accumulator")
+    let suffix = "!"
+    let built = iter.fold_shared(names.iter_shared(), StringBuilder.new(), |var acc, name| {
+        acc.push_str(name)
+        acc.push_str(&suffix)
+        acc
+    })
+    suffix.release()
+    let text = built.finish()
+    assert(text == "Alice!!Bob!Carol!", "captured fold")
+    assert(iter.fold_shared(names.iter_shared(), 0, |acc, name| { acc + int32(name.byte_length()) }) == 13, "shared fold")
+    let digits = [1, 2, 3]
+    assert(iter.shared(&digits).map(|n| { *n }).fold(0, |acc, n| { acc * 10 + n }) == 123, "ordered mapped fold")
+    var calls = 0
+    assert(iter.shared(&digits).fold(0, |acc, n| { calls += 1; acc + *n }) == 6, "mutable fold capture")
+    assert(calls == 3, "fold callback count")
     let values = iter.shared(&names).map(measure).take(1)
     for value in values { assert(value.size == 5 && value.present, "Copy record output") }
     assert(count(values) == 1, "shared state is Copy")

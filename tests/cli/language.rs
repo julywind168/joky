@@ -3010,6 +3010,8 @@ fn iterator_adapters_execute_and_clean_up_in_standalone_aot() {
         ),
         ("map_failure", "fn main() { fail_map() }", "1\n2\n9\n", Some("Map callback failure")),
         ("filter_failure", "fn main() { fail_filter() }", "1\n2\n9\n", Some("Filter callback failure")),
+        ("terminals", "fn main() { terminal_cleanup() }", "1\n2\n9\n3\n4\n", None),
+        ("fold_failure", "fn main() { fail_fold() }", "1\n2\n9\n", Some("Fold callback failure")),
     ] {
         let file = format!("{name}.jk");
         work.write(&file, &format!("{source}\n{entry}"));

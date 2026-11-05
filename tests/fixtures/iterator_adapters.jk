@@ -4,6 +4,7 @@ import joky/option.{type Option, Some, None}
 import joky/array.{type Array}
 import joky/check.{assert}
 import joky/drop.{type Drop}
+import joky/string.{type StringBuilder}
 extern fn record(x: Int32) -> Int32
 fn expect(ok: Bool) { assert(ok, "Iterator adapter mismatch") }
 
@@ -33,6 +34,16 @@ fn sum<I: IntoIterator>(input: I) -> Int32 {
     n
 }
 fn compute() -> Int32 {
+    expect(iter.count(0..0) == 0)
+    expect(iter.count(iter.filter(0..5, even)) == 3)
+    expect(iter.fold(1..4, 0, |acc, value| { acc * 10 + value }) == 123)
+    expect(iter.fold(0..0, 42, |acc, value| { assert(false, "empty fold"); acc }) == 42)
+    var calls = 0
+    expect(iter.fold([1, 2, 3], 0, |acc, value| { calls += 1; acc + value }) == 6)
+    expect(calls == 3)
+    let built = iter.fold(["a", "中", "🙂"], StringBuilder.new(), |var acc, value| { acc.push_str(&value); acc })
+    let text = built.finish()
+    expect(text == "a中🙂")
     let zero = iter.take(0..10, 0)
     expect(sum(zero) == 0)
     expect(sum(iter.take(0..2, 18446744073709551615)) == 2)
@@ -91,6 +102,19 @@ fn cleanup() {
     let selected = iter.filter(mapped, move |value| { value.id != 1 })
     for value in iter.take(selected, 1) { expect(value.id == 2) }
 }
+fn terminal_cleanup() {
+    expect(iter.count([owned(1), owned(2)]) == 2)
+    let result = iter.fold([owned(3), owned(4)], owned(9), |acc, value| { value })
+    expect(result.id == 4)
+}
+fn fail_fold() {
+    let capture = owned(9)
+    iter.fold([owned(1), owned(2)], 0, move |acc, value| {
+        expect(capture.id == 9)
+        assert(false, "Fold callback failure")
+        acc + value.id
+    });
+}
 fn zip_cleanup() {
     for _ in iter.zip([owned(1), owned(2)], [owned(3)]) {}
 }
@@ -125,6 +149,7 @@ fn pending() @suspends -> Int32 {
     42
 }
 fn sync_pending() @suspends -> Int32 { cleanup(); 42 }
+fn terminal_pending() @suspends -> Int32 { terminal_cleanup(); 42 }
 struct Counter { value: Int32 }
 struct Mixed { counter: Counter, items: Array<Int32> }
 fn field(mixed: &Mixed) -> &Int32 { &mixed.counter.value }

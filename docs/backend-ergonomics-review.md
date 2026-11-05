@@ -230,12 +230,14 @@ Array 已补 `retain` 方法与模块函数：同步借用元素判断，原地�
 Array 已补 `dedup` 方法与模块函数：以 Eq 合并相邻重复项，保留每组第一项；
 原地保序、容量不变，支持拥有型元素，重复项在截断阶段销毁。
 `Array<String>.join(&separator)` 已复用 string.join，借用输入并返回独立字符串。
+迭代器已补 count / fold：拥有型入口 iter.count / iter.fold，共享入口 count_shared / fold_shared，
+SharedPipeline 提供同名终结方法；支持拥有型累积值，按顺序处理，到第一个 None 停止。
 
 后续分批推进：
 
 - Array：`extend_from(&slice)`，先明确元素移动、销毁与复制约定。
 - 迭代器：已有拥有型 Iterator、共享 SharedIterator 与独占游标组合入口；
-  先补 `count`、`fold`、`enumerate`、`skip`、`chain`，再考虑 sum、collect、flat_map。
+  后续补 `enumerate`、`skip`、`chain`，再考虑 sum、collect、flat_map；独占游标终结操作另行推进。
   新操作需明确适用的迭代入口；for 的 `index, item` 已提供直接遍历编号。
 - 访问器：get 的 Copy 取值与 get_ref 的共享借用语义先保留，文档优先推荐下标及显式借用。
   访问器还区分复制值、共享借用、独占借用，不能仅按“可能没有 / 一定有”合并。

@@ -26,6 +26,23 @@ pub fn next<I: Iterator>(iterator: &mut I) @noescape -> Option<I.Item> {
     Iterator.next(iterator)
 }
 
+// Terminal operations stop at the first None and clean up the consumed state.
+pub fn count<I: IntoIterator>(input: I) -> UInt64 {
+    var source = IntoIterator.into_iter(input)
+    var total: UInt64 = 0
+    while Iterator.next(&mut source).is_some() { total += 1 }
+    total
+}
+pub fn fold<I: IntoIterator, A, F: FnMut(A, I.IntoIter.Item) -> A>(input: I, var initial: A, var combine: F) -> A {
+    var source = IntoIterator.into_iter(input)
+    while true {
+        match Iterator.next(&mut source) {
+            Some(value) => { initial = (&mut combine)(initial, value) }
+            None => { return initial }
+        }
+    }
+}
+
 // Adapters own their inputs and stop permanently after the first None.
 pub struct Take<I> { source: I, remaining: UInt64 }
 pub fn take<I: IntoIterator>(input: I, count: UInt64) -> Take<I.IntoIter> {
@@ -193,6 +210,27 @@ pub fn step_shared<I: Copy + SharedIterator>(input: I) -> (I, Option<I.Item>) {
     SharedIterator.step(input)
 }
 
+pub fn count_shared<I: Copy + SharedIterator>(var input: I) -> UInt64 {
+    var total: UInt64 = 0
+    while true {
+        let (next, value) = SharedIterator.step(input)
+        input = next
+        if value.is_none() { return total }
+        total += 1
+    }
+}
+pub fn fold_shared<I: Copy + SharedIterator, A, F: FnMut(A, I.Item) @noescape -> A>(var input: I, var initial: A, var combine: F) @noescape(combine) -> A {
+    types.require_reference_free::<A>()
+    while true {
+        let (next, value) = SharedIterator.step(input)
+        input = next
+        match value {
+            Some(value) => { initial = (&mut combine)(initial, value) }
+            None => { return initial }
+        }
+    }
+}
+
 pub struct SharedTake<I: Copy> { source: I, remaining: UInt64 }
 pub fn take_shared<I: Copy + SharedIterator>(input: I, count: UInt64) -> SharedTake<I> {
     SharedTake { source: input, remaining: count }
@@ -277,6 +315,19 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedIterator for SharedPipel
     }
 }
 impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
+    pub fn count(self) -> UInt64 { count_shared(self.source) }
+    pub fn fold<A, F: FnMut(A, T) @noescape -> A>(self, var initial: A, var combine: F) @noescape(combine) -> A {
+        types.require_reference_free::<A>()
+        var source = self.source
+        while true {
+            let (next, value) = SharedIterator.step(source)
+            source = next
+            match value {
+                Some(value) => { initial = (&mut combine)(initial, value) }
+                None => { return initial }
+            }
+        }
+    }
     pub fn take(self, count: UInt64) -> SharedPipeline<SharedTake<I>, T> {
         SharedPipeline { source: take_shared(self.source, count) }
     }
