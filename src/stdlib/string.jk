@@ -261,6 +261,13 @@ impl String {
     pub fn find(&self, needle: &String) -> Option<UInt64> { find(self, needle) }
     pub fn starts_with(&self, prefix: &String) -> Bool { starts_with(self, prefix) }
     pub fn ends_with(&self, suffix: &String) -> Bool { ends_with(self, suffix) }
+    pub fn contains(&self, needle: &String) -> Bool { contains(self, needle) }
+    pub fn split_once(&self, separator: &String) -> Option<(String, String)> { split_once(self, separator) }
+    pub fn strip_prefix(&self, prefix: &String) -> Option<String> { strip_prefix(self, prefix) }
+    pub fn strip_suffix(&self, suffix: &String) -> Option<String> { strip_suffix(self, suffix) }
+    pub fn trim(&self) -> String { trim(self) }
+    pub fn trim_start(&self) -> String { trim_start(self) }
+    pub fn trim_end(&self) -> String { trim_end(self) }
 }
 
 pub fn new() -> String { "" }
@@ -308,4 +315,55 @@ pub fn find(text: &String, needle: &String) -> Option<UInt64> {
         offset = offset + 1
     }
     None
+}
+
+pub fn contains(text: &String, needle: &String) -> Bool { find(text, needle).is_some() }
+pub fn split_once(text: &String, separator: &String) -> Option<(String, String)> {
+    let offset = find(text, separator)?
+    Some((substring(text, 0, offset)!, substring(text, offset + byte_length(separator), byte_length(text))!))
+}
+pub fn strip_prefix(text: &String, prefix: &String) -> Option<String> {
+    if starts_with(text, prefix) { substring(text, byte_length(prefix), byte_length(text)) } else { None }
+}
+pub fn strip_suffix(text: &String, suffix: &String) -> Option<String> {
+    if ends_with(text, suffix) { substring(text, 0, byte_length(text) - byte_length(suffix)) } else { None }
+}
+
+// Unicode White_Space; zero-width space and the byte order mark are not whitespace.
+fn whitespace(rune: Rune) -> Bool {
+    let value = rune.to_u32()
+    (value >= 0x09 && value <= 0x0d) || value == 0x20 || value == 0x85 ||
+    value == 0xa0 || value == 0x1680 || (value >= 0x2000 && value <= 0x200a) ||
+    value == 0x2028 || value == 0x2029 || value == 0x202f || value == 0x205f || value == 0x3000
+}
+fn trim_start_offset(source: &Slice<UInt8>) -> UInt64 {
+    var start: UInt64 = 0
+    while start < slice.len(source) {
+        let (rune, next) = decode(source, start)!
+        if !whitespace(rune) { break }
+        start = next
+    }
+    start
+}
+fn trim_end_offset(source: &Slice<UInt8>, start: UInt64) -> UInt64 {
+    var end = slice.len(source)
+    while end > start {
+        var offset = end - 1
+        while !boundary(source, offset) { offset -= 1 }
+        let (rune, _) = decode(source, offset)!
+        if !whitespace(rune) { break }
+        end = offset
+    }
+    end
+}
+pub fn trim_start(text: &String) -> String {
+    substring(text, trim_start_offset(bytes(text)), byte_length(text))!
+}
+pub fn trim_end(text: &String) -> String {
+    substring(text, 0, trim_end_offset(bytes(text), 0))!
+}
+pub fn trim(text: &String) -> String {
+    let source = bytes(text)
+    let start = trim_start_offset(source)
+    substring(text, start, trim_end_offset(source, start))!
 }

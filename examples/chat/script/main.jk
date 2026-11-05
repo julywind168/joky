@@ -27,15 +27,14 @@ type Outcome<T> = domain.Outcome<T, Rejection>
 // Protocol: one line is one command; any rejection closes the connection.
 enum Command { Balance, Join(String), Leave, Say(String), Invalid }
 fn parse(line: String) -> Command {
-    let separator = line.find(" ").unwrap_or(line.byte_length())
-    let verb = line.substring(0, separator)!
-    let argument = if separator < line.byte_length() {
-        line.substring(separator + 1, line.byte_length())!
-    } else { "" }
+    let (verb, argument, has_separator) = match line.split_once(" ") {
+        Some((verb, argument)) => (verb, argument, true),
+        None => (line, "", false)
+    }
     match verb {
-        "join" if !argument.is_empty() && argument.find(" ").is_none() && argument.find("\t").is_none() => Command.Join(argument),
-        "balance" if separator == line.byte_length() => Command.Balance,
-        "leave" if separator == line.byte_length() => Command.Leave,
+        "join" if !argument.is_empty() && !argument.contains(" ") && !argument.contains("\t") => Command.Join(argument),
+        "balance" if !has_separator => Command.Balance,
+        "leave" if !has_separator => Command.Leave,
         "say" if !argument.is_empty() => Command.Say(argument),
         _ => Command.Invalid
     }

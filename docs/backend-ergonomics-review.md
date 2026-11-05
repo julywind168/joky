@@ -194,18 +194,18 @@ Copy／拥有型 struct 已支持 `Options { field: value, ..base }`，可直接
 
 ### 6.1 String【P0】
 
-现有：find、starts_with、ends_with、substring、split、join、concat、rune_count、next_rune。
-[chat 的 parse()](../examples/chat/script/main.jk) 用 `find` + `substring(...)!` + 两次 `find(...).is_none()`
-才完成"按第一个空格切成动词和参数、参数不含空白"。
+已补齐 `contains`、`split_once`、`strip_prefix` / `strip_suffix`、`trim` / `trim_start` / `trim_end`，
+同时提供 String 方法与 string 模块函数。输入均为借用，文本结果为独立拥有值；trim 使用 Unicode White_Space。
+chat 的 `parse()` 已改用 split_once 和 contains，保留原命令的空格与参数校验规则。
 
-建议补齐（均为借用输入、返回新 String 或借用切片）：
+其余建议及本轮完成状态：
 
 | 方法 | 用途 |
 | --- | --- |
-| `trim()` / `trim_start()` / `trim_end()` | 处理输入、标头、配置 |
-| `split_once(&sep) -> Option<(String, String)>` | 协议行、`key=value`、`Bearer xxx` |
-| `strip_prefix(&p) -> Option<String>` / `strip_suffix` | 路由、前缀命令 |
-| `contains(&needle) -> Bool` | 替代 `find(x).is_some()` |
+| `trim()` / `trim_start()` / `trim_end()` | 已完成；处理输入、标头、配置 |
+| `split_once(&sep) -> Option<(String, String)>` | 已完成；协议行、`key=value`、`Bearer xxx` |
+| `strip_prefix(&p) -> Option<String>` / `strip_suffix` | 已完成；路由、前缀命令 |
+| `contains(&needle) -> Bool` | 已完成；替代 `find(x).is_some()` |
 | `replace(&from, &to)` | 模板、转义 |
 | `lines()`、`split_whitespace()` | 文本协议、CSV 粗处理 |
 | `to_lowercase()` / `to_uppercase()`（ASCII 版本 `to_ascii_lowercase` 先行） | 标头名、大小写无关比较 |

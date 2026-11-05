@@ -35,6 +35,7 @@ pub fn cases() -> Cases {
         .map(|(name, value)| (name.into(), value.into()))
         .to_vec(),
     };
+    text_helpers(&mut cases);
     // Exercise scalar boundaries on both sides of the runtime's bounded scans.
     // Build long prefixes as literals, keeping the generated program compact.
     for (index, (padding, tail)) in [
@@ -237,4 +238,78 @@ pub fn cases() -> Cases {
         }
     }
     cases
+}
+
+fn text_helpers(cases: &mut Cases) {
+    let whitespace: String = (0..=0x3000)
+        .filter_map(char::from_u32)
+        .filter(|c| c.is_whitespace())
+        .collect();
+    for (index, input) in [
+        String::new(),
+        whitespace.clone(),
+        format!("{whitespace}中 🙂{whitespace}"),
+        " \tleft right\r\n".into(),
+        "🙂中".into(),
+        " \u{200b}text\u{feff} ".into(),
+        "\0 middle \0".into(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for (method, expected) in [
+            ("trim", input.trim()),
+            ("trim_start", input.trim_start()),
+            ("trim_end", input.trim_end()),
+        ] {
+            let name = format!("{method}_{index}");
+            let call = if index % 2 == 0 {
+                format!("original.{method}()")
+            } else {
+                format!("string.{method}(&original)")
+            };
+            cases.source.push_str(&format!("\nfn {name}() -> String {{ let original = {}; let result = {call}; original.release(); result }}", literal(&input)));
+            cases.strings.push((name, expected.into()));
+        }
+    }
+    for (index, (input, needle)) in [
+        ("", ""),
+        ("", "x"),
+        ("text", ""),
+        ("中🙂中", "中"),
+        ("中🙂中", "🙂"),
+        ("a=b=c", "="),
+        ("same", "same"),
+        ("a\0b", "\0"),
+        ("é", "e"),
+        ("a", "longer"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("text_helpers_{index}");
+        cases.source.push_str(&format!("\nfn {name}() -> Int32 {{ let input = {}; let needle = {}; if input.contains(&needle) != {} {{ return 1 }}; ", literal(input), literal(needle), input.contains(needle)));
+        for (method, expected) in [
+            ("strip_prefix", input.strip_prefix(needle)),
+            ("strip_suffix", input.strip_suffix(needle)),
+        ] {
+            let check = expected.map_or("None => {}, Some(_) => return 2".into(), |value| {
+                format!(
+                    "Some(value) => {{ if !value.equals({}) {{ return 3 }} }}, None => return 4",
+                    literal(value)
+                )
+            });
+            cases.source.push_str(&format!(
+                "match string.{method}(&input, &needle) {{ {check} }}; "
+            ));
+        }
+        cases.source.push_str("let result = input.split_once(&needle); input.release(); needle.release(); match result { ");
+        if let Some((left, right)) = input.split_once(needle) {
+            cases.source.push_str(&format!("Some((left, right)) => {{ if left.equals({}) && right.equals({}) {{ 42 }} else {{ 5 }} }}, None => 6", literal(left), literal(right)));
+        } else {
+            cases.source.push_str("None => 42, Some(_) => 7");
+        }
+        cases.source.push_str("} }\n");
+        cases.integers.push((name, 42));
+    }
 }

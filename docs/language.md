@@ -6606,6 +6606,13 @@ fn sample() -> UInt64 {
 | `text.find(&needle)` / `string.find(&text, &needle)` | Option<UInt64>，首次命中的字节偏移；未命中 None，空 needle 为 Some(0) |
 | `text.starts_with(&prefix)` / `string.starts_with(&text, &prefix)` | Bool，空前缀为 true |
 | `text.ends_with(&suffix)` / `string.ends_with(&text, &suffix)` | Bool，空后缀为 true |
+| `text.contains(&needle)` / `string.contains(&text, &needle)` | Bool，按 UTF-8 内容查找；空 needle 为 true |
+| `text.split_once(&separator)` / `string.split_once(&text, &separator)` | Option<(String, String)>，在首次命中处切分，不含分隔符；未找到为 None，空分隔符得到 `Some(("", 原文本副本))` |
+| `text.strip_prefix(&prefix)` / `string.strip_prefix(&text, &prefix)` | Option<String>，去除一次匹配前缀；未匹配为 None，空前缀返回原文本副本 |
+| `text.strip_suffix(&suffix)` / `string.strip_suffix(&text, &suffix)` | Option<String>，去除一次匹配后缀；未匹配为 None，空后缀返回原文本副本 |
+| `text.trim()` / `string.trim(&text)` | String，去除两端 Unicode White_Space 字符，保留中间空白；不去除零宽空格或 BOM |
+| `text.trim_start()` / `string.trim_start(&text)` | String，仅去除开头的 Unicode 空白 |
+| `text.trim_end()` / `string.trim_end(&text)` | String，仅去除结尾的 Unicode 空白 |
 | `String.from_utf8(data)` / `string.from_utf8(data)` | Result<String, Utf8Error>，成功验证后转移 Array<UInt8>，失败也消费并清理输入 |
 | `text.bytes()` / `string.bytes(&text)` | 只读 &Slice<UInt8>，依赖整个输入 String；不分配或复制载荷 |
 | `text.into_bytes()` / `string.into_bytes(text)` | 消费式 Array<UInt8>，转移原存储及容量 |
