@@ -7156,7 +7156,12 @@ Router.share 为每个连接复制路径和函数入口，连接拥有独立路�
 服务端在响应写入结束时记录 `http.request_finished`。其中 `status` 是服务端选定的 HTTP 状态码，
 `write_outcome` 为 `complete`、`failed` 或 `timeout`。例如状态码可以是 200，同时写入失败。
 `complete` 表示本地写入完成；对端是否收到完整响应仍由客户端判断。
-`duration_ms` 按单调时钟计算，从开始读请求计至写入结束（可计算时提供）。
+耗时按单调时钟分为两个阶段（可计算时提供）：
+
+- `read_duration_ms`：从开始读请求到完整请求读取成功，包含等待发送、请求头及正文读取；读取失败或超时时计至失败返回。
+- `duration_ms`：从完整请求读取成功到响应写入结束，包含 handler 和响应写出；读取失败或超时时省略。
+
+两个阶段均不包含 TCP 建连或 TLS 握手；正常请求的两项之和对应读请求到响应写完的总耗时（各自取整到毫秒）。
 完整解析的请求自动记录 `method`（如 `GET`、`POST`）和 `path`（request.path()，不含查询串）。
 这适用于普通 handler、Router 和自定义 Service，包括未匹配路径的 404 与方法不匹配的 405；
 HEAD 复用 GET handler 时仍记录 HEAD。path 保留原始百分号编码，不使用路由模板或 128 字节的注册路径上限截断。

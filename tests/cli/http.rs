@@ -303,6 +303,8 @@ fn http_server_serves_json_and_validates_framing() {
             assert_eq!(event["method"], method);
             assert_eq!(event["path"], path);
             assert!(event.get("route").is_none());
+            assert!(event["read_duration_ms"].is_u64());
+            assert!(event["duration_ms"].is_u64());
         }
     }
 }
@@ -436,10 +438,24 @@ fn main() @suspends -> Int32 {
     assert!(server.finish().success());
 
     let events = std::fs::read_to_string(work.path().join("requests.jsonl")).unwrap();
-    assert!(events
+    let events: Vec<serde_json::Value> = events
         .lines()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .any(|event| event["request_id"] == timeout_id && event["status"] == 408));
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let timeout = events
+        .iter()
+        .find(|event| event["request_id"] == timeout_id)
+        .unwrap();
+    assert_eq!(timeout["status"], 408);
+    assert!(timeout["read_duration_ms"].as_u64().unwrap() >= 200);
+    assert!(timeout.get("duration_ms").is_none());
+    let id = super::tcp_server::response_id(&response);
+    let finished = events
+        .iter()
+        .find(|event| event["request_id"] == id)
+        .unwrap();
+    assert!(finished["read_duration_ms"].is_u64());
+    assert!(finished["duration_ms"].as_u64().unwrap() >= 250);
 
     let (mut server, port) = start(false);
     let mut reset = connect(port);
@@ -456,6 +472,8 @@ fn main() @suspends -> Int32 {
     let event: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(event["status"], 200);
     assert_eq!(event["write_outcome"], "failed");
+    assert!(event["read_duration_ms"].is_u64());
+    assert!(event["duration_ms"].as_u64().unwrap() >= 250);
 
     let (mut server, port) = start(false);
     let mut stuck = connect(port);
