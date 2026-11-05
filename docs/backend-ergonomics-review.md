@@ -293,7 +293,7 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 
 | 问题 | 现状 | 建议 |
 | --- | --- | --- |
-| 没有路由 | 已补精确路径 `http.Router`，HTTP/HTTPS 示例已迁移，自动提供 404 和 405/Allow；完成日志统一记录 method/path | 后续补路径参数和带状态 handler；当前 `:id` 按字面匹配 |
+| 没有路由 | 已补精确路径 `http.Router`，HTTP/HTTPS 示例已迁移，自动提供 404 和 405/Allow；完成日志统一记录 method/path | 后续补路径参数；当前 `:id` 按字面匹配 |
 | 方法是字符串 | 已统一为服务端/客户端共用的 `http.Method`，派生 Eq，补 Options | 挂起函数中可直接比较 request.method；OPTIONS 的业务策略由 handler 决定 |
 | target 含查询串 | 已补 `request.path()` 和 `request.query_pairs()`，HTTP 示例已迁移 | 查询保留重复键和错误，由调用者选择取值策略 |
 | 标头查找 | 已补 `header` 首值借用、`header_all` 全部值副本，ASCII 忽略大小写 | 订单示例保留重复 Idempotency-Key 拒绝 |
@@ -301,7 +301,7 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 | JSON 错误体手写 | 订单示例已用 `http.json` 与派生 ToJson 的错误/订单结构体 | 编码失败显式返回空 500 响应 |
 | 状态码命名 | 已改为 `Status.Ok`、`InternalServerError`，补齐常用成功、重定向及错误码 | `from_code` 与原因短语同步；其他 200–599 保留 Other |
 | 请求体解码 | 已补 `request.json<T: FromJson>()`，订单示例已迁移 | 共享借用正文，结果独立拥有，可重复解码；解码错误原样返回 |
-| 函数 handler 不能带状态 | 已提供 `with_context(source)` 注入资源句柄，订单示例已迁移 | 采用下节的关联请求上下文与状态域句柄方案 |
+| 函数 handler 不能带状态 | 已提供 `with_context(source)` 注入资源句柄，`with_state(handle, source)` 注入域句柄和关联请求上下文 | 订单服务使用池，内存库存服务使用域；见 §7.1 |
 | 连接模型 | 每连接一次请求、`Connection: close`、无 chunked | 记为已知限制即可，keep-alive 在压测和反向代理后会成为瓶颈，排入后续计划 |
 | 中间件 | 无 | 至少提供请求前后钩子：鉴权、请求日志已内置、CORS |
 
@@ -309,8 +309,8 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 
 ### 7.1 HTTP 应用状态与关联请求上下文设计
 
-2026-11-06：已实现 `Request<C>`、`ContextSource` 与 `with_context`。Parallel 主程序已支持静态单域和多域 `when`；`with_state` 是后续目标。沿用 `#state` / `when`，不新增 Shared/Mutex
-或另一套状态修改闭包 API。下列 `text` 代码块表示目标接口，不属于当前可执行标准库。
+2026-11-06：已实现 `Request<C>`、`with_context` 和 `with_state`。Parallel 主程序可在 handler 中
+直接使用静态单域或多域 `when`。本节给出接口节选，完整用例见[共享库存 HTTP 服务](../tests/fixtures/http_state.jk)。
 
 应用有三种不同的状态来源：
 
@@ -328,8 +328,8 @@ when 提交与数据库事务不是同一事务；需要数据库一致性的订
 来源只保存跨请求资源，关联类型还可以包含每次请求重新初始化的字段。例如连接分享数据库池句柄，
 请求命中后才生成 `{ db, current_user: None }`。具体签名见[语言参考](language.md#http-服务端-jokyhttp)。
 
-拟议的 `Application.RequestContext` 进一步限定每种 App 对应一种上下文，注册路由时可检查 handler 的类型。
-若同一库存域需要给公网和管理接口提供不同资源，应在落地 `with_state` 前用该场景复核这一约束。
+每种 App 通过 `Application.RequestContext` 选择一种请求上下文类型。不同资源来源可以生成同一种上下文；
+工厂检查来源的关联类型，注册路由时再检查 handler 的参数类型。
 下例使用内存库存，订单示例的库存仍在 PostgreSQL 中。
 
 ```text
@@ -338,6 +338,7 @@ pub trait Application {
 }
 #state
 struct App { available: UInt64 }
+fn new_app(_: Unit) -> App { App { available: 1 } }
 impl http.Application for App {
     type RequestContext = Unit
 }
@@ -368,7 +369,7 @@ fn reserve(app: domain.WriteHandle<App>, request: http.Request<Unit>) @suspends 
 `request.log.info/warn/error` 等方法自动附加框架绑定的 request_id，业务无需重复传入；
 `request.request_id` 用于读取同一个 UUID，响应仍自动发送 X-Request-Id。
 method、target、headers、body 与现有辅助方法保持职责。
-拟议的状态路由用关联类型建立 `App -> AppContext` 的对应关系，注册时据此检查 handler 参数类型。
+状态路由用关联类型建立 `App -> AppContext` 的对应关系，注册时据此检查 handler 参数类型。
 使用 `Request<AppContext>`，不要求记录声明直接带 `A: Application` 约束或投影字段。
 业务模块可写 `type Request = http.Request<AppContext>` 缩短签名；同一个无泛型 `http.Request`
 不能依据另一个参数自动改变 ctx 的类型，不引入隐式类型映射或动态类型查询。
@@ -378,13 +379,12 @@ method、target、headers、body 与现有辅助方法保持职责。
 只有资源上下文的服务直接使用 `http.with_context(source)`，
 注册 `fn(Request<C>) @suspends -> Response`，共享请求实现和路由匹配规则。
 
-**构造与生命周期。** 拟议的有状态入口为以下工厂，返回 `StateRouter<A, A.RequestContext>`；
-内部需要两个具体类型参数，调用方只明确应用类型。StateRouter 应复用现有
-路径校验、方法分发、HEAD、404/405/Allow 规则。
+**构造与生命周期。** 工厂从句柄和来源推断 A、S，返回 `StateRouter<A, S, A.RequestContext>`。
+来源 S 为每次命中的请求构造上下文，因此可以与上下文使用不同类型。StateRouter 与 ContextRouter 共用路由表。
 
 ```text
 let owner = domain.create(new_app, {})
-var router = http.with_state::<App>(owner.handle(), {})
+var router = http.with_state(owner.handle(), {})
 router.post("/reserve", reserve)!
 http.serve_with(listener, &stop, options, router)!
 owner.close()
@@ -407,16 +407,16 @@ request.log 的绑定和完成日志使用同一个原始 request_id；handler �
 不得改变框架绑定的日志身份。
 
 **并行边界。** 主程序已接通直接构造、Owner 关闭和静态访问集 `when`。JIT、解释器及独立 AOT
-均复用根任务树的控制代理和 R8 授权器。后续接入 HTTP 时，handler 在请求任务中执行，只在 `when` 处提交受检捕获包。
+均复用根任务树的控制代理和 R8 授权器。handler 在请求任务中执行，只在 `when` 处提交受检捕获包。
 数据库池与完整请求由调用任务持有。见[库存竞争用例](../tests/fixtures/parallel_single_domain.jk)和[转账用例](../tests/fixtures/parallel_multi_domain.jk)。
 
-下一步接入 `with_state`，验证服务排空、Owner 关闭与已准入请求的交错。
 动态目录路径与自动周期方法分别验收；直接入口在支持前继续拒绝。
 
 **实施顺序与验收。**
 
 1. 已交付 `with_context` 并迁移订单服务。复用路由 fixture 检查请求局部字段独立、自动 404/405 跳过初始化、隐式 HEAD 正常分发。真实 PostgreSQL 用例验证并发下单和丢失响应后的幂等重试；独立连接观察池会话，确认最后一个路由句柄释放后会话结束。
 2. 已接通直接并行静态访问集。同步探针让两个任务争抢同一域的最后一件库存，断言恰有一个成功且最终库存为零。多域转账覆盖反向竞争、不相交的访问集同时计算、业务拒绝和提交前取消。
+3. 已交付 `with_state`。两个已准入的 HTTP 请求在停机信号后竞争最后一件库存，分别返回 201 和 409。排空后服务作用域读取最终库存，再关闭 Owner。
 
 **2026-11-05 设计探针。** 临时探针已执行 JIT、解释器、独立 AOT：关联类型选择上下文，泛型请求
 持有 `Option<postgres.Pool>` 与 String，适配现有 Service.share/handle，

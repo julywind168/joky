@@ -4,6 +4,7 @@ import joky/log
 import joky/url
 import joky/uuid
 import joky/admission
+import joky/domain
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Err}
@@ -460,10 +461,23 @@ impl ContextSource for Unit {
     fn share(&self) @suspends @noescape -> Self { {} }
     fn for_request(&self) @suspends @noescape -> Unit { {} }
 }
-struct Route<C> { method: Method, path: String, handler: Handler<C> }
-pub struct ContextRouter<S, C> { source: S, routes: Array<Route<C>> }
+pub trait Application {
+    type RequestContext
+}
+pub type StateHandler<A, C> = fn(domain.WriteHandle<A>, Request<C>) @suspends -> Response
+struct Route<H> { method: Method, path: String, handler: H }
+struct RouteTable<H> { entries: Array<Route<H>> }
+pub struct ContextRouter<S, C> { source: S, table: RouteTable<Handler<C>> }
+pub struct StateRouter<A, S, C> { app: domain.WriteHandle<A>, source: S, table: RouteTable<StateHandler<A, C>> }
 pub fn with_context<S: ContextSource>(source: S) -> ContextRouter<S, S.Context> {
-    ContextRouter { source, routes: [] }
+    ContextRouter { source, table: RouteTable { entries: [] } }
+}
+pub fn with_state<A: Application, S: ContextSource<Context = A.RequestContext>>(app: domain.WriteHandle<A>, source: S) -> StateRouter<A, S, A.RequestContext> {
+    StateRouter { app, source, table: RouteTable { entries: [] } }
+}
+fn bind_context<C>(request: Request<Unit>, ctx: C) -> Request<C> {
+    let Request { ctx: _, log, request_id, method, target, headers, body } = request
+    Request { ctx, log, request_id, method, target, headers, body }
 }
 fn valid_route_path(path: &String) -> Bool {
     if !path.starts_with("/") || path.byte_length() > ROUTE_PATH_LIMIT { return false }
@@ -488,27 +502,20 @@ impl Service for Router {
     fn share(&self) @suspends -> Self { Router { inner: self.inner.share() } }
     fn handle(&self, request: Request<Unit>) @suspends -> Response { self.inner.handle(request) }
 }
-impl<S, C> ContextRouter<S, C> {
-    pub fn add(&mut self, method: Method, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
+impl<H: Copy> RouteTable<H> {
+    fn add(&mut self, method: Method, path: String, handler: H) -> Result<Unit, RouteError> {
         if !valid_route_path(&path) { return Err(RouteError.InvalidPath) }
         if self.find_handler(&path, method).is_some() { return Err(RouteError.DuplicateRoute) }
-        self.routes.push(Route { method, path, handler })
+        self.entries.push(Route { method, path, handler })
         result.Ok({})
     }
-    pub fn get(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Get, path, handler) }
-    pub fn head(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Head, path, handler) }
-    pub fn post(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Post, path, handler) }
-    pub fn put(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Put, path, handler) }
-    pub fn patch(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Patch, path, handler) }
-    pub fn delete(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Delete, path, handler) }
-    pub fn options(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Options, path, handler) }
-    fn find_handler(&self, path: &String, method: Method) @noescape -> Option<Handler<C>> {
-        for entry in &self.routes {
+    fn find_handler(&self, path: &String, method: Method) @noescape -> Option<H> {
+        for entry in &self.entries {
             if entry.path == path && entry.method == method { return Some(entry.handler) }
         }
         None
     }
-    fn select(&self, path: &String, method: Method) @noescape -> Option<Handler<C>> {
+    fn select(&self, path: &String, method: Method) @noescape -> Option<H> {
         let handler = self.find_handler(path, method)
         if handler.is_none() && method == Method.Head { self.find_handler(path, Method.Get) } else { handler }
     }
@@ -519,27 +526,58 @@ impl<S, C> ContextRouter<S, C> {
         }
         names.join(", ")
     }
-    fn copy_routes(&self) -> Array<Route<C>> {
-        var routes: Array<Route<C>> = []
-        for entry in &self.routes {
-            routes.push(Route { method: entry.method, path: entry.path.clone(), handler: entry.handler })
-        }
-        routes
-    }
-}
-impl<S: ContextSource<Context = C>, C> Service for ContextRouter<S, C> {
-    fn share(&self) @suspends -> Self { ContextRouter { source: self.source.share(), routes: self.copy_routes() } }
-    fn handle(&self, request: Request<Unit>) @suspends -> Response {
-        let path = request.path()
-        if let Some(handler) = self.select(&path, request.method) {
-            let ctx = self.source.for_request()
-            let Request { ctx: _, log, request_id, method, target, headers, body } = request
-            return handler(Request { ctx, log, request_id, method, target, headers, body })
-        }
-        let allow = self.allowed(&path)
+    fn unmatched(&self, path: &String) @noescape -> Response {
+        let allow = self.allowed(path)
         if allow.is_empty() { text(Status.NotFound, "not found") } else {
             text(Status.MethodNotAllowed, "method not allowed").with_header("Allow", allow)
         }
+    }
+    fn copy_routes(&self) -> Self {
+        var routes: Array<Route<H>> = []
+        for entry in &self.entries {
+            routes.push(Route { method: entry.method, path: entry.path.clone(), handler: entry.handler })
+        }
+        RouteTable { entries: routes }
+    }
+}
+impl<S, C> ContextRouter<S, C> {
+    pub fn add(&mut self, method: Method, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.table.add(method, path, handler) }
+    pub fn get(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Get, path, handler) }
+    pub fn head(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Head, path, handler) }
+    pub fn post(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Post, path, handler) }
+    pub fn put(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Put, path, handler) }
+    pub fn patch(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Patch, path, handler) }
+    pub fn delete(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Delete, path, handler) }
+    pub fn options(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Options, path, handler) }
+}
+impl<A, S, C> StateRouter<A, S, C> {
+    pub fn add(&mut self, method: Method, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.table.add(method, path, handler) }
+    pub fn get(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Get, path, handler) }
+    pub fn head(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Head, path, handler) }
+    pub fn post(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Post, path, handler) }
+    pub fn put(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Put, path, handler) }
+    pub fn patch(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Patch, path, handler) }
+    pub fn delete(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Delete, path, handler) }
+    pub fn options(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Options, path, handler) }
+}
+impl<S: ContextSource<Context = C>, C> Service for ContextRouter<S, C> {
+    fn share(&self) @suspends -> Self { ContextRouter { source: self.source.share(), table: self.table.copy_routes() } }
+    fn handle(&self, request: Request<Unit>) @suspends -> Response {
+        let path = request.path()
+        if let Some(handler) = self.table.select(&path, request.method) {
+            return handler(bind_context(request, self.source.for_request()))
+        }
+        self.table.unmatched(&path)
+    }
+}
+impl<A: Application<RequestContext = C>, S: ContextSource<Context = C>, C> Service for StateRouter<A, S, C> {
+    fn share(&self) @suspends -> Self { StateRouter { app: self.app, source: self.source.share(), table: self.table.copy_routes() } }
+    fn handle(&self, request: Request<Unit>) @suspends -> Response {
+        let path = request.path()
+        if let Some(handler) = self.table.select(&path, request.method) {
+            return handler(self.app, bind_context(request, self.source.for_request()))
+        }
+        self.table.unmatched(&path)
     }
 }
 struct FunctionService { callback: fn(Request<Unit>) @suspends -> Response }

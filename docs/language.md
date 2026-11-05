@@ -7163,8 +7163,19 @@ Router 的分发规则如下：
 - 取得连接名额后，接收循环调用 `share(&self) @suspends @noescape -> Self`，为连接复制长期资源句柄和路由表。在此执行数据库查询或鉴权会阻塞下一次接纳。
 - 完整请求命中路由后，连接任务调用一次 `for_request(&self) @suspends @noescape -> Self.Context`。它可以分享池句柄，并将当前用户等局部字段初始化为空。解析失败及自动 404/405 跳过这一步。
 
-`Router.new()` 使用 Unit 作为来源及请求上下文。两种入口使用同一套路由规则。
-可对照[无状态 HTTP 服务](../examples/http_server.jk)和[使用 PostgreSQL 池的订单服务](../examples/postgres_orders_http.jk)。
+`http.with_state(owner.handle(), source)` 创建带状态域的路由器。状态类型 A 实现 `http.Application`，
+通过关联类型 `RequestContext` 指定每次请求使用的 C。来源 S 实现 `ContextSource` 且 `S.Context` 等于 C。
+工厂从两个参数推断类型，返回 `StateRouter<A, S, C>`。每个 A 对应一种请求上下文类型；
+不同来源可以产生同一种 C。只需要状态域时，令 `RequestContext = Unit` 并传入 `{}`。
+
+注册的 handler 类型为 `fn(domain.WriteHandle<A>, http.Request<C>) @suspends -> http.Response`。
+每个连接分享同一个域的弱句柄，handler 用 `when` 读取或修改 A，并通过 `request.ctx` 使用该请求的资源。
+Owner 由启动服务的作用域持有。正常停机时先等 `serve_with` 排空已准入的请求，再调用 `owner.close()`；
+提前关闭时，后续 `when` 返回 Closed。
+
+`Router.new()` 使用 Unit 作为来源及请求上下文。三个入口共用路径匹配、HEAD 回退与 404/405 规则。
+用法见[无状态 HTTP 服务](../examples/http_server.jk)、[使用 PostgreSQL 池的订单服务](../examples/postgres_orders_http.jk)
+和[使用共享库存域的服务](../tests/fixtures/http_state.jk)。
 
 服务端在响应写入结束时记录 `http.request_finished`。其中 `status` 是服务端选定的 HTTP 状态码，
 `write_outcome` 为 `complete`、`failed` 或 `timeout`。例如状态码可以是 200，同时写入失败。

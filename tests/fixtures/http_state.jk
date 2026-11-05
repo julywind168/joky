@@ -1,0 +1,42 @@
+import joky/domain
+import joky/http.{type Application, type ContextSource}
+import joky/shutdown
+import joky/tcp
+
+#state
+struct Stock { available: Int32 }
+
+struct Source { stop: shutdown.Controller }
+struct Context { stop: shutdown.Controller }
+impl ContextSource for Source {
+    type Context = Context
+    fn share(&self) @suspends @noescape -> Self { Source { stop: self.stop.share() } }
+    fn for_request(&self) @suspends @noescape -> Context { Context { stop: self.stop.share() } }
+}
+impl Application for Stock { type RequestContext = Context }
+fn stock(n: Int32) -> Stock { Stock { available: n } }
+fn reserve(app: domain.WriteHandle<Stock>, request: http.Request<Context>) @suspends -> http.Response {
+    println("admitted")
+    request.ctx.stop.wait()
+    let reserved = when (mut app) {
+        if app.available == 0 { false } else {
+            app.available -= 1
+            true
+        }
+    }!
+    http.empty(if reserved { http.Status.Created } else { http.Status.Conflict })
+}
+fn main() @suspends {
+    let owner = domain.create(stock, 1)
+    let app = owner.handle()
+    let stop = shutdown.create()
+    let signals = stop.subscribe_unix()!
+    var router = http.with_state(app, Source { stop: stop.share() })
+    router.post("/reserve", reserve)!
+    var listener = tcp.listen("127.0.0.1", 0)!
+    println("listening {listener.local_addr()!.port()}")
+    http.serve_with(listener, &stop, http.Options.default(), router)!
+    assert(when (app) { app.available }! == 0, "service drained before owner close")
+    owner.close()
+    assert(match when (app) { app.available } { Err(Closed) => true, _ => false }, "owner closed after drain")
+}

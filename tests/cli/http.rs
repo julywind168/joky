@@ -340,6 +340,85 @@ fn http_server_serves_json_and_validates_framing() {
 }
 
 #[test]
+fn http_state_checks_the_context_source_and_registered_handler() {
+    let work = Workspace::new();
+    for (context, body, diagnostic) in [
+        (
+            "String",
+            "let router = http.with_state(app, {})",
+            "associated equalities",
+        ),
+        (
+            "Unit",
+            r#"var router = http.with_state(app, {}); router.post("/", wrong)!"#,
+            "Unit and Int32",
+        ),
+    ] {
+        work.write("wrong.jk", &format!(r#"
+            import joky/domain
+            import joky/http.{{type Application}}
+            struct App {{ count: Int32 }}
+            impl Application for App {{ type RequestContext = {context} }}
+            fn wrong(app: domain.WriteHandle<App>, req: http.Request<Int32>) @suspends -> http.Response {{
+                http.empty(http.Status.Ok)
+            }}
+            fn bad(app: domain.WriteHandle<App>) {{ {body} }}
+        "#));
+        failure(&work.cli(&["check", "wrong.jk"]), diagnostic);
+    }
+}
+
+#[test]
+fn http_state_is_shared_until_admitted_requests_drain() {
+    let work = Workspace::new();
+    work.write("state.jk", include_str!("../fixtures/http_state.jk"));
+    success(&work.cli(&["build", "--task-workers", "3", "state.jk"]));
+    for backend in ["jit", "interpreter", "aot"] {
+        let command = if backend == "aot" {
+            Command::new(work.path().join("state"))
+        } else {
+            let mut command = work.command();
+            command.args(["run", "--task-workers", "3", "state.jk"]);
+            if backend == "interpreter" {
+                command.arg("--interpreter");
+            }
+            command
+        };
+        let mut server = Running::start(command);
+        let port = server
+            .line()
+            .strip_prefix("listening ")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let mut clients = [connect(port), connect(port)];
+        for client in &mut clients {
+            client
+                .write_all(b"POST /reserve HTTP/1.1\r\nHost: a\r\n\r\n")
+                .unwrap();
+        }
+        // Both handlers are waiting on the shutdown controller before either can reserve.
+        for _ in &clients {
+            assert_eq!(server.line(), "admitted");
+        }
+        server.signal("-TERM");
+        let mut statuses = clients.map(|mut client| {
+            let mut reply = String::new();
+            client.read_to_string(&mut reply).unwrap();
+            assert!(reply.ends_with("\r\n\r\n"), "{backend}: {reply}");
+            reply.lines().next().unwrap().to_owned()
+        });
+        statuses.sort();
+        assert_eq!(
+            statuses,
+            ["HTTP/1.1 201 Created", "HTTP/1.1 409 Conflict"],
+            "{backend}"
+        );
+        assert!(server.finish().success(), "{backend}");
+    }
+}
+
+#[test]
 fn http_read_timeout_and_shutdown_preserve_admitted_handler() {
     let work = Workspace::new();
     work.write("http_probe.jk", r#"
