@@ -123,7 +123,7 @@ fn empty_result(e: Choice) -> Empty { match e { None => Empty {}, _ => Empty {} 
 fn boolean_result(e: Choice) -> Bool { match e { None => false, _ => true } }
 fn text_result(e: Choice) -> String { match e { None => "empty", _ => "value" } }
 fn constructor_exit() -> Choice { Choice.Number(return Choice.None) }
-fn unit_exit(e: Choice) { match e { None => return, _ => return } }
+fn unit_exit(e: Choice) { match e { None => return (), _ => return } }
 fn abrupt_loop() -> Int32 {
     var i = 0
     while true {
@@ -136,6 +136,7 @@ fn abrupt_loop() -> Int32 {
     i
 }
 fn edge_cases() -> Int32 {
+    let _: Unit = match Choice.Done(()) { Done(value) => value, _ => () }
     empty_result(Choice.None); empty_result(number(1))
     text_result(Choice.None); text_result(number(1))
     unit_exit(Choice.None); unit_exit(number(1))

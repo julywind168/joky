@@ -174,7 +174,7 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 | `Float32` / `Float64` | `1.0`、`1.5e-3`、`2.5E+3` | 小数点两侧都有十进制数字；分隔符同整数规则，无后缀 |
 | `Bool` | `true`、`false` | 不与整数隐式转换 |
 | `String` | `"hello"` | 不可变拥有型 UTF-8；`"{expr}"` 默认 Show 插值，`{{` / `}}` 输出字面花括号，无 `+`；字符字面量产生 Rune |
-| `Unit` | `{}` | 空块产生 Unit；第一版不增加 `()` 别名 |
+| `Unit` | `()` | 空块 `{}` 也产生 Unit；类型位置仍写 `Unit` |
 
 负号是一元运算符。四种整数字面量的上下文定型已实现，无约束局部绑定默认 Int32；
 大数字不自动升级。范围和最小值拼写见[当前整数语义](language.md#整数类型与字面量)。
@@ -619,7 +619,7 @@ UInt8、Rune 也已实现，实际支持的运算与边界见 language.md。
 | 浮点 | `Float32`、`Float64` | IEEE 754 二进制浮点，保留 NaN、无穷和有符号零 |
 | 字符 | `Rune` | 一个 Unicode 标量值，不等于一个字节或一个用户感知字符 |
 | 文本 | `String` | 拥有不可变 UTF-8 文本，字面量同为 String；非 Copy，显式 clone 与共享借用已实现；宿主使用版本化文本出口 |
-| 无信息结果 | `Unit` | 唯一值用空块 `{}` 表示，表示正常完成 |
+| 无信息结果 | `Unit` | 唯一值写 `()`，空块 `{}` 也产生同一值，表示正常完成 |
 | 不返回 | 内部 `Never` | 没有正常完成路径；暂不开放用户书写 |
 
 - 整数字面量由参数、返回值或注解等上下文定型，无约束时默认为 Int32；浮点默认 Float64。
@@ -726,7 +726,7 @@ struct OrderId { value: UInt64 }
   不能以此省略函数实参的逗号。字段默认私有，`pub` 字段在类型可见时可跨模块访问。
   相邻枚举变体之间同样必须有逗号或真实换行，载荷类型的尾随逗号仍允许。
 - 元组按元素类型、数量和位置匹配；`(T)` 是分组，`(T,)` 才是单元素元组类型，
-  `(value,)` 同理。`()` 暂不作为另一种 Unit 表示。
+  `(value,)` 同理。`()` 表示 Unit 值，类型位置仍写 `Unit`。
 - 可用 `let (x, y) = coordinates()` 解构元组；普通 let / var 模式必须不可失败。
   enum 分支解构放入 match，不能通过可能失败的 let 隐式丢掉其他情况。
 - 字段写作 `user.name`；拥有值的可变字段位置需要 var 或独占可变借用。
@@ -1180,7 +1180,7 @@ Product      = Unary, { ("*" | "/" | "%"), Unary } ;
 Unary        = ("-" | "!" | "~"), Unary | "&", [ "mut" ], [ "*" ], Unary | Postfix ;
 Postfix      = Primary, { Arguments | ".", Identifier, [ TypeArguments ], [ Arguments ] | "[", Expression, "]" | "!" | "?" } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
-Primary      = Integer | StringLiteral | "true" | "false"
+Primary      = Integer | StringLiteral | "true" | "false" | "(", ")"
              | Identifier | PrimitiveMember | RecordValue | TupleValue | ArrayValue | Call | TypedName | Group | BlockForm | TaskForm | Anonymous ;
 Anonymous    = [ "move" ], ( "||" | "|", AnonymousParam, { ",", AnonymousParam }, [ "," ], "|" ), [ "@", "suspends" ], [ Result ], Block ;
 AnonymousParam = Identifier, [ ":", Type ] ;

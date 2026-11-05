@@ -12,6 +12,7 @@ fn assert_format(source: &str, expected: &str) {
 
 #[test]
 fn format_normalizes_indentation_and_horizontal_spacing() {
+    assert_format("fn f(){Ok(( ))}", "fn f() { Ok(()) }\n");
     assert_format(
         "fn  main( ) {\n\tvar x=1+2\n if x==3{\nprintln( x );x=x*-2\n }\n}\n",
         "fn main() {\n    var x = 1 + 2\n    if x == 3 {\n        println(x); x = x * -2\n    }\n}\n",

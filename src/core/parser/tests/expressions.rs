@@ -33,7 +33,9 @@ fn tuples_distinguish_grouping_lists_and_irrefutable_patterns() {
         "fn f() { var (x, (_, y)) = (1, (2, 3)) }",
         "fn f(p: ((Int32))) -> (Int32) { (p) }",
         "fn f() { let _ = 1\n var _ = 2 }",
-        "fn f(p: (Unit,)) -> (Unit,) { ({},) }",
+        "fn f() { () }",
+        "fn f() { ( /* Unit */ ) }",
+        "fn f(p: (Unit,)) -> (Unit,) { ((),) }",
         "fn f() { let pair = (R { x: 1 }, E.Value(2)) }",
         "fn f(p: (Int32, Bool)) { let (x, y) = p; (x, y) }",
         "fn f() { let p = (1,2)\n p.0 }",
@@ -42,7 +44,6 @@ fn tuples_distinguish_grouping_lists_and_irrefutable_patterns() {
         assert!(parse(source).is_ok(), "{source}");
     }
     for source in [
-        "fn f() { () }",
         "fn f(x: ()) {}",
         "type T = ()",
         "fn f() { let () = {} }",

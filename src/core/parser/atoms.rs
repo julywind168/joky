@@ -384,9 +384,16 @@ impl Parser<'_> {
                 }
             }
             TokenKind::LBracket => self.parse_array_literal(),
-            // Parenthesized expression.
+            // Unit literal, parenthesized expression, or tuple.
             TokenKind::LParen => {
                 self.advance();
+                if self.peek() == &TokenKind::RParen {
+                    self.advance();
+                    return Ok(Expr::Block {
+                        exprs: Vec::new(),
+                        span: self.span(start, self.last_span.end()),
+                    });
+                }
                 let previous = std::mem::replace(&mut self.allow_record, true);
                 let previous_newlines =
                     std::mem::replace(&mut self.newlines, Newlines::Joined { minus: None });

@@ -72,7 +72,7 @@ fn sequence_boundaries() -> Int32 {
     let (a, b) = (n = 1; n, n = 2; n)
     a * 10 + b
 }
-fn zero() -> (Unit, Empty) { ({}, Empty {}) }
+fn zero() -> (Unit, Empty) { ((), Empty {}) }
 fn zero_result(flag: Bool) -> (Unit, Empty) { if flag { return zero() }; zero() }
 fn zero_calls() -> Int32 {
     let (unit, empty) = zero_result(true)
@@ -91,7 +91,7 @@ fn recurse(pair: Pair, n: Int32) -> Pair {
     recurse((x + 1, !flag), n - 1)
 }
 fn calls() -> Int32 {
-    let (x, flag) = unpack({}, recurse(choose(2), 3), Empty {}, 4)
+    let (x, flag) = unpack((), recurse(choose(2), 3), Empty {}, 4)
     let (y, _) = choose(0)
     if !flag { x * 10 + y } else { 0 }
 }
