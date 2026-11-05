@@ -26,6 +26,8 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             .map(String::as_str)
             .collect::<Vec<_>>(),
         [
+            "all",
+            "any",
             "borrow",
             "borrow_mut",
             "borrow_mut_ref",
@@ -34,7 +36,10 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "clear",
             "clone",
             "contains",
+            "dedup",
             "extend_bytes",
+            "find",
+            "first",
             "get",
             "get_ref",
             "insert",
@@ -43,14 +48,17 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "iter",
             "iter_mut",
             "iter_shared",
+            "last",
             "len",
             "new",
             "pop",
+            "position",
             "push",
             "release",
             "remove",
             "replace",
             "reserve",
+            "retain",
             "set",
             "slice",
             "slice_mut",
@@ -474,7 +482,15 @@ fn cached_modules_keep_identity_scopes_and_source_ids() {
         .map(|e| e.id)
         .eq(second.enums.iter().map(|e| e.id)));
     assert_eq!(second.enums.len(), 3);
-    assert_eq!(again.implementations.len(), 11);
+    let impl_spans = |module: &crate::parser::ast::Module| {
+        module
+            .implementations
+            .iter()
+            .map(|implementation| implementation.span)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(impl_spans(&first), impl_spans(&second));
+    assert_eq!(impl_spans(&second), impl_spans(&again));
     let first_method = &first.implementations[0].methods[0];
     let second_method = &second.implementations[0].methods[0];
     assert!(Arc::ptr_eq(

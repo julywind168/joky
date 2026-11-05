@@ -183,7 +183,6 @@ fn reject_invalid_assignment_loop_and_comparison_semantics() {
             ("1 != false", ErrorCode::TypeMismatch, "1 != false"),
             ("true < false", ErrorCode::TypeMismatch, "true < false"),
             ("true + false", ErrorCode::TypeMismatch, "true + false"),
-            ("{} == {}", ErrorCode::TypeMismatch, "{} == {}"),
             ("-true", ErrorCode::TypeMismatch, "-true"),
             ("-{}", ErrorCode::TypeMismatch, "-{}"),
             ("-\"text\"", ErrorCode::TypeMismatch, "-\"text\""),

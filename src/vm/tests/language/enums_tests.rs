@@ -234,7 +234,7 @@ fn invalid_enums_and_patterns_are_rejected() {
         (
             "enum E { A, B(Int32) } fn f(e: E) -> Bool { e == E.A }",
             ErrorCode::TypeMismatch,
-            "Comparison operands",
+            "does not implement joky/eq.Eq",
         ),
         (
             "enum E { A } fn f() { E.A.field; }",

@@ -193,7 +193,7 @@ fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
         (
             "fn f() -> Bool { (1,) == (1,) }",
             ErrorCode::TypeMismatch,
-            "Comparison operands",
+            "does not implement joky/eq.Eq",
         ),
         (
             "fn f() { let p = (1,); p.x; }",

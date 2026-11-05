@@ -231,7 +231,7 @@ fn invalid_records_have_consistent_diagnostics_before_publication() {
             ("struct P { x: Int32 } fn f() { var p = P { x: 1 }; p.x = true }", ErrorCode::TypeMismatch, "Field assignment"),
             ("struct P { x: Int32 } fn f() -> Int32 { P { x: 1 }.y }", ErrorCode::UnknownName, "Unknown field `y`"),
             ("fn f() -> Int32 { 1.x }", ErrorCode::TypeMismatch, "has no fields"),
-            ("struct P {} fn f() -> Bool { P {} == P {} }", ErrorCode::TypeMismatch, "Comparison operands"),
+            ("struct P {} fn f() -> Bool { P {} == P {} }", ErrorCode::TypeMismatch, "does not implement joky/eq.Eq"),
             ("struct P {} extern fn host(p: P)", ErrorCode::AbiError, "host ABI"),
             ("struct P {} extern fn host() @suspends -> P", ErrorCode::AbiError, "host ABI"),
             ("import joky/vm struct P {} fn f() { let vm = P {}; vm.create(); }", ErrorCode::UnknownName, "has no method"),

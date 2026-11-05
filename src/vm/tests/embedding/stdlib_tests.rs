@@ -114,7 +114,7 @@ fn result_option_dependency_keeps_identity_without_exporting_names() {
         let first = types.resolve_aliases(&parser::parse(&source).unwrap()).unwrap();
         let second = types.resolve_aliases(&first).unwrap();
         assert_eq!(first.enums.len(), 2);
-        assert_eq!(second.implementations.len(), 2);
+        assert_eq!(second.implementations.len(), first.implementations.len());
         assert_eq!(first.enums.iter().map(|d| d.id).collect::<Vec<_>>(), second.enums.iter().map(|d| d.id).collect::<Vec<_>>());
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);

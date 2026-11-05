@@ -151,7 +151,7 @@ fn function_values_reject_invalid_signatures_bounds_effects_and_host_escapes() {
             "does not satisfy @noescape",
         ),
         ("fn bad<T>(x: T) { x(); }", "not a function"),
-        ("fn bad(f: fn() -> Int32) -> Bool { f == f }", "operands"),
+        ("fn bad(f: fn() -> Int32) -> Bool { f == f }", "does not implement joky/eq.Eq"),
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = engine(mode);
