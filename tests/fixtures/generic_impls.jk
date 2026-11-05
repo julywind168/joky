@@ -33,7 +33,18 @@ impl<T> Choice<T> {
 }
 fn through<T: Copy>(value: T) -> T { Pair.make(value, value).swap().first() }
 fn wide() -> UInt64 { Pair.make::<UInt64>(0xffff_ffff_ffff_ffff, 0).first() }
+impl Pair<Int32> {
+    fn integer() -> Self { Self { left: 20, right: 22 } }
+    fn total(&self) -> Int32 { self.left + self.right }
+    const INTEGER_SIZE: Int32 = 2
+}
+impl Choice<Int32> {
+    fn select<U>(self, value: U) -> U { value }
+}
 fn check() -> Int32 {
+    let concrete = Pair::<Int32>.integer()
+    if concrete.total() != 42 || Pair::<Int32>.INTEGER_SIZE != 2 { return -2 }
+    if Choice::<Int32>.Some(0).select::<Int32>(42) != 42 { return -3 }
     let p = Pair.make(1, 42)
     let q = Pair::<Int64>.make(4294967295, 7)
     let explicit = Pair.make::<Int64>(4294967295, 9)

@@ -84,7 +84,7 @@ fn arrays<T>() -> String {
     let view = parts.slice(0, parts.len())
     if slice.borrow_ref(view, 1).byte_length() != 4 { return "bad slice" }
     let separator = "|"
-    let result = string.join(&parts, &separator)
+    let result = parts.join(&separator)
     parts.clear()
     parts.release()
     result

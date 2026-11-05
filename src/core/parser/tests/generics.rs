@@ -157,7 +157,6 @@ mod generic_record_tests {
             "struct S<T: Show> { value: T }",
             "type Alias<T: Show> = T",
             "impl<T: Copy +> Pair<T> {}",
-            "impl Pair<Int32> {}",
         ] {
             assert!(parse(invalid).is_err(), "{invalid}");
         }

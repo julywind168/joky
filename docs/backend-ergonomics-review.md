@@ -229,11 +229,11 @@ Array 已补 `retain` 方法与模块函数：同步借用元素判断，原地�
 支持拥有型元素，无需 Copy / Clone；淘汰项在压紧后的截断阶段销毁。
 Array 已补 `dedup` 方法与模块函数：以 Eq 合并相邻重复项，保留每组第一项；
 原地保序、容量不变，支持拥有型元素，重复项在截断阶段销毁。
+`Array<String>.join(&separator)` 已复用 string.join，借用输入并返回独立字符串。
 
 后续分批推进：
 
 - Array：`extend_from(&slice)`，先明确元素移动、销毁与复制约定。
-  `Array<String>.join` 可复用已有 string.join。
 - 迭代器：已有拥有型 Iterator、共享 SharedIterator 与独占游标组合入口；
   先补 `count`、`fold`、`enumerate`、`skip`、`chain`，再考虑 sum、collect、flat_map。
   新操作需明确适用的迭代入口；for 的 `index, item` 已提供直接遍历编号。

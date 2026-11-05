@@ -1256,7 +1256,7 @@ fn generic_impls_run_build_and_report_template_errors() {
     }
     for (source, message) in [
         ("struct Pair<T> { value: T } impl<T> Pair<T> { fn bad(self) -> T { self.value + self.value } } fn main() {}", "type_mismatch"),
-        ("struct Pair<T> { value: T } impl<T> Pair<Int32> {} fn main() {}", "specialized implementations"),
+        ("struct Pair<T> { value: T } impl<T> Pair<Int32> {} fn main() {}", "partially generic implementations"),
         ("struct Pair<T> { value: T } impl<T> Pair<T> { fn method<T>(self, value: T) {} } fn main() {}", "cannot shadow impl parameters"),
         ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { let value = Marker.make() }", "Cannot infer type parameter"),
         ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { Marker.make::<String>() }", "type_mismatch"),

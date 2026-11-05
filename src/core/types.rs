@@ -423,6 +423,22 @@ impl TypeRegistry {
             resolve_type(&mut implementation.target, &canonical, &local)
                 .map_err(|e| e.with_span(implementation.span))?;
             let target = &implementation.target;
+            let concrete_inherent =
+                implementation.trait_name.is_none()
+                    && implementation.type_params.is_empty()
+                    && !TypeWalk::new(target, TypeEdges::Arguments).any(|ty| match ty {
+                        Type::Parameter(_) | Type::Projection(_) => true,
+                        Type::FixedArray(a) | Type::FixedArrayInit(a) => {
+                            matches!(a.length, ConstArgument::Parameter(_))
+                        }
+                        Type::Record(r) => r.arguments.iter().any(|a| {
+                            matches!(a, GenericArgument::Const(ConstArgument::Parameter(_)))
+                        }),
+                        Type::Enum(e) => e.arguments.iter().any(|a| {
+                            matches!(a, GenericArgument::Const(ConstArgument::Parameter(_)))
+                        }),
+                        _ => false,
+                    });
             let arguments = match target {
                 Type::Record(r) => Some((&r.name, &r.parameters, &r.arguments)),
                 Type::Enum(e) => Some((&e.name, &e.parameters, &e.arguments)),
@@ -431,7 +447,12 @@ impl TypeRegistry {
             if implementation.trait_name.is_none() {
                 if let Some((name, _, _)) = arguments {
                     if let Some((owner, _)) = name.rsplit_once('.') {
-                        if implementation.origin.as_deref() != Some(owner) {
+                        let standard_extension = super::source::is_reserved_module_path(owner)
+                            && implementation
+                                .origin
+                                .as_deref()
+                                .is_some_and(super::source::is_reserved_module_path);
+                        if implementation.origin.as_deref() != Some(owner) && !standard_extension {
                             return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
                                 format!("Cannot define inherent methods for `{}`: the type is defined in another module", implementation.target_name))
                                 .with_span(implementation.span));
@@ -472,11 +493,12 @@ impl TypeRegistry {
                                 .is_some_and(|b| b.name == *name && b.resolved.is_none())
                         })))
                     && arguments.len() == parameters.len()
-                    && arguments.len() == implementation.type_params.len()
-                    && arguments
-                        .iter()
-                        .zip(&implementation.type_params)
-                        .all(|(ty, p)| *ty == p.argument())
+                    && (concrete_inherent
+                        || (arguments.len() == implementation.type_params.len()
+                            && arguments
+                                .iter()
+                                .zip(&implementation.type_params)
+                                .all(|(ty, p)| *ty == p.argument())))
             } else if let Type::Parameter(parameter) = target {
                 implementation.trait_name.is_some()
                     && implementation.type_params.len() == 1
@@ -489,7 +511,7 @@ impl TypeRegistry {
             };
             if !valid {
                 return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
-                    "impl requires a Copy primitive or a record/enum with each impl parameter in declaration order; aliases and specialized implementations are not supported")
+                    "impl requires a Copy primitive, a concrete record/enum, or each impl parameter in declaration order; aliases and specialized trait or partially generic implementations are not supported")
                     .with_span(implementation.span));
             }
             // Only the embedded library can originate in the reserved Joky namespace.

@@ -320,6 +320,7 @@ impl Members {
         self.methods.iter().find(|m| {
             m.trait_id.is_none()
                 && same_owner(&m.target, ty)
+                && (m.impl_parameters > 0 || m.target == *ty)
                 && m.name == name
                 && scoped.as_ref().is_none_or(|key| key == &m.function)
         })
@@ -407,9 +408,9 @@ impl FunctionPlan {
             .constants_by_key
             .get(&key)
             .filter(|c| {
-                c.owner
-                    .target()
-                    .is_some_and(|target| same_owner(target, &ty))
+                c.owner.target().is_some_and(|target| {
+                    same_owner(target, &ty) && (!c.parameters.is_empty() || *target == ty)
+                })
             })
             .cloned();
         if let Some(c) = &constant {

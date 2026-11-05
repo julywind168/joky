@@ -181,7 +181,7 @@ pub fn bulk_group() -> Group {
                 .source
                 .push_str(&format!("parts.push({}); ", literal(value)));
         }
-        group.source.push_str(&format!("let separator = {}; let result = string.join(&parts, &separator); parts.release(); separator.release(); result }}", literal(separator)));
+        group.source.push_str(&format!("let separator = {}; let result = parts.join(&separator); parts.release(); separator.release(); result }}", literal(separator)));
         group.entries.push(Entry {
             name: name.into(),
             text: Some(values.join(separator)),

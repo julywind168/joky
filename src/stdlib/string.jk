@@ -127,6 +127,10 @@ fn add_join_length(current: UInt64, additional: UInt64) -> UInt64 {
     if current > limit || additional > limit - current { limit + 1 } else { current + additional }
 }
 
+impl Array<String> {
+    pub fn join(&self, separator: &String) -> String { join(self, separator) }
+}
+
 pub fn join(parts: &Array<String>, separator: &String) -> String {
     let length = parts.len()
     let separator_length = byte_length(separator)

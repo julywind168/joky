@@ -51,6 +51,12 @@ fn generic_impl_rejects_invalid_contracts() {
         ("impl<T> Marker<T> { fn make() -> Self { Self {} } } fn bad() { Marker::<String>.make() }", ErrorCode::TypeMismatch),
         ("impl<T> Marker<T> { fn make() -> Self { Self {} } } fn bad() { Marker::<Missing>.make() }", ErrorCode::UnknownType),
         ("impl<T> Pair<Int32> {}", ErrorCode::TypeMismatch),
+        ("impl Pair {}", ErrorCode::TypeMismatch),
+        ("impl Pair<Int32> { fn only(&self) -> Int32 { 42 } } fn bad(value: Pair<Bool>) { value.only() }", ErrorCode::UnknownName),
+        ("impl Pair<Int32> { const ONLY: Int32 = 42 } fn bad() { Pair::<Bool>.ONLY }", ErrorCode::InvalidCall),
+        ("impl Pair<Int32> { fn only(&self) -> Int32 { 42 } } fn bad<T>(value: Pair<T>) { value.only() }", ErrorCode::UnknownName),
+        ("impl Pair<Int32> { fn same(&self) {} } impl<T> Pair<T> { fn same(&self) {} }", ErrorCode::DuplicateDefinition),
+        ("impl Pair<Int32> { fn same(&self) {} } impl Pair<Bool> { fn same(&self) {} }", ErrorCode::DuplicateDefinition),
         ("impl<T, U> Split<U, T> {}", ErrorCode::TypeMismatch),
         ("impl<T, U> Split<T, T> {}", ErrorCode::TypeMismatch),
         ("impl<T> Split<T, Int32> {}", ErrorCode::TypeMismatch),
@@ -135,7 +141,6 @@ fn generic_impl_parser_keeps_parameter_scope_and_self_arguments() {
         "impl<T> Pair<T> { fn f<T>(self, value: T) {} }",
         "impl<T> Pair<T> { fn f(self) { Self::<T>.f(self) } }",
         "impl<T> Pair<T> { fn f(Self: T) {} }",
-        "impl Pair<Int32> {}",
         "impl<T> (T, T) {}",
     ] {
         assert!(crate::parser::parse(invalid).is_err(), "{invalid}");
@@ -253,9 +258,7 @@ fn generic_impl_normalization_preserves_parameters_and_nominal_identity() {
         assert_eq!(a.target, b.target);
         assert_eq!(a.type_params, b.type_params);
         for (a, b) in a.methods.iter().zip(&b.methods) {
-            if a.scope.is_none() {
-                assert!(b.type_params.is_empty());
-            }
+            assert_eq!(a.type_params, b.type_params);
             assert_eq!(a.ret_ty, b.ret_ty);
             for (a, b) in a.params.iter().zip(&b.params) {
                 assert_eq!(a.ty, b.ty);
