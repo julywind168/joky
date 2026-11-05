@@ -181,7 +181,7 @@ impl Show for ServeError {
 
 const HEAD_LIMIT: UInt64 = 16384
 const BODY_LIMIT: UInt64 = 1048576
-const ROUTE_LABEL_LIMIT: UInt64 = 128
+const ROUTE_PATH_LIMIT: UInt64 = 128
 enum ReadFailure { Bad, Network, HeadLimit, BodyLimit, Timeout, Stopped, Unsupported, Expectation }
 
 // HTTP token characters: ASCII letters, digits and the permitted punctuation.
@@ -403,7 +403,7 @@ fn send(var stream: Wire, prefix: String, body: Array<UInt8>, head: Bool) @suspe
     if stream.finish() { Complete } else { Failed }
 }
 fn write_timeout(duration: Duration) @suspends -> WriteOutcome { task.sleep(duration); TimedOut }
-fn respond(io: Wire, context: RequestContext, started: time.Instant, route: Option<String>, var code: Int32, reason: String, media: String, headers: Array<Header>, var body: Array<UInt8>, head: Bool, timeout: Duration) @suspends {
+fn respond(io: Wire, context: RequestContext, started: time.Instant, request_info: Option<(Method, String)>, var code: Int32, reason: String, media: String, headers: Array<Header>, var body: Array<UInt8>, head: Bool, timeout: Duration) @suspends {
     let prefix = match response_prefix(code, reason, media, headers, body.len(), context) {
         Some(prefix) => prefix,
         None => {
@@ -417,8 +417,9 @@ fn respond(io: Wire, context: RequestContext, started: time.Instant, route: Opti
     let label = match outcome { Complete => "complete", Failed => "failed", TimedOut => "timeout" }
     var fields = [log.field("status", code), log.field("write_outcome", label)]
     if let Some(duration) = started.elapsed() { fields.push(log.field("duration_ms", duration.as_millis())) }
-    if let Some(name) = route {
-        if !name.is_empty() && name.byte_length() <= ROUTE_LABEL_LIMIT { fields.push(log.field("route", name)) }
+    if let Some((method, path)) = request_info {
+        fields.push(log.field("method", method_name(method)))
+        fields.push(log.field("path", path))
     }
     context.info("http.request_finished", fields)
 }
@@ -429,8 +430,6 @@ fn stop_handshake(stop: &shutdown.Controller) @suspends -> Option<Wire> { stop.w
 fn handshake_timeout(timeout: Duration) @suspends -> Option<Wire> { task.sleep(timeout); None }
 // Each admitted connection owns its service handle until the handler and write finish.
 pub trait Service {
-    // Return a stable route label, never a raw target or query string.
-    fn route(&self, request: &Request) -> Option<String> { None }
     fn share(&self) @suspends -> Self
     fn handle(&self, request: Request) @suspends -> Response
 }
@@ -447,7 +446,7 @@ impl Show for RouteError {
 struct Route { method: Method, path: String, handler: Handler }
 pub struct Router { routes: Array<Route> }
 fn valid_route_path(path: &String) -> Bool {
-    if !path.starts_with("/") || path.byte_length() > ROUTE_LABEL_LIMIT { return false }
+    if !path.starts_with("/") || path.byte_length() > ROUTE_PATH_LIMIT { return false }
     for byte in path.bytes() {
         if *byte <= 32 || *byte > 126 || *byte == 63 || *byte == 35 { return false }
     }
@@ -495,13 +494,6 @@ impl Router {
 }
 impl Service for Router {
     fn share(&self) @suspends -> Self { self.copy_routes() }
-    fn route(&self, request: &Request) -> Option<String> {
-        let path = request.path()
-        for entry in &self.routes {
-            if entry.path == path { return Some(entry.path.clone()) }
-        }
-        None
-    }
     fn handle(&self, request: Request) @suspends -> Response {
         let path = request.path()
         if let Some(handler) = self.select(&path, request.method) { return handler(request) }
@@ -539,11 +531,11 @@ fn connection<S: Service>(config: Option<tls.ServerConfig>, stream: TcpStream, s
         }
         result.Ok(request) => {
             let head = request.method == Method.Head
-            let route = if context.logger.enabled(log.Level.Info) { service.route(&request) } else { None }
+            let request_info = if context.logger.enabled(log.Level.Info) { Some((request.method, request.path())) } else { None }
             let Response { status, content_type, headers, body } = service.handle(request)
             let (code, label) = status_line(status)
             let media = match content_type { Text => "text/plain; charset=utf-8", Json => "application/json", Bytes => "application/octet-stream", Custom(media) => media.value }
-            respond(io, context, started, route, code, label, media, headers, body, head, options.write_timeout)
+            respond(io, context, started, request_info, code, label, media, headers, body, head, options.write_timeout)
         }
     }
 }

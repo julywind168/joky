@@ -7138,7 +7138,7 @@ HTTPS 对应入口为 `http.serve_tls_with(listener, config, &stop, options, ser
 同一方法和路径重复注册返回 DuplicateRoute，不覆盖旧 handler。
 
 注册路径必须以 `/` 开始、长度不超过 128 字节，采用无空白的可打印 ASCII，且不能含 `?` 或 `#`，
-否则返回 InvalidPath。长度上限与请求日志的 route 标签上限一致，非 ASCII 路径需写成百分号编码。
+否则返回 InvalidPath。非 ASCII 路径需写成百分号编码。
 匹配使用 request.path()，不包含查询串；区分大小写、尾斜线和原始百分号编码，不解码或规范化路径。
 路径中的 `:id`、`*` 等均按字面字符匹配，尚无参数或通配符语法。
 
@@ -7149,7 +7149,6 @@ Router 的分发规则如下：
 - 路径不存在返回文本 404；路径存在而方法不匹配返回文本 405，并设置 Allow。
   Allow 按 GET、HEAD、POST、PUT、PATCH、DELETE、OPTIONS 顺序列出允许方法，GET 隐含 HEAD，去除重复。
 - OPTIONS 使用显式注册的 handler，未注册时沿用 404/405 规则；不自动生成 CORS 策略。
-- route 日志标签使用匹配到的注册路径，包含方法不匹配的 405；路径未匹配时不提供标签，查询串不会进入标签。
 
 Router.share 为每个连接复制路径和函数入口，连接拥有独立路由表。静态小路由表可直接使用，
 带共享业务状态的服务仍通过自定义 Service 实现。完整用法见 [HTTP 示例](../examples/http_server.jk)。
@@ -7158,8 +7157,11 @@ Router.share 为每个连接复制路径和函数入口，连接拥有独立路�
 `write_outcome` 为 `complete`、`failed` 或 `timeout`。例如状态码可以是 200，同时写入失败。
 `complete` 表示本地写入完成；对端是否收到完整响应仍由客户端判断。
 `duration_ms` 按单调时钟计算，从开始读请求计至写入结束（可计算时提供）。
-服务可覆盖 `route(&self, request: &http.Request) -> Option<String>` 返回固定模板，如 `Some("/orders")`。
-默认省略 route；空标签或超过 128 字节的标签也会省略。HTTP 层不自动记录原始 URL、标头或正文。
+完整解析的请求自动记录 `method`（如 `GET`、`POST`）和 `path`（request.path()，不含查询串）。
+这适用于普通 handler、Router 和自定义 Service，包括未匹配路径的 404 与方法不匹配的 405；
+HEAD 复用 GET handler 时仍记录 HEAD。path 保留原始百分号编码，不使用路由模板或 128 字节的注册路径上限截断。
+请求读取或解析失败时省略 method/path；不再提供 route 字段或 Service.route 回调。
+HTTP 层不自动记录查询串、标头或正文。
 握手失败、未进入写响应流程的请求，以及在产生写入结果前被强制取消的分支，都不会产生该完成事件。
 
 服务端提供 HTTP/1.1 的有限子集。支持 GET、HEAD、POST、PUT、PATCH、DELETE 和 OPTIONS，每个连接处理一次请求并发送 `Connection: close`。

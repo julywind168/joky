@@ -25,9 +25,6 @@ fn error_reply(status: http.Status, error: String) -> http.Response {
 }
 impl Service for Orders {
     fn share(&self) @suspends -> Self { Orders { pool: self.pool.share() } }
-    fn route(&self, request: &http.Request) -> Option<String> {
-        if request.method == http.Method.Post && request.path() == "/orders" { Some("/orders") } else { None }
-    }
     fn handle(&self, request: http.Request) @suspends -> http.Response {
         if request.method != http.Method.Post || request.path() != "/orders" { return error_reply(http.Status.NotFound, "not found") }
         var keys = request.header_all("Idempotency-Key")
@@ -54,7 +51,7 @@ fn order_reply(context: http.RequestContext, result: Result<orders.Order, postgr
         Ok(Conflict) => error_reply(http.Status.Conflict, "key already used with another quantity"),
         Ok(Insufficient) => error_reply(http.Status.Conflict, "insufficient stock"),
         Err(OutcomeUnknown) => {
-            context.warn("order.commit_unknown", [log.field("route", "/orders")])
+            context.warn("order.commit_unknown", [log.field("method", "POST"), log.field("path", "/orders")])
             error_reply(http.Status.ServiceUnavailable, "outcome unknown; retry with the same Idempotency-Key")
         },
         Err(AcquireFailed) => error_reply(http.Status.ServiceUnavailable, "database checkout failed"),

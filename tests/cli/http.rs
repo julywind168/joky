@@ -153,9 +153,7 @@ fn routing() @suspends {
     let denied = router.handle(routed_request(http.Method.Options, "/item"))
     assert(match denied.status { MethodNotAllowed => true, _ => false }, "known path with unsupported method")
     assert(denied.headers.len() == 1 && denied.headers[0].name == "Allow" && denied.headers[0].value == "GET, HEAD, POST", "deterministic allowed methods include implicit HEAD")
-    assert(router.route(routed_request(http.Method.Delete, "/item?secret=1"))! == "/item", "405 route label excludes query")
     for path in ["/missing", "/Item", "/item/", "/a/b"] {
-        assert(router.route(request(path.clone())).is_none(), "unmatched path has no route label")
         assert(match router.handle(request(path)).status { NotFound => true, _ => false }, "exact path matching")
     }
     assert(String.from_utf8(router.handle(routed_request(http.Method.Patch, "/a%2Fb")).body)! == "PATCH /a%2Fb", "encoded path remains literal")
@@ -214,7 +212,10 @@ fn http_server_serves_json_and_validates_framing() {
             ]
         )
         .ends_with("\r\n\r\n{\"n\":1}"));
-        let missing = http_reply(port, &[b"OPTIONS /unhandled HTTP/1.1\r\nHost: a\r\n\r\n"]);
+        let missing = http_reply(
+            port,
+            &[b"OPTIONS /unhandled?secret=1 HTTP/1.1\r\nHost: a\r\n\r\n"],
+        );
         assert!(missing.starts_with("HTTP/1.1 404 "));
         let denied = http_reply(
             port,
@@ -224,10 +225,8 @@ fn http_server_serves_json_and_validates_framing() {
             denied.starts_with("HTTP/1.1 405 Method Not Allowed\r\n")
                 && denied.contains("\r\nAllow: GET, HEAD\r\n")
         );
-        assert!(
-            http_reply(port, &[b"HEAD /health HTTP/1.1\r\nHost: a\r\n\r\n"])
-                .ends_with("Content-Length: 11\r\nConnection: close\r\n\r\n")
-        );
+        let head = http_reply(port, &[b"HEAD /health HTTP/1.1\r\nHost: a\r\n\r\n"]);
+        assert!(head.ends_with("Content-Length: 11\r\nConnection: close\r\n\r\n"));
         if backend == "jit" {
             for (headers, code) in [
                 (
@@ -290,17 +289,20 @@ fn http_server_serves_json_and_validates_framing() {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        for (reply, route) in [
-            (&health, Some("/health")),
-            (&denied, Some("/health")),
-            (&missing, None),
+        for (reply, method, path) in [
+            (&health, "GET", "/health"),
+            (&denied, "POST", "/health"),
+            (&missing, "OPTIONS", "/unhandled"),
+            (&head, "HEAD", "/health"),
         ] {
             let id = super::tcp_server::response_id(reply);
             let event = events
                 .iter()
                 .find(|event| event["request_id"] == id)
                 .unwrap();
-            assert_eq!(event["route"].as_str(), route);
+            assert_eq!(event["method"], method);
+            assert_eq!(event["path"], path);
+            assert!(event.get("route").is_none());
         }
     }
 }

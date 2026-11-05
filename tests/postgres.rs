@@ -531,7 +531,9 @@ fn main() @suspends {
             .collect();
         assert_eq!(matching.len(), 1);
         let e = matching[0];
-        assert_eq!(e["route"], "/orders");
+        assert_eq!(e["method"], "POST");
+        assert_eq!(e["path"], "/orders");
+        assert!(e.get("route").is_none());
         assert_eq!(e["status"], status);
         assert_eq!(e["write_outcome"], "complete");
         assert!(e["duration_ms"].is_u64() && e["timestamp"].is_string());

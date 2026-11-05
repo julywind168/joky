@@ -293,7 +293,7 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 
 | 问题 | 现状 | 建议 |
 | --- | --- | --- |
-| 没有路由 | 已补精确路径 `http.Router`，HTTP/HTTPS 示例已迁移，自动提供 route 标签、404 和 405/Allow | 后续补路径参数和带状态 handler；当前 `:id` 按字面匹配 |
+| 没有路由 | 已补精确路径 `http.Router`，HTTP/HTTPS 示例已迁移，自动提供 404 和 405/Allow；完成日志统一记录 method/path | 后续补路径参数和带状态 handler；当前 `:id` 按字面匹配 |
 | 方法是字符串 | 已统一为服务端/客户端共用的 `http.Method`，派生 Eq，补 Options | 挂起函数中可直接比较 request.method；OPTIONS 的业务策略由 handler 决定 |
 | target 含查询串 | 已补 `request.path()` 和 `request.query_pairs()`，HTTP 示例已迁移 | 查询保留重复键和错误，由调用者选择取值策略 |
 | 标头查找 | 已补 `header` 首值借用、`header_all` 全部值副本，ASCII 忽略大小写 | 订单示例保留重复 Idempotency-Key 拒绝 |
