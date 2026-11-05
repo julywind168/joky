@@ -190,6 +190,43 @@ pub fn split(text: &String, separator: &String) -> Array<String> {
     output
 }
 
+pub fn lines(text: &String) -> Array<String> {
+    let source = bytes(text)
+    let length = slice.len(source)
+    var output = Array.new::<String>()
+    var start: UInt64 = 0
+    var index: UInt64 = 0
+    while index < length {
+        if buffer.slice_load(source, index) == 0x0a {
+            var end = index
+            if end > start && buffer.slice_load(source, end - 1) == 0x0d { end -= 1 }
+            output.push(substring(text, start, end)!)
+            start = index + 1
+        }
+        index += 1
+    }
+    if start < length { output.push(substring(text, start, length)!) }
+    output
+}
+
+pub fn split_whitespace(text: &String) -> Array<String> {
+    let source = bytes(text)
+    let length = slice.len(source)
+    var output = Array.new::<String>()
+    var start: UInt64 = 0
+    var offset: UInt64 = 0
+    while offset < length {
+        let (rune, next) = decode(source, offset)!
+        if whitespace(rune) {
+            if start < offset { output.push(substring(text, start, offset)!) }
+            start = next
+        }
+        offset = next
+    }
+    if start < length { output.push(substring(text, start, length)!) }
+    output
+}
+
 fn decimal(value: UInt64, negative: Bool) -> String {
     var digits = Array.with_capacity::<UInt8>(20)
     var remaining = value
@@ -275,6 +312,8 @@ impl String {
     pub fn rune_count(&self) -> UInt64 { rune_count(self) }
     pub fn concat(&self, right: &String) -> String { concat(self, right) }
     pub fn split(&self, separator: &String) -> Array<String> { split(self, separator) }
+    pub fn lines(&self) -> Array<String> { lines(self) }
+    pub fn split_whitespace(&self) -> Array<String> { split_whitespace(self) }
     pub fn new() -> Self { new() }
     pub fn clone(&self) -> Self { clone(self) }
     pub fn release(self) { release(self) }

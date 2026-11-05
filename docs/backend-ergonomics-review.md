@@ -208,7 +208,7 @@ chat 的 `parse()` 已改用 split_once 和 contains，保留原命令的空格�
 | `strip_prefix(&p) -> Option<String>` / `strip_suffix` | 已完成；路由、前缀命令 |
 | `contains(&needle) -> Bool` | 已完成；替代 `find(x).is_some()` |
 | `replace(&from, &to)` | 已完成；普通文本替换，空 from 在每个 Rune 边界插入 |
-| `lines()`、`split_whitespace()` | 文本协议、CSV 粗处理 |
+| `lines()`、`split_whitespace()` | 已完成；返回独立 Array<String>，分别处理 LF / CRLF 行边界与 Unicode 空白 |
 | `to_lowercase()` / `to_uppercase()` | ASCII 版本 `to_ascii_lowercase` / `to_ascii_uppercase` 已完成；完整 Unicode 转换暂缓 |
 | `eq_ignore_ascii_case(&other)` | 已完成；标头、方法名比较 |
 | `text.parse::<T>()` 或保留 `T.parse(&text)` 并统一 | 目前只能 `UInt16.parse(&text)` |

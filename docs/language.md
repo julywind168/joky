@@ -6627,6 +6627,8 @@ fn sample() -> UInt64 {
 | `left.concat(&right)` / `string.concat(&left, &right)` | 独立 String，不消费两侧输入，组合长度沿 Array.reserve 受检 |
 | `string.join(&parts, &separator)` | String，借用 Array<String> 与分隔符，返回独立拼接结果；总长度受检 |
 | `text.split(&separator)` / `string.split(&text, &separator)` | Array<String>，复制各项；空分隔符按 Rune 边界切分，不添加首尾空项 |
+| `text.lines()` / `string.lines(&text)` | Array<String>，按 LF / CRLF 分行并去掉换行符；保留中间空行，末尾换行不额外产生空项，空文本得到空数组 |
+| `text.split_whitespace()` / `string.split_whitespace(&text)` | Array<String>，按 Unicode White_Space 切分；合并连续空白、忽略两端空白，空文本或全空白得到空数组 |
 
 `replace` 的 from 为空时，在每个 Rune 边界（包含首尾）插入 to，例如
 `"é中".replace("", "-")` 得到 `"-é-中-"`；输入为空时得到 to 的副本。
@@ -6654,6 +6656,10 @@ split 按非空分隔符从左到右不重叠匹配，保留头尾和相邻分�
 组合字符分别成项，不按字形簇切分。
 各项均复制内容，释放输入后仍可使用；部分构造失败会清理已完成项，分配失败仍为终止性 ResourceLimit。
 示例见 [string_collections.jk](../examples/string_collections.jk)，三后端输出 5、11、6。
+
+`lines()` 只识别 `\n` 和 `\r\n`，单独的 `\r` 保留为文本内容；不去掉行内或两端空格。
+`split_whitespace()` 与 `trim` 使用相同的 Unicode 空白判定，不把零宽空格或 BOM 当作分隔符。
+两者都借用输入并复制输出项，原文本释放后数组仍可独立使用。
 
 `runes()` 可直接用于 `for rune in text.runes()`，元素为 Rune；也可用 `iter.step_shared` 逐步读取，
 耗尽后始终返回 None。迭代器保留原 String 的共享借用，最后使用前不能移动、释放或替换原文本。

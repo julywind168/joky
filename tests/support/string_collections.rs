@@ -122,6 +122,47 @@ pub fn bulk_group() -> Group {
             failure: false,
         });
     }
+    for (index, text) in [
+        "",
+        "\n",
+        "\r\n",
+        "\n\n",
+        "\r",
+        "a\rb\r",
+        "a\r\r\nb\n\r\n",
+        "\n中\r\n\n🙂\n",
+        "a\nb",
+        " \té中🙂\0e\u{301}  tail \r\n",
+        "\t\n\u{b}\u{c}\r \u{85}\u{a0}\u{1680}\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}",
+        "中\u{a0}🙂\u{2028}é\u{3000}tail",
+        "\u{200b}\u{feff}word\u{200b}\u{feff}",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for (method, parts) in [
+            ("lines", text.lines().collect::<Vec<_>>()),
+            ("split_whitespace", text.split_whitespace().collect::<Vec<_>>()),
+        ] {
+            let name = format!("{method}_{index}");
+            let call = if index % 2 == 0 {
+                format!("input.{method}()")
+            } else {
+                format!("string.{method}(&input)")
+            };
+            group.source.push_str(&format!("\nfn {name}() -> Int32 {{ let input = {}; let parts = {call}; input.release(); if parts.len() != {} {{ return 1 }}; ", literal(text), parts.len()));
+            for (index, part) in parts.iter().enumerate() {
+                group.source.push_str(&format!("{{ let expected = {}; if !parts.borrow_ref({index}).equals(&expected) {{ return 2 }} }}; ", literal(part)));
+            }
+            group.source.push_str("42 }");
+            group.entries.push(Entry {
+                name,
+                text: None,
+                drops: vec![],
+                failure: false,
+            });
+        }
+    }
     for (name, values, separator) in [
         ("join_empty", vec![], "中"),
         ("join_single", vec!["🙂\0"], "中"),
