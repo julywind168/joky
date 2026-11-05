@@ -1,9 +1,11 @@
 import joky/eq.{type Eq as Equal}
 import joky/hash.{type Hash as Hashed}
-import joky/check.{assert}
+import joky/check.{assert, panic}
+import joky/array.{type Array}
+import joky/task
 extern fn record_int(value: Int32)
 struct Key<T> { value: T }
-impl<T: Equal> Equal for Key<T> { fn eq(&self, other: &Self) -> Bool { Equal.eq(&self.value, &other.value) } }
+impl<T: Equal> Equal for Key<T> { fn eq(&self, other: &Self) -> Bool { self.value == other.value } }
 impl<T: Hashed> Hashed for Key<T> { fn hash(&self) -> UInt64 { Hashed.hash(&self.value) } }
 // Inherent names must not replace the selected trait requirements.
 impl<T> Key<T> {
@@ -11,6 +13,40 @@ impl<T> Key<T> {
     fn hash(&self) -> UInt64 { 0 }
 }
 fn same<K: Equal + Hashed>(a: &K, b: &K) -> Bool { a.eq(b) && a.hash() == b.hash() }
+fn equal<T: Equal>(a: &T, b: &T) -> Bool { a == b }
+fn next(count: &mut Int32, expected: Int32) -> Key<String> {
+    assert(*count == expected, "Equality operand order")
+    *count += 1
+    Key { value: "owned" }
+}
+enum Choice { Empty, Text(String) }
+impl Equal for Choice {
+    fn eq(&self, other: &Self) -> Bool {
+        match self {
+            Choice.Empty => match other { Choice.Empty => true, Choice.Text(_) => false }
+            Choice.Text(a) => match other { Choice.Empty => false, Choice.Text(b) => a == b }
+        }
+    }
+}
+enum Tag { One, Two }
+impl Equal for Tag { fn eq(&self, other: &Self) -> Bool { true } }
+enum PlainTag { One, Two }
+fn equality_pending() @suspends -> Int32 {
+    var count = 0
+    let different = next(&mut count, 0) != {
+        task.yield_now()
+        task.yield_now()
+        next(&mut count, 1)
+    }
+    assert(!different && count == 2, "Equality operands survive suspension")
+    42
+}
+struct Failing { text: String }
+impl Equal for Failing {
+    fn eq(&self, other: &Self) -> Bool { panic("Eq comparison failed") }
+}
+fn equality_failed() { let _same = Failing { text: "left" } != Failing { text: "right" } }
+fn equality_failed_rhs() { let _same = Key { value: "left" } == { panic("Eq argument failed") } }
 fn protocols() -> Int32 {
     { let assertion_condition = Hashed.hash(int32(0)) == 0 && Hashed.hash(int32(1)) == 6238072747940578789; let assertion_message = "Small hash vectors"; assert(assertion_condition, &assertion_message) }
     { let assertion_condition = Hashed.hash(int32(42)) == 12058926934050108962; let assertion_message = "Hash 42"; assert(assertion_condition, &assertion_message) }
@@ -25,6 +61,24 @@ fn protocols() -> Int32 {
     assert(same(&owner, Key { value: "owned" }), "Owning conditional key protocols")
     assert(owner.value == "owned", "Key protocols preserve owning fields")
     assert(Equal.eq(-0.0, 0.0) && !Equal.eq(Float64.NAN, Float64.NAN), "IEEE equality")
+    assert(owner == Key { value: "owned" } && owner != Key { value: "different" }, "Fixed Eq operator dispatch")
+    var other = Key { value: "owned" }
+    assert(&owner == &mut other && equal(&owner, &other), "Borrowed equality")
+    let values = [Key { value: "owned" }]
+    assert(values[0] == owner && owner == values[0], "Owning indexed operands")
+    let stored = &values[0]
+    assert(owner.value == "owned" && stored.value == "owned", "Operators preserve owners")
+    var count = 0
+    assert(next(&mut count, 0) == next(&mut count, 1) && count == 2, "Operands evaluated once")
+    assert(Choice.Text("a") == Choice.Text("a") && Choice.Text("a") != Choice.Empty, "Payload enum equality")
+    assert(Tag.One == Tag.Two && !(Tag.One != Tag.Two), "Explicit enum Eq overrides tag equality")
+    assert(PlainTag.One == PlainTag.One && PlainTag.One != PlainTag.Two, "Default tag equality")
+    assert(equal(42, 42) && equal("a", "a") && equal({}, {}), "Generic primitive equality")
+    let number = 42
+    assert(number == &number && &number == number && &number == &number, "Borrowed scalar equality")
+    assert(equal(-0.0, 0.0) && !equal(Float32.NAN, Float32.NAN), "Generic IEEE equality")
+    assert(1s == 1000ms && 1s != 2s, "Standard record equality")
+    assert(Key { value: 42 } == Key { value: 42 }, "Inferred generic operands")
     42
 }
 fn main() { record_int(protocols()) }

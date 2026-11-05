@@ -884,7 +884,9 @@ trait 由 `pub` 控制导出，使用 `import module.{type Eq}` 导入，方法�
 
 默认方法、`type Item`、`Self.Item` / `T.Item` / `<T as Trait>::Item`、关联能力与具名等式约束已实现。
 当前规则见[默认方法与关联类型](language.md#默认方法与关联类型)，验收记录见[第 4 项计划](trait-default-methods-associated-types.md)。
-trait 本身的泛型、方法级泛型、关联默认值、GAT、trait 关联常量、继承与特化尚未实现。`+` 已支持同型、按值、静态的 `joky/ops.Add` 派发；其他运算符与复合赋值重载尚未实现。拥有型 dyn 的挂起方法已支持，限制见语言参考。
+trait 本身的泛型、方法级泛型、关联默认值、GAT、trait 关联常量、继承与特化尚未实现。
+`+` 已支持同型、按值、静态的 `joky/ops.Add` 派发；`==`／`!=` 已接入共享借用的 `joky/eq.Eq`，
+后者对 eq 结果取反。其他运算符与复合赋值重载尚未实现。拥有型 dyn 的挂起方法已支持，限制见语言参考。
 Drop 已按专门所有权规则实现，不属于本次待补的普通 trait 能力。
 Eq / Hash 的代数规律由实现方和测试保证，不由编译器证明。
 

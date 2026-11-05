@@ -182,8 +182,8 @@ fn finish(
     Ok(result)
 }
 
-// Type checking selects text equality later; only source modules with equality
-// expressions need the hidden implementation. Embedded libraries declare dependencies.
+// Type checking selects equality later; source modules with equality expressions
+// need the standard protocol. Embedded libraries declare their own dependencies.
 fn uses_equality(module: &Module) -> bool {
     use crate::parser::ast::{BinOp, Expr};
     let mut pending: Vec<_> = module.expression_roots().collect();
@@ -231,6 +231,9 @@ fn bind(
         }
     }
     let mut required = BTreeSet::new();
+    if implicit_operators && uses_equality(module) && libraries.contains_key("joky/eq") {
+        required.insert("joky/eq".into());
+    }
     // String equality is language syntax, including with the prelude disabled.
     // Bind the implementation by its trusted declaration, never a user alias.
     if let Some(text) = libraries.get("joky/internal/text") {

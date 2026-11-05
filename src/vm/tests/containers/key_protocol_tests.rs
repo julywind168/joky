@@ -23,19 +23,45 @@ fn standard_key_protocols_execute_vectors_and_fixed_conditional_dispatch() {
     let source = format!(
         r#"import keys
         {source}
+        trait Eq {{ fn eq(&self, other: &Self) -> Bool }}
         fn test() -> Int32 {{
             let a: keys.Alias = keys.Key {{ value: 42 }}
-            if keys.compare(a, a) {{ protocols() }} else {{ 0 }}
+            if keys.compare(a, a) && (a == keys.Key {{ value: 42 }}) && (a != keys.Key {{ value: 43 }}) {{ protocols() }} else {{ 0 }}
         }}
     "#
     );
     let ast = TypeRegistry::default()
+        .with_prelude(false)
         .resolve_with_modules(&crate::parser::parse(&source).unwrap(), &modules)
         .unwrap();
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
-        vm.load_module(&ast).unwrap();
+        vm.load_module(&ast).unwrap_or_else(|error| {
+            let source = error
+                .span()
+                .and_then(|span| span.slice(error.sources().get(span.source_id())?.text()));
+            panic!("{error}: {source:?}")
+        });
         assert_eq!(vm.call_int32_0("test").unwrap(), 42);
+        let mut task = vm.call_async("equality_pending", &[]).unwrap();
+        assert!(!task.is_finished());
+        while !task.is_finished() {
+            task.resume().unwrap();
+        }
+        assert_eq!(task.cps_result(), Some(42));
+        drop(task);
+        drop(vm.call_async("equality_pending", &[]).unwrap());
+        for (entry, message) in [
+            ("equality_failed", "Eq comparison failed"),
+            ("equality_failed_rhs", "Eq argument failed"),
+        ] {
+            assert!(vm
+                .call_unit_0(entry)
+                .unwrap_err()
+                .message()
+                .contains(message));
+        }
+        crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
     }
     #[cfg(unix)]
     crate::backends::aot::tests::assert_sync_int32(&ast, "test", 42);
@@ -48,6 +74,10 @@ fn standard_key_protocols_reject_missing_requirements_and_wrong_signatures() {
         ("fn f<K>(k: K) -> UInt64 { Hash.hash(k) }", "does not satisfy trait bound"),
         ("struct Key {} impl Hash for Key { fn hash(&self) -> Int32 { 0 } }", "Signature does not match trait method"),
         ("struct Key {} impl Eq for Key { fn eq(self, other: &Self) -> Bool { true } }", "Signature does not match trait method"),
+        ("struct Key {} impl Key { fn eq(&self, other: &Self) -> Bool { true } } fn f(a: Key, b: Key) -> Bool { a == b }", "does not implement joky/eq.Eq"),
+        ("fn f<T>(a: &T, b: &T) -> Bool { a != b }", "does not implement joky/eq.Eq"),
+        ("struct Key {} impl Eq for Key { fn eq(&self, other: &Self) -> Bool { true } } fn f(a: Key) -> Bool { a == 1 }", "type mismatch"),
+        ("struct Key { text: String } impl Eq for Key { fn eq(&self, other: &Self) -> Bool { true } } fn f(a: Key) -> Bool { a == { let moved = a; moved } }", "borrow"),
     ] {
         let source = format!("import joky/eq.{{type Eq}} import joky/hash.{{type Hash}} {body}");
         let ast = TypeRegistry::default().resolve_with_modules(&crate::parser::parse(&source).unwrap(), &ModuleSources::new()).unwrap();

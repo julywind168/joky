@@ -441,6 +441,9 @@ impl FunctionPlan {
         if let Some(call) = self.addition_call(expr, vars, functions, types)? {
             return Ok(Some(call));
         }
+        if let Some(call) = self.equality_call(expr, vars, functions, types)? {
+            return Ok(Some(call));
+        }
         if matches!(expr, Expr::Call { callee, .. } if matches!(callee.as_str(), "Ptr.null" | "Ptr.is_null"))
         {
             return Ok(None);

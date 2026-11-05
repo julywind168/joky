@@ -51,6 +51,36 @@ impl BorrowedLocals {
                         .try_fold(target, |ty, field| ty.inline_field(field).map(|(_, ty)| ty))
                         .is_some_and(|ty| {
                             let context = plan.generics.borrow();
+                            if name == "$eq" {
+                                if ty.is_numeric()
+                                    || matches!(
+                                        ty,
+                                        Type::Bool | Type::Rune | Type::String | Type::Reference(_)
+                                    )
+                                {
+                                    return false;
+                                }
+                                return context
+                                    .members
+                                    .traits
+                                    .definitions
+                                    .iter()
+                                    .find(|d| d.is_eq)
+                                    .is_some_and(|d| {
+                                        context
+                                            .members
+                                            .trait_method(
+                                                ty,
+                                                "eq",
+                                                Some(d.self_parameter.id),
+                                                &plan.scope,
+                                                *span,
+                                            )
+                                            .ok()
+                                            .flatten()
+                                            .is_some()
+                                    });
+                            }
                             let selected = context.members.trait_calls.borrow().get(span).copied();
                             let inherent = context
                                 .members
@@ -127,6 +157,19 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
             | Expr::Spread { value, .. } => pending.push(value),
             Expr::Return { value, .. } => pending.extend(value.iter().map(Box::as_ref)),
             Expr::BinaryChain { .. } | Expr::IfChain { .. } => pending.extend(expr.children()),
+            Expr::BinOp {
+                lhs,
+                op: BinOp::Eq | BinOp::Ne,
+                rhs,
+                span,
+            } => {
+                for operand in [lhs.as_ref(), rhs.as_ref()] {
+                    if let Some((root, path)) = local_path(operand) {
+                        names.receiver(root, path, "$eq", *span);
+                    }
+                }
+                pending.extend([lhs.as_ref(), rhs.as_ref()]);
+            }
             Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
                 pending.extend([lhs.as_ref(), rhs.as_ref()])
             }

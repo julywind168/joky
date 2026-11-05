@@ -37,6 +37,7 @@ pub(super) enum SourceKind {
     BufferLibrary,
     DropTrait,
     Operators,
+    Equality,
     Check,
     TypeCheck,
     Integer,
@@ -416,7 +417,7 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
-        kind: SourceKind::BufferLibrary,
+        kind: SourceKind::Equality,
         path: "joky/eq",
         source: include_str!("../../stdlib/eq.jk"),
         reexport_imports: false,
@@ -504,7 +505,7 @@ impl StandardCache {
             .iter()
             .map(|i| i.path.as_str())
             .chain(prelude.then_some(PRELUDE))
-            .chain(uses_equality(module).then_some("joky/internal/text"));
+            .chain(uses_equality(module).then_some("joky/eq"));
         // Most calls reuse already prepared entries. The isolated registry is
         // needed only when binding a new embedded module's own declarations.
         let mut registry = None;
@@ -641,6 +642,7 @@ impl StandardLibrary {
             SourceKind::User
                 | SourceKind::FixedArrayLibrary
                 | SourceKind::BufferLibrary
+                | SourceKind::Equality
                 | SourceKind::Integer
                 | SourceKind::Decimal
                 | SourceKind::Text
@@ -737,6 +739,7 @@ impl StandardLibrary {
         for declaration in &mut module.traits {
             declaration.is_drop = kind == SourceKind::DropTrait;
             declaration.is_add = kind == SourceKind::Operators && declaration.name == "Add";
+            declaration.is_eq = kind == SourceKind::Equality && declaration.name == "Eq";
             let name = declaration.name.clone();
             declaration.name = format!("{path}.{name}");
             let binding = TraitBinding {

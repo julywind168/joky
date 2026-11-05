@@ -336,9 +336,15 @@ impl FunctionPlan {
         if let Some(ty) = self.dyn_hint(expr, vars, functions, types) {
             return Some(ty);
         }
-        // Homogeneous addition has the operand type. Selecting its method here
-        // would recursively infer each subtree twice, including numeric chains.
-        if !matches!(expr, Expr::BinOp { op: BinOp::Add, .. }) {
+        // Addition has the operand type and equality always returns Bool.
+        // Selecting their methods here would recursively infer operands twice.
+        if !matches!(
+            expr,
+            Expr::BinOp {
+                op: BinOp::Add | BinOp::Eq | BinOp::Ne,
+                ..
+            }
+        ) {
             if let Some(call) = self
                 .hint_work
                 .observe(self.member_call(expr, vars, functions, types), expr.span())

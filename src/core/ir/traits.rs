@@ -673,6 +673,119 @@ impl FunctionPlan {
 }
 
 impl FunctionPlan {
+    /// Equality borrows both operands through the trusted Eq requirement. The
+    /// ordinary call planner retains temporaries and evaluates each operand once.
+    pub(super) fn equality_call(
+        &self,
+        expr: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+    ) -> Result<Option<Expr>, Error> {
+        let Expr::BinOp {
+            lhs,
+            op: op @ (BinOp::Eq | BinOp::Ne),
+            rhs,
+            span,
+        } = expr
+        else {
+            return Ok(None);
+        };
+        let Some(hint) = self
+            .binary_hint(lhs, rhs, vars, functions, types)
+            .or_else(|| self.bound_hint(lhs, vars, functions, types))
+            .or_else(|| self.bound_hint(rhs, vars, functions, types))
+        else {
+            return Ok(None);
+        };
+        // Primitive implementations use the intrinsic comparison themselves.
+        // String retains its content comparison, including reference operands.
+        let target = hint.reference_type().map_or(&hint, |r| &r.target);
+        let scalar = hint.is_numeric() || matches!(hint, Type::Bool | Type::Rune);
+        let borrowed_rhs = scalar
+            && self
+                .type_hint(rhs, vars, functions, types)
+                .is_some_and(|ty| ty.reference_type().is_some());
+        if scalar && !borrowed_rhs || *target == Type::String {
+            return Ok(None);
+        }
+        let context = self.generics.borrow();
+        let id = context
+            .members
+            .traits
+            .definitions
+            .iter()
+            .find(|d| d.is_eq)
+            .map(|d| d.self_parameter.id);
+        let method = match id {
+            Some(id) => context
+                .members
+                .trait_method(target, "eq", Some(id), &self.scope, *span)?,
+            None => None,
+        };
+        // Payload-free enums keep their built-in tag comparison without Eq.
+        if method.is_none()
+            && matches!(&hint, Type::Enum(e) if e.variants.iter().all(|v| v.payload.is_none()))
+        {
+            return Ok(None);
+        }
+        let method = method.ok_or_else(|| {
+            type_error(
+                span,
+                ErrorCode::TypeMismatch,
+                format!("Type '{target}' does not implement joky/eq.Eq for equality comparison"),
+            )
+        })?;
+        let type_args = if method.impl_parameters == 0 {
+            Vec::new()
+        } else {
+            match (&method.target, target) {
+                (Type::Parameter(_), _) => vec![target.clone().into()],
+                (_, Type::Record(r)) => r.arguments.clone(),
+                (_, Type::Enum(e)) => e.arguments.clone(),
+                _ => unreachable!("generic trait targets are nominal or rigid"),
+            }
+        };
+        let call = Expr::Call {
+            callee: format!("joky/member/{}", method.function),
+            type_args,
+            args: [lhs.as_ref(), rhs.as_ref()]
+                .into_iter()
+                .map(|operand| {
+                    let place = indexing::is_index_place(operand)
+                        || locals::local_path(operand)
+                            .is_some_and(|(name, _)| vars.contains_key(name));
+                    let needs_borrow =
+                        self.type_hint(operand, vars, functions, types)
+                            .is_none_or(|ty| {
+                                ty.reference_type().is_none()
+                                    && !ty.is_numeric()
+                                    && !matches!(ty, Type::Bool | Type::Rune)
+                            });
+                    if place && needs_borrow {
+                        Expr::Unary {
+                            op: UnaryOp::Borrow,
+                            operand: Box::new(operand.clone()),
+                            span: operand.span(),
+                        }
+                    } else {
+                        operand.clone()
+                    }
+                })
+                .collect(),
+            span: *span,
+        };
+        Ok(Some(if *op == BinOp::Ne {
+            Expr::Unary {
+                op: UnaryOp::Not,
+                operand: Box::new(call),
+                span: *span,
+            }
+        } else {
+            call
+        }))
+    }
+
     /// Select the trusted Add identity before evaluating either operand. Ordinary
     /// call planning preserves left-to-right evaluation, moves and failure cleanup.
     pub(super) fn addition_call(
