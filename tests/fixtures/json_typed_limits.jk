@@ -111,7 +111,8 @@ fn limits() {
     let broken = "["
     match typed.decode::<User>(&broken) { Err(Syntax(error)) => { ensure(error.offset == 1) }, _ => { ensure(false) } }
     var bytes = Array.new::<UInt8>(); bytes.push(0xff)
-    match typed.decode_bytes::<User>(bytes) { Err(Syntax(error)) => { ensure(error.offset == 0) }, _ => { ensure(false) } }
+    match typed.decode_bytes::<User>(&bytes) { Err(Syntax(error)) => { ensure(error.offset == 0) }, _ => { ensure(false) } }
+    ensure(bytes.len() == 1 && bytes[0] == 0xff)
     let valid = "{{\"name\":\"Ada\",\"age\":37}}"
     var defaults = Options.default(); defaults.limits.max_nodes = 3
     match typed.decode_with_options::<User>(&valid, defaults) {
@@ -119,6 +120,8 @@ fn limits() {
         Ok(_) => { ensure(false) }
     }
     defaults.limits.max_nodes = 4; ensure(typed.decode_with_options::<User>(&valid, defaults).is_ok())
-    ensure(typed.decode_bytes::<User>(valid.into_bytes()).is_ok())
+    let bytes = valid.into_bytes()
+    ensure(typed.decode_bytes::<User>(&bytes).is_ok())
+    ensure(typed.decode_bytes::<User>(&bytes).is_ok())
 }
 fn main() { limits() }

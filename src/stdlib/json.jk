@@ -10,6 +10,7 @@ import joky/slice
 import joky/integer
 import joky/float
 import joky/internal/decimal
+import joky/internal/buffer
 
 pub enum Value {
     Null,
@@ -245,34 +246,33 @@ fn decode_error(kind: DecodeErrorKind, offset: UInt64) -> DecodeError {
     DecodeError { kind: kind, offset: offset }
 }
 fn whitespace(byte: UInt8) -> Bool { byte == 32 || byte == 9 || byte == 10 || byte == 13 }
-fn skip_space(input: &String, start: UInt64) -> UInt64 {
-    let bytes = input.bytes()
+fn skip_space(input: &slice.Slice<UInt8>, start: UInt64) -> UInt64 {
+    let bytes = input
     var offset = start
-    while offset < input.byte_length() && whitespace(byte_at(bytes, offset)) { offset = offset + 1 }
+    while offset < slice.len(input) && whitespace(byte_at(bytes, offset)) { offset = offset + 1 }
     offset
 }
 fn number_end(byte: UInt8) -> Bool { whitespace(byte) || byte == 44 || byte == 93 || byte == 125 }
-fn read_number(input: &String, start: UInt64, limit: UInt64) -> Result<(Number, UInt64), DecodeError> {
-    let bytes = input.bytes()
+fn read_number(input: &slice.Slice<UInt8>, start: UInt64, limit: UInt64) -> Result<(Number, UInt64), DecodeError> {
+    let bytes = input
     var end = start
-    while end < input.byte_length() && !number_end(byte_at(bytes, end)) {
+    while end < slice.len(input) && !number_end(byte_at(bytes, end)) {
         if end - start == limit { return Err(decode_error(DecodeErrorKind.NumberLimit, end)) }
         end = end + 1
     }
     if let Err(failure) = validate_number(bytes, start, end) {
         return Err(decode_error(DecodeErrorKind.InvalidNumber, failure.offset))
     }
-    match input.substring(start, end) {
-        Some(text) => Ok((Number { text: text }, end))
-        None => Err(decode_error(DecodeErrorKind.InvalidNumber, start))
-    }
+    var text = array.Array.with_capacity::<UInt8>(end - start)
+    array.extend_bytes(&mut text, input, start, end)
+    Ok((Number { text: String.from_utf8(text)! }, end))
 }
-fn literal(input: &String, start: UInt64, expected: &String) -> Result<UInt64, DecodeError> {
-    let source = input.bytes()
+fn literal(input: &slice.Slice<UInt8>, start: UInt64, expected: &String) -> Result<UInt64, DecodeError> {
+    let source = input
     let token = expected.bytes()
     var index: UInt64 = 0
     while index < expected.byte_length() {
-        if start + index == input.byte_length() {
+        if start + index == slice.len(input) {
             return Err(decode_error(DecodeErrorKind.UnexpectedEof, start + index))
         }
         if byte_at(source, start + index) != byte_at(token, index) {
@@ -288,12 +288,12 @@ fn hex_digit(byte: UInt8) -> UInt32 {
     if byte >= 97 && byte <= 102 { return uint32(byte - 97) + 10 }
     16
 }
-fn hex_quad(input: &String, start: UInt64, escape: UInt64) -> Result<UInt32, DecodeError> {
-    let bytes = input.bytes()
+fn hex_quad(input: &slice.Slice<UInt8>, start: UInt64, escape: UInt64) -> Result<UInt32, DecodeError> {
+    let bytes = input
     var scalar: UInt32 = 0
     var index: UInt64 = 0
     while index < 4 {
-        if start + index == input.byte_length() {
+        if start + index == slice.len(input) {
             return Err(decode_error(DecodeErrorKind.UnexpectedEof, start + index))
         }
         let digit = hex_digit(byte_at(bytes, start + index))
@@ -306,9 +306,22 @@ fn hex_quad(input: &String, start: UInt64, escape: UInt64) -> Result<UInt32, Dec
 fn rune_width(scalar: UInt32) -> UInt64 {
     if scalar < 0x80 { 1 } else { if scalar < 0x800 { 2 } else { if scalar < 0x10000 { 3 } else { 4 } } }
 }
-fn read_string(input: &String, start: UInt64, limit: UInt64) -> Result<(String, UInt64), DecodeError> {
-    let bytes = input.bytes()
-    let length = input.byte_length()
+// Inputs have already passed strict UTF-8 validation (or came from a String).
+fn read_utf8_scalar(input: &slice.Slice<UInt8>, offset: UInt64) -> (UInt32, UInt64) {
+    let first = uint32(byte_at(input, offset))
+    if first < 0x80 { return (first, offset + 1) }
+    let width: UInt64 = if first < 0xe0 { 2 } else { if first < 0xf0 { 3 } else { 4 } }
+    var scalar = first & (if width == 2 { 0x1f } else { if width == 3 { 0x0f } else { 0x07 } })
+    var index: UInt64 = 1
+    while index < width {
+        scalar = (scalar << 6) | (uint32(byte_at(input, offset + index)) & 0x3f)
+        index += 1
+    }
+    (scalar, offset + width)
+}
+fn read_string(input: &slice.Slice<UInt8>, start: UInt64, limit: UInt64) -> Result<(String, UInt64), DecodeError> {
+    let bytes = input
+    let length = slice.len(input)
     var offset = start + 1
     var builder = string.StringBuilder.new()
     while offset < length {
@@ -352,10 +365,9 @@ fn read_string(input: &String, start: UInt64, limit: UInt64) -> Result<(String, 
                 }
             }
         } else {
-            match input.next_rune(offset) {
-                Some((rune, next)) => { scalar = rune.to_u32(); offset = next }
-                None => { return Err(decode_error(DecodeErrorKind.UnexpectedEof, offset)) }
-            }
+            let (value, next) = read_utf8_scalar(input, offset)
+            scalar = value
+            offset = next
         }
         if rune_width(scalar) > limit - builder.byte_length() {
             return Err(decode_error(DecodeErrorKind.StringLimit, source_offset))
@@ -393,7 +405,7 @@ fn attach(frame: &mut DecodeFrame, child: Value, offset: UInt64) -> Result<UInt3
         }
     }
 }
-fn read_key(input: &String, start: UInt64, limit: UInt64, frame: &mut DecodeFrame) -> Result<UInt64, DecodeError> {
+fn read_key(input: &slice.Slice<UInt8>, start: UInt64, limit: UInt64, frame: &mut DecodeFrame) -> Result<UInt64, DecodeError> {
     let (name, next) = read_string(input, start, limit)?
     match frame {
         Fields((fields, key)) => {
@@ -404,8 +416,8 @@ fn read_key(input: &String, start: UInt64, limit: UInt64, frame: &mut DecodeFram
     }
     Ok(next)
 }
-fn read_scalar(input: &String, start: UInt64, limits: Limits) -> Result<(Value, UInt64), DecodeError> {
-    let byte = byte_at(input.bytes(), start)
+fn read_scalar(input: &slice.Slice<UInt8>, start: UInt64, limits: Limits) -> Result<(Value, UInt64), DecodeError> {
+    let byte = byte_at(input, start)
     if byte == 34 {
         match read_string(input, start, limits.max_string_bytes) {
             Ok((text, next)) => { return Ok((Value.Text(text), next)) }
@@ -433,9 +445,9 @@ fn new_frame(byte: UInt8) -> DecodeFrame {
 }
 
 pub fn decode(input: &String) -> Result<Value, DecodeError> { decode_with_limits(input, Limits.default()) }
-fn decode_step(input: &String, decoder: &mut Decoder) -> Result<Bool, DecodeError> {
-    let length = input.byte_length()
-    let bytes = input.bytes()
+fn decode_step(input: &slice.Slice<UInt8>, decoder: &mut Decoder) -> Result<Bool, DecodeError> {
+    let length = slice.len(input)
+    let bytes = input
     decoder.offset = skip_space(input, decoder.offset)
     if decoder.mode == 1 {
         if decoder.stack.is_empty() {
@@ -518,6 +530,9 @@ pub fn decode_with_limits(input: &String, limits: Limits) -> Result<Value, Decod
     if input.byte_length() > limits.max_input_bytes {
         return Err(decode_error(DecodeErrorKind.InputLimit, limits.max_input_bytes))
     }
+    decode_validated_bytes(input.bytes(), limits)
+}
+fn decode_validated_bytes(input: &slice.Slice<UInt8>, limits: Limits) @noescape -> Result<Value, DecodeError> {
     var decoder = Decoder { stack: array.Array.new::<DecodeFrame>(), result: Value.Null,
         offset: 0, nodes: 0, mode: 0, allow_end: false, limits: limits }
     while true {
@@ -526,18 +541,18 @@ pub fn decode_with_limits(input: &String, limits: Limits) -> Result<Value, Decod
     }
 }
 
-pub fn decode_bytes(input: array.Array<UInt8>) -> Result<Value, DecodeError> {
+pub fn decode_bytes(input: &array.Array<UInt8>) @noescape -> Result<Value, DecodeError> {
     decode_bytes_with_limits(input, Limits.default())
 }
-pub fn decode_bytes_with_limits(input: array.Array<UInt8>, limits: Limits) -> Result<Value, DecodeError> {
+pub fn decode_bytes_with_limits(input: &array.Array<UInt8>, limits: Limits) @noescape -> Result<Value, DecodeError> {
     if !valid_limits(limits) { return Err(decode_error(DecodeErrorKind.InvalidLimits, 0)) }
     if input.len() > limits.max_input_bytes {
         return Err(decode_error(DecodeErrorKind.InputLimit, limits.max_input_bytes))
     }
-    match String.from_utf8(input) {
-        Ok(text) => decode_with_limits(&text, limits)
-        Err(failure) => Err(decode_error(DecodeErrorKind.InvalidUtf8, failure.offset))
-    }
+    let bytes = input.slice(0, input.len())
+    let valid = buffer.utf8_prefix(bytes)
+    if valid != input.len() { return Err(decode_error(DecodeErrorKind.InvalidUtf8, valid)) }
+    decode_validated_bytes(bytes, limits)
 }
 
 // Only indices are stored in the work stack. Each step borrows its node from

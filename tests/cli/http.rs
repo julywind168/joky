@@ -32,6 +32,7 @@ import joky/url
 import joky/http
 import joky/log
 import joky/uuid
+import joky/mem
 fn pairs(var actual: Array<(String, String)>, var expected: Array<(String, String)>) {
     assert(actual.len() == expected.len(), "pair count")
     while !expected.is_empty() {
@@ -86,18 +87,24 @@ fn requests() {
 #derive(ToJson, FromJson)
 struct ErrorBody { error: String }
 fn decoding() {
-    var value = request("/decode?x=1")
-    value.headers.push(http.Header { name: "X-Item", value: "kept" })
+    let value = http.Request {
+        headers: [http.Header { name: "X-Item", value: "kept" }],
+        body: r#"{"error":"bad"}"#.into_bytes(), ..request("/decode?x=1")
+    }
     let id = value.context.request_id
-    value.body = r#"{"error":"bad"}"#.into_bytes()
-    let decoded = value.take_json::<ErrorBody>()!
-    assert(value.body.is_empty(), "successful decode consumes body")
+    let decoded = value.json::<ErrorBody>()!
+    assert(value.json::<ErrorBody>()!.error == "bad" && value.body.len() == 15, "shared request supports repeated decoding")
     assert(value.context.request_id == id && value.header("x-item")! == "kept"
         && value.path() == "/decode" && value.method == http.Method.Get, "decode preserves request metadata")
-    assert(match value.take_json::<ErrorBody>() { Err(Syntax(_)) => true, _ => false }, "second decode sees empty body")
-    value.body = "42".into_bytes()
-    assert(match value.take_json::<ErrorBody>() { Err(Mapping(_)) => true, _ => false }, "mapping error remains observable")
-    assert(value.body.is_empty() && decoded.error == "bad", "failed decode consumes body and previous result stays independent")
+    mem.drop(value)
+    assert(decoded.error == "bad", "decoded value outlives request")
+    var invalid = request("/")
+    invalid.body = "42".into_bytes()
+    assert(match invalid.json::<ErrorBody>() { Err(Mapping(_)) => true, _ => false }, "mapping error remains observable")
+    assert(invalid.body.len() == 2 && invalid.body[0] == 52, "mapping failure preserves body")
+    invalid.body = [255]
+    assert(match invalid.json::<ErrorBody>() { Err(Syntax(_)) => true, _ => false }, "syntax error remains observable")
+    assert(invalid.body.len() == 1 && invalid.body[0] == 255, "syntax failure preserves body")
 }
 fn helpers() {
     var value = request("/")

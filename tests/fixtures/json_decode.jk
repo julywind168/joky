@@ -153,23 +153,30 @@ fn boundaries() {
 fn bytes() {
     var source = Array.new::<UInt8>()
     source.push(34); source.push(0xf0); source.push(0x9f); source.push(0x99); source.push(0x82); source.push(34)
-    match json.decode_bytes(source) {
-        Ok(Value.Text(text)) => { let expected = "🙂"; ensure(text.equals(&expected)) }
+    let decoded = json.decode_bytes(&source)!
+    ensure(source.len() == 6)
+    ensure(json.decode_bytes(&source).is_ok())
+    source.clear()
+    match decoded {
+        Value.Text(text) => { let expected = "🙂"; ensure(text.equals(&expected)) }
         _ => { ensure(false) }
     }
     var source = Array.new::<UInt8>()
     source.push(34); source.push(0xed); source.push(0xa0); source.push(0x80); source.push(34)
-    match json.decode_bytes(source) { Err(error) => { ensure(error.offset == 1); ensure(error_code(error) == 5) }, _ => { ensure(false) } }
+    match json.decode_bytes(&source) { Err(error) => { ensure(error.offset == 1); ensure(error_code(error) == 5) }, _ => { ensure(false) } }
+    ensure(source.len() == 5 && source[1] == 0xed)
     var source = Array.new::<UInt8>()
     source.push(0xc2)
-    match json.decode_bytes(source) { Err(error) => { ensure(error.offset == 0); ensure(error_code(error) == 5) }, _ => { ensure(false) } }
+    match json.decode_bytes(&source) { Err(error) => { ensure(error.offset == 0); ensure(error_code(error) == 5) }, _ => { ensure(false) } }
+    source = [91, 44, 0xff]
+    match json.decode_bytes(&source) { Err(error) => { ensure(error.offset == 2); ensure(error_code(error) == 5) }, _ => { ensure(false) } }
     var source = Array.new::<UInt8>()
     source.push(0xff)
     var limits = Limits.default(); limits.max_input_bytes = 0
-    match json.decode_bytes_with_limits(source, limits) { Err(error) => { ensure(error.offset == 0); ensure(error_code(error) == 9) }, _ => { ensure(false) } }
+    match json.decode_bytes_with_limits(&source, limits) { Err(error) => { ensure(error.offset == 0); ensure(error_code(error) == 9) }, _ => { ensure(false) } }
     var source = Array.new::<UInt8>(); source.push(0xff)
     limits.max_output_bytes = 1048577
-    match json.decode_bytes_with_limits(source, limits) { Err(error) => { ensure(error_code(error) == 14) }, _ => { ensure(false) } }
+    match json.decode_bytes_with_limits(&source, limits) { Err(error) => { ensure(error_code(error) == 14) }, _ => { ensure(false) } }
 }
 fn main() @suspends { positive(); negative(); boundaries(); bytes(); json2a_probe(); json2a_failure(); json2a_work(); json2a_cancel_work(); }
 
@@ -226,11 +233,12 @@ fn json2a_work() @suspends -> Int32 {
 }
 
 fn json2a_cancel_work() @suspends -> Int32 {
-    let input = "{{\"x\":[\"\\u0000\",-0.0]}}"
-    let value = match json.decode(&input) {
+    let input = "{{\"x\":[\"\\u0000\",-0.0]}}".into_bytes()
+    let value = match json.decode_bytes(&input) {
         Ok(value) => value, Err(_) => { ensure(false); Value.Null }
     }
     task.yield_now()
+    ensure(input.len() == 21)
     let invalid = "{{\"x\":[\"\\u0000\",-0.0,]}}"
     match json.decode(&invalid) { Err(error) => { ensure(error_code(error) == 2) }, Ok(_) => { ensure(false) } }
     task.yield_now()

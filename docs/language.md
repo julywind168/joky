@@ -7087,11 +7087,11 @@ Method 是 Copy 值，派生 Eq 并支持 `==`／`!=`，Show 输出对应的大�
 `request.header_all(name: &String) -> Array<String>` 返回全部匹配值的独立副本，保留顺序及重复项，缺失为空数组。
 它不会按逗号拆分单个值。对于 Idempotency-Key 等要求唯一的标头，使用 header_all 检查数量，不能仅取第一个值。
 
-`request.take_json<T: FromJson>(&mut self) -> Result<T, typed.CodecError>` 取走 body，
-按 `typed.decode_bytes` 的默认选项解码，不额外复制正文。调用需要可变 Request，handler 参数可写 `var request: http.Request`。
-成功或失败后 body 都为空；重复调用会按空正文返回语法错误。返回的 T 独立拥有，不借用 Request，
-context、method、target 和 headers 保留，调用后仍可访问。该方法只解码正文，不检查 Content-Type；
-UTF-8、JSON 语法和类型映射错误按 CodecError 原样返回，由 handler 决定 HTTP 状态码及错误响应体。
+`request.json<T: FromJson>(&self) -> Result<T, typed.CodecError>` 共享借用 body，
+按 `typed.decode_bytes` 的默认选项直接解析字节，不复制整份正文。成功或失败均保留 Request 的正文及元数据，
+可以重复解码，也可在调用后继续读取原始正文。返回的 T 独立拥有，不借用 Request，Request 可先于结果释放。
+该方法只解码正文，不检查 Content-Type；UTF-8、JSON 语法和类型映射错误按 CodecError 原样返回，
+由 handler 决定 HTTP 状态码及错误响应体。
 
 Response 提供 status、content_type、headers 和 body 字段，也提供下列便捷入口：
 
@@ -7711,8 +7711,8 @@ OutOfRange（首个使整数超范围的数字，UInt64 负号或浮点溢出为
 | --- | --- |
 | json.decode(input: &String) | 默认限额；结果独立拥有字符串、数字文本及子树，不保留输入借用 |
 | json.decode_with_limits(input: &String, limits: Limits) | 指定限额，输入保留 |
-| json.decode_bytes(input: Array<UInt8>) | 消费字节数组；先检查长度和严格 UTF-8，失败也清理输入 |
-| json.decode_bytes_with_limits(input: Array<UInt8>, limits: Limits) | 字节入口的指定限额版本 |
+| json.decode_bytes(input: &Array<UInt8>) | 借用字节数组；先检查长度和严格 UTF-8，成功或失败均保留输入 |
+| json.decode_bytes_with_limits(input: &Array<UInt8>, limits: Limits) | 字节入口的指定限额版本 |
 
 只接受一个完整值及前后空白（空格、tab、CR、LF），顶层可为标量。
 拒绝 BOM、注释、尾逗号、未转义控制字符、孤立代理项、重复对象键与尾随数据。
@@ -7807,7 +7807,7 @@ struct Envelope<T> { value: T }
 | --- | --- |
 | `typed.encode<T: ToJson>(&T)` | 借用输入，返回独立拥有的 `Result<String, CodecError>` |
 | `typed.decode<T: FromJson>(&String)` | 输入保留，返回独立拥有的 `Result<T, CodecError>` |
-| `typed.decode_bytes<T: FromJson>(Array<UInt8>)` | 消费输入，含失败路径 |
+| `typed.decode_bytes<T: FromJson>(&Array<UInt8>)` | 借用字节解析，成功或失败均保留输入；结果独立拥有 |
 | 以上接口的 `_with_options` 版本 | 最后一个参数为 `Options`，默认使用 `Options.default()` |
 
 `Options` 包含 `limits: json.Limits` 和 `reject_unknown_fields: Bool`（默认 false）。
@@ -7867,7 +7867,7 @@ id 必须能精确转换为 UInt64，payload 为任意拥有 Value。服务端�
 `cargo run -- run examples/tcp_json.jk` 输出 `push`、`error`、`reply`、`error`、`reply`。
 
 示例将帧和编解码输入/输出同时限制为 65536 字节，深度 16、节点 4096、单字符串 32768 字节。
-编码成功后才发送帧头；解码消费完整帧，非法 JSON/UTF-8 或不符合信封的值得到业务错误回复，
+编码成功后才发送帧头；解码借用完整帧正文，非法 JSON/UTF-8 或不符合信封的值得到业务错误回复，
 后续有效请求仍可处理。帧截断、传输长度超限、写失败或取消结束整个会话，不恢复协议前缀。
 这些限额和信封属于示例，不新增标准库协议或连接重试策略。
 

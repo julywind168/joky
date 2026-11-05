@@ -156,8 +156,8 @@ Godot 扩展格式/Clippy、8 项 Rust 测试与全部真实引擎场景通过�
 | --- | --- |
 | `decode(input: &String) -> Result<Value, DecodeError>` | 完整解码，结果拥有全部字符串/数字文本，输入可在返回后释放 |
 | `decode_with_limits(input: &String, limits: Limits)` | 同上，使用指定上限；不保留输入借用 |
-| `decode_bytes(input: Array<UInt8>) -> Result<Value, DecodeError>` | 消费字节数组，先检查长度及严格 UTF-8；失败也按普通拥有值清理 |
-| `decode_bytes_with_limits(input: Array<UInt8>, limits: Limits)` | 字节入口的上限版本 |
+| `decode_bytes(input: &Array<UInt8>) -> Result<Value, DecodeError>` | 借用字节数组，先检查长度及严格 UTF-8；直接解析切片，不复制整份输入，结果独立拥有 |
+| `decode_bytes_with_limits(input: &Array<UInt8>, limits: Limits)` | 字节入口的上限版本 |
 | `encode(value: &Value) -> Result<String, EncodeError>` | 紧凑输出，借用值树；输出独立拥有 |
 | `encode_with_limits(value: &Value, limits: Limits)` | 同上，使用指定上限 |
 

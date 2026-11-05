@@ -14,7 +14,7 @@ pub fn handle(request: http.Request) @suspends -> http.Response {
         return http.json(http.Status.Ok, &health)!
     }
     if method == http.Method.Post && path == "/echo" {
-        if let Ok(value) = json.decode_bytes(body) {
+        if let Ok(value) = json.decode_bytes(&body) {
             return http.Response { headers: [], status: http.Status.Ok, content_type: http.ContentType.Json, body: json.encode(&value)!.into_bytes() }
         }
         return http.text(http.Status.BadRequest, "invalid JSON")

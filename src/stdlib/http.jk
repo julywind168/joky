@@ -13,7 +13,6 @@ import joky/tcp.{type BufferedTcp, type TcpListener, type TcpStream}
 import joky/tls
 import joky/time.{type Duration}
 import joky/string
-import joky/mem
 import joky/json/typed.{type ToJson, type FromJson}
 
 pub struct Header { pub name: String, pub value: String }
@@ -40,8 +39,8 @@ pub struct Request {
     pub body: Array<UInt8>
 }
 impl Request {
-    pub fn take_json<T: FromJson>(&mut self) @noescape -> Result<T, typed.CodecError> {
-        typed.decode_bytes::<T>(mem.replace(&mut self.body, []))
+    pub fn json<T: FromJson>(&self) @noescape -> Result<T, typed.CodecError> {
+        typed.decode_bytes::<T>(&self.body)
     }
     pub fn header(&self, name: &String) @noescape(name) -> Option<&String> {
         for field in &self.headers {

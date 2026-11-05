@@ -279,8 +279,8 @@ pub fn decode_with_options<T: FromJson>(text: &String, options: Options) @noesca
     var context = context(options)
     match context.read::<T>(value) { Ok(value) => Ok(value), Err(error) => Err(CodecError.Mapping(error)) }
 }
-pub fn decode_bytes<T: FromJson>(bytes: Array<UInt8>) -> Result<T, CodecError> { decode_bytes_with_options::<T>(bytes, Options.default()) }
-pub fn decode_bytes_with_options<T: FromJson>(bytes: Array<UInt8>, options: Options) -> Result<T, CodecError> {
+pub fn decode_bytes<T: FromJson>(bytes: &Array<UInt8>) @noescape -> Result<T, CodecError> { decode_bytes_with_options::<T>(bytes, Options.default()) }
+pub fn decode_bytes_with_options<T: FromJson>(bytes: &Array<UInt8>, options: Options) @noescape -> Result<T, CodecError> {
     let value = match json.decode_bytes_with_limits(bytes, options.limits) {
         Ok(value) => value, Err(error) => { return Err(CodecError.Syntax(error)) }
     }
