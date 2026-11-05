@@ -317,8 +317,8 @@ Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成�
 | 组成 | 内容与所有权 | 访问规则 |
 | --- | --- | --- |
 | `#state App` | 跨请求的业务数据，如内存库存、缓存与计数；服务作用域持有唯一域 Owner | handler 取得 `domain.WriteHandle<App>`；通过 `when (app)` 读取、`when (mut app)` 修改 |
-| `App.RequestContext` | 应用定义的请求上下文，持有数据库池等资源句柄；每次请求独立拥有包装值 | 普通代码直接使用 `request.context.db`；共享的是底层池，包装值和请求局部字段独立 |
-| `http.RequestMeta` | 框架生成的 request_id、logger，沿用当前日志方法 | HTTP 层在解析和错误响应中也能使用，不依赖应用上下文创建成功 |
+| `App.RequestContext` | 应用定义的请求上下文，持有数据库池等资源句柄；每次请求独立拥有包装值 | 普通代码直接使用 `request.ctx.db`；共享的是底层池，包装值和请求局部字段独立 |
+| `request.log` / `request.request_id` | 框架提供已绑定请求 ID 的日志对象及 UUID | 直接访问请求字段；HTTP 层在解析和错误响应中也能使用，不依赖应用上下文创建成功 |
 
 数据库池不能放进 `#state App`：域根要求无资源、无用户清理 hook 的受检拥有图，
 候选复制和回滚不能复制或撤销一个外部数据库连接池。pool 留在请求上下文中，SQL 在 when 外执行。
@@ -353,25 +353,35 @@ fn health(app: domain.WriteHandle<App>, request: http.Request<AppContext>) @susp
         Ok(hits) => hits,
         Err(_) => return http.empty(http.Status.ServiceUnavailable)
     }
-    http.text(http.Status.Ok, "hits: {hits}")
+    request.log.info("health.check_started", [log.field("hits", hits)])
+    let available = request.ctx.db.query_one("SELECT 1", []).is_ok()
+    if !available {
+        request.log.warn("health.database_unavailable", [])
+    }
+    let status = if available { http.Status.Ok } else { http.Status.ServiceUnavailable }
+    let request_id = request.request_id.to_text()
+    http.text(status, "healthy: {available}; request_id: {request_id}")
 }
 ```
 
 `app` 是权限句柄，不是 App 的副本，也不是跨整个 handler 存活的 `&mut App`。
 取得句柄不会锁住状态；只有 when 操作授权后才获得相应访问权，操作提交后释放，再继续 I/O。
-闭包式隐式捕获不增加能力：仍按现有 when 捕获契约传入数据，不能把带 pool 的整个 request/context
+闭包式隐式捕获不增加能力：仍按现有 when 捕获契约传入数据，不能把带 pool 的整个 request/ctx
 捕获到事务内。应先在 handler 中解码请求，提取 qty、id 等数据，再在 when 中使用。
 
-**请求类型。** 通用记录使用 `Request<C>`，`context: C`，原来的固定 RequestContext
-改名为 RequestMeta 并放在 `request.meta`；method、target、headers、body 与现有辅助方法保持职责。
+**请求类型。** 通用记录使用 `Request<C>`，应用上下文字段统一命名为 `ctx: C`。
+日志对象和请求 ID 作为 Request 的直接字段，分别通过 `request.log`、`request.request_id` 访问。
+`request.log.info/warn/error` 等方法自动附加框架绑定的 request_id，业务无需重复传入；
+`request.request_id` 用于读取同一个 UUID，响应仍自动发送 X-Request-Id。
+method、target、headers、body 与现有辅助方法保持职责。
 关联类型建立 `App -> AppContext` 的对应关系，路由工厂据此检查 handler 的参数类型。
 使用 `Request<AppContext>`，不要求记录声明直接带 `A: Application` 约束或投影字段。
 业务模块可写 `type Request = http.Request<AppContext>` 缩短签名；同一个无泛型 `http.Request`
-不能依据另一个参数自动改变 context 的类型，不引入隐式类型映射或动态类型查询。
+不能依据另一个参数自动改变 ctx 的类型，不引入隐式类型映射或动态类型查询。
 
 无状态 `Router.new()` 和普通函数服务使用 `Request<Unit>`，Unit 提供空上下文的分享实现；
 已有示例相应更新显式类型。当前语言没有泛型类型默认实参，本方案不将其作为前置条件。
-只有资源上下文而没有内存事务状态的服务不需要创建空 App：提供 `http.with_context(context)`，
+只有资源上下文而没有内存事务状态的服务不需要创建空 App：提供 `http.with_context(ctx)`，
 注册 `fn(Request<C>) @suspends -> Response`，共享请求实现和路由匹配规则。
 
 **构造与生命周期。** 有状态入口为以下工厂，返回 `StateRouter<A, A.RequestContext>`；
@@ -400,7 +410,8 @@ Closed 错误，不悄悄创建新 App，也不保证请求一定成功。
 
 request_id、method、path 和计时起点由 HTTP 层在调用 handler 前固定；
 完成日志使用该快照及响应写入结束时的时间。
-handler 修改自己的 request 或 context 不得改变服务端完成日志的请求身份。
+request.log 的绑定和完成日志使用同一个原始 request_id；handler 修改自己的 request 或 ctx
+不得改变框架绑定的日志身份。
 
 **必须补齐的并行边界。** 当前 Local 可以直接 create / when；Parallel 的直接状态操作仍被
 资格检查拒绝，已有并行 when 经 `vm.Vm` 的控制桥与域授权器执行。不能只开放一个 ParallelSafe 标记。
