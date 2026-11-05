@@ -24,6 +24,10 @@ impl<T, E> Result<T, E> {
         match self { Ok(value) => Ok(transform(value)), Err(error) => Err(error) }
     }
 
+    fn map_or<U, F: FnOnce(T) -> U>(self, fallback: U, transform: F) @noescape(transform) -> U {
+        match self { Ok(value) => transform(value), Err(_) => fallback }
+    }
+
     fn map_err<U, F: FnOnce(E) -> U>(self, transform: F) -> Result<T, U> {
         match self { Ok(value) => Ok(value), Err(error) => Err(transform(error)) }
     }
@@ -76,6 +80,12 @@ impl<T, E> Result<T, E> {
     // Both arguments are evaluated; an existing success keeps its payload.
     fn or<F>(self, fallback: Result<T, F>) -> Result<T, F> {
         match self { Ok(value) => Ok(value), Err(_) => fallback }
+    }
+}
+
+impl<T, E> Result<Result<T, E>, E> {
+    fn flatten(self) -> Result<T, E> {
+        match self { Ok(value) => value, Err(error) => Err(error) }
     }
 }
 

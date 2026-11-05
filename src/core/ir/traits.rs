@@ -199,6 +199,7 @@ pub(super) fn collect(
             members.functions.insert(definition.name.clone());
             members.methods.push(Method {
                 target: Type::Parameter(declaration.self_parameter.clone()),
+                impl_type_params: vec![declaration.self_parameter.clone()],
                 trait_id: Some(id),
                 name: requirement.name.clone(),
                 function: definition.name.clone(),
@@ -434,6 +435,7 @@ pub(super) fn collect(
             members.functions.insert(function.name.clone());
             members.methods.push(Method {
                 target: implementation.target.clone(),
+                impl_type_params: implementation.type_params.clone(),
                 trait_id: Some(binding.id),
                 name: definition.name.clone(),
                 function: function.name.clone(),
@@ -477,6 +479,7 @@ pub(super) fn collect(
             members.functions.insert(function.name.clone());
             members.methods.push(Method {
                 target: implementation.target.clone(),
+                impl_type_params: implementation.type_params.clone(),
                 trait_id: Some(binding.id),
                 name: requirement.name.clone(),
                 function: function.name.clone(),

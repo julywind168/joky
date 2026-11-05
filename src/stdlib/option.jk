@@ -85,3 +85,9 @@ impl<T> Option<T> {
         Some((left, right))
     }
 }
+
+impl<T> Option<Option<T>> {
+    fn flatten(self) -> Option<T> {
+        match self { Some(value) => value, None => None }
+    }
+}

@@ -2156,6 +2156,7 @@ Copy 实例仍可再次使用。运算符只识别标准库类型的声明身份
 | `map<U, F: FnOnce(T) -> U>(transform: F) -> Option<U>` | Some 调用一次 transform，None 不调用 |
 | `and_then<U, F: FnOnce(T) -> Option<U>>(transform: F) -> Option<U>` | Some 返回回调结果，None 不调用 |
 | `map_or<U, F: FnOnce(T) -> U>(fallback, transform) -> U` | Some 调用 transform；None 返回 fallback；fallback 先求值 |
+| `flatten(self) -> Option<T>` | 将 `Option<Option<T>>` 展平一层；外层或内层为 None 时返回 None |
 | `filter<F: FnOnce(&T) -> Bool>(predicate) -> Option<T>` | Some 仅在谓词为 true 时保留；None 不调用谓词 |
 | `is_some_and<F: FnOnce(&T) -> Bool>(predicate) -> Bool` | Some 调用谓词，None 返回 false |
 | `ok_or<E>(error: E) -> Result<T, E>` | Some 转为 Ok，None 转为 Err(error) |
@@ -2180,8 +2181,10 @@ Option 的 unwrap 不复制拥有型载荷；取值后原绑定已被消费，Co
 | `or<F>(fallback: Result<T, F>) -> Result<T, F>` | 保留原 Ok；原值为 Err 时返回 fallback，舍弃原错误；成功类型 T 必须相同，错误类型可变 |
 | `expect(self, message: &String) -> T` | Ok 返回载荷；Err 触发任务失败并使用调用者提供的消息 |
 | `inspect_err<F: FnOnce(&E) -> Unit>(inspect: F) -> Result<T, E>` | Err 借用错误调用一次 inspect，再保留原 Err；Ok 不调用 |
+| `flatten(self) -> Result<T, E>` | 将 `Result<Result<T, E>, E>` 展平一层；内层或外层 Err 原样返回 |
 
 回调方法另提供 `Result.map<U, F: FnOnce(T) -> U>(F) -> Result<U, E>`、
+`Result.map_or<U, F: FnOnce(T) -> U>(fallback, transform) -> U`、
 `Result.map_err<U, F: FnOnce(E) -> U>(F) -> Result<T, U>` 和
 `Result.and_then<U, F: FnOnce(T) -> Result<U, E>>(F) -> Result<U, E>`。
 map / and_then 仅在 Ok 时执行回调，map_err 仅在 Err 时执行；其余分支保持原载荷。
@@ -2213,7 +2216,7 @@ fn example() -> String {
 `joky/result` 单向依赖 `joky/option`，但不重导出 Option / Some / None；单独导入 Result 后可以链式调用
 `result.ok().unwrap_or(default)`，需要直接书写 Option 类型名或构造器时再显式导入它们。
 不含回调的方法不依赖闭包或 trait；map / map_err / and_then / unwrap_or_else / map_or / filter /
-is_some_and / ok_or_else / inspect_err 接收满足 FnOnce 的同步闭包或语言函数指针，
+is_some_and / ok_or_else / inspect_err / Result.map_or 接收满足 FnOnce 的同步闭包或语言函数指针，
 未选中回调的分支也会清理其拥有捕获。这些方法仍由普通 Joky 源码实现。
 完整示例见 [option_result.jk](../examples/option_result.jk)；显式方法类型实参见 [generic_methods.jk](../examples/generic_methods.jk)。
 

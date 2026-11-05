@@ -51,9 +51,21 @@ fn check() -> Int32 {
 
     let mapped = Maybe.Some(20).map_or(1, |value| { value + 1 })
     let mapped_default = Maybe.None::<Int32>.map_or(21, |value| { value + 1 })
+    let result_mapped = Outcome.Ok::<Int32, Int32>(20).map_or(1, |value| { value + 1 })
+    let result_mapped_default = Outcome.Err::<Int32, Int32>(21).map_or(22, |value| { value + 1 })
     let filtered = Maybe.Some(4).filter(|value| { *value > 3 })
     let rejected = Maybe.Some(2).filter(|value| { *value > 3 })
-    if mapped != 21 || mapped_default != 21 || filtered.unwrap_or(0) != 4 || rejected.is_some() { return 18 }
+    let nested_some: Maybe<Maybe<Int32>> = Maybe.Some(Maybe.Some(42))
+    let nested_none: Maybe<Maybe<Int32>> = Maybe.Some(Maybe.None)
+    let outer_none: Maybe<Maybe<Int32>> = Maybe.None
+    let nested_ok: Outcome<Outcome<Int32, Int32>, Int32> = Outcome.Ok(Outcome.Ok(42))
+    let nested_err: Outcome<Outcome<Int32, Int32>, Int32> = Outcome.Ok(Outcome.Err(7))
+    let outer_err: Outcome<Outcome<Int32, Int32>, Int32> = Outcome.Err(9)
+    if mapped != 21 || mapped_default != 21 || result_mapped != 21 || result_mapped_default != 22 ||
+        filtered.unwrap_or(0) != 4 || rejected.is_some() || nested_some.flatten().unwrap_or(0) != 42 ||
+        !nested_none.flatten().is_none() || !outer_none.flatten().is_none() ||
+        nested_ok.flatten().unwrap_or(0) != 42 || nested_err.flatten().err().unwrap_or(0) != 7 ||
+        outer_err.flatten().err().unwrap_or(0) != 9 { return 18 }
     if !Maybe.Some(3).is_some_and(|value| { *value == 3 }) || Maybe.None::<Int32>.is_some_and(|value| { *value == 0 }) { return 19 }
     let missing = Maybe.None::<Int32>.ok_or(7)
     let lazy_missing = Maybe.None::<Int32>.ok_or_else(|| { 8 })

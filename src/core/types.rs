@@ -439,6 +439,26 @@ impl TypeRegistry {
                         }),
                         _ => false,
                     });
+            // A few embedded standard methods specialize a generic nominal
+            // target (for example Option<Option<T>>). Keep this capability
+            // inside the reserved library namespace until general overlap and
+            // coherence rules exist for user-defined implementations.
+            let specialized_inherent = implementation.trait_name.is_none()
+                && !implementation.type_params.is_empty()
+                && implementation
+                    .origin
+                    .as_deref()
+                    .is_some_and(super::source::is_reserved_module_path)
+                && TypeWalk::new(target, TypeEdges::Arguments).any(|ty| {
+                    matches!(
+                        ty,
+                        Type::Parameter(parameter)
+                            if implementation
+                                .type_params
+                                .iter()
+                                .any(|candidate| candidate.id == parameter.id)
+                    )
+                });
             let arguments = match target {
                 Type::Record(r) => Some((&r.name, &r.parameters, &r.arguments)),
                 Type::Enum(e) => Some((&e.name, &e.parameters, &e.arguments)),
@@ -494,6 +514,7 @@ impl TypeRegistry {
                         })))
                     && arguments.len() == parameters.len()
                     && (concrete_inherent
+                        || specialized_inherent
                         || (arguments.len() == implementation.type_params.len()
                             && arguments
                                 .iter()

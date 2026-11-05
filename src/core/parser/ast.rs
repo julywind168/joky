@@ -575,7 +575,7 @@ pub struct MethodCall {
     pub span: Span,
 }
 
-/// An inherent or trait implementation for a concrete or full generic nominal type.
+/// An inherent or trait implementation for a concrete or generic nominal type.
 #[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct ImplDef {
     /// Original fields/payloads for compiler-generated conditional derive bounds.

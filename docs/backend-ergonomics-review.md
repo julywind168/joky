@@ -245,13 +245,14 @@ SharedPipeline 提供同名终结方法；支持拥有型累积值，按顺序�
 
 ### 6.3 Option / Result【P1】
 
-已补 `Option.expect`、`Result.expect`、`Option.ok_or` / `ok_or_else`、`map_or`、`filter`、
-`is_some_and` 和 `Result.inspect_err`；回调均为同步 FnOnce，借用不会逃出调用。
+已补 `Option.expect`、`Result.expect`、`Option.ok_or` / `ok_or_else`、Option/Result `map_or`、
+`filter`、`is_some_and`、`Result.inspect_err` 以及 Option/Result `flatten`；回调均为同步 FnOnce，
+借用不会逃出调用。
 
 仍缺少的方法：
 
 - `map_or_else`、`unwrap_or_default`（依赖 Default）。
-- Result 已有 `map_err`；仍待 `transpose`、`flatten`。
+- Result 已有 `map_err`；仍待 `map_or_else`、`transpose`。
 
 ### 6.4 配置与进程
 

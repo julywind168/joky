@@ -12,6 +12,7 @@ pub(super) enum Receiver {
 pub(super) struct Method {
     pub trait_id: Option<u64>,
     pub target: Type,
+    pub impl_type_params: Vec<Arc<crate::core::types::TypeParameter>>,
     pub name: String,
     pub function: String,
     pub receiver: Option<Receiver>,
@@ -207,6 +208,7 @@ impl Members {
                 members.methods.push(Method {
                     trait_id: None,
                     target: target.clone(),
+                    impl_type_params: implementation.type_params.clone(),
                     name: definition.name.clone(),
                     function: function.clone(),
                     receiver,
@@ -320,11 +322,32 @@ impl Members {
         self.methods.iter().find(|m| {
             m.trait_id.is_none()
                 && same_owner(&m.target, ty)
+                && (m.impl_type_params.is_empty()
+                    || target_matches(&m.target, ty, &m.impl_type_params))
                 && (m.impl_parameters > 0 || m.target == *ty)
                 && m.name == name
                 && scoped.as_ref().is_none_or(|key| key == &m.function)
         })
     }
+}
+
+fn target_matches(
+    formal: &Type,
+    actual: &Type,
+    parameters: &[Arc<crate::core::types::TypeParameter>],
+) -> bool {
+    let mut substitutions = crate::core::types::Substitutions::default();
+    super::generics::unify(
+        formal,
+        actual,
+        parameters,
+        &mut substitutions,
+        Span::empty(0),
+    )
+    .is_ok()
+        && parameters
+            .iter()
+            .all(|parameter| substitutions.argument(parameter).is_some())
 }
 
 impl FunctionPlan {
@@ -803,16 +826,33 @@ impl FunctionPlan {
         }
         arguments.extend_from_slice(args);
         let mut bound_arguments = if method.impl_parameters > 0 && bound_receiver {
-            match (&method.target, &ty) {
-                (Type::Parameter(_), _) if method.trait_id.is_some() => vec![ty.clone().into()],
-                (_, Type::FixedArray(a)) => vec![
-                    a.element.clone().into(),
-                    crate::core::types::GenericArgument::Const(a.length.clone()),
-                ],
-                (_, Type::Record(r)) => r.arguments.clone(),
-                (_, Type::Enum(e)) => e.arguments.clone(),
-                (_, Type::BufferSlice(element)) => vec![(**element).clone().into()],
-                _ => unreachable!("generic implementations have nominal targets"),
+            if method.trait_id.is_some() && matches!(method.target, Type::Parameter(_)) {
+                vec![ty.clone().into()]
+            } else {
+                let mut substitutions = crate::core::types::Substitutions::default();
+                super::generics::unify(
+                    &method.target,
+                    &ty,
+                    &method.impl_type_params,
+                    &mut substitutions,
+                    span,
+                )?;
+                method
+                    .impl_type_params
+                    .iter()
+                    .map(|parameter| {
+                        substitutions.argument(parameter).ok_or_else(|| {
+                            type_error(
+                                &span,
+                                ErrorCode::TypeMismatch,
+                                format!(
+                                    "Could not infer implementation parameter `{}`",
+                                    parameter.name
+                                ),
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
             }
         } else {
             Vec::new()
