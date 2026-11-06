@@ -257,6 +257,13 @@ impl Type {
             _ => None,
         }
     }
+    /// A borrowed FnOnce environment may travel through a scoped CPS call,
+    /// while its capture loans remain visible to ordinary lifetime checking.
+    pub(crate) fn is_scoped_suspending_closure(&self) -> bool {
+        self.closure_info()
+            .is_some_and(|c| c.suspends && !c.storable && c.mode == CallableKind::FnOnce)
+            && !self.is_owner()
+    }
     pub fn function(params: Vec<Type>, ret: Type) -> Self {
         Self::function_with_effect(params, ret, false)
     }
@@ -370,6 +377,8 @@ impl Type {
                 target => target,
             };
             target.is_suspend_safe_owner()
+                || target.reference_type().is_some_and(|r| !r.mutable)
+                    && target.is_suspend_safe_view()
                 || target.is_copy_storage_value()
                     && !target.contains_references()
                     && !target.contains_closures()

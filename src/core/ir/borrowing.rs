@@ -183,6 +183,11 @@ pub(super) fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
         Op::OutboxEmit { bytes, .. } => (refs(bytes), vec![]),
         Op::Assert { message, .. } | Op::Panic { message } => (refs(message), vec![]),
         Op::Closure(op) => match op.as_ref() {
+            closures::ClosureOp::End(slot) if slot.ty.is_scoped_suspending_closure() => {
+                // This environment owns no captures and has no destructor. Its
+                // lexical end must not prolong loans after a consuming call.
+                (vec![], refs(slot))
+            }
             closures::ClosureOp::BorrowCapture { dst, reference } => (refs(reference), refs(dst)),
             closures::ClosureOp::Access(slot)
             | closures::ClosureOp::End(slot)

@@ -1034,12 +1034,12 @@ pub(super) fn check_module(
                 .signature
                 .params
                 .iter()
-                .any(Type::contains_unstorable_closures)
+                .any(|ty| ty.contains_unstorable_closures() && !ty.is_scoped_suspending_closure())
         {
             return Err(type_error(
                 &info.span,
                 ErrorCode::InvalidCall,
-                "Only reference-free move closure values can enter suspending frames",
+                "Suspending frames require reference-free move environments or scoped suspending closures",
             ));
         }
         for (index, ty) in info.signature.params.iter().enumerate() {
@@ -1071,6 +1071,7 @@ pub(super) fn check_module(
                     && !target.is_copy_value()
                     && !target.is_suspend_safe_owner()
                     && !target.is_callable_parameter()
+                    && !target.is_scoped_suspending_closure()
                 {
                     return Err(type_error(
                         span,

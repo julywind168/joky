@@ -88,10 +88,13 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                 Type::FixedArray(a) => pending.push((a.element.clone(), share)),
                 Type::Tuple(t) => pending.extend(t.elements.iter().cloned().map(|ty| (ty, share))),
                 Type::Record(r)
-                    // A pointer entry proves this concrete closure captures nothing.
-                    // Its exact call target is still checked by analyse.
+                    // Worker-local borrowed callbacks keep ordinary capture loans;
+                    // they gain no permission to transfer an environment to a worker.
                     if r.closure.as_ref().is_none_or(|c| {
-                        c.storable || (worker_local && c.pointer_entry.is_some())
+                        c.storable
+                            || worker_local
+                                && (c.pointer_entry.is_some()
+                                    || c.suspends && c.mode == crate::core::types::CallableKind::FnOnce)
                     })
                         && (worker_local || !share || r.closure.is_none()) =>
                 {
@@ -558,6 +561,8 @@ mod tests {
             fn safe() -> Int32 { apply(|x| { x + 1 }) }
             fn calls_local() -> Int32 { apply(|x| { local(x) }) }
             fn captures(n: Int32) -> Int32 { apply(|x| { x + n }) }
+            fn await_once<F: FnOnce() @suspends -> Int32>(f: F) @suspends -> Int32 { f() }
+            fn scoped(n: Int32) @suspends -> Int32 { await_once(|| @suspends { n + 1 }) }
         "#;
         let types = crate::TypeRegistry::default().with_prelude(false);
         let ast = types
@@ -568,6 +573,7 @@ mod tests {
         let plan = prepared.plan(&Default::default()).unwrap();
         let effects = analyse(&plan, &prepared, &HashSet::new());
         effects.require("safe").unwrap();
+        effects.require("scoped").unwrap();
         assert!(effects.require("calls_local").is_err());
         assert!(effects.require("captures").is_err());
     }

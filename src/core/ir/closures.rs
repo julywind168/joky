@@ -270,7 +270,7 @@ impl FunctionPlan {
             })
             .collect();
         let closure = environment.closure.as_ref().unwrap();
-        // A capture-free synchronous literal needs no environment across a suspension.
+        // A capture-free literal needs no environment across a suspension.
         // Keep contextual callable types and the ownership of explicit move closures.
         let pointer_type = match expected {
             Some(Type::Function(pointer)) => {
@@ -284,9 +284,10 @@ impl FunctionPlan {
                 Some(Type::Function(pointer.clone()))
             }
             None if suspends && !function.moving && closure.pointer_entry.is_some() => {
-                Some(Type::function(
+                Some(Type::function_with_effect(
                     closure.signature.params.clone(),
                     closure.signature.ret.clone(),
+                    function.suspends,
                 ))
             }
             _ => None,
@@ -306,11 +307,11 @@ impl FunctionPlan {
             self.emit(Op::FunctionRef(dst.clone(), entry.clone()));
             return Ok(Flow::Value(Some(dst)));
         }
-        if suspends && !closure.storable {
+        if suspends && !closure.storable && !function.suspends {
             return Err(type_error(
                 &function.span,
                 ErrorCode::InvalidCall,
-                "Only reference-free move closure environments can enter suspending functions; use move for reference-free captures",
+                "Suspending frames require a reference-free move environment or a scoped suspending closure; use move for synchronous captures",
             ));
         }
         let dst = self.slot(Type::Record(environment.clone()))?;
@@ -603,7 +604,7 @@ impl FunctionPlan {
                 storable = !ty.contains_references() && !ty.contains_unstorable_closures();
                 pending.extend(ty.buffer_elements().iter().map(|ty| (**ty).clone()));
             }
-            if function.suspends && !storable {
+            if function.suspends && function.moving && !storable {
                 return Err(type_error(
                     &function.span,
                     ErrorCode::TypeMismatch,
@@ -928,7 +929,7 @@ impl FunctionPlan {
         self.consuming_captures = definition.moving;
         for (index, (name, ty, mutable)) in definition.captures.iter().enumerate() {
             let field = format!("$capture{index}");
-            if mode == CallableKind::FnOnce {
+            if mode == CallableKind::FnOnce && definition.moving {
                 let selected = source.field_path(std::slice::from_ref(&field));
                 if let Some(mode) = definition.capabilities[index] {
                     self.callable_modes.insert(selected.index, mode);
@@ -963,7 +964,11 @@ impl FunctionPlan {
                 ))?;
                 self.emit(Op::Project {
                     dst: projection.clone(),
-                    src: source.clone(),
+                    src: if mode == CallableKind::FnOnce {
+                        vars["$environment"].place.clone().unwrap()
+                    } else {
+                        source.clone()
+                    },
                     path: vec![field],
                     reservation: false,
                 });
@@ -999,7 +1004,7 @@ impl FunctionPlan {
                     name.clone(),
                     Binding {
                         slot,
-                        mutable: *mutable && mode == CallableKind::FnMut,
+                        mutable: *mutable && mode != CallableKind::Fn,
                         place: Some(place),
                     },
                 );
@@ -1073,11 +1078,14 @@ impl FunctionPlan {
         types: &TypeRegistry,
         later: Option<&'a Expr>,
     ) -> Result<Option<PreparedCallable>, Error> {
-        if suspends && value.ty.contains_unstorable_closures() {
+        if suspends
+            && value.ty.contains_unstorable_closures()
+            && !value.ty.is_scoped_suspending_closure()
+        {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,
-                "Only reference-free move closure environments can enter suspending functions; use move for reference-free captures",
+                "Suspending frames require a reference-free move environment or a scoped suspending closure; use move for synchronous captures",
             ));
         }
         let value = if self.captured_fields.contains_key(&value.index)

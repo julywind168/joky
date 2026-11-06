@@ -493,11 +493,11 @@ numeric／Decimal 按当前需求暂缓，业务继续用 UInt64 表示最小金
   库不再读取 JOKY_POSTGRES_URL，不引入 open_named 或宿主注册机制。同一程序可连接多个数据库。
 - `postgres.Options { max_connections, acquire_timeout }` 默认 4 个连接、5s 获取超时，支持结构更新。
   无效参数在连接前拒绝，错误不返回连接字符串；多个 URL、占满连接后的自定义超时及恢复由三后端回归覆盖。
-- 已提供 `pool.transaction(move |tx| @suspends { ... })`，回调返回 Result<TxOutcome<T>, DbError>。
+- 已提供 `pool.transaction(|tx| @suspends { ... })`，回调返回 Result<TxOutcome<T>, DbError>。
   Commit(value) 提交，Rollback(value) 回滚，成功收尾后均返回 Ok(value)；闭包 Err 路径尝试回滚并保留原错误。
   订单示例的 Conflict／Insufficient 明确选择 Rollback，避免业务正常返回却提交了本应撤销的订单。
   回调只借用事务；取消、运行时失败沿用连接弃用与未提交事务清理规则，不承诺取消能撤销已发送的提交。
-  挂起闭包需要 move 和 @suspends，类型推导边界及错误优先规则见语言参考。
+  挂起闭包需要 @suspends；只借用外部值时无需 move，转移捕获所有权时显式写 move。类型推导边界及错误优先规则见语言参考。
 
 ## 9. 服务启动与并发样板【P1】
 
@@ -522,8 +522,8 @@ SignalScope 保持 worker-local；`controller().share()` 仍返回可跨 worker 
 业务准入前仍检查 requested，取消不撤销已经发生的副作用。
 
 HTTP 内部循环、chat 主服务与管理端、TCP 排空示例已使用该方法；其余纯停机包装使用现有 race 分支块，
-无需新增带绑定的 race 语法。通用 stop.until 暂缓：挂起闭包尚不能捕获借用，不能直接套用
-`|| listener.accept()` 来反复借用监听器。分支块可以捕获显式引用；None／Err 缺少推导上下文时标注结果类型。
+无需新增带绑定的 race 语法。挂起闭包现已支持借用捕获，可在每次操作时新建闭包借用监听器；
+通用 stop.until 接口仍未提供。分支块可以捕获显式引用；None／Err 缺少推导上下文时标注结果类型。
 
 ### 9.3 session 与连接框架【Handler 已实现；serve 待做】
 
@@ -570,9 +570,9 @@ DNS 和 PostgreSQL 后台任务仍拥有必要的输入副本；借用接口省�
 以下为采纳 §4、§7、§8 建议后的 `place()` 与 HTTP handler 草图，仅用于说明方向：
 
 ```text
-pub fn place(pool: &pg.Pool, customer: Int64, key: String, qty: Int64) @suspends -> Result<Order, pg.DbError> {
+pub fn place(pool: &pg.Pool, customer: Int64, key: &String, qty: Int64) @suspends -> Result<Order, pg.DbError> {
     if qty <= 0 || key.is_empty() { return Err(pg.DbError.InvalidRequest) }
-    pool.transaction(move |tx| @suspends {
+    pool.transaction(|tx| @suspends {
         let inserted = tx.execute("INSERT ... ON CONFLICT (customer, request_id) DO NOTHING", [customer, key, qty])?
         let row = tx.query_one("SELECT id, qty FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [customer, key])?
         if row.get::<Int64>("qty")? != qty { return Ok(pg.TxOutcome.Rollback(Order.Conflict)) }

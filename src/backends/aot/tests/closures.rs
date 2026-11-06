@@ -110,6 +110,11 @@ fn suspending_closures_execute_relocated_entries_and_cleanup() {
             ("closure_unused", "-1,41,1", 3),
             ("closure_reference_argument", "40", 1),
             ("closure_factory", "41", 1),
+            ("closure_borrowed", "-1,40,1", 3),
+            ("closure_borrowed_mut", "-1,40,1", 3),
+            ("closure_borrowed_reference", "-1,40,1", 3),
+            ("closure_borrowed_unused", "-1,41,1", 3),
+            ("closure_borrowed_empty", "41", 1),
         ],
         |compiler| {
             let mut extra = String::new();
@@ -121,6 +126,12 @@ fn suspending_closures_execute_relocated_entries_and_cleanup() {
                 "closure_unused",
                 "closure_failure",
                 "closure_race",
+                "closure_borrowed",
+                "closure_borrowed_mut",
+                "closure_borrowed_reference",
+                "closure_borrowed_unused",
+                "closure_borrowed_failure",
+                "closure_borrowed_race",
             ] {
                 let slots = compiler.cps_frame_slots(name).unwrap();
                 extra.push_str(&format!(
@@ -144,20 +155,22 @@ fn suspending_closures_execute_relocated_entries_and_cleanup() {
                 "#
                 ));
             }
-            let slots = compiler.cps_frame_slots("closure_failure").unwrap();
-            extra.push_str(&format!(r#"
+            for name in ["closure_failure", "closure_borrowed_failure"] {
+                let slots = compiler.cps_frame_slots(name).unwrap();
+                extra.push_str(&format!(r#"
                 {{
-                    extern int32_t closure_failure(JokyCpsFrame *);
+                    extern int32_t {name}(JokyCpsFrame *);
                     ready = 0; count = 0;
                     JokyCpsFrame *frame = joky_cps_frame_new({slots});
-                    if (closure_failure(frame) != JOKY_CPS_PENDING) return 22;
+                    if ({name}(frame) != JOKY_CPS_PENDING) return 22;
                     ready = 1;
-                    if (closure_failure(frame) != 7) return 23;
+                    if ({name}(frame) != 7) return 23;
                     joky_cps_frame_free(frame);
                     if (count != 3 || events[0] != -1 || events[1] != 40 || events[2] != 1) return 24;
                     joky_runtime_error_clear();
                 }}
             "#));
+            }
             extra
         },
     );

@@ -637,9 +637,6 @@ impl Parser<'_> {
         if noescape || !names.is_empty() {
             return Err(self.error("Only @suspends is supported on anonymous functions".into()));
         }
-        if suspends && !moving {
-            return Err(self.error("Suspending closures require move captures".into()));
-        }
         let ret = if self.peek() == &TokenKind::Arrow {
             self.advance();
             Some(self.parse_type()?)

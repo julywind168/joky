@@ -11,12 +11,12 @@ pub fn setup(pool: &postgres.Pool) @suspends {
     pool.execute("INSERT INTO joky_demo_stock VALUES (1, 100) ON CONFLICT DO NOTHING", [])!
     pool.execute("CREATE TABLE IF NOT EXISTS joky_demo_orders (id bigserial PRIMARY KEY, customer bigint NOT NULL, request_id text NOT NULL, qty bigint NOT NULL CHECK (qty > 0), UNIQUE(customer, request_id))", [])!;
 }
-pub fn place(pool: &postgres.Pool, customer: Int64, key: String, qty: Int64) @suspends -> Result<Order, postgres.DbError> {
+pub fn place(pool: &postgres.Pool, customer: Int64, key: &String, qty: Int64) @suspends -> Result<Order, postgres.DbError> {
     if qty <= 0 || key.is_empty() { return Err(postgres.DbError.InvalidRequest) }
-    pool.transaction(move |tx| @suspends {
+    pool.transaction(|tx| @suspends {
         let inserted = tx.execute("INSERT INTO joky_demo_orders (customer, request_id, qty) VALUES ($1,$2,$3) ON CONFLICT (customer, request_id) DO NOTHING",
-            [postgres.param(&customer), postgres.param(&key), postgres.param(&qty)])?
-        let row = tx.query_one_as::<StoredOrder>("SELECT qty, id FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [postgres.param(&customer), postgres.param(&key)])?
+            [postgres.param(&customer), postgres.param(key), postgres.param(&qty)])?
+        let row = tx.query_one_as::<StoredOrder>("SELECT qty, id FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [postgres.param(&customer), postgres.param(key)])?
         let id = row.id
         if row.qty != qty { return Ok(postgres.TxOutcome.Rollback(Order.Conflict)) }
         if inserted == 1 {

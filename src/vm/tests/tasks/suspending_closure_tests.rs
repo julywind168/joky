@@ -1,4 +1,4 @@
-//! Owned suspending environments cross CPS calls without replay or leaked captures.
+//! Owned and borrowed suspending environments preserve captures across CPS calls.
 use super::{support::*, VmMode};
 use crate::runtime::{arena::LIVE, suspension::ContinuationStatus};
 
@@ -13,6 +13,11 @@ const CASES: &[(&str, &[i32])] = &[
     ("closure_unused", &[-1, 41, 1]),
     ("closure_reference_argument", &[40]),
     ("closure_factory", &[41]),
+    ("closure_borrowed", &[-1, 40, 1]),
+    ("closure_borrowed_mut", &[-1, 40, 1]),
+    ("closure_borrowed_reference", &[-1, 40, 1]),
+    ("closure_borrowed_unused", &[-1, 41, 1]),
+    ("closure_borrowed_empty", &[41]),
 ];
 
 fn cleaned() {
@@ -60,19 +65,24 @@ fn suspending_closures_resume_transfer_and_cancel_owned_environments() {
                 cleaned();
             }
         }
-        EVENTS.with(|e| e.borrow_mut().clear());
-        READY.with(|r| r.set(false));
-        let task = vm.call_async("closure_race", &[]).unwrap();
-        assert_eq!(task.cps_result(), Some(42));
-        drop(task);
-        cleaned();
-        EVENTS.with(|e| e.borrow_mut().clear());
-        let mut task = vm.call_async("closure_failure", &[]).unwrap();
-        READY.with(|r| r.set(true));
-        assert!(task.resume().is_err());
-        assert!(matches!(task.status(), ContinuationStatus::Failed(_)));
-        drop(task);
-        cleaned();
+        for entry in ["closure_race", "closure_borrowed_race"] {
+            EVENTS.with(|e| e.borrow_mut().clear());
+            READY.with(|r| r.set(false));
+            let task = vm.call_async(entry, &[]).unwrap();
+            assert_eq!(task.cps_result(), Some(42));
+            drop(task);
+            cleaned();
+        }
+        for entry in ["closure_failure", "closure_borrowed_failure"] {
+            EVENTS.with(|e| e.borrow_mut().clear());
+            READY.with(|r| r.set(false));
+            let mut task = vm.call_async(entry, &[]).unwrap();
+            READY.with(|r| r.set(true));
+            assert!(task.resume().is_err());
+            assert!(matches!(task.status(), ContinuationStatus::Failed(_)));
+            drop(task);
+            cleaned();
+        }
     }
 }
 
@@ -83,6 +93,10 @@ fn cancellation(sweep: CancellationSweep) {
         "closure_transfer",
         "closure_argument",
         "closure_unused",
+        "closure_borrowed",
+        "closure_borrowed_mut",
+        "closure_borrowed_reference",
+        "closure_borrowed_race",
     ] {
         assert_cancellation(
             &mut vm,
@@ -111,7 +125,7 @@ fn exhaustive_suspending_closures_cancel_every_instruction() {
 #[test]
 fn suspending_closures_reject_effect_erasure_borrows_and_reuse() {
     for source in [
-        "fn bad() { let f = || @suspends {} }",
+        "fn bad() { let f = || @suspends {}; f() }",
         "fn bad() { let n = 1; let r = &n; let f = move || @suspends { *r } }",
         "fn bad() { let f = move || @suspends {}; f() }",
         "fn bad() @suspends { let f = move || @suspends {}; f(); f() }",
@@ -127,6 +141,14 @@ fn suspending_closures_reject_effect_erasure_borrows_and_reuse() {
         "fn bad<F: FnMut() @suspends -> Unit>(f: F) {}",
         "fn bad() { let f = move || @suspends @suspends {} }",
         "fn bad() { let f = move || @unknown {} }",
+        "fn bad() @suspends { let s = \"owned\"; let f = || @suspends { s }; f(); }",
+        "fn bad() @suspends { var s = \"owned\"; let f = || @suspends { s.byte_length() }; s = \"changed\"; f(); }",
+        "fn bad() @suspends { var n = 1; let f = || @suspends { n += 1 }; println(n); f(); }",
+        "fn bad() @suspends { let n = 1; let f = || @suspends { n }; f(); f(); }",
+        "fn bad() @suspends { let n = 1; let f = || @suspends { &n }; f(); }",
+        "fn bad() @suspends { let n = 1; let f = { let s = \"local\"; || @suspends { s.byte_length() + uint64(n) } }; f(); }",
+        "fn bad() @suspends { var n = 1; let f = || @suspends { n += 1 }; let g = || @suspends { n += 1 }; join { f(), g() } }",
+        "fn bad() @suspends { let n = 1; let f = || @suspends { n }; let values = [f]; }",
     ] {
         frontend_error(source, &crate::ModuleSources::new());
     }

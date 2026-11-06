@@ -3,12 +3,12 @@ extern fn record(value: Int32) -> Int32
 extern fn delayed_value(value: Int32) @suspends -> Int32
 extern fn fail_now() @suspends
 
-struct Resource { id: Int32, text: String }
+struct Resource { id: Int32, text: String, count: Int32 }
 impl Drop for Resource {
     fn drop(&mut self) { record(self.id); }
 }
 fn resource(id: Int32) -> Resource {
-    let value = Resource { id, text: "owned capture" }
+    let value = Resource { id, text: "owned capture", count: 0 }
     record(-id)
     value
 }
@@ -81,4 +81,54 @@ fn closure_reference_argument() @suspends -> Int32 {
 fn closure_factory() @suspends -> Int32 {
     let factory = move | number: Int32 | { move || @suspends { delayed_value(number) } }
     forward(factory(41))
+}
+
+fn closure_borrowed() @suspends -> Int32 {
+    let owner = resource(1)
+    let operation = || @suspends { delayed_value(40) + owner.id }
+    let result = forward(operation)
+    assert(owner.text == "owned capture", "borrowed owner remains usable")
+    result
+}
+fn closure_borrowed_mut() @suspends -> Int32 {
+    var owner = resource(1)
+    let operation = || @suspends {
+        let result = delayed_value(40)
+        owner.count += 1
+        result + owner.id
+    }
+    let result = apply(operation)
+    assert(owner.count == 1, "exclusive capture updates caller storage")
+    result
+}
+fn closure_borrowed_reference() @suspends -> Int32 {
+    let owner = resource(1)
+    let view = &owner.text
+    let result = apply_ref(|value| @suspends {
+        delayed_value(40)
+        assert(view == "owned capture", "reference capture remains live")
+        *value + 41
+    }, &owner.id)
+    assert(owner.id == 1, "noescape callback releases capture loans")
+    result
+}
+fn closure_borrowed_unused() @suspends -> Int32 {
+    let owner = resource(1)
+    let operation = || @suspends { delayed_value(40) + owner.id }
+    delayed_value(41)
+}
+fn closure_borrowed_failure() @suspends -> Int32 {
+    let owner = resource(1)
+    apply(|| @suspends -> Int32 { delayed_value(40); fail_now(); owner.id })
+}
+fn closure_borrowed_race() @suspends -> Int32 {
+    let owner = resource(1)
+    let operation = || @suspends { delayed_value(40) + owner.id }
+    let result = race { operation(), immediate() }
+    assert(owner.id == 1, "race stops borrowed callback before resuming parent")
+    result
+}
+fn closure_borrowed_empty() @suspends -> Int32 {
+    let operation = || @suspends { delayed_value(41) }
+    operation()
 }

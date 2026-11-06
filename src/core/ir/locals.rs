@@ -501,6 +501,7 @@ impl FunctionPlan {
         let ty = slot_type(&binding.slot);
         if suspends
             && !(ty.is_copy_value()
+                || path.is_empty() && ty.is_scoped_suspending_closure()
                 || path.is_empty() && ty == Type::String
                 || self
                     .pointee(
