@@ -89,7 +89,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 默认 prelude 已导出 `Array`、`Map`、`Set` 三个类型名。聊天室脚本可直接声明 `members: Array<Member>`。内嵌标准模块继续显式声明自己的依赖；用户关闭 prelude 后也需显式导入。[聊天室脚本](../examples/chat/script/main.jk)
 
-跨模块枚举的裸变体查找降为 P2。显式选择性导入仍可让 SQL 参数列表写成 `[IntValue(customer), TextValue(key)]`；订单示例现已迁移为 §8.1 的 `postgres.param(&value)`。表达式中的裸构造器须在作用域内唯一；即使是本地枚举，也不会按期望类型消除歧义。以后若扩展这条规则，需同时确定与同名函数、显式导入和泛型推导的优先关系。[订单示例](../examples/postgres_orders.jk)
+跨模块枚举的裸变体查找降为 P2。显式选择性导入仍可让 SQL 参数列表写成 `[IntValue(customer), TextValue(key)]`；订单示例现已迁移为 §8.1 的 SQL 模板。表达式中的裸构造器须在作用域内唯一；即使是本地枚举，也不会按期望类型消除歧义。以后若扩展这条规则，需同时确定与同名函数、显式导入和泛型推导的优先关系。[订单示例](../examples/postgres_orders.jk)
 
 ### 4.4 派生与 Show【Show 已补齐，Eq 运算符及 Eq／Hash 派生已实现】
 
@@ -431,12 +431,12 @@ explain-parallel 确认直接域操作仍为 Local。仅核验现有能力，没
 
 ## 8. PostgreSQL【P0】
 
-### 8.1 参数绑定【ToSql 与显式转换已实现】
+### 8.1 参数绑定【ToSql、SQL 模板与 Query 已实现】
 
-已提供 `postgres.ToSql` 与 `postgres.param(&value)`，订单示例使用：
+已提供 `postgres.ToSql` 与 `postgres.param(&value)`；订单示例进一步使用类型化模板：
 
 ```joky
-[postgres.param(&customer), postgres.param(&key), postgres.param(&qty)]
+sql"INSERT INTO orders (customer, request_id, qty) VALUES (${customer}, ${key}, ${qty})"
 ```
 
 内置支持 Bool、Int16/32/64、Float64、String、Array<UInt8>、time.Timestamp、uuid.Uuid、
@@ -445,7 +445,10 @@ explain-parallel 确认直接域操作仍为 Local。仅核验现有能力，没
 文本和字节从借用生成独立拥有的参数副本，不保留输入借用，可跨挂起使用；
 这里省去调用方显式 clone，没有消除实际复制。业务类型可实现 ToSql 复用已支持的 SQL 类型。
 
-参数容器仍为 `Array<postgres.Value>`，原有显式变体构造继续可用。
+模板产生拥有型 Query，Pool／Transaction 的执行与查询方法消费 Query。
+`${expr}` 绑定 ToSql 值或预编码 Value，`{expr}` 仅允许 postgres.ident 生成的 Identifier；
+JSON 参数仍显式处理编码错误。编译器检查插值词法边界，不连接数据库或检查 schema。
+内部参数容器仍为 `Array<postgres.Value>`；`Query.new(sql, params)` 保留显式构造入口与手写 `$N` 重用。
 尚未实现异构数组 `[customer, key, qty]` 的隐式转换；不为此引入第二套 Param 容器。
 Timestamp、Uuid 已接入 ToSql，jsonb 使用显式可失败参数构造函数，见 §8.3。
 float8、text[]、int8[] 已接入同一协议；numeric 和 Value 变体命名整理仍待处理。
@@ -563,10 +566,11 @@ on_close 自身失败传播，不重试。处理器只被借用，可持有拥�
 | 完成构建 | `StringBuilder.finish()` | 业界常见 `to_string()`/`build()`，`finish` 可接受，但应与 http 内部 `Wire.finish()`（关闭连接）区分语义 |
 | 错误枚举变体 | 已改为 `InvalidRequest`、`LimitExceeded`、`TransactionClosed` | LimitExceeded 同时覆盖请求和服务资源上限；TransactionClosed 只表示事务失效，宿主状态码保持不变 |
 | HTTP 状态 | `Success` | `Ok`（见 §7） |
-| 参数传递 | `process.env`／`env_or` 的名称、`resolve_path` 的路径、TCP/DNS 主机名、数据库 URL／SQL 已改为 &String | 挂起调用支持不逃逸参数的自动共享借用；字面量和临时值保活到调用结束，命名字符串可重复使用 |
+| 参数传递 | `process.env`／`env_or` 的名称、`resolve_path` 的路径、TCP/DNS 主机名、数据库 URL 已改为 &String；SQL 改为拥有型 Query | 挂起调用支持不逃逸参数的自动共享借用；字面量和临时值保活到调用结束，命名字符串可重复使用 |
 
 挂起自动借用沿用不逃逸检查，并覆盖失败、取消及 join/race 分支清理。process 只在调用线程读取键，
 DNS 和 PostgreSQL 后台任务仍拥有必要的输入副本；借用接口省去调用方为复用字符串而做的额外 clone。
+SQL 模板独立保存参数快照，执行消费 Query；Query.new 则直接接收文本及参数的所有权。
 只读且不逃逸的参数优先使用 &String；会返回、保存或转移字符串所有权的参数继续按值，例如 env_or 的 fallback。
 
 建议把上表的结论写入 CONTRIBUTING.md 的 API 命名约定，新增模块按此执行，旧接口在一次集中迁移中改名。
@@ -579,10 +583,10 @@ DNS 和 PostgreSQL 后台任务仍拥有必要的输入副本；借用接口省�
 pub fn place(pool: &pg.Pool, customer: Int64, key: &String, qty: Int64) @suspends -> Result<Order, pg.DbError> {
     if qty <= 0 || key.is_empty() { return Err(pg.DbError.InvalidRequest) }
     pool.transaction(|tx| {
-        let inserted = tx.execute("INSERT ... ON CONFLICT (customer, request_id) DO NOTHING", [customer, key, qty])?
-        let row = tx.query_one("SELECT id, qty FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [customer, key])?
+        let inserted = tx.execute(sql"INSERT INTO joky_demo_orders (customer, request_id, qty) VALUES (${customer}, ${key}, ${qty}) ON CONFLICT (customer, request_id) DO NOTHING")?
+        let row = tx.query_one(sql"SELECT id, qty FROM joky_demo_orders WHERE customer=${customer} AND request_id=${key}")?
         if row.get::<Int64>("qty")? != qty { return Ok(pg.TxOutcome.Rollback(Order.Conflict)) }
-        if inserted == 1 && tx.execute("UPDATE ... WHERE sku=1 AND available >= $1", [qty])? == 0 {
+        if inserted == 1 && tx.execute(sql"UPDATE joky_demo_stock SET available=available-${qty} WHERE sku=1 AND available >= ${qty}")? == 0 {
             return Ok(pg.TxOutcome.Rollback(Order.Insufficient))
         }
         Ok(pg.TxOutcome.Commit(Order.Confirmed(row.get::<Int64>("id")?)))

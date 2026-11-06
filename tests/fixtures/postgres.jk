@@ -55,7 +55,7 @@ impl postgres.FromSql for OrderId {
 struct WrappedRow<T> { id: T }
 
 fn scalar(p: &postgres.Pool, sql: String) @suspends -> Int64 {
-    p.query_scalar::<Int64>(sql, [])!
+    p.query_scalar::<Int64>(postgres.Query.new(sql, []))!
 }
 fn parameters(pool: &postgres.Pool) @suspends {
     let flag = true
@@ -73,7 +73,7 @@ fn parameters(pool: &postgres.Pool) @suspends {
         values
     }
     task.sleep(1ms)
-    let row = pool.query_one("SELECT $1 AS flag, $2 AS small, $3 AS medium, $4 AS large, $5 AS text, $6 AS bytes", params)!
+    let row = pool.query_one(postgres.Query.new("SELECT $1 AS flag, $2 AS small, $3 AS medium, $4 AS large, $5 AS text, $6 AS bytes", params))!
     assert(row.get::<Bool>("flag")!, "bound boolean")
     assert(row.get::<Int64>("small")! == -32768 && row.get::<Int64>("medium")! == -2147483648, "signed integer widening")
     assert(row.get::<Int64>("large")! == large, "bound bigint minimum")
@@ -87,9 +87,9 @@ fn parameters(pool: &postgres.Pool) @suspends {
     let no_int: Option<Int64> = None
     let no_text: Option<String> = None
     let no_bytes: Option<Array<UInt8>> = None
-    let row = pool.query_one("SELECT $1 AS flag, $2 AS small, $3 AS medium, $4 AS large, $5 AS text, $6 AS bytes", [
+    let row = pool.query_one(postgres.Query.new("SELECT $1 AS flag, $2 AS small, $3 AS medium, $4 AS large, $5 AS text, $6 AS bytes", [
         postgres.param(&no_bool), postgres.param(&no_small), postgres.param(&no_medium),
-        postgres.param(&no_int), postgres.param(&no_text), postgres.param(&no_bytes)])!
+        postgres.param(&no_int), postgres.param(&no_text), postgres.param(&no_bytes)]))!
     assert(row.get::<Option<Bool>>("flag")!.is_none(), "boolean NULL has a SQL type without a cast")
     assert(row.get::<Option<Int64>>("small")!.is_none() && row.get::<Option<Int64>>("medium")!.is_none() && row.get::<Option<Int64>>("large")!.is_none(), "integer NULL kinds")
     assert(row.get::<Option<String>>("text")!.is_none() && row.get::<Option<Array<UInt8>>>("bytes")!.is_none(), "owning NULL kinds")
@@ -98,52 +98,52 @@ fn parameters(pool: &postgres.Pool) @suspends {
     let present_int: Option<Int16> = Some(32767)
     let present_text = Some("")
     let present_bytes: Option<Array<UInt8>> = Some([])
-    let row = pool.query_one("SELECT $1 AS flag, $2 AS n, $3 AS text, $4 AS bytes", [
-        postgres.param(&present_bool), postgres.param(&present_int), postgres.param(&present_text), postgres.param(&present_bytes)])!
+    let row = pool.query_one(postgres.Query.new("SELECT $1 AS flag, $2 AS n, $3 AS text, $4 AS bytes", [
+        postgres.param(&present_bool), postgres.param(&present_int), postgres.param(&present_text), postgres.param(&present_bytes)]))!
     assert(!row.get::<Bool>("flag")! && row.get::<Int64>("n")! == 32767, "optional scalar values")
     assert(row.get::<String>("text")!.is_empty() && row.get::<Array<UInt8>>("bytes")!.is_empty(), "present empty parameters are not NULL")
 
     let id = Some(OrderId { value: 42 })
     let no_id: Option<OrderId> = None
     var tx = pool.begin()!
-    assert(tx.query_scalar::<OrderId>("SELECT $1", [postgres.param(&id)])!.value == 42, "custom optional ToSql in a transaction")
-    assert(tx.query_scalar::<Option<OrderId>>("SELECT $1", [postgres.param(&no_id)])!.is_none(), "custom ToSql supplies the NULL kind")
+    assert(tx.query_scalar::<OrderId>(postgres.Query.new("SELECT $1", [postgres.param(&id)]))!.value == 42, "custom optional ToSql in a transaction")
+    assert(tx.query_scalar::<Option<OrderId>>(postgres.Query.new("SELECT $1", [postgres.param(&no_id)]))!.is_none(), "custom ToSql supplies the NULL kind")
     tx.commit()!
 }
 fn scalar_queries(pool: &postgres.Pool) @suspends {
-    assert(pool.query_scalar::<Int64>("SELECT count(*) FROM generate_series(1, 3)", [])! == 3, "scalar count")
-    assert(pool.query_scalar::<Bool>("SELECT $1::bool", [postgres.Value.BoolValue(true)])!, "scalar bound boolean")
-    let text = pool.query_scalar::<String>("SELECT $1::text", [postgres.Value.TextValue("owned scalar")])!
-    let bytes = pool.query_scalar::<Array<UInt8>>("SELECT $1::bytea", [postgres.Value.BytesValue([0,255])])!
+    assert(pool.query_scalar::<Int64>(postgres.Query.new("SELECT count(*) FROM generate_series(1, 3)", []))! == 3, "scalar count")
+    assert(pool.query_scalar::<Bool>(postgres.Query.new("SELECT $1::bool", [postgres.Value.BoolValue(true)]))!, "scalar bound boolean")
+    let text = pool.query_scalar::<String>(postgres.Query.new("SELECT $1::text", [postgres.Value.TextValue("owned scalar")]))!
+    let bytes = pool.query_scalar::<Array<UInt8>>(postgres.Query.new("SELECT $1::bytea", [postgres.Value.BytesValue([0,255])]))!
     assert(text == "owned scalar" && bytes.len() == 2 && bytes[1] == 255, "scalar owning results")
-    assert(pool.query_scalar::<Option<Int64>>("SELECT NULL::bigint", [])!.is_none(), "scalar nullable integer")
-    assert(pool.query_scalar::<Option<Int64>>("SELECT 42::bigint", [])!! == 42, "scalar present optional")
-    assert(match pool.query_scalar::<Option<Int64>>("SELECT 1 WHERE false", []) { Err(ResultRead(NoRows)) => true, _ => false }, "scalar optional still requires a row")
-    assert(match pool.query_scalar::<Int64>("SELECT n, n FROM generate_series(1, 2) AS s(n)", []) { Err(ResultRead(MultipleRows)) => true, _ => false }, "scalar row count precedes column count")
-    assert(match pool.query_scalar::<Int64>("SELECT FROM generate_series(1, 1)", []) { Err(ResultRead(ColumnCount(0))) => true, _ => false }, "scalar zero columns")
-    assert(match pool.query_scalar::<Int64>("SELECT 1, 'extra'::text", []) { Err(ResultRead(ColumnCount(2))) => true, _ => false }, "scalar multiple columns")
-    assert(match pool.query_scalar::<Int64>("SELECT NULL::bigint", []) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "scalar required NULL")
-    assert(match pool.query_scalar::<Option<Int64>>("SELECT NULL::text", []) { Err(Column(TypeMismatch(0))) => true, _ => false }, "scalar wrong NULL type")
-    assert(match pool.query_scalar::<Int64>("SELECT 'wrong'::text", []) { Err(Column(TypeMismatch(0))) => true, _ => false }, "scalar type mismatch")
-    let id = pool.query_scalar::<OrderId>("SELECT 42::bigint", [])!
+    assert(pool.query_scalar::<Option<Int64>>(postgres.Query.new("SELECT NULL::bigint", []))!.is_none(), "scalar nullable integer")
+    assert(pool.query_scalar::<Option<Int64>>(postgres.Query.new("SELECT 42::bigint", []))!! == 42, "scalar present optional")
+    assert(match pool.query_scalar::<Option<Int64>>(postgres.Query.new("SELECT 1 WHERE false", [])) { Err(ResultRead(NoRows)) => true, _ => false }, "scalar optional still requires a row")
+    assert(match pool.query_scalar::<Int64>(postgres.Query.new("SELECT n, n FROM generate_series(1, 2) AS s(n)", [])) { Err(ResultRead(MultipleRows)) => true, _ => false }, "scalar row count precedes column count")
+    assert(match pool.query_scalar::<Int64>(postgres.Query.new("SELECT FROM generate_series(1, 1)", [])) { Err(ResultRead(ColumnCount(0))) => true, _ => false }, "scalar zero columns")
+    assert(match pool.query_scalar::<Int64>(postgres.Query.new("SELECT 1, 'extra'::text", [])) { Err(ResultRead(ColumnCount(2))) => true, _ => false }, "scalar multiple columns")
+    assert(match pool.query_scalar::<Int64>(postgres.Query.new("SELECT NULL::bigint", [])) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "scalar required NULL")
+    assert(match pool.query_scalar::<Option<Int64>>(postgres.Query.new("SELECT NULL::text", [])) { Err(Column(TypeMismatch(0))) => true, _ => false }, "scalar wrong NULL type")
+    assert(match pool.query_scalar::<Int64>(postgres.Query.new("SELECT 'wrong'::text", [])) { Err(Column(TypeMismatch(0))) => true, _ => false }, "scalar type mismatch")
+    let id = pool.query_scalar::<OrderId>(postgres.Query.new("SELECT 42::bigint", []))!
     assert(id.value == 42, "scalar custom FromSql")
-    assert(match pool.query_scalar::<OrderId>("SELECT -1::bigint", []) { Err(InvalidRequest) => true, _ => false }, "scalar custom error")
+    assert(match pool.query_scalar::<OrderId>(postgres.Query.new("SELECT -1::bigint", [])) { Err(InvalidRequest) => true, _ => false }, "scalar custom error")
     let error = postgres.DbError.ResultRead(postgres.ReadFailure.ColumnCount(2))
     assert("{error}" == "query returned 2 columns; expected one", "scalar column count diagnostic")
 
     var tx = pool.begin()!
-    assert(match tx.query_scalar::<Int64>("SELECT 1 WHERE false", []) { Err(ResultRead(NoRows)) => true, _ => false }, "transaction scalar no rows")
-    assert(match tx.query_scalar::<Int64>("SELECT generate_series(1, 2)", []) { Err(ResultRead(MultipleRows)) => true, _ => false }, "transaction scalar multiple rows")
-    assert(match tx.query_scalar::<Int64>("SELECT 1, 2", []) { Err(ResultRead(ColumnCount(2))) => true, _ => false }, "transaction scalar columns")
-    assert(match tx.query_scalar::<Int64>("SELECT true", []) { Err(Column(TypeMismatch(0))) => true, _ => false }, "transaction scalar decode error")
-    assert(tx.query_scalar::<Option<String>>("SELECT NULL::text", [])!.is_none(), "transaction scalar nullable text")
-    assert(tx.query_scalar::<Int64>("SELECT $1::bigint", [postgres.Value.IntValue(42)])! == 42, "transaction remains usable after scalar errors")
+    assert(match tx.query_scalar::<Int64>(postgres.Query.new("SELECT 1 WHERE false", [])) { Err(ResultRead(NoRows)) => true, _ => false }, "transaction scalar no rows")
+    assert(match tx.query_scalar::<Int64>(postgres.Query.new("SELECT generate_series(1, 2)", [])) { Err(ResultRead(MultipleRows)) => true, _ => false }, "transaction scalar multiple rows")
+    assert(match tx.query_scalar::<Int64>(postgres.Query.new("SELECT 1, 2", [])) { Err(ResultRead(ColumnCount(2))) => true, _ => false }, "transaction scalar columns")
+    assert(match tx.query_scalar::<Int64>(postgres.Query.new("SELECT true", [])) { Err(Column(TypeMismatch(0))) => true, _ => false }, "transaction scalar decode error")
+    assert(tx.query_scalar::<Option<String>>(postgres.Query.new("SELECT NULL::text", []))!.is_none(), "transaction scalar nullable text")
+    assert(tx.query_scalar::<Int64>(postgres.Query.new("SELECT $1::bigint", [postgres.Value.IntValue(42)]))! == 42, "transaction remains usable after scalar errors")
     tx.commit()!
 }
 fn types(pool: &postgres.Pool) @suspends {
-    let rows = pool.query("SELECT $1::bool, $2::bigint, $3::text, $4::bytea, $5::bigint, 7::int2, 8::int4", [
+    let rows = pool.query(postgres.Query.new("SELECT $1::bool, $2::bigint, $3::text, $4::bytea, $5::bigint, 7::int2, 8::int4", [
         postgres.Value.BoolValue(true), postgres.Value.IntValue(-42), postgres.Value.TextValue("a';--好"),
-        postgres.Value.BytesValue([0,255]), postgres.Value.Null(postgres.Kind.Integer)])!
+        postgres.Value.BytesValue([0,255]), postgres.Value.Null(postgres.Kind.Integer)]))!
     let r = rows.borrow_ref(0)
     assert(match r.borrow_ref(0) { BoolValue(b) => b, _ => false }, "boolean")
     assert(match r.borrow_ref(1) { IntValue(n) => n == -42, _ => false }, "negative bigint")
@@ -152,9 +152,9 @@ fn types(pool: &postgres.Pool) @suspends {
     assert(match r.borrow_ref(4) { Null(Integer) => true, _ => false }, "typed null")
     assert(match r.borrow_ref(5) { IntValue(n) => n == 7, _ => false }, "int2")
     assert(match r.borrow_ref(6) { IntValue(n) => n == 8, _ => false }, "int4")
-    assert(match pool.query("SELECT 1.5::numeric", []) { Err(ResultRead(UnsupportedType)) => true, _ => false }, "unsupported column")
-    assert(match pool.query("SELECT repeat('x', 1048567) AS payload", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "column metadata counts toward the byte bound")
-    assert(match pool.query("SELECT generate_series(0,1024)", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "row bound")
+    assert(match pool.query(postgres.Query.new("SELECT 1.5::numeric", [])) { Err(ResultRead(UnsupportedType)) => true, _ => false }, "unsupported column")
+    assert(match pool.query(postgres.Query.new("SELECT repeat('x', 1048567) AS payload", [])) { Err(ResultRead(ResultLimit)) => true, _ => false }, "column metadata counts toward the byte bound")
+    assert(match pool.query(postgres.Query.new("SELECT generate_series(0,1024)", [])) { Err(ResultRead(ResultLimit)) => true, _ => false }, "row bound")
 }
 fn cells(row: &postgres.Row) {
     assert(postgres.get_i64(row, 0)!.is_none() && postgres.get_bool(row, 1)!!, "typed cells")
@@ -176,12 +176,12 @@ fn check_batch(batch: &Array<postgres.Row>) {
     assert(second.column_names().borrow_ref(0) == "qty" && second.values().len() == 2, "ordered column metadata")
 }
 fn cardinality(pool: &postgres.Pool) @suspends {
-    assert(pool.query_optional("SELECT 1 WHERE false", [])!.is_none(), "optional empty")
-    assert(match pool.query_one("SELECT 1 WHERE false", []) { Err(ResultRead(NoRows)) => true, _ => false }, "required empty")
-    assert(match pool.query_optional("SELECT generate_series(1, 2)", []) { Err(ResultRead(MultipleRows)) => true, _ => false }, "optional multiple")
+    assert(pool.query_optional(postgres.Query.new("SELECT 1 WHERE false", []))!.is_none(), "optional empty")
+    assert(match pool.query_one(postgres.Query.new("SELECT 1 WHERE false", [])) { Err(ResultRead(NoRows)) => true, _ => false }, "required empty")
+    assert(match pool.query_optional(postgres.Query.new("SELECT generate_series(1, 2)", [])) { Err(ResultRead(MultipleRows)) => true, _ => false }, "optional multiple")
     var tx = pool.begin()!
-    assert(match tx.query_one("SELECT generate_series(1, 2)", []) { Err(ResultRead(MultipleRows)) => true, _ => false }, "required multiple")
-    let row = tx.query_optional("SELECT NULL::bigint AS n, true AS flag, 'x'::text AS \"Text\", $1::bytea AS bytes", [postgres.Value.BytesValue([0,255])])!!
+    assert(match tx.query_one(postgres.Query.new("SELECT generate_series(1, 2)", [])) { Err(ResultRead(MultipleRows)) => true, _ => false }, "required multiple")
+    let row = tx.query_optional(postgres.Query.new("SELECT NULL::bigint AS n, true AS flag, 'x'::text AS \"Text\", $1::bytea AS bytes", [postgres.Value.BytesValue([0,255])]))!!
     cells(&row)
     assert(row.get_opt::<Int64>("n")!.is_none(), "generic typed NULL")
     assert(row.get::<Bool>("flag")! && row.get::<String>("Text")! == "x", "generic scalar reads")
@@ -194,30 +194,30 @@ fn cardinality(pool: &postgres.Pool) @suspends {
     let mapped = postgres.FromRow.from_row::<NamedRow<String>>(&row)!
     mem.drop(row)
     assert(mapped.Text == "x" && mapped.n.is_none() && mapped.flag, "derived values outlive the row")
-    let single = tx.query_one_as::<NamedRow<String>>("SELECT true AS flag, 'owned'::text AS \"Text\", 7::bigint AS n, 42 AS extra", [])!
+    let single = tx.query_one_as::<NamedRow<String>>(postgres.Query.new("SELECT true AS flag, 'owned'::text AS \"Text\", 7::bigint AS n, 42 AS extra", []))!
     assert(single.Text == "owned" && single.n! == 7, "derived mapping ignores order and extra columns")
-    let duplicate = tx.query_one("SELECT 9::bigint AS id, 11::bigint AS id", [])!
+    let duplicate = tx.query_one(postgres.Query.new("SELECT 9::bigint AS id, 11::bigint AS id", []))!
     assert(match duplicate.get_int64("id") { Err(AmbiguousColumn) => true, _ => false }, "ambiguous label")
     assert(match duplicate.get::<Int64>("id") { Err(Column(AmbiguousColumn)) => true, _ => false }, "generic ambiguous column")
     assert(match postgres.FromRow.from_row::<Identifier>(&duplicate) { Err(Column(AmbiguousColumn)) => true, _ => false }, "derived ambiguous column")
     assert(postgres.get_i64(&duplicate, 1)!! == 11, "duplicate labels retain their positions")
-    let batch = tx.query("SELECT n+10 AS qty, n AS id FROM generate_series(1,2) AS series(n) ORDER BY n", [])!
+    let batch = tx.query(postgres.Query.new("SELECT n+10 AS qty, n AS id FROM generate_series(1,2) AS series(n) ORDER BY n", []))!
     check_batch(&batch)
-    let single = tx.query_one("SELECT 42", [])!
+    let single = tx.query_one(postgres.Query.new("SELECT 42", []))!
     assert(postgres.get_i64(&single, 0)!! == 42, "transaction remains usable")
     tx.commit()!
 }
 fn abandon(p: &postgres.Pool) @suspends {
     var tx = p.begin()!
-    tx.execute("INSERT INTO joky_test_abandon VALUES (1)", [])!;
+    tx.execute(postgres.Query.new("INSERT INTO joky_test_abandon VALUES (1)", []))!;
 }
 fn sleep_query(pool: &postgres.Pool) @suspends {
     var tx = pool.begin()!
-    tx.execute("INSERT INTO joky_test_abandon VALUES (3)", [])!;
-    tx.execute("SELECT pg_sleep(5) /*joky_cancel_probe*/", [])!;
+    tx.execute(postgres.Query.new("INSERT INTO joky_test_abandon VALUES (3)", []))!;
+    tx.execute(postgres.Query.new("SELECT pg_sleep(5) /*joky_cancel_probe*/", []))!;
 }
 fn queued(pool: &postgres.Pool) @suspends {
-    pool.execute("INSERT INTO joky_test_abandon VALUES (4)", [])!;
+    pool.execute(postgres.Query.new("INSERT INTO joky_test_abandon VALUES (4)", []))!;
 }
 fn await_sleep(observer: &postgres.Pool, pid: Int64) @suspends {
     while scalar(observer, "SELECT count(*) FROM pg_stat_activity WHERE pid={pid} AND state='active' AND query LIKE 'SELECT pg_sleep(5) /*joky_cancel_probe*/%'") == 0 { task.sleep(5ms) }
@@ -230,30 +230,30 @@ fn main() @suspends {
     parameters(&pool)
     scalar_queries(&pool)
     cardinality(&pool)
-    binary_columns(pool.query_one("SELECT $1::bytea AS bytes, ''::bytea AS empty, NULL::bytea AS nullable, NULL::bigint AS wrong", [postgres.Value.BytesValue([0, 255, 42])])!)
-    let binary = pool.query_one_as::<BinaryRow>("SELECT $1::bytea AS bytes, NULL::bytea AS nullable", [postgres.Value.BytesValue([42])])!
+    binary_columns(pool.query_one(postgres.Query.new("SELECT $1::bytea AS bytes, ''::bytea AS empty, NULL::bytea AS nullable, NULL::bigint AS wrong", [postgres.Value.BytesValue([0, 255, 42])]))!)
+    let binary = pool.query_one_as::<BinaryRow>(postgres.Query.new("SELECT $1::bytea AS bytes, NULL::bytea AS nullable", [postgres.Value.BytesValue([42])]))!
     assert(binary.bytes[0] == 42 && binary.nullable.is_none(), "mapped binary query returns independent owners across suspension")
-    let wrapped = pool.query_one_as::<WrappedRow<OrderId>>("SELECT 42::bigint AS id", [])!
+    let wrapped = pool.query_one_as::<WrappedRow<OrderId>>(postgres.Query.new("SELECT 42::bigint AS id", []))!
     assert(wrapped.id.value == 42, "custom FromSql with inferred derive bounds")
-    let invalid = pool.query_one("SELECT -1::bigint AS id", [])!
+    let invalid = pool.query_one(postgres.Query.new("SELECT -1::bigint AS id", []))!
     assert(match invalid.get_opt::<OrderId>("id") { Err(InvalidRequest) => true, _ => false }, "optional custom decode preserves errors")
-    let id = pool.query_one_as::<Identifier>("SELECT 42::bigint AS id", [])!
+    let id = pool.query_one_as::<Identifier>(postgres.Query.new("SELECT 42::bigint AS id", []))!
     assert(id.id == 42, "pool mapped query")
-    pool.query_one_as::<EmptyRow>("SELECT 1 AS extra", [])!
-    assert(match pool.query_one_as::<Identifier>("SELECT 1 AS id WHERE false", []) { Err(ResultRead(NoRows)) => true, _ => false }, "mapped empty query")
-    assert(match pool.query_one_as::<Identifier>("SELECT generate_series(1,2) AS id", []) { Err(ResultRead(MultipleRows)) => true, _ => false }, "mapped multirow query")
-    pool.execute("CREATE TABLE IF NOT EXISTS joky_result_probe (id bigint PRIMARY KEY)", [])!;
-    pool.execute("DELETE FROM joky_result_probe", [])!;
-    assert(match pool.query("INSERT INTO joky_result_probe VALUES (7) RETURNING id::numeric", []) {
+    pool.query_one_as::<EmptyRow>(postgres.Query.new("SELECT 1 AS extra", []))!
+    assert(match pool.query_one_as::<Identifier>(postgres.Query.new("SELECT 1 AS id WHERE false", [])) { Err(ResultRead(NoRows)) => true, _ => false }, "mapped empty query")
+    assert(match pool.query_one_as::<Identifier>(postgres.Query.new("SELECT generate_series(1,2) AS id", [])) { Err(ResultRead(MultipleRows)) => true, _ => false }, "mapped multirow query")
+    pool.execute(postgres.Query.new("CREATE TABLE IF NOT EXISTS joky_result_probe (id bigint PRIMARY KEY)", []))!;
+    pool.execute(postgres.Query.new("DELETE FROM joky_result_probe", []))!;
+    assert(match pool.query(postgres.Query.new("INSERT INTO joky_result_probe VALUES (7) RETURNING id::numeric", [])) {
         Err(ResultRead(UnsupportedType)) => true, _ => false }, "DML returned an unreadable result")
     assert(scalar(&pool, "SELECT count(*) FROM joky_result_probe") == 1, "DML already committed")
 
-    pool.execute("CREATE TABLE IF NOT EXISTS joky_test_abandon (n bigint PRIMARY KEY)", [])!;
+    pool.execute(postgres.Query.new("CREATE TABLE IF NOT EXISTS joky_test_abandon (n bigint PRIMARY KEY)", []))!;
     abandon(&pool)
     assert(scalar(&pool, "SELECT count(*) FROM joky_test_abandon") == 0, "drop rolls back")
     var tx = pool.begin()!
-    tx.execute("INSERT INTO joky_test_abandon VALUES (2)", [])!;
-    assert(match tx.execute("INSERT INTO joky_test_abandon VALUES (2)", []) { Err(Database(code)) => code == "23505", _ => false }, "SQLSTATE")
+    tx.execute(postgres.Query.new("INSERT INTO joky_test_abandon VALUES (2)", []))!;
+    assert(match tx.execute(postgres.Query.new("INSERT INTO joky_test_abandon VALUES (2)", [])) { Err(Database(code)) => code == "23505", _ => false }, "SQLSTATE")
     assert(tx.commit().is_err(), "failed transaction cannot commit")
     assert(scalar(&pool, "SELECT count(*) FROM joky_test_abandon") == 0, "failure rolls back")
     let before = scalar(&pool, "SELECT pg_backend_pid()")

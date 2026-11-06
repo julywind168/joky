@@ -2878,7 +2878,7 @@ from_entries/extend 先按输入长度受检 reserve，再原地反转输入并�
 Show 是 `stdlib/show.jk` 中的普通静态 trait，使用受检查的共享接收者与独占 builder
 `@noescape` 契约，内置与用户实现均单态化，不增加动态分派或运行时模板解析。
 Show 的默认 `to_text` 包装共享 builder 创建、show 和 finish；自由函数与 io.print 复用它，io.println 保留直接追加换行的单 builder 路径。
-Lexer 将 f 字符串分为解码文本和保留原 UTF-8 span 的表达式 token；Parser 展开成
+Lexer 将普通插值字符串分为解码文本和保留原 UTF-8 span 的表达式 token；Parser 展开成
 普通 builder 块和不可由源码拼写的临时名/模块别名，并仅按需引入 show/string。
 共享 IR 区分已有拥有位置、引用和需要求值的临时值，临时局部按既有机制物化借用位置，
 Show 完成后逐段清理，最后消费 finish。借用、返回、分配失败和 Drop 仍走共享检查/清理路径。
@@ -2894,6 +2894,16 @@ R7a 为该入口附加受审计的同步 TextViewV2 并行宿主证据：精确�
 输出仍可能阻塞 worker，跨调用顺序不保证；Show 调用图继续接受普通并行资格检查。
 公开 C 声明位于 `include/joky_io.h`，安装脚本一起部署；输出失败记录运行时错误且可能
 已写入前缀。通用输出只需显式导入 io，不扩大默认 prelude 的宿主依赖。
+
+## SQL 模板
+
+Lexer 为 `sql"..."` 保留文本、标识符孔和参数孔三类片段。Parser 在解码及去缩进后的文本中检查
+PostgreSQL 引号、美元引用、嵌套块注释与行注释，拒绝其中的孔、模板内手写 `$N` 及参数 token 拼接。
+之后展开为普通 `postgres.SqlBuilder` 调用，复用字符串插值的拥有位置／引用／临时值借用与逐段清理。
+编译器私有导入别名固定绑定标准 postgres，内部 builder 与追加函数不向用户源码开放。
+`{expr}` 的追加参数固定为 Identifier，`${expr}` 通过 BindParam 单态化；不经过 Show 或动态类型判断。
+Query 是普通拥有型记录，包含 String 和 Array<Value>。执行消费记录，继续使用既有 PostgreSQL 编码及
+后台驱动，不改变 ABI、字节码或 CPS 协议；三个后端共享构造、挂起、取消和分配失败的清理路径。
 
 ## 递归拥有容器清理（JSON1a）
 

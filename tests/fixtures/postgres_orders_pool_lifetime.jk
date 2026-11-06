@@ -9,7 +9,7 @@ import joky/task
 import joky/uuid
 
 fn scalar(pool: &postgres.Pool, sql: String) @suspends -> Int64 {
-    let row = pool.query_one(sql, [])!
+    let row = pool.query_one(postgres.Query.new(sql, []))!
     postgres.get_i64(&row, 0)!!
 }
 fn main() @suspends {

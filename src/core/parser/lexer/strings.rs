@@ -111,6 +111,14 @@ impl Lexer<'_> {
 
     /// Raw literals skip escapes and holes; hole-free strings fold to `StrLit`.
     pub(super) fn read_string(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
+        self.read_template(start, false)
+    }
+
+    pub(super) fn read_sql_string(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
+        self.read_template(start, true)
+    }
+
+    fn read_template(&mut self, start: usize, sql: bool) -> Result<TokenKind, Diagnostic> {
         if self.interpolation_depth >= 64 {
             return Err(Diagnostic::at(
                 self.line,
@@ -119,9 +127,12 @@ impl Lexer<'_> {
             ));
         }
         self.interpolation_depth += 1;
-        let result = self.string_parts(start);
+        let result = self.string_parts(start, sql);
         self.interpolation_depth -= 1;
         let parts = result?;
+        if sql {
+            return Ok(TokenKind::SqlTemplate(parts));
+        }
         if parts
             .iter()
             .any(|part| matches!(part, InterpolationPart::Expression(_)))
@@ -138,7 +149,11 @@ impl Lexer<'_> {
         Ok(TokenKind::StrLit(text))
     }
 
-    fn string_parts(&mut self, start: usize) -> Result<Vec<InterpolationPart>, Diagnostic> {
+    fn string_parts(
+        &mut self,
+        start: usize,
+        sql: bool,
+    ) -> Result<Vec<InterpolationPart>, Diagnostic> {
         let line = self.line;
         let raw = self.peek() == Some('r');
         let mut hashes = 0;
@@ -206,7 +221,11 @@ impl Lexer<'_> {
                         "Unmatched '}' in string literal; use '}}' for a literal brace",
                     ))
                 }
-                Some('{') if !raw => {
+                Some(c) if !raw && (c == '{' || sql && c == '$' && self.peek2() == Some('{')) => {
+                    let parameter = c == '$';
+                    if parameter {
+                        self.advance();
+                    }
                     parts.push(InterpolationPart::Text(
                         std::mem::take(&mut text),
                         Span::new(segment, self.byte_pos),
@@ -237,7 +256,11 @@ impl Lexer<'_> {
                         }
                         tokens.push(token);
                     }
-                    parts.push(InterpolationPart::Expression(tokens));
+                    parts.push(if parameter {
+                        InterpolationPart::Parameter(tokens)
+                    } else {
+                        InterpolationPart::Expression(tokens)
+                    });
                     segment = self.byte_pos;
                 }
                 Some('\\') if !raw => {

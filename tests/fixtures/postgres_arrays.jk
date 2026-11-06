@@ -18,17 +18,17 @@ fn floats(pool: &postgres.Pool) @suspends {
         0x7fefffffffffffff, 0x7ff0000000000000, 0xfff0000000000000]
     for bits in bits {
         let value = Float64.from_bits(bits)
-        let actual = pool.query_scalar::<Float64>("SELECT $1", [postgres.param(&value)])!
+        let actual = pool.query_scalar::<Float64>(postgres.Query.new("SELECT $1", [postgres.param(&value)]))!
         assert(actual.to_bits() == bits, "float8 preserves finite values, signed zero and infinities")
     }
     let nan = Float64.from_bits(0x7ff8000000000001)
-    let actual = pool.query_scalar::<Float64>("SELECT $1", [postgres.param(&nan)])!
+    let actual = pool.query_scalar::<Float64>(postgres.Query.new("SELECT $1", [postgres.param(&nan)]))!
     assert(actual != actual, "float8 preserves NaN classification")
-    assert(pool.query_scalar::<Float64>("SELECT 1.25::float8", [])! == 1.25, "server float8 result")
+    assert(pool.query_scalar::<Float64>(postgres.Query.new("SELECT 1.25::float8", []))! == 1.25, "server float8 result")
     let absent: Option<Float64> = None
-    assert(pool.query_scalar::<Option<Float64>>("SELECT $1", [postgres.param(&absent)])!.is_none(), "typed float8 NULL")
-    assert(match pool.query_scalar::<Float64>("SELECT NULL::float8", []) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "required float NULL")
-    assert(match pool.query_scalar::<Option<Float64>>("SELECT NULL::bigint", []) { Err(Column(TypeMismatch(0))) => true, _ => false }, "float NULL type mismatch")
+    assert(pool.query_scalar::<Option<Float64>>(postgres.Query.new("SELECT $1", [postgres.param(&absent)]))!.is_none(), "typed float8 NULL")
+    assert(match pool.query_scalar::<Float64>(postgres.Query.new("SELECT NULL::float8", [])) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "required float NULL")
+    assert(match pool.query_scalar::<Option<Float64>>(postgres.Query.new("SELECT NULL::bigint", [])) { Err(Column(TypeMismatch(0))) => true, _ => false }, "float NULL type mismatch")
 }
 
 fn arrays(pool: &postgres.Pool) @suspends {
@@ -41,7 +41,7 @@ fn arrays(pool: &postgres.Pool) @suspends {
         params
     }
     task.sleep(1ms)
-    let row = pool.query_one("SELECT $1 AS labels, $2 AS ids", params)!
+    let row = pool.query_one(postgres.Query.new("SELECT $1 AS labels, $2 AS ids", params))!
     var labels = row.get::<Array<String>>("labels")!
     var ids = row.get::<Array<Int64>>("ids")!
     assert(labels.len() == 4 && labels.borrow_ref(0) == "a';--好" && labels.borrow_ref(1) == "" && labels.borrow_ref(2) == "NULL" && labels.borrow_ref(3) == "a,b", "text array owns parameter snapshots")
@@ -54,14 +54,14 @@ fn arrays(pool: &postgres.Pool) @suspends {
     assert(labels.borrow_ref(0) == "copy" && ids[0] == 9, "decoded arrays outlive the row")
     let empty_text: Array<String> = []
     let empty_int: Array<Int64> = []
-    assert(pool.query_scalar::<Array<String>>("SELECT $1", [postgres.param(&empty_text)])!.is_empty(), "empty text array")
-    assert(pool.query_scalar::<Array<Int64>>("SELECT $1", [postgres.param(&empty_int)])!.is_empty(), "empty bigint array")
+    assert(pool.query_scalar::<Array<String>>(postgres.Query.new("SELECT $1", [postgres.param(&empty_text)]))!.is_empty(), "empty text array")
+    assert(pool.query_scalar::<Array<Int64>>(postgres.Query.new("SELECT $1", [postgres.param(&empty_int)]))!.is_empty(), "empty bigint array")
 }
 
 fn nullable_arrays(pool: &postgres.Pool) @suspends {
     let labels: Array<Option<String>> = [Some("x"), None, Some("")]
     let ids: Array<Option<Int64>> = [Some(-42), None, Some(0)]
-    let row = pool.query_one("SELECT $1 AS labels, $2 AS ids", [postgres.param(&labels), postgres.param(&ids)])!
+    let row = pool.query_one(postgres.Query.new("SELECT $1 AS labels, $2 AS ids", [postgres.param(&labels), postgres.param(&ids)]))!
     let text = row.get::<Array<Option<String>>>("labels")!
     let ints = row.get::<Array<Option<Int64>>>("ids")!
     assert(match text.borrow_ref(0) { Some(value) => value == "x", _ => false }, "present optional text element")
@@ -71,31 +71,31 @@ fn nullable_arrays(pool: &postgres.Pool) @suspends {
     assert(match row.get::<Option<Array<Int64>>>("ids") { Err(Column(NullElement((1, 1)))) => true, _ => false }, "element NULL does not become whole-array None")
     let no_text: Option<Array<Option<String>>> = None
     let no_int: Option<Array<Int64>> = None
-    assert(pool.query_scalar::<Option<Array<Option<String>>>>("SELECT $1", [postgres.param(&no_text)])!.is_none(), "typed text array NULL")
-    assert(pool.query_scalar::<Option<Array<Int64>>>("SELECT $1", [postgres.param(&no_int)])!.is_none(), "typed bigint array NULL")
-    assert(match pool.query_scalar::<Array<String>>("SELECT NULL::text[]", []) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "required array NULL")
-    assert(match pool.query_scalar::<Option<Array<Int64>>>("SELECT NULL::text[]", []) { Err(Column(TypeMismatch(0))) => true, _ => false }, "array NULL type mismatch")
-    let all_null = pool.query_scalar::<Option<Array<Option<Int64>>>>("SELECT ARRAY[NULL]::bigint[]", [])!!
+    assert(pool.query_scalar::<Option<Array<Option<String>>>>(postgres.Query.new("SELECT $1", [postgres.param(&no_text)]))!.is_none(), "typed text array NULL")
+    assert(pool.query_scalar::<Option<Array<Int64>>>(postgres.Query.new("SELECT $1", [postgres.param(&no_int)]))!.is_none(), "typed bigint array NULL")
+    assert(match pool.query_scalar::<Array<String>>(postgres.Query.new("SELECT NULL::text[]", [])) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "required array NULL")
+    assert(match pool.query_scalar::<Option<Array<Int64>>>(postgres.Query.new("SELECT NULL::text[]", [])) { Err(Column(TypeMismatch(0))) => true, _ => false }, "array NULL type mismatch")
+    let all_null = pool.query_scalar::<Option<Array<Option<Int64>>>>(postgres.Query.new("SELECT ARRAY[NULL]::bigint[]", []))!!
     assert(all_null.len() == 1 && all_null.borrow_ref(0).is_none(), "all-NULL array is present")
 }
 
 fn array_boundaries(pool: &postgres.Pool) @suspends {
     for sql in ["SELECT ARRAY[[1,2],[3,4]]::bigint[]", "SELECT array_fill('x'::text, ARRAY[2], ARRAY[0])"] {
-        assert(match pool.query(sql, []) { Err(ResultRead(ArrayShape)) => true, _ => false }, "array dimensions and lower bounds are not discarded")
+        assert(match pool.query(postgres.Query.new(sql, [])) { Err(ResultRead(ArrayShape)) => true, _ => false }, "array dimensions and lower bounds are not discarded")
     }
-    assert(match pool.query("SELECT ARRAY[1,2]::int4[]", []) { Err(ResultRead(UnsupportedType)) => true, _ => false }, "other SQL array types require an explicit cast")
+    assert(match pool.query(postgres.Query.new("SELECT ARRAY[1,2]::int4[]", [])) { Err(ResultRead(UnsupportedType)) => true, _ => false }, "other SQL array types require an explicit cast")
     var many: Array<Option<Int64>> = []
     for i in 0 .. 65536 { many.push(None) }
-    let roundtrip = pool.query_scalar::<Array<Option<Int64>>>("SELECT $1", [postgres.param(&many)])!
+    let roundtrip = pool.query_scalar::<Array<Option<Int64>>>(postgres.Query.new("SELECT $1", [postgres.param(&many)]))!
     assert(roundtrip.len() == 65536 && roundtrip.borrow_ref(65535).is_none(), "maximum array length")
     many.push(None)
-    assert(match pool.query("SELECT $1", [postgres.param(&many)]) { Err(LimitExceeded) => true, _ => false }, "oversized parameter array is rejected")
-    assert(match pool.query("SELECT array_fill(NULL::text, ARRAY[65537])", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "oversized result array is rejected before allocation")
-    assert(match pool.query("SELECT array_fill(repeat('x', 1024), ARRAY[1024])", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "array elements count toward result byte limit")
+    assert(match pool.query(postgres.Query.new("SELECT $1", [postgres.param(&many)])) { Err(LimitExceeded) => true, _ => false }, "oversized parameter array is rejected")
+    assert(match pool.query(postgres.Query.new("SELECT array_fill(NULL::text, ARRAY[65537])", [])) { Err(ResultRead(ResultLimit)) => true, _ => false }, "oversized result array is rejected before allocation")
+    assert(match pool.query(postgres.Query.new("SELECT array_fill(repeat('x', 1024), ARRAY[1024])", [])) { Err(ResultRead(ResultLimit)) => true, _ => false }, "array elements count toward result byte limit")
     var tx = pool.begin()!
-    assert(match tx.query_scalar::<Array<Int64>>("SELECT ARRAY[NULL]::bigint[]", []) { Err(Column(NullElement((0, 0)))) => true, _ => false }, "transaction array mapping error")
+    assert(match tx.query_scalar::<Array<Int64>>(postgres.Query.new("SELECT ARRAY[NULL]::bigint[]", [])) { Err(Column(NullElement((0, 0)))) => true, _ => false }, "transaction array mapping error")
     let ids: Array<Int64> = [1, 42]
-    assert(tx.query_scalar::<Bool>("SELECT 42 = ANY($1)", [postgres.param(&ids)])!, "transaction remains usable and array parameters work with ANY")
+    assert(tx.query_scalar::<Bool>(postgres.Query.new("SELECT 42 = ANY($1)", [postgres.param(&ids)]))!, "transaction remains usable and array parameters work with ANY")
     tx.rollback()!
 }
 
@@ -105,7 +105,7 @@ fn main() @suspends {
     arrays(&pool)
     nullable_arrays(&pool)
     array_boundaries(&pool)
-    let batch = pool.query_one_as::<Batch>("SELECT 1.5::float8 AS weight, ARRAY['a']::text[] AS labels, ARRAY[42]::bigint[] AS ids, ARRAY[NULL, 'b']::text[] AS optional_labels, ARRAY[NULL, 7]::bigint[] AS optional_ids, NULL::text[] AS missing", [])!
+    let batch = pool.query_one_as::<Batch>(postgres.Query.new("SELECT 1.5::float8 AS weight, ARRAY['a']::text[] AS labels, ARRAY[42]::bigint[] AS ids, ARRAY[NULL, 'b']::text[] AS optional_labels, ARRAY[NULL, 7]::bigint[] AS optional_ids, NULL::text[] AS missing", []))!
     mem.drop(pool)
     assert(batch.weight == 1.5 && batch.labels.borrow_ref(0) == "a" && batch.ids[0] == 42 && batch.optional_labels.borrow_ref(0).is_none() && batch.optional_ids.borrow_ref(0).is_none() && batch.missing.is_none(), "derived float and array fields own their results")
 }

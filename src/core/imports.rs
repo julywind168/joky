@@ -441,6 +441,7 @@ fn bind(
             "joky/option" => Some("$joky_option"),
             "joky/show" => Some("$joky_show"),
             "joky/string" => Some("$joky_string"),
+            "joky/postgres" => Some("$joky_postgres"),
             _ => None,
         };
         if let Some(alias) = compiler_alias {

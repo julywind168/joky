@@ -2141,12 +2141,19 @@ impl FunctionPlan {
             callee, args, span, ..
         } = expr
         {
-            if callee == "$interpolation_append" {
+            let append = match callee.as_str() {
+                "$interpolation_append" => Some("$joky_show.append"),
+                "$sql_text" => Some("$joky_postgres.__sql_text"),
+                "$sql_parameter" => Some("$joky_postgres.__sql_parameter"),
+                "$sql_identifier" => Some("$joky_postgres.__sql_identifier"),
+                _ => None,
+            };
+            if let Some(append) = append {
                 let Expr::Unary { operand, .. } = &args[0] else {
                     unreachable!("compiler-authored interpolation borrow")
                 };
                 return self.interpolation_append(
-                    (operand, &args[1], *span),
+                    (operand, &args[1], *span, append),
                     vars,
                     functions,
                     suspends,

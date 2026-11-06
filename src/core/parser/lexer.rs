@@ -68,6 +68,7 @@ pub(crate) enum TokenKind {
     TupleIndex(u64),
     StrLit(String), // Decoded UTF-8 text; braces have no special meaning.
     Interpolated(Vec<InterpolationPart>),
+    SqlTemplate(Vec<InterpolationPart>),
     CharLit(char),
 
     // Punctuation.
@@ -212,6 +213,7 @@ impl std::fmt::Display for TokenKind {
             Self::StrLit(s) => return write!(f, "`{s:?}`"),
             Self::CharLit(c) => return write!(f, "`{c:?}`"),
             Self::Interpolated(_) => return f.write_str("an interpolated string"),
+            Self::SqlTemplate(_) => return f.write_str("an SQL template"),
             Self::CompoundAssign(op) => match op {
                 BinOp::Add => "+=",
                 BinOp::Sub => "-=",
@@ -245,6 +247,7 @@ pub(crate) struct Token {
 pub(crate) enum InterpolationPart {
     Text(String, Span),
     Expression(Vec<Token>),
+    Parameter(Vec<Token>),
 }
 
 pub(crate) struct Lexer<'a> {
@@ -631,6 +634,10 @@ impl<'a> Lexer<'a> {
                     start..start + 2,
                     "Interpolation is the default in string literals; remove the `f` prefix",
                 ))
+            }
+            Some('s') if self.source[start..].starts_with("sql\"") => {
+                self.byte_pos += 3;
+                self.read_sql_string(start)?
             }
             Some('r') if self.raw_string_prefix() => self.read_string(start)?,
             Some(c) if c.is_alphabetic() || c == '_' => self.read_ident_or_keyword(),

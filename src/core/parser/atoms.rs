@@ -78,6 +78,10 @@ impl Parser<'_> {
                     span: self.span(start, self.last_span.end()),
                 })
             }
+            TokenKind::SqlTemplate(parts) => {
+                self.advance();
+                self.parse_sql_template(parts, self.span(start, self.last_span.end()))
+            }
             TokenKind::Interpolated(parts) => {
                 self.advance();
                 self.parse_interpolation(parts, self.span(start, self.last_span.end()))

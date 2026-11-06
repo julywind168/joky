@@ -4,13 +4,13 @@ use super::*;
 impl FunctionPlan {
     pub(super) fn interpolation_append(
         &mut self,
-        part: (&Expr, &Expr, Span),
+        part: (&Expr, &Expr, Span, &str),
         vars: &mut HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
-        let (value, output, span) = part;
+        let (value, output, span, callee) = part;
         let hint = self.type_hint(value, vars, functions, types);
         let reference = hint
             .as_ref()
@@ -42,7 +42,7 @@ impl FunctionPlan {
             }
         };
         exprs.push(Expr::Call {
-            callee: "$joky_show.append".into(),
+            callee: callee.into(),
             type_args: vec![],
             args: vec![argument, output.clone()],
             span,

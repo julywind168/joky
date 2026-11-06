@@ -14,7 +14,7 @@ fn invalid_options() @suspends {
     assert(match postgres.open("postgres://user:secret@localhost/example", zero) { Err(InvalidRequest) => true, _ => false }, "zero acquire timeout is rejected")
 }
 fn checkout(pool: &postgres.Pool) @suspends -> Bool {
-    match pool.query_scalar::<Int64>("SELECT 1", []) { Err(AcquireTimeout) => true, _ => false }
+    match pool.query_scalar::<Int64>(postgres.Query.new("SELECT 1", [])) { Err(AcquireTimeout) => true, _ => false }
 }
 fn deadline() @suspends -> Bool { task.sleep(3s); false }
 fn main() @suspends {
@@ -25,13 +25,13 @@ fn main() @suspends {
     let options = postgres.Options { max_connections: 1, acquire_timeout: 1s }
     let pool = postgres.open(first, options)!
     let other = postgres.open(second, postgres.Options.default())!
-    assert(pool.query_scalar::<String>("SELECT current_database()::text", [])! == "postgres", "first explicit URL")
-    assert(other.query_scalar::<String>("SELECT current_database()::text", [])! == "joky_options", "second explicit URL is independent")
+    assert(pool.query_scalar::<String>(postgres.Query.new("SELECT current_database()::text", []))! == "postgres", "first explicit URL")
+    assert(other.query_scalar::<String>(postgres.Query.new("SELECT current_database()::text", []))! == "joky_options", "second explicit URL is independent")
     let tx = pool.begin()!
     let timed_out = race { checkout(&pool), deadline() }
     assert(timed_out, "custom acquire timeout wins before the deadline while the only connection is occupied")
     tx.rollback()!
-    assert(pool.query_scalar::<Int64>("SELECT 42", [])! == 42, "pool remains usable after checkout timeout")
+    assert(pool.query_scalar::<Int64>(postgres.Query.new("SELECT 42", []))! == 42, "pool remains usable after checkout timeout")
     mem.drop(pool)
-    assert(other.query_scalar::<Int64>("SELECT 7", [])! == 7, "independent pool remains usable")
+    assert(other.query_scalar::<Int64>(postgres.Query.new("SELECT 7", []))! == 7, "independent pool remains usable")
 }

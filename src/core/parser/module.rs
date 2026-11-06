@@ -184,6 +184,19 @@ impl Parser<'_> {
                 }
             }
         }
+        if self.sql_templates
+            && !module
+                .imports
+                .iter()
+                .any(|import| import.path == "joky/postgres")
+        {
+            module.imports.push(Import {
+                path: "joky/postgres".into(),
+                alias: Some("$joky_postgres".into()),
+                members: vec![],
+                span: self.last_span,
+            });
+        }
         if self.interpolation {
             for (path, alias) in [("joky/show", "$joky_show"), ("joky/string", "$joky_string")] {
                 if module.imports.iter().any(|import| import.path == path) {

@@ -250,6 +250,7 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
         ("driver", include_str!("fixtures/postgres.jk")),
         ("types", include_str!("fixtures/postgres_types.jk")),
         ("arrays", include_str!("fixtures/postgres_arrays.jk")),
+        ("templates", include_str!("fixtures/postgres_templates.jk")),
         ("options", include_str!("fixtures/postgres_options.jk")),
         (
             "transaction",
@@ -295,7 +296,7 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
 
     fs::write(dir.join("verified.jk"),r#"import joky/postgres import joky/process fn main() @suspends {
         let p=postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
-        let r=p.query("SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()",[])!
+        let r=p.query(postgres.Query.new("SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()",[]))!
         assert(match r.borrow_ref(0).borrow_ref(0) {BoolValue(b)=>b,_=>false},"verified TLS connection")
     }"#).unwrap();
     bounded(
@@ -338,7 +339,7 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
     fs::write(dir.join("rollback_lost.jk"), r#"import joky/postgres import joky/process fn main() @suspends {
         let p = postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options.default())!
         let result: Result<String, postgres.DbError> = p.transaction(move |tx| @suspends {
-            tx.execute("INSERT INTO joky_test_abandon VALUES (99)", [])?
+            tx.execute(postgres.Query.new("INSERT INTO joky_test_abandon VALUES (99)", []))?
             Ok(postgres.TxOutcome.Rollback("must not report success"))
         })
         assert(match result { Err(Unavailable) => true, _ => false }, "lost rollback acknowledgement is not a successful business result")
@@ -356,7 +357,7 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
         let p=postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
         assert(match orders.place(&p,1,"lost",10)! { Confirmed(id)=>id==1, _=>false }, "original order")
         assert(match orders.place(&p,1,"lost",11)! { Conflict=>true, _=>false }, "changed quantity")
-        let r=p.query("SELECT count(*), (SELECT available FROM joky_demo_stock WHERE sku=1) FROM joky_demo_orders",[])!
+        let r=p.query(postgres.Query.new("SELECT count(*), (SELECT available FROM joky_demo_stock WHERE sku=1) FROM joky_demo_orders",[]))!
         let row=r.borrow_ref(0)
         assert(match row.borrow_ref(0) { IntValue(n)=>n==1,_=>false },"one order")
         assert(match row.borrow_ref(1) { IntValue(n)=>n==90,_=>false },"one deduction")
@@ -370,7 +371,7 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
 
     fs::write(dir.join("auto.jk"),r#"import joky/postgres import joky/process fn main() @suspends {
         let p=postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
-        assert(match p.execute("INSERT INTO joky_demo_stock VALUES (2, 10)",[]) { Err(OutcomeUnknown)=>true, _=>false },"lost autocommit ack")
+        assert(match p.execute(postgres.Query.new("INSERT INTO joky_demo_stock VALUES (2, 10)",[])) { Err(OutcomeUnknown)=>true, _=>false },"lost autocommit ack")
     }"#).unwrap();
     let (port, proxy) = lose_ack(cluster.port, b"INSERT 0 1\0");
     bounded(
@@ -382,7 +383,7 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
     proxy.join().unwrap();
     fs::write(dir.join("verify_auto.jk"), r#"import joky/postgres import joky/process fn main() @suspends {
         let p=postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
-        let r=p.query("SELECT available FROM joky_demo_stock WHERE sku=2",[])!
+        let r=p.query(postgres.Query.new("SELECT available FROM joky_demo_stock WHERE sku=2",[]))!
         assert(match r.borrow_ref(0).borrow_ref(0) { IntValue(n)=>n==10,_=>false },"autocommit persisted")
     }"#).unwrap();
     bounded(

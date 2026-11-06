@@ -39,6 +39,65 @@ impl Show for Kind {
 
 pub enum Value { Null(Kind), BoolValue(Bool), IntValue(Int64), TextValue(String), BytesValue(Array<UInt8>), TimestampValue(time.Timestamp), UuidValue(uuid.Uuid), JsonValue(String), FloatValue(Float64), TextArrayValue(Array<Option<String>>), IntArrayValue(Array<Option<Int64>>) }
 
+// Queries own snapshots of their parameters; execution consumes the query.
+pub struct Query { text: String, parameters: Array<Value> }
+impl Query {
+    pub fn new(text: String, parameters: Array<Value>) -> Self { Query { text, parameters } }
+    pub fn sql(&self) -> &String { &self.text }
+    pub fn params(&self) -> &Array<Value> { &self.parameters }
+}
+// Identifier is intentionally not constructible from arbitrary SQL fragments.
+pub struct Identifier { quoted: String }
+pub fn ident(name: &String) @noescape -> Result<Identifier, DbError> {
+    if name.is_empty() { return Err(InvalidRequest) }
+    var quoted = StringBuilder.new()
+    quoted.push('"')
+    for rune in name.runes() {
+        if rune == '\0' { return Err(InvalidRequest) }
+        quoted.push(rune)
+        if rune == '"' { quoted.push('"') }
+    }
+    quoted.push('"')
+    Ok(Identifier { quoted: quoted.finish() })
+}
+// This separate protocol also accepts pre-encoded JSON and typed NULL values.
+pub trait BindParam { fn to_param(&self) @noescape -> Value }
+impl<T: ToSql> BindParam for T {
+    fn to_param(&self) @noescape -> Value { ToSql.to_sql(self) }
+}
+impl BindParam for Value {
+    fn to_param(&self) @noescape -> Value {
+        match self {
+            Null(kind) => Null(kind),
+            BoolValue(value) => BoolValue(value),
+            IntValue(value) => IntValue(value),
+            TextValue(value) => TextValue(value.clone()),
+            BytesValue(value) => BytesValue(array.clone(value)),
+            TimestampValue(value) => TimestampValue(value),
+            UuidValue(value) => UuidValue(value),
+            JsonValue(value) => JsonValue(value.clone()),
+            FloatValue(value) => FloatValue(value),
+            TextArrayValue(value) => TextArrayValue(copy_text_array(value)),
+            IntArrayValue(value) => IntArrayValue(copy_int_array(value))
+        }
+    }
+}
+struct SqlBuilder { text: StringBuilder, parameters: Array<Value> }
+impl SqlBuilder {
+    fn new() -> Self { SqlBuilder { text: StringBuilder.new(), parameters: Array.new::<Value>() } }
+    fn finish(self) -> Query {
+        let SqlBuilder { text, parameters } = self
+        Query.new(text.finish(), parameters)
+    }
+}
+fn __sql_text(value: &String, output: &mut SqlBuilder) @noescape { output.text.push_str(value) }
+fn __sql_identifier(value: &Identifier, output: &mut SqlBuilder) @noescape { output.text.push_str(&value.quoted) }
+fn __sql_parameter<T: BindParam>(value: &T, output: &mut SqlBuilder) @noescape {
+    output.parameters.push(BindParam.to_param(value))
+    let placeholder = "${output.parameters.len()}"
+    output.text.push_str(placeholder)
+}
+
 pub struct Json<T> { pub value: T }
 pub enum TxOutcome<T> { Commit(T), Rollback(T) }
 // JSON encoding is fallible. These helpers retain codec details and own the text.
@@ -593,15 +652,15 @@ impl Pool {
         }
     }
     pub fn share(&self) @suspends -> Self { Pool { owner: __pg_share(&self.owner) } }
-    pub fn execute(&self, sql: &String, params: Array<Value>) @suspends -> Result<UInt64, DbError> { exec(&self.owner, sql, params) }
-    pub fn query(&self, sql: &String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
-    pub fn query_optional(&self, sql: &String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, sql, params) }
-    pub fn query_one(&self, sql: &String, params: Array<Value>) @suspends -> Result<Row, DbError> { required_row(optional_row(&self.owner, sql, params)?) }
-    pub fn query_scalar<T: FromSql>(&self, sql: &String, params: Array<Value>) @suspends -> Result<T, DbError> {
-        scalar_value::<T>(self.query_one(sql, params)?)
+    pub fn execute(&self, query: Query) @suspends -> Result<UInt64, DbError> { let Query { text, parameters } = query; exec(&self.owner, &text, parameters) }
+    pub fn query(&self, query: Query) @suspends -> Result<Array<Row>, DbError> { let Query { text, parameters } = query; fetch(&self.owner, &text, parameters) }
+    pub fn query_optional(&self, query: Query) @suspends -> Result<Option<Row>, DbError> { let Query { text, parameters } = query; optional_row(&self.owner, &text, parameters) }
+    pub fn query_one(&self, query: Query) @suspends -> Result<Row, DbError> { required_row(self.query_optional(query)?) }
+    pub fn query_scalar<T: FromSql>(&self, query: Query) @suspends -> Result<T, DbError> {
+        scalar_value::<T>(self.query_one(query)?)
     }
-    pub fn query_one_as<T: FromRow>(&self, sql: &String, params: Array<Value>) @suspends -> Result<T, DbError> {
-        let row = self.query_one(sql, params)?
+    pub fn query_one_as<T: FromRow>(&self, query: Query) @suspends -> Result<T, DbError> {
+        let row = self.query_one(query)?
         FromRow.from_row::<T>(&row)
     }
     pub fn begin(&self) @suspends -> Result<Transaction, DbError> {
@@ -611,15 +670,15 @@ impl Pool {
     }
 }
 impl Transaction {
-    pub fn execute(&mut self, sql: &String, params: Array<Value>) @suspends -> Result<UInt64, DbError> { exec(&self.owner, sql, params) }
-    pub fn query(&mut self, sql: &String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
-    pub fn query_optional(&mut self, sql: &String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, sql, params) }
-    pub fn query_one(&mut self, sql: &String, params: Array<Value>) @suspends -> Result<Row, DbError> { required_row(optional_row(&self.owner, sql, params)?) }
-    pub fn query_scalar<T: FromSql>(&mut self, sql: &String, params: Array<Value>) @suspends -> Result<T, DbError> {
-        scalar_value::<T>(self.query_one(sql, params)?)
+    pub fn execute(&mut self, query: Query) @suspends -> Result<UInt64, DbError> { let Query { text, parameters } = query; exec(&self.owner, &text, parameters) }
+    pub fn query(&mut self, query: Query) @suspends -> Result<Array<Row>, DbError> { let Query { text, parameters } = query; fetch(&self.owner, &text, parameters) }
+    pub fn query_optional(&mut self, query: Query) @suspends -> Result<Option<Row>, DbError> { let Query { text, parameters } = query; optional_row(&self.owner, &text, parameters) }
+    pub fn query_one(&mut self, query: Query) @suspends -> Result<Row, DbError> { required_row(self.query_optional(query)?) }
+    pub fn query_scalar<T: FromSql>(&mut self, query: Query) @suspends -> Result<T, DbError> {
+        scalar_value::<T>(self.query_one(query)?)
     }
-    pub fn query_one_as<T: FromRow>(&mut self, sql: &String, params: Array<Value>) @suspends -> Result<T, DbError> {
-        let row = self.query_one(sql, params)?
+    pub fn query_one_as<T: FromRow>(&mut self, query: Query) @suspends -> Result<T, DbError> {
+        let row = self.query_one(query)?
         FromRow.from_row::<T>(&row)
     }
     pub fn commit(self) @suspends -> Result<Unit, DbError> { let result = __pg_finish(&self.owner, 1); check_status(&result) }

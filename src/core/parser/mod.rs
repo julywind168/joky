@@ -14,6 +14,7 @@ mod lexer;
 mod module;
 mod patterns;
 mod source_text;
+mod sql_template;
 pub use source_text::escape_diagnostic_text;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -79,6 +80,7 @@ struct Parser<'src> {
     impl_target: Option<Type>,
     impl_trait: Option<String>,
     interpolation: bool,
+    sql_templates: bool,
     durations: bool,
     arrays: bool,
     iterators: bool,
@@ -104,6 +106,7 @@ impl<'src> Parser<'src> {
             impl_target: None,
             impl_trait: None,
             interpolation: false,
+            sql_templates: false,
             durations: false,
             arrays: false,
             iterators: false,

@@ -2708,3 +2708,14 @@ fn payload_bindings_remain_bindings_when_enum_variants_share_their_names() {
         "{stderr}"
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn sql_templates_execute_in_aot_without_prelude() {
+    let work = Workspace::new();
+    work.write("sql.jk", include_str!("../fixtures/sql_templates.jk"));
+    work.assert_native("sql.jk", &["--no-prelude"], b"", 0);
+    success(&work.cli(&["fmt", "sql.jk"]));
+    success(&work.cli(&["fmt", "--check", "sql.jk"]));
+    success(&work.cli(&["check", "--no-prelude", "sql.jk"]));
+}

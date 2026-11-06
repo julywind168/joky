@@ -3,73 +3,73 @@ import joky/process
 import joky/task
 
 fn count(pool: &postgres.Pool) @suspends -> Int64 {
-    pool.query_scalar::<Int64>("SELECT count(*) FROM joky_tx_helper", [])!
+    pool.query_scalar::<Int64>(postgres.Query.new("SELECT count(*) FROM joky_tx_helper", []))!
 }
 fn decisions(pool: &postgres.Pool) @suspends {
     let message = "committed owner"
     let committed: Result<String, postgres.DbError> = pool.transaction(move |tx| @suspends {
-        tx.execute("INSERT INTO joky_tx_helper VALUES (1)", [])?
+        tx.execute(postgres.Query.new("INSERT INTO joky_tx_helper VALUES (1)", []))?
         task.sleep(1ms)
         Ok(postgres.TxOutcome.Commit(message))
     })
     assert(committed! == "committed owner" && count(pool) == 1, "commit waits for completion and returns the owned result")
     let rolled_back: Result<String, postgres.DbError> = pool.transaction(move |tx| @suspends {
-        tx.execute("INSERT INTO joky_tx_helper VALUES (2)", [])?
+        tx.execute(postgres.Query.new("INSERT INTO joky_tx_helper VALUES (2)", []))?
         return Ok(postgres.TxOutcome.Rollback("business decline"))
     })
     assert(rolled_back! == "business decline" && count(pool) == 1, "early closure return still rolls back")
 }
 fn failures(pool: &postgres.Pool) @suspends {
     let invalid: Result<Unit, postgres.DbError> = pool.transaction(move |tx| @suspends {
-        tx.execute("INSERT INTO joky_tx_helper VALUES (3)", [])?
+        tx.execute(postgres.Query.new("INSERT INTO joky_tx_helper VALUES (3)", []))?
         Err(postgres.DbError.InvalidRequest)
     })
     assert(match invalid { Err(InvalidRequest) => true, _ => false }, "callback error is preserved")
     assert(count(pool) == 1, "callback error rolls back successful statements")
     let duplicate: Result<Unit, postgres.DbError> = pool.transaction(move |tx| @suspends {
-        tx.execute("INSERT INTO joky_tx_helper VALUES (4)", [])?
-        let original = tx.execute("INSERT INTO joky_tx_helper VALUES (1)", [])
-        assert(match tx.execute("SELECT 1", []) { Err(TransactionClosed) => true, _ => false }, "failed SQL retires the transaction handle")
+        tx.execute(postgres.Query.new("INSERT INTO joky_tx_helper VALUES (4)", []))?
+        let original = tx.execute(postgres.Query.new("INSERT INTO joky_tx_helper VALUES (1)", []))
+        assert(match tx.execute(postgres.Query.new("SELECT 1", [])) { Err(TransactionClosed) => true, _ => false }, "failed SQL retires the transaction handle")
         original?;
         Ok(postgres.TxOutcome.Commit({}))
     })
     assert(match duplicate { Err(Database(code)) => code == "23505", _ => false }, "rollback TransactionClosed does not replace the original SQLSTATE")
     assert(count(pool) == 1, "SQL failure does not commit earlier statements")
     let decode: Result<Unit, postgres.DbError> = pool.transaction(move |tx| @suspends {
-        tx.execute("INSERT INTO joky_tx_helper VALUES (6)", [])?
-        tx.query_scalar::<Int64>("SELECT true", [])?
+        tx.execute(postgres.Query.new("INSERT INTO joky_tx_helper VALUES (6)", []))?
+        tx.query_scalar::<Int64>(postgres.Query.new("SELECT true", []))?
         Ok(postgres.TxOutcome.Commit({}))
     })
     assert(match decode { Err(Column(TypeMismatch(0))) => true, _ => false }, "decode error is preserved")
     assert(count(pool) == 1, "decode error rolls back an otherwise healthy transaction")
 }
 fn commit_failure(pool: &postgres.Pool) @suspends {
-    pool.execute("CREATE TABLE IF NOT EXISTS joky_tx_deferred (id bigint PRIMARY KEY DEFERRABLE INITIALLY DEFERRED)", [])!
+    pool.execute(postgres.Query.new("CREATE TABLE IF NOT EXISTS joky_tx_deferred (id bigint PRIMARY KEY DEFERRABLE INITIALLY DEFERRED)", []))!
     let result: Result<String, postgres.DbError> = pool.transaction(move |tx| @suspends {
-        tx.execute("INSERT INTO joky_tx_deferred VALUES (1), (1)", [])?
+        tx.execute(postgres.Query.new("INSERT INTO joky_tx_deferred VALUES (1), (1)", []))?
         Ok(postgres.TxOutcome.Commit("must not escape"))
     })
     assert(match result { Err(Database(code)) => code == "23505", _ => false }, "commit failure replaces the pending success value")
-    assert(pool.query_scalar::<Int64>("SELECT count(*) FROM joky_tx_deferred", [])! == 0, "failed commit leaves no rows")
+    assert(pool.query_scalar::<Int64>(postgres.Query.new("SELECT count(*) FROM joky_tx_deferred", []))! == 0, "failed commit leaves no rows")
 }
 fn cancelled(pool: &postgres.Pool) @suspends {
     let result: Result<Unit, postgres.DbError> = pool.transaction(move |tx| @suspends {
-        tx.execute("INSERT INTO joky_tx_helper VALUES (5)", [])?
-        tx.execute("SELECT pg_sleep(5) /*joky_tx_helper_cancel*/", [])?
+        tx.execute(postgres.Query.new("INSERT INTO joky_tx_helper VALUES (5)", []))?
+        tx.execute(postgres.Query.new("SELECT pg_sleep(5) /*joky_tx_helper_cancel*/", []))?
         Ok(postgres.TxOutcome.Commit({}))
     })
     result!;
 }
 fn runtime_failure(pool: &postgres.Pool) @suspends {
     let result: Result<Unit, postgres.DbError> = pool.transaction(move |tx| @suspends {
-        tx.execute("INSERT INTO joky_tx_helper VALUES (7)", [])?
+        tx.execute(postgres.Query.new("INSERT INTO joky_tx_helper VALUES (7)", []))?
         assert(false, "intentional transaction callback failure")
         Ok(postgres.TxOutcome.Commit({}))
     })
     result!;
 }
 fn cancellation_gate(observer: &postgres.Pool) @suspends {
-    while observer.query_scalar::<Int64>("SELECT count(*) FROM pg_stat_activity WHERE state='active' AND query LIKE 'SELECT pg_sleep(5) /*joky_tx_helper_cancel*/%'", [])! == 0 {
+    while observer.query_scalar::<Int64>(postgres.Query.new("SELECT count(*) FROM pg_stat_activity WHERE state='active' AND query LIKE 'SELECT pg_sleep(5) /*joky_tx_helper_cancel*/%'", []))! == 0 {
         task.sleep(5ms)
     }
 }
@@ -79,18 +79,18 @@ fn main() @suspends {
     let pool = postgres.open(url, options)!
     let observer = postgres.open(url, options)!
     let sql = "SELECT 42::bigint"
-    assert(pool.query_scalar::<Int64>(sql, [])! == 42, "query borrows SQL")
-    assert(observer.query_scalar::<Int64>(sql, [])! == 42 && !url.is_empty(), "URL and SQL remain reusable")
-    pool.execute("CREATE TABLE IF NOT EXISTS joky_tx_helper (id bigint PRIMARY KEY)", [])!
-    pool.execute("DELETE FROM joky_tx_helper", [])!
+    assert(pool.query_scalar::<Int64>(postgres.Query.new(sql.clone(), []))! == 42, "explicit query owns its SQL copy")
+    assert(observer.query_scalar::<Int64>(postgres.Query.new(sql, []))! == 42 && !url.is_empty(), "URL remains borrowed and explicit SQL can be moved")
+    pool.execute(postgres.Query.new("CREATE TABLE IF NOT EXISTS joky_tx_helper (id bigint PRIMARY KEY)", []))!
+    pool.execute(postgres.Query.new("DELETE FROM joky_tx_helper", []))!
     decisions(&pool)
     failures(&pool)
     commit_failure(&pool)
     let child = pool.share()
     let failed = isolate { runtime_failure(&child) }
     assert(failed.is_err() && count(&pool) == 1, "runtime failure drops the transaction without committing")
-    let before = pool.query_scalar::<Int64>("SELECT pg_backend_pid()", [])!
+    let before = pool.query_scalar::<Int64>(postgres.Query.new("SELECT pg_backend_pid()", []))!
     race { cancelled(&pool), cancellation_gate(&observer) }
-    assert(pool.query_scalar::<Int64>("SELECT pg_backend_pid()", [])! != before, "cancelled helper retires its transaction connection")
+    assert(pool.query_scalar::<Int64>(postgres.Query.new("SELECT pg_backend_pid()", []))! != before, "cancelled helper retires its transaction connection")
     assert(count(&pool) == 1, "cancelled helper cannot commit its write")
 }

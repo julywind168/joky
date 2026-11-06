@@ -22,67 +22,67 @@ fn timestamps(pool: &postgres.Pool) @suspends {
     let cases: Array<Int64> = [-62135596800000000, -1, 0, 946684800000000, 253402300799999999]
     for micros in cases {
         let value = time.Timestamp.from_unix_micros(micros)!
-        let actual = pool.query_scalar::<time.Timestamp>("SELECT $1", [postgres.param(&value)])!
+        let actual = pool.query_scalar::<time.Timestamp>(postgres.Query.new("SELECT $1", [postgres.param(&value)]))!
         assert(actual == value, "timestamp bounds and epochs round trip exactly")
     }
-    let normalized = pool.query_scalar::<time.Timestamp>("SELECT '2024-01-02 03:04:05.123456+08'::timestamptz", [])!
+    let normalized = pool.query_scalar::<time.Timestamp>(postgres.Query.new("SELECT '2024-01-02 03:04:05.123456+08'::timestamptz", []))!
     assert(normalized == time.Timestamp.parse("2024-01-01T19:04:05.123456Z")!, "timestamp offsets normalize to UTC")
     let absent: Option<time.Timestamp> = None
-    assert(pool.query_scalar::<Option<time.Timestamp>>("SELECT $1", [postgres.param(&absent)])!.is_none(), "typed timestamp NULL")
-    assert(match pool.query_scalar::<time.Timestamp>("SELECT NULL::timestamptz", []) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "required timestamp NULL")
-    assert(match pool.query_scalar::<Option<time.Timestamp>>("SELECT NULL::bigint", []) { Err(Column(TypeMismatch(0))) => true, _ => false }, "timestamp NULL type mismatch")
+    assert(pool.query_scalar::<Option<time.Timestamp>>(postgres.Query.new("SELECT $1", [postgres.param(&absent)]))!.is_none(), "typed timestamp NULL")
+    assert(match pool.query_scalar::<time.Timestamp>(postgres.Query.new("SELECT NULL::timestamptz", [])) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "required timestamp NULL")
+    assert(match pool.query_scalar::<Option<time.Timestamp>>(postgres.Query.new("SELECT NULL::bigint", [])) { Err(Column(TypeMismatch(0))) => true, _ => false }, "timestamp NULL type mismatch")
     for sql in ["SELECT 'infinity'::timestamptz", "SELECT '-infinity'::timestamptz", "SELECT '10000-01-01'::timestamptz", "SELECT '0001-12-31 BC'::timestamptz"] {
-        assert(match pool.query(sql, []) { Err(ResultRead(ValueRange)) => true, _ => false }, "out-of-range timestamps are rejected")
+        assert(match pool.query(postgres.Query.new(sql, [])) { Err(ResultRead(ValueRange)) => true, _ => false }, "out-of-range timestamps are rejected")
     }
     var tx = pool.begin()!
-    tx.execute("CREATE TEMP TABLE precision_probe (created timestamptz)", [])!
+    tx.execute(postgres.Query.new("CREATE TEMP TABLE precision_probe (created timestamptz)", []))!
     let nanos = time.Timestamp.from_unix_parts(-1, 999999999)!
-    assert(match tx.execute("INSERT INTO precision_probe VALUES ($1)", [postgres.param(&nanos)]) { Err(TimestampPrecision) => true, _ => false }, "submicrosecond parameter fails before SQL runs")
-    assert(tx.query_scalar::<Int64>("SELECT count(*) FROM precision_probe", [])! == 0, "precision rejection leaves transaction usable")
+    assert(match tx.execute(postgres.Query.new("INSERT INTO precision_probe VALUES ($1)", [postgres.param(&nanos)])) { Err(TimestampPrecision) => true, _ => false }, "submicrosecond parameter fails before SQL runs")
+    assert(tx.query_scalar::<Int64>(postgres.Query.new("SELECT count(*) FROM precision_probe", []))! == 0, "precision rejection leaves transaction usable")
     tx.rollback()!
 }
 
 fn uuids(pool: &postgres.Pool) @suspends {
     for text in ["00000000-0000-0000-0000-000000000000", "ffffffff-ffff-ffff-ffff-ffffffffffff", "00112233-4455-6677-8899-aabbccddeeff"] {
         let value = uuid.Uuid.parse(&text)!
-        let actual = pool.query_scalar::<uuid.Uuid>("SELECT $1", [postgres.param(&value)])!
+        let actual = pool.query_scalar::<uuid.Uuid>(postgres.Query.new("SELECT $1", [postgres.param(&value)]))!
         assert(actual == value, "UUID network byte ordering")
-        let server = pool.query_scalar::<String>("SELECT $1::text", [postgres.param(&value)])!
+        let server = pool.query_scalar::<String>(postgres.Query.new("SELECT $1::text", [postgres.param(&value)]))!
         assert(server == text, "UUID binding uses the uuid SQL type")
     }
     let absent: Option<uuid.Uuid> = None
-    assert(pool.query_scalar::<Option<uuid.Uuid>>("SELECT $1", [postgres.param(&absent)])!.is_none(), "typed UUID NULL")
-    assert(match pool.query_scalar::<uuid.Uuid>("SELECT NULL::uuid", []) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "required UUID NULL")
-    assert(match pool.query_scalar::<Option<uuid.Uuid>>("SELECT NULL::bytea", []) { Err(Column(TypeMismatch(0))) => true, _ => false }, "UUID NULL type mismatch")
+    assert(pool.query_scalar::<Option<uuid.Uuid>>(postgres.Query.new("SELECT $1", [postgres.param(&absent)]))!.is_none(), "typed UUID NULL")
+    assert(match pool.query_scalar::<uuid.Uuid>(postgres.Query.new("SELECT NULL::uuid", [])) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "required UUID NULL")
+    assert(match pool.query_scalar::<Option<uuid.Uuid>>(postgres.Query.new("SELECT NULL::bytea", [])) { Err(Column(TypeMismatch(0))) => true, _ => false }, "UUID NULL type mismatch")
 }
 
 fn json_values(pool: &postgres.Pool) @suspends {
     for text in ["null", "true", "\"a';--好\"", "9007199254740993.123456789", "[1,null,false]"] {
         let value = json.decode(&text)!
-        let actual = pool.query_scalar::<json.Value>("SELECT $1", [postgres.param_json(&value)!])!
+        let actual = pool.query_scalar::<json.Value>(postgres.Query.new("SELECT $1", [postgres.param_json(&value)!]))!
         assert(json.encode(&actual)! == text, "raw JSON values preserve semantics and decimal precision")
     }
-    let sql_null = pool.query_scalar::<Option<json.Value>>("SELECT $1", [postgres.Value.Null(postgres.Kind.Jsonb)])!
-    let json_null = pool.query_scalar::<Option<json.Value>>("SELECT 'null'::jsonb", [])!
+    let sql_null = pool.query_scalar::<Option<json.Value>>(postgres.Query.new("SELECT $1", [postgres.Value.Null(postgres.Kind.Jsonb)]))!
+    let json_null = pool.query_scalar::<Option<json.Value>>(postgres.Query.new("SELECT 'null'::jsonb", []))!
     assert(sql_null.is_none() && match json_null { Some(Null) => true, _ => false }, "SQL NULL differs from JSON null")
-    let nested = pool.query_scalar::<postgres.Json<Option<Int64>>>("SELECT 'null'::jsonb", [])!
+    let nested = pool.query_scalar::<postgres.Json<Option<Int64>>>(postgres.Query.new("SELECT 'null'::jsonb", []))!
     assert(nested.value.is_none(), "typed JSON null belongs inside Json")
-    assert(match pool.query_scalar::<json.Value>("SELECT NULL::jsonb", []) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "required jsonb NULL")
-    assert(match pool.query_scalar::<Option<json.Value>>("SELECT NULL::text", []) { Err(Column(TypeMismatch(0))) => true, _ => false }, "text is not implicitly JSON")
+    assert(match pool.query_scalar::<json.Value>(postgres.Query.new("SELECT NULL::jsonb", [])) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "required jsonb NULL")
+    assert(match pool.query_scalar::<Option<json.Value>>(postgres.Query.new("SELECT NULL::text", [])) { Err(Column(TypeMismatch(0))) => true, _ => false }, "text is not implicitly JSON")
     let absent: Option<Payload> = None
-    assert(pool.query_scalar::<Option<postgres.Json<Payload>>>("SELECT $1", [postgres.param_json_optional(&absent)!])!.is_none(), "optional typed JSON parameter uses SQL NULL")
+    assert(pool.query_scalar::<Option<postgres.Json<Payload>>>(postgres.Query.new("SELECT $1", [postgres.param_json_optional(&absent)!]))!.is_none(), "optional typed JSON parameter uses SQL NULL")
     let present = Some(Payload { source: "optional", version: 2 })
-    let actual = pool.query_scalar::<postgres.Json<Payload>>("SELECT $1", [postgres.param_json_optional(&present)!])!
+    let actual = pool.query_scalar::<postgres.Json<Payload>>(postgres.Query.new("SELECT $1", [postgres.param_json_optional(&present)!]))!
     assert(actual.value.source == "optional" && actual.value.version == 2, "present typed JSON parameter")
     let json_none: Option<Int64> = None
-    assert(!pool.query_scalar::<Bool>("SELECT $1 IS NULL", [postgres.param_json_as(&json_none)!])!, "typed None encodes JSON null")
+    assert(!pool.query_scalar::<Bool>(postgres.Query.new("SELECT $1 IS NULL", [postgres.param_json_as(&json_none)!]))!, "typed None encodes JSON null")
 }
 
 fn json_errors(pool: &postgres.Pool) @suspends {
     var tx = pool.begin()!
-    let failure = tx.query_scalar::<postgres.Json<Payload>>("SELECT jsonb_build_object('source', 'x', 'version', 'wrong')", [])
+    let failure = tx.query_scalar::<postgres.Json<Payload>>(postgres.Query.new("SELECT jsonb_build_object('source', 'x', 'version', 'wrong')", []))
     assert(match failure { Err(JsonCodec(Mapping(error))) => error.pointer() == "/version", _ => false }, "typed mapping errors retain the JSON path")
-    assert(tx.query_scalar::<Int64>("SELECT 42", [])! == 42, "mapping errors leave transaction usable")
+    assert(tx.query_scalar::<Int64>(postgres.Query.new("SELECT 42", []))! == 42, "mapping errors leave transaction usable")
     tx.rollback()!
 
     var deep = json.Value.Null
@@ -90,8 +90,8 @@ fn json_errors(pool: &postgres.Pool) @suspends {
     assert(match postgres.param_json(&deep) { Err(JsonCodec(Encoding(DepthLimit))) => true, _ => false }, "raw JSON encoding limits are preserved")
     let non_finite = Float64.from_bits(0x7ff0000000000000)
     assert(match postgres.param_json_as(&non_finite) { Err(JsonCodec(Mapping(error))) => match error.kind { NonFinite => true, _ => false }, _ => false }, "typed JSON encoding errors are preserved")
-    assert(match pool.query_scalar::<json.Value>("SELECT to_jsonb(repeat('x', 262145))", []) { Err(JsonCodec(Syntax(error))) => match error.kind { StringLimit => true, _ => false }, _ => false }, "JSON result parsing limits are preserved")
-    assert(match pool.query("SELECT $1", [postgres.Value.JsonValue("not JSON")]) { Err(Database(_)) => true, _ => false }, "invalid explicit JSON text gets a database error")
+    assert(match pool.query_scalar::<json.Value>(postgres.Query.new("SELECT to_jsonb(repeat('x', 262145))", [])) { Err(JsonCodec(Syntax(error))) => match error.kind { StringLimit => true, _ => false }, _ => false }, "JSON result parsing limits are preserved")
+    assert(match pool.query(postgres.Query.new("SELECT $1", [postgres.Value.JsonValue("not JSON")])) { Err(Database(_)) => true, _ => false }, "invalid explicit JSON text gets a database error")
 }
 
 fn main() @suspends {
@@ -107,7 +107,7 @@ fn main() @suspends {
         [postgres.param(&created), postgres.param(&id), postgres.param_json_as(&payload)!]
     }
     task.sleep(1ms)
-    let event = pool.query_one_as::<Event>("SELECT $3 AS payload, $2 AS id, $1 AS created, '[42]'::jsonb AS raw, NULL::jsonb AS optional", params)!
+    let event = pool.query_one_as::<Event>(postgres.Query.new("SELECT $3 AS payload, $2 AS id, $1 AS created, '[42]'::jsonb AS raw, NULL::jsonb AS optional", params))!
     mem.drop(pool)
     assert(event.created == created && event.id == id && event.payload.value.source == "owned" && event.payload.value.version == 3 && event.optional.is_none(), "derived results own their values after suspension and pool release")
     assert(json.encode(&event.raw)! == "[42]", "derived dynamic JSON owns its payload")

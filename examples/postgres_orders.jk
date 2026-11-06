@@ -7,20 +7,23 @@ struct StoredOrder { id: Int64, qty: Int64 }
 
 pub enum Order { Confirmed(Int64), Conflict, Insufficient }
 pub fn setup(pool: &postgres.Pool) @suspends {
-    pool.execute("CREATE TABLE IF NOT EXISTS joky_demo_stock (sku integer PRIMARY KEY, available bigint NOT NULL CHECK (available >= 0))", [])!
-    pool.execute("INSERT INTO joky_demo_stock VALUES (1, 100) ON CONFLICT DO NOTHING", [])!
-    pool.execute("CREATE TABLE IF NOT EXISTS joky_demo_orders (id bigserial PRIMARY KEY, customer bigint NOT NULL, request_id text NOT NULL, qty bigint NOT NULL CHECK (qty > 0), UNIQUE(customer, request_id))", [])!;
+    pool.execute(sql"CREATE TABLE IF NOT EXISTS joky_demo_stock (sku integer PRIMARY KEY, available bigint NOT NULL CHECK (available >= 0))")!
+    pool.execute(sql"INSERT INTO joky_demo_stock VALUES (1, 100) ON CONFLICT DO NOTHING")!
+    pool.execute(sql"CREATE TABLE IF NOT EXISTS joky_demo_orders (id bigserial PRIMARY KEY, customer bigint NOT NULL, request_id text NOT NULL, qty bigint NOT NULL CHECK (qty > 0), UNIQUE(customer, request_id))")!;
 }
 pub fn place(pool: &postgres.Pool, customer: Int64, key: &String, qty: Int64) @suspends -> Result<Order, postgres.DbError> {
     if qty <= 0 || key.is_empty() { return Err(postgres.DbError.InvalidRequest) }
     pool.transaction(|tx| {
-        let inserted = tx.execute("INSERT INTO joky_demo_orders (customer, request_id, qty) VALUES ($1,$2,$3) ON CONFLICT (customer, request_id) DO NOTHING",
-            [postgres.param(&customer), postgres.param(key), postgres.param(&qty)])?
-        let row = tx.query_one_as::<StoredOrder>("SELECT qty, id FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [postgres.param(&customer), postgres.param(key)])?
+        let inserted = tx.execute(sql"""
+            INSERT INTO joky_demo_orders (customer, request_id, qty)
+            VALUES (${customer}, ${key}, ${qty})
+            ON CONFLICT (customer, request_id) DO NOTHING
+            """)?
+        let row = tx.query_one_as::<StoredOrder>(sql"SELECT qty, id FROM joky_demo_orders WHERE customer=${customer} AND request_id=${key}")?
         let id = row.id
         if row.qty != qty { return Ok(postgres.TxOutcome.Rollback(Order.Conflict)) }
         if inserted == 1 {
-            let updated = tx.execute("UPDATE joky_demo_stock SET available=available-$1 WHERE sku=1 AND available >= $1", [postgres.param(&qty)])?
+            let updated = tx.execute(sql"UPDATE joky_demo_stock SET available=available-${qty} WHERE sku=1 AND available >= ${qty}")?
             if updated == 0 { return Ok(postgres.TxOutcome.Rollback(Order.Insufficient)) }
         }
         Ok(postgres.TxOutcome.Commit(Order.Confirmed(id)))

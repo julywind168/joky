@@ -8,7 +8,17 @@ impl Parser<'_> {
         parts: Vec<InterpolationPart>,
         span: Span,
     ) -> Result<Expr, Diagnostic> {
-        self.interpolation = true;
+        self.parse_template_parts(parts, span, false)
+    }
+
+    pub(super) fn parse_template_parts(
+        &mut self,
+        parts: Vec<InterpolationPart>,
+        span: Span,
+        sql: bool,
+    ) -> Result<Expr, Diagnostic> {
+        self.interpolation |= !sql;
+        self.sql_templates |= sql;
         let builder = format!("$interpolation_builder_{}", span.start());
         let ident = |name: &str, span| Expr::Ident {
             name: name.into(),
@@ -18,7 +28,12 @@ impl Parser<'_> {
             name: builder.clone(),
             annotation: None,
             value: Box::new(Expr::Call {
-                callee: "$joky_string.StringBuilder.new".into(),
+                callee: if sql {
+                    "$joky_postgres.SqlBuilder.new"
+                } else {
+                    "$joky_string.StringBuilder.new"
+                }
+                .into(),
                 type_args: vec![],
                 args: vec![],
                 span,
@@ -26,6 +41,15 @@ impl Parser<'_> {
             span,
         }];
         for part in parts {
+            let callee = if !sql {
+                "$interpolation_append"
+            } else {
+                match &part {
+                    InterpolationPart::Text(..) => "$sql_text",
+                    InterpolationPart::Expression(_) => "$sql_identifier",
+                    InterpolationPart::Parameter(_) => "$sql_parameter",
+                }
+            };
             let value = match part {
                 InterpolationPart::Text(text, text_span) => {
                     if text.is_empty() {
@@ -36,7 +60,8 @@ impl Parser<'_> {
                         span: text_span.with_source(self.source),
                     }
                 }
-                InterpolationPart::Expression(mut tokens) => {
+                InterpolationPart::Expression(mut tokens)
+                | InterpolationPart::Parameter(mut tokens) => {
                     for token in &mut tokens {
                         token.span = token.span.with_source(self.source);
                     }
@@ -49,6 +74,8 @@ impl Parser<'_> {
                         return Err(parser.error("Interpolation requires an expression".into()));
                     }
                     let value = parser.parse_expr()?;
+                    self.sql_templates |= parser.sql_templates;
+                    self.interpolation |= parser.interpolation;
                     self.durations |= parser.durations;
                     self.arrays |= parser.arrays;
                     self.iterators |= parser.iterators;
@@ -60,7 +87,7 @@ impl Parser<'_> {
             };
             let value_span = value.span();
             exprs.push(Expr::Call {
-                callee: "$interpolation_append".into(),
+                callee: callee.into(),
                 type_args: vec![],
                 args: vec![
                     Expr::Unary {

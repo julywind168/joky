@@ -163,6 +163,7 @@ fn ends_operand(kind: &TokenKind) -> bool {
             | TokenKind::TupleIndex(_)
             | TokenKind::StrLit(_)
             | TokenKind::Interpolated(_)
+            | TokenKind::SqlTemplate(_)
             | TokenKind::CharLit(_)
             | TokenKind::True
             | TokenKind::False

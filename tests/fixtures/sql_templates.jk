@@ -1,0 +1,67 @@
+import joky/postgres as pg
+import joky/check.{assert}
+import joky/task
+import joky/time
+import joky/uuid
+import joky/array.{type Array}
+import joky/option.{type Option, Some, None}
+import joky/result.{type Result, Ok, Err}
+
+#derive(ToJson)
+struct Payload { note: String }
+fn json_query(payload: &Payload) -> Result<pg.Query, pg.DbError> {
+    Ok(sql"SELECT ${42}, ${pg.param_json_as(payload)?}")
+}
+fn increment(counter: &mut Int32) -> Int32 { *counter += 1; *counter }
+fn delayed(value: &String) @suspends @noescape -> String { task.yield_now(); value.clone() }
+fn main() @suspends -> Int32 {
+    let name = "O'Reilly; SELECT 1 --"
+    let column = pg.ident("na\"me")!
+    var calls = 0
+    let missing: Option<String> = None
+    let payload = Payload { note: "line\nquote\"" }
+    let encoded = pg.param_json_as(payload)!
+    let query = sql"""
+        SELECT {column}, ${increment(&mut calls)}, ${delayed(name)},
+            ${increment(&mut calls)}, ${missing}, ${encoded}
+        """
+    assert(query.sql() == "SELECT \"na\"\"me\", $1, $2,\n    $3, $4, $5", "SQL structure and numbering")
+    let values = query.params()
+    assert(values.len() == 5 && calls == 2, "each expression evaluates once in order")
+    assert(match values.borrow_ref(0) { IntValue(n) => n == 1, _ => false }, "first argument")
+    assert(match values.borrow_ref(1) { TextValue(text) => text == name, _ => false }, "text is data")
+    assert(match values.borrow_ref(2) { IntValue(n) => n == 2, _ => false }, "third argument")
+    assert(match values.borrow_ref(3) { Null(Text) => true, _ => false }, "typed null")
+    assert(match values.borrow_ref(4) { JsonValue(text) => text == r#"{"note":"line\nquote\""}"#, _ => false }, "JSONB type is retained")
+    assert(payload.note == "line\nquote\"", "binding retains original owners")
+    assert(match &encoded { JsonValue(_) => true, _ => false }, "pre-encoded parameter is borrowed")
+    assert(pg.ident("").is_err() && pg.ident("nul\0name").is_err(), "invalid identifiers are rejected")
+    let inline_json = json_query(payload)!
+    assert(inline_json.params().len() == 2, "fallible encoding is allowed inside a parameter hole")
+    let qualified = sql"SELECT {pg.ident("schema.with.dot")!}.{pg.ident("table")!}"
+    assert(qualified.sql() == "SELECT \"schema.with.dot\".\"table\"", "one identifier never splits on dots")
+    let empty = sql"SELECT 42"
+    assert(empty.params().is_empty(), "hole-free query")
+    let nested = "query={ { let inner = sql"SELECT ${42}"; inner.params().len() } }"
+    assert(nested == "query=1", "SQL inside ordinary interpolation")
+    var source = "before"
+    let snapshot = sql"SELECT ${source}"
+    source = "after"
+    assert(match snapshot.params().borrow_ref(0) { TextValue(text) => text == "before", _ => false }, "query owns a snapshot")
+    let bytes: Array<UInt8> = [0, 255]
+    let text_array: Array<Option<String>> = [Some("x"), None]
+    let int_array: Array<Option<Int64>> = [Some(42), None]
+    let all: Array<pg.Value> = [
+        pg.Value.Null(pg.Kind.Integer), pg.Value.BoolValue(true), pg.Value.IntValue(42),
+        pg.Value.TextValue("text"), pg.Value.BytesValue(bytes),
+        pg.Value.TimestampValue(time.Timestamp.from_unix_micros(0)!),
+        pg.Value.UuidValue(uuid.Uuid.parse("00000000-0000-0000-0000-000000000000")!),
+        pg.Value.JsonValue("null"), pg.Value.FloatValue(1.5),
+        pg.Value.TextArrayValue(text_array), pg.Value.IntArrayValue(int_array)
+    ]
+    for value in &all {
+        let copied = sql"SELECT ${value}"
+        assert(copied.params().len() == 1, "all pre-encoded variants can bind")
+    }
+    0
+}

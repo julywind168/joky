@@ -309,6 +309,8 @@ mod show_tests;
 #[path = "language/structured_value_tests.rs"]
 mod structured_value_tests;
 
+#[path = "language/sql_template_tests.rs"]
+mod sql_template_tests;
 #[path = "language/trait_tests.rs"]
 mod trait_tests;
 

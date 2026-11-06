@@ -202,6 +202,11 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 格式规格、自动派生留待后续，实际语义见
 [Show 与插值](language.md#showprint--println-与字符串插值)。
 
+SQL 模板已实现：`sql"..."` / `sql"""..."""` 产生拥有型 `postgres.Query`。
+`${expr}` 绑定数据参数，`{expr}` 只插入带引号的 `postgres.Identifier`，不调用 Show；
+普通字符串插值保持原有语义。模板复用转义、字面花括号与三引号去缩进，编译期检查 SQL 词法边界，
+不查询数据库 schema。完整约束见[SQL 模板与标识符](language.md#sql-模板与标识符)。
+
 ## 4. 绑定、赋值与作用域
 
 ```joky
@@ -1087,6 +1092,7 @@ String 语言内部使用拥有存储，宿主参数使用显式 JokyText 指针
 
 `[ ... ]` 表示可选，`{ ... }` 表示重复，`|` 表示选择；引号内为源码终结符。
 `Identifier`、`Integer`、`StringLiteral` 按第 3 节识别，排除保留字；`StringLiteral` 内的 `{expr}` 是插值孔。
+`SqlTemplate` 是紧邻 `sql` 前缀的非原始单／三引号模板，孔语义见第 3 节。
 下面描述 v0.1 核心及已实现的泛型函数 / 记录 / 枚举 / 透明别名、模块常量、match、元组、解构绑定、固有 impl 与静态 trait，以及同步 / 挂起函数类型与函数取值、同步匿名函数与 callable bound。
 EBNF 不记录行号信息：相邻 `RecordField` 与相邻 `VariantDef` 之间除逗号外还允许真实换行作分隔（见 10.2），
 此处 `{ RecordField, [ "," ] }` 等按逗号形式书写。
@@ -1182,7 +1188,7 @@ Product      = Unary, { ("*" | "/" | "%"), Unary } ;
 Unary        = ("-" | "!" | "~"), Unary | "&", [ "mut" ], [ "*" ], Unary | Postfix ;
 Postfix      = Primary, { Arguments | ".", Identifier, [ TypeArguments ], [ Arguments ] | "[", Expression, "]" | "!" | "?" } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
-Primary      = Integer | StringLiteral | "true" | "false" | "(", ")"
+Primary      = Integer | StringLiteral | SqlTemplate | "true" | "false" | "(", ")"
              | Identifier | PrimitiveMember | RecordValue | TupleValue | ArrayValue | Call | TypedName | Group | BlockForm | TaskForm | Anonymous ;
 Anonymous    = [ "move" ], ( "||" | "|", AnonymousParam, { ",", AnonymousParam }, [ "," ], "|" ), [ "@", "suspends" ], [ Result ], Block ;
 AnonymousParam = Identifier, [ ":", Type ] ;

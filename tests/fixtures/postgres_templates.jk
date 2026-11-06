@@ -1,0 +1,36 @@
+import joky/process
+import joky/postgres
+
+#derive(ToJson, FromJson)
+struct Details { note: String, enabled: Bool }
+#derive(FromRow)
+struct Stored { customer: String, qty: Int64, extra: postgres.Json<Details> }
+
+fn main() @suspends {
+    let pool = postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options.default())!
+    let name = "O'Reilly'); SELECT 99; --"
+    let details = Details { note: "quote\" and newline\n", enabled: true }
+    let encoded = postgres.param_json_as(details)!
+    let table = postgres.ident("template\"orders; --")!
+    let column = postgres.ident("customer\"name")!
+    let qty: Int64 = 3
+    let missing: Option<String> = None
+    let committed: Result<UInt64, postgres.DbError> = pool.transaction(|tx| {
+        tx.execute(sql"CREATE TEMP TABLE {table} ({column} text, qty bigint, extra jsonb, missing text) ON COMMIT DROP")?
+        let inserted = tx.execute(sql"INSERT INTO {table} VALUES (${name}, ${qty}, ${encoded}, ${missing})")?
+        assert(inserted == 1, "one row inserted")
+        let row = tx.query_one_as::<Stored>(sql"SELECT {column} AS customer, qty, extra FROM {table} WHERE {column} = ${name}")?
+        assert(row.customer == name && row.qty == 3, "identifiers and values stay separate")
+        assert(row.extra.value.note == details.note && row.extra.value.enabled, "pre-encoded JSONB round trips")
+        assert(tx.query_scalar::<Bool>(sql"SELECT missing IS NULL FROM {table}")?, "typed SQL NULL")
+        assert(tx.query_optional(sql"SELECT qty FROM {table} WHERE qty > ${qty}")?.is_none(), "optional query")
+        assert(tx.query_one(sql"SELECT qty FROM {table}")?.get::<Int64>("qty")? == 3, "required row")
+        assert(tx.query(sql"SELECT qty FROM {table}")?.len() == 1, "all rows")
+        Ok(postgres.TxOutcome.Commit(inserted))
+    })
+    assert(committed! == 1, "template query participates in transaction")
+    assert(pool.query_scalar::<Bool>(sql"SELECT ${name}::text = ${name}::text")!, "repeated expressions bind independently")
+    assert(pool.query_scalar::<String>(sql"SELECT '$1'::text")! == "$1", "literal placeholder text is unchanged")
+    let manual = postgres.Query.new("SELECT $1::bigint + $1", [postgres.param(qty)])
+    assert(pool.query_scalar::<Int64>(manual)! == 6, "explicit queries retain manual parameter reuse")
+}

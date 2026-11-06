@@ -7306,10 +7306,10 @@ verify-full 用来验证数据库服务器证书和主机名。订单示例中�
 | --- | --- |
 | `postgres.open(url, options)` | 建立 SQLx PgPool，返回 Result<Pool, DbError>；配置见下表 |
 | `pool.share()` | 同一池的独立拥有句柄，可交给其他任务。最后一个持有者释放服务 |
-| `pool.execute(sql, params)` | 执行一条参数化语句，返回受影响行数 UInt64 |
-| `pool.query(sql, params)` | 返回 Array<Row>，每行按 SELECT 列表顺序持有列名和对应的值 |
-| `pool.query_optional(sql, params)` / `pool.query_one(sql, params)` | 前者无行时返回 None，后者返回 ResultRead(NoRows)；两者遇到多行均拒绝。Transaction 也提供这两个接口 |
-| `pool.query_scalar<T: FromSql>(sql, params)` / `tx.query_scalar<T: FromSql>(sql, params)` | 要求恰好一行一列，返回 Result<T, DbError>。Option<T> 允许该列为 SQL NULL |
+| `pool.execute(query)` | 执行一条参数化语句，返回受影响行数 UInt64 |
+| `pool.query(query)` | 返回 Array<Row>，每行按 SELECT 列表顺序持有列名和对应的值 |
+| `pool.query_optional(query)` / `pool.query_one(query)` | 前者无行时返回 None，后者返回 ResultRead(NoRows)；两者遇到多行均拒绝。Transaction 也提供这两个接口 |
+| `pool.query_scalar<T: FromSql>(query)` / `tx.query_scalar<T: FromSql>(query)` | 要求恰好一行一列，返回 Result<T, DbError>。Option<T> 允许该列为 SQL NULL |
 | `pool.begin()` | 借出一条物理连接，返回拥有型 Transaction。该连接在整个事务内独占 |
 | `pool.transaction(operation)` | 建立事务，调用一次挂起闭包，按 TxOutcome 提交或回滚后返回 Result<T, DbError> |
 | `tx.execute` / `tx.query` | 与池上方法相同的参数和结果，独占借用事务 |
@@ -7332,16 +7332,66 @@ import joky/process
 fn main() @suspends {
     let url = process.env("JOKY_POSTGRES_URL")!!
     let pool = postgres.open(url, postgres.Options { max_connections: 2, ..postgres.Options.default() })!
-    let answer = pool.query_scalar::<Int64>("SELECT 1", [])!
+    let answer = pool.query_scalar::<Int64>(sql"SELECT 1")!
     println("{answer}")
 }
 ```
 
-URL 和所有查询／执行方法的 SQL 参数均为 &String，支持自动共享借用：字面量、临时字符串、
-命名字符串都可以直接传入，调用后仍可重复使用命名字符串，无需 clone。
-宿主在提交后台任务前建立独立输入副本，不把语言借用传给 Tokio。
+URL 使用 &String，支持自动共享借用；查询／执行方法消费拥有型 `postgres.Query`。
+Query 独立持有 SQL 文本与参数，宿主在提交后台任务前建立输入副本，不把语言借用传给 Tokio。
 
 原有 `postgres.open(n)` 调用需改为 `postgres.open(url, postgres.Options { max_connections: n, ..postgres.Options.default() })`。
+
+### SQL 模板与标识符
+
+`sql"..."` 或 `sql"""..."""` 产生 `postgres.Query`，可直接传给 Pool 和 Transaction 的查询／执行方法。
+模板按需绑定标准 postgres 模块，即使使用导入别名或 `--no-prelude` 也不改变含义。
+
+| 模板写法 | 含义 |
+| --- | --- |
+| `${expression}` | 按出现顺序生成 `$1`、`$2` 等占位符，保存参数快照 |
+| `{expression}` | 插入 `postgres.Identifier` 的带引号文本；拒绝 String 和普通 Show 值 |
+| `{{` / `}}` | 输出字面花括号，适用于 SQL 内的 JSON 文本等 |
+
+普通 `"..."` 的 `{expression}` 仍调用 Show。SQL 模板沿用普通字符串的转义与三引号去缩进，
+不提供 `sqlr` 原始形式。SQL 中的单／双引号、美元引用与注释内禁止插值孔；
+`${expression}` 须独立构成 SQL token，可紧接 `::type` 转换，不能与相邻数字拼成另一占位符。
+模板禁止手写 `$N` 参数（引号或注释中的普通文本不受影响），避免与生成的编号混用。
+编译器检查这些词法边界、孔的类型和借用规则，不连接数据库，也不校验表、列或完整 SQL 语法。
+
+每个孔从左到右求值一次。`${expression}` 通过 `postgres.BindParam` 接受所有 ToSql 类型及已经编码的
+`postgres.Value`，不移动已有位置；String、字节与数组生成独立快照，之后修改原值不影响 Query。
+重复出现的表达式分别绑定，并分别求值；孔中的函数可挂起，部分构造的 Query 在失败或取消时正常释放。
+JSON 编码仍显式传播错误，可以预先调用 `param_json_as(value)?`，再把结果放入 `${encoded}`。
+
+`postgres.ident(name: &String) @noescape -> Result<Identifier, DbError>` 引用一个标识符：
+在两侧加双引号并将内部双引号加倍，空名称或 NUL 返回 InvalidRequest。
+它不拆分点号，限定名称应写 `{postgres.ident(schema)?}.{postgres.ident(table)?}`。
+Identifier 的字段私有，不能构造任意 SQL 片段；选择哪些表、列可访问仍由应用决定。
+
+例如，以下函数同时使用动态表名、列名和 JSONB：
+
+```joky
+import joky/postgres
+
+#derive(ToJson)
+struct Extra { note: String }
+
+fn insert(pool: &postgres.Pool, table_name: &String, column_name: &String,
+          customer: &String, extra: &Extra) @suspends -> Result<UInt64, postgres.DbError> {
+    let table = postgres.ident(table_name)?
+    let column = postgres.ident(column_name)?
+    let encoded = postgres.param_json_as(extra)?
+    pool.execute(sql"INSERT INTO {table} ({column}, extra) VALUES (${customer}, ${encoded})")
+}
+```
+
+`postgres.Query.new(text: String, parameters: Array<Value>)` 保留手写 SQL 的入口，拥有传入的文本与参数，
+允许显式 `$1` 重用。`query.sql()` 和 `query.params()` 分别借用其文本与参数数组，字段不可直接修改。
+旧的 `pool.execute(sql, params)` 等调用迁移为 `pool.execute(postgres.Query.new(sql, params))`，
+或直接改用模板；若需保留传给 Query.new 的已有 String，显式 clone。
+
+### 参数绑定与结果类型
 
 使用 PostgreSQL 的 `$1`、`$2` 参数，不拼接数据。绑定值支持 BoolValue、IntValue(Int64，对应 bigint)、
 TextValue、BytesValue、TimestampValue、UuidValue、JsonValue（JSON 文本）、FloatValue、
@@ -7363,7 +7413,7 @@ let customer: Int64 = 42
 let key = "request-1"
 let qty: Option<Int64> = None
 let params = [postgres.param(&customer), postgres.param(&key), postgres.param(&qty)]
-let row = pool.query_one("SELECT $1 AS customer, $2 AS key, $3 AS qty", params)?
+let row = pool.query_one(postgres.Query.new("SELECT $1 AS customer, $2 AS key, $3 AS qty", params))?
 ```
 
 ToSql 要求实现 `fn kind() -> postgres.Kind` 和 `fn to_sql(&self) @noescape -> postgres.Value`。
@@ -7468,11 +7518,11 @@ import joky/postgres
 struct StoredOrder { id: Int64, qty: Int64 }
 
 fn load(tx: &mut postgres.Transaction, id: Int64) @suspends -> Result<StoredOrder, postgres.DbError> {
-    tx.query_one_as::<StoredOrder>("SELECT qty, id FROM orders WHERE id=$1", [postgres.Value.IntValue(id)])
+    tx.query_one_as::<StoredOrder>(sql"SELECT qty, id FROM orders WHERE id=${id}")
 }
 ```
 
-Pool 和 Transaction 均提供 `query_one_as<T: FromRow>(sql, params) -> Result<T, DbError>`，
+Pool 和 Transaction 均提供 `query_one_as<T: FromRow>(query) -> Result<T, DbError>`，
 先执行 query_one 的行数及资源检查，再调用 `FromRow.from_row(row: &Row) @noescape`。
 映射结果独立拥有其数据；失败时释放临时行和已解码字段。映射错误发生在结果接收之后，事务仍可继续使用。
 手写 FromRow 可用于需要自定义字段转换的结构。
@@ -7484,8 +7534,8 @@ Pool 和 Transaction 均提供 `query_one_as<T: FromRow>(sql, params) -> Result<
 文本与 bytea 返回独立拥有值，支持用户定义的 FromSql 实现。例如：
 
 ```joky
-let count = pool.query_scalar::<Int64>("SELECT count(*) FROM orders", [])?
-let latest = tx.query_scalar::<Option<Int64>>("SELECT max(id) FROM orders", [])?
+let count = pool.query_scalar::<Int64>(sql"SELECT count(*) FROM orders")?
+let latest = tx.query_scalar::<Option<Int64>>(sql"SELECT max(id) FROM orders")?
 ```
 
 `pool.transaction` 接受 `F: FnOnce(&mut Transaction) @suspends @noescape -> Result<TxOutcome<T>, DbError>`。
