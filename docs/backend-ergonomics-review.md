@@ -487,16 +487,17 @@ float8 现映射 Float64，保留 NaN、Infinity 和有符号零；text[]/int8[]
 回归见 `tests/fixtures/postgres_arrays.jk`，同时覆盖参数副本、FromRow 和数组元素 NULL 的错误索引。
 numeric／Decimal 按当前需求暂缓，业务继续用 UInt64 表示最小金额单位；SQL json 暂须显式转换为 jsonb。
 
-### 8.4 配置与生命周期【显式 URL 与 Options 已实现】
+### 8.4 配置与生命周期【显式 URL、Options 与事务助手已实现】
 
 - 已改为 `postgres.open(url, options)`，连接字符串来源由调用方决定。示例显式调用 process.env；
   库不再读取 JOKY_POSTGRES_URL，不引入 open_named 或宿主注册机制。同一程序可连接多个数据库。
 - `postgres.Options { max_connections, acquire_timeout }` 默认 4 个连接、5s 获取超时，支持结构更新。
   无效参数在连接前拒绝，错误不返回连接字符串；多个 URL、占满连接后的自定义超时及恢复由三后端回归覆盖。
-- 事务句柄被丢弃（未 commit/rollback）时的行为需要在 API 上可见：文档已说明弃用连接，
-  建议在 language.md 表格中明确写"丢弃即回滚"，并提供 `pool.transaction(|tx| { ... })` 形式，
-  闭包返回 Ok 提交、Err 回滚，消除"提前 return 忘记 rollback"的类别错误
-  （示例中两处 `tx.rollback()?; return Ok(...)` 就是这种模式）。
+- 已提供 `pool.transaction(move |tx| @suspends { ... })`，回调返回 Result<TxOutcome<T>, DbError>。
+  Commit(value) 提交，Rollback(value) 回滚，成功收尾后均返回 Ok(value)；闭包 Err 路径尝试回滚并保留原错误。
+  订单示例的 Conflict／Insufficient 明确选择 Rollback，避免业务正常返回却提交了本应撤销的订单。
+  回调只借用事务；取消、运行时失败沿用连接弃用与未提交事务清理规则，不承诺取消能撤销已发送的提交。
+  挂起闭包需要 move 和 @suspends，类型推导边界及错误优先规则见语言参考。
 
 ## 9. 服务启动与并发样板【P1】
 
@@ -568,16 +569,16 @@ chat 主文件中的 `serve` 循环（准入、计数 ID、复制脚本、isolat
 以下为采纳 §4、§7、§8 建议后的 `place()` 与 HTTP handler 草图，仅用于说明方向：
 
 ```text
-pub fn place(pool: &pg.Pool, customer: Int64, key: &String, qty: Int64) @suspends -> Result<Order, AppError> {
-    if qty <= 0 || key.is_empty() { return Err(AppError.Invalid) }
-    pool.transaction(|tx| {
+pub fn place(pool: &pg.Pool, customer: Int64, key: String, qty: Int64) @suspends -> Result<Order, pg.DbError> {
+    if qty <= 0 || key.is_empty() { return Err(pg.DbError.Invalid) }
+    pool.transaction(move |tx| @suspends {
         let inserted = tx.execute("INSERT ... ON CONFLICT (customer, request_id) DO NOTHING", [customer, key, qty])?
         let row = tx.query_one("SELECT id, qty FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [customer, key])?
-        if row.get::<Int64>("qty")? != qty { return Ok(Order.Conflict) }
+        if row.get::<Int64>("qty")? != qty { return Ok(pg.TxOutcome.Rollback(Order.Conflict)) }
         if inserted == 1 && tx.execute("UPDATE ... WHERE sku=1 AND available >= $1", [qty])? == 0 {
-            return Ok(Order.Insufficient)
+            return Ok(pg.TxOutcome.Rollback(Order.Insufficient))
         }
-        Ok(Order.Confirmed(row.get::<Int64>("id")?))
+        Ok(pg.TxOutcome.Commit(Order.Confirmed(row.get::<Int64>("id")?)))
     })
 }
 
@@ -587,7 +588,7 @@ fn create_order(request: http.Request<Orders>) @suspends -> http.Response {
     let key = keys.take_last()
     if key.is_empty() || key.byte_length() > 128 { return error_reply(Status.BadRequest, "invalid Idempotency-Key") }
     let input = match request.json::<Purchase>() { Ok(i) => i, Err(_) => return http.bad_request("expected qty") }
-    match orders.place(&request.ctx.pool, 1, &key, input.qty) {
+    match orders.place(&request.ctx.pool, 1, key, input.qty) {
         Ok(Confirmed(id)) => http.json(Status.Ok, &OrderCreated { order_id: id }),
         ...
     }

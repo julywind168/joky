@@ -7252,6 +7252,7 @@ verify-full 用来验证数据库服务器证书和主机名。订单示例中�
 | `pool.query_optional(sql, params)` / `pool.query_one(sql, params)` | 前者无行时返回 None，后者返回 ResultRead(NoRows)；两者遇到多行均拒绝。Transaction 也提供这两个接口 |
 | `pool.query_scalar<T: FromSql>(sql, params)` / `tx.query_scalar<T: FromSql>(sql, params)` | 要求恰好一行一列，返回 Result<T, DbError>。Option<T> 允许该列为 SQL NULL |
 | `pool.begin()` | 借出一条物理连接，返回拥有型 Transaction。该连接在整个事务内独占 |
+| `pool.transaction(operation)` | 建立事务，调用一次挂起闭包，按 TxOutcome 提交或回滚后返回 Result<T, DbError> |
 | `tx.execute` / `tx.query` | 与池上方法相同的参数和结果，独占借用事务 |
 | `tx.commit()` / `tx.rollback()` | 消费事务并等待数据库回执，成功返回 Unit |
 
@@ -7423,6 +7424,27 @@ Pool 和 Transaction 均提供 `query_one_as<T: FromRow>(sql, params) -> Result<
 let count = pool.query_scalar::<Int64>("SELECT count(*) FROM orders", [])?
 let latest = tx.query_scalar::<Option<Int64>>("SELECT max(id) FROM orders", [])?
 ```
+
+`pool.transaction` 接受 `F: FnOnce(&mut Transaction) @suspends @noescape -> Result<TxOutcome<T>, DbError>`。
+闭包使用现有 `move |tx| @suspends { ... }` 语法，仅借用助手持有的事务，不能移出或返回该借用。
+`TxOutcome<T>` 的两个变体分开表达事务决定与业务结果：
+
+| 闭包返回 | 助手行为 |
+| --- | --- |
+| `Ok(TxOutcome.Commit(value))` | 等待提交成功后返回 Ok(value)；提交失败返回提交错误，包括 OutcomeUnknown，不重试 |
+| `Ok(TxOutcome.Rollback(value))` | 等待回滚成功后返回 Ok(value)；回滚失败返回回滚错误 |
+| `Err(error)` | 尝试回滚后返回原始 error；即使连接已因 SQL 错误被弃用，也不让回滚的 Closed 等错误覆盖原错误 |
+
+begin 成功后回调只调用一次；begin 失败时不调用。闭包内的 `return` 只退出闭包，不会绕过事务收尾。
+取消或运行时失败沿用拥有事务的释放规则，弃用连接并由服务器终止未提交事务；提交已发出时仍可能结果未知。
+助手不会在取消后额外运行异步回滚；回调中不要通过 SQL 手动改变事务边界。
+
+完整用法见[订单示例](../examples/postgres_orders.jk)：订单确认返回 Commit(Confirmed(id))，
+冲突或库存不足返回 Rollback(Conflict/Insufficient)，由助手统一完成事务收尾。
+
+返回类型可由外围函数的 Result<T, DbError> 推导。赋给局部变量时可显式标注
+`let result: Result<T, postgres.DbError> = pool.transaction(...)`，随后再用 `?` 或 `!` 解包；
+当前推导不保证跨末尾的解包运算符反推闭包结果类型。
 
 事务边界由 Transaction 管理。不要在普通语句中手动提交或回滚事务。池连接成功归还前执行 DISCARD ALL，
 不跨借用保留临时表、会话参数或锁。取消排队的获取操作不会执行 SQL；取消已在执行的操作、放弃事务、

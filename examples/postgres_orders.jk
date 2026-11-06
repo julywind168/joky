@@ -13,18 +13,18 @@ pub fn setup(pool: &postgres.Pool) @suspends {
 }
 pub fn place(pool: &postgres.Pool, customer: Int64, key: String, qty: Int64) @suspends -> Result<Order, postgres.DbError> {
     if qty <= 0 || key.is_empty() { return Err(postgres.DbError.Invalid) }
-    var tx = pool.begin()?
-    let inserted = tx.execute("INSERT INTO joky_demo_orders (customer, request_id, qty) VALUES ($1,$2,$3) ON CONFLICT (customer, request_id) DO NOTHING",
-        [postgres.param(&customer), postgres.param(&key), postgres.param(&qty)])?
-    let row = tx.query_one_as::<StoredOrder>("SELECT qty, id FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [postgres.param(&customer), postgres.param(&key)])?
-    let id = row.id
-    if row.qty != qty { tx.rollback()?; return Ok(Order.Conflict) }
-    if inserted == 1 {
-        let updated = tx.execute("UPDATE joky_demo_stock SET available=available-$1 WHERE sku=1 AND available >= $1", [postgres.param(&qty)])?
-        if updated == 0 { tx.rollback()?; return Ok(Order.Insufficient) }
-    }
-    tx.commit()?
-    Ok(Order.Confirmed(id))
+    pool.transaction(move |tx| @suspends {
+        let inserted = tx.execute("INSERT INTO joky_demo_orders (customer, request_id, qty) VALUES ($1,$2,$3) ON CONFLICT (customer, request_id) DO NOTHING",
+            [postgres.param(&customer), postgres.param(&key), postgres.param(&qty)])?
+        let row = tx.query_one_as::<StoredOrder>("SELECT qty, id FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [postgres.param(&customer), postgres.param(&key)])?
+        let id = row.id
+        if row.qty != qty { return Ok(postgres.TxOutcome.Rollback(Order.Conflict)) }
+        if inserted == 1 {
+            let updated = tx.execute("UPDATE joky_demo_stock SET available=available-$1 WHERE sku=1 AND available >= $1", [postgres.param(&qty)])?
+            if updated == 0 { return Ok(postgres.TxOutcome.Rollback(Order.Insufficient)) }
+        }
+        Ok(postgres.TxOutcome.Commit(Order.Confirmed(id)))
+    })
 }
 fn main() @suspends {
     let url = process.env("JOKY_POSTGRES_URL")!!

@@ -40,6 +40,7 @@ impl Show for Kind {
 pub enum Value { Null(Kind), BoolValue(Bool), IntValue(Int64), TextValue(String), BytesValue(Array<UInt8>), TimestampValue(time.Timestamp), UuidValue(uuid.Uuid), JsonValue(String), FloatValue(Float64), TextArrayValue(Array<Option<String>>), IntArrayValue(Array<Option<Int64>>) }
 
 pub struct Json<T> { pub value: T }
+pub enum TxOutcome<T> { Commit(T), Rollback(T) }
 // JSON encoding is fallible. These helpers retain codec details and own the text.
 pub fn param_json(value: &json.Value) @noescape -> Result<Value, DbError> {
     match json.encode(value) { Ok(text) => Ok(JsonValue(text)), Err(error) => Err(JsonCodec(typed.CodecError.Encoding(error))) }
@@ -578,6 +579,19 @@ fn scalar_value<T: FromSql>(row: Row) -> Result<T, DbError> {
     FromSql.from_sql::<T>(&row, 0)
 }
 impl Pool {
+    pub fn transaction<T, F: FnOnce(&mut Transaction) @suspends @noescape -> Result<TxOutcome<T>, DbError>>(&self, operation: F) @suspends -> Result<T, DbError> {
+        var tx = self.begin()?
+        match operation(&mut tx) {
+            Ok(Commit(value)) => { tx.commit()?; Ok(value) },
+            Ok(Rollback(value)) => { tx.rollback()?; Ok(value) },
+            Err(error) => {
+                // A failed SQL operation may already have retired the connection.
+                // Preserve the original failure even if rollback also fails.
+                tx.rollback();
+                Err(error)
+            }
+        }
+    }
     pub fn share(&self) @suspends -> Self { Pool { owner: __pg_share(&self.owner) } }
     pub fn execute(&self, sql: String, params: Array<Value>) @suspends -> Result<UInt64, DbError> { exec(&self.owner, sql, params) }
     pub fn query(&self, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }

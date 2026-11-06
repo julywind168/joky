@@ -247,6 +247,10 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
         ("types", include_str!("fixtures/postgres_types.jk")),
         ("arrays", include_str!("fixtures/postgres_arrays.jk")),
         ("options", include_str!("fixtures/postgres_options.jk")),
+        (
+            "transaction",
+            include_str!("fixtures/postgres_transaction.jk"),
+        ),
     ] {
         let file = format!("{name}.jk");
         fs::write(dir.join(&file), source).unwrap();
@@ -322,6 +326,23 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
     bounded(
         joky(dir)
             .args(["run", "lost.jk"])
+            .env("JOKY_POSTGRES_URL", cluster.url(port)),
+        dir,
+    );
+    proxy.join().unwrap();
+
+    fs::write(dir.join("rollback_lost.jk"), r#"import joky/postgres import joky/process fn main() @suspends {
+        let p = postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options.default())!
+        let result: Result<String, postgres.DbError> = p.transaction(move |tx| @suspends {
+            tx.execute("INSERT INTO joky_test_abandon VALUES (99)", [])?
+            Ok(postgres.TxOutcome.Rollback("must not report success"))
+        })
+        assert(match result { Err(Unavailable) => true, _ => false }, "lost rollback acknowledgement is not a successful business result")
+    }"#).unwrap();
+    let (port, proxy) = lose_ack(cluster.port, b"ROLLBACK\0");
+    bounded(
+        joky(dir)
+            .args(["run", "rollback_lost.jk"])
             .env("JOKY_POSTGRES_URL", cluster.url(port)),
         dir,
     );
