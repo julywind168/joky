@@ -13,7 +13,7 @@ pub fn setup(pool: &postgres.Pool) @suspends {
 }
 pub fn place(pool: &postgres.Pool, customer: Int64, key: &String, qty: Int64) @suspends -> Result<Order, postgres.DbError> {
     if qty <= 0 || key.is_empty() { return Err(postgres.DbError.InvalidRequest) }
-    pool.transaction(|tx| @suspends {
+    pool.transaction(|tx| {
         let inserted = tx.execute("INSERT INTO joky_demo_orders (customer, request_id, qty) VALUES ($1,$2,$3) ON CONFLICT (customer, request_id) DO NOTHING",
             [postgres.param(&customer), postgres.param(key), postgres.param(&qty)])?
         let row = tx.query_one_as::<StoredOrder>("SELECT qty, id FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [postgres.param(&customer), postgres.param(key)])?

@@ -260,8 +260,18 @@ impl FunctionPlan {
             Type::Function(f) => Some(&f.signature),
             _ => ty.closure_info().map(|c| &c.signature),
         });
-        let environment =
-            self.prepare_closure(function, vars, functions, types, expected_signature)?;
+        let expected_suspends = expected.and_then(|ty| match ty {
+            Type::Function(f) => Some(f.suspends),
+            _ => ty.closure_info().map(|c| c.suspends),
+        });
+        let environment = self.prepare_closure(
+            function,
+            vars,
+            functions,
+            types,
+            expected_signature,
+            expected_suspends,
+        )?;
         let captures: Vec<_> = free_names(function, vars)?
             .into_iter()
             .map(|name| {
@@ -274,7 +284,7 @@ impl FunctionPlan {
         // Keep contextual callable types and the ownership of explicit move closures.
         let pointer_type = match expected {
             Some(Type::Function(pointer)) => {
-                if pointer.suspends != function.suspends {
+                if pointer.suspends != closure.suspends {
                     return Err(type_error(
                         &function.span,
                         ErrorCode::TypeMismatch,
@@ -287,7 +297,7 @@ impl FunctionPlan {
                 Some(Type::function_with_effect(
                     closure.signature.params.clone(),
                     closure.signature.ret.clone(),
-                    function.suspends,
+                    closure.suspends,
                 ))
             }
             _ => None,
@@ -307,7 +317,7 @@ impl FunctionPlan {
             self.emit(Op::FunctionRef(dst.clone(), entry.clone()));
             return Ok(Flow::Value(Some(dst)));
         }
-        if suspends && !closure.storable && !function.suspends {
+        if suspends && !closure.storable && !closure.suspends {
             return Err(type_error(
                 &function.span,
                 ErrorCode::InvalidCall,
@@ -385,7 +395,18 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
         expected: Option<&crate::FunctionSignature>,
+        expected_suspends: Option<bool>,
     ) -> Result<Arc<RecordType>, Error> {
+        if function.suspends && expected_suspends == Some(false) {
+            return Err(type_error(
+                &function.span,
+                ErrorCode::TypeMismatch,
+                "Closure suspension effect does not match its expected callable type",
+            ));
+        }
+        // Only a literal inherits its expected effect. Without a callable
+        // context, omission remains synchronous; named values are never lifted.
+        let suspends = function.suspends || expected_suspends.unwrap_or(false);
         let captures: Vec<_> = free_names(function, vars)?
             .into_iter()
             .map(|name| {
@@ -476,8 +497,11 @@ impl FunctionPlan {
             .find(|c| c.parent == self.source_function && c.site == function.span)
             .cloned();
         let environment = if let Some(cached) = cached {
-            let previous = &cached.environment.closure.as_ref().unwrap().signature;
-            if previous.params != signature.params || !infer_return && previous.ret != signature.ret
+            let closure = cached.environment.closure.as_ref().unwrap();
+            let previous = &closure.signature;
+            if closure.suspends != suspends
+                || previous.params != signature.params
+                || !infer_return && previous.ret != signature.ret
             {
                 return Err(type_error(
                     &function.span,
@@ -574,7 +598,7 @@ impl FunctionPlan {
                     }
                 }
             })?;
-            let mut mode = if function.suspends {
+            let mut mode = if suspends {
                 CallableKind::FnOnce
             } else if !mutations.is_empty() {
                 CallableKind::FnMut
@@ -604,7 +628,7 @@ impl FunctionPlan {
                 storable = !ty.contains_references() && !ty.contains_unstorable_closures();
                 pending.extend(ty.buffer_elements().iter().map(|ty| (**ty).clone()));
             }
-            if function.suspends && function.moving && !storable {
+            if suspends && function.moving && !storable {
                 return Err(type_error(
                     &function.span,
                     ErrorCode::TypeMismatch,
@@ -667,7 +691,7 @@ impl FunctionPlan {
                     map: false,
                     set: false,
                     closure: Some(Arc::new(ClosureInfo {
-                        suspends: function.suspends,
+                        suspends,
                         storable,
                         mode,
                         signature: signature.clone(),
@@ -726,7 +750,7 @@ impl FunctionPlan {
                 type_params: vec![],
                 params: inputs,
                 ret_ty: ret.clone(),
-                suspends: function.suspends,
+                suspends,
                 body: function.body.clone(),
                 span: function.span,
             };
@@ -759,7 +783,7 @@ impl FunctionPlan {
             info.internal = true;
             info.instance_entry = false;
             info.domain_entry = false;
-            info.suspends = function.suspends;
+            info.suspends = suspends;
             info.compiler_intrinsic = None;
             info.may_fail = false;
             info.uses_arena = false;

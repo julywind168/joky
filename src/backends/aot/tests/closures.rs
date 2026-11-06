@@ -115,6 +115,7 @@ fn suspending_closures_execute_relocated_entries_and_cleanup() {
             ("closure_borrowed_reference", "-1,40,1", 3),
             ("closure_borrowed_unused", "-1,41,1", 3),
             ("closure_borrowed_empty", "41", 1),
+            ("closure_contextual_pointer", "41", 1),
         ],
         |compiler| {
             let mut extra = String::new();

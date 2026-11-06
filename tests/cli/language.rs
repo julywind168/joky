@@ -3688,6 +3688,33 @@ fn suspending_callers_infer_capture_free_callbacks_as_pointers() {
 
 #[test]
 #[cfg(unix)]
+fn closure_effect_context_infers_literals_and_keeps_nested_defaults() {
+    let work = Workspace::new();
+    work.write(
+        "context.jk",
+        r#"
+        import joky/task
+        fn apply<T, F: FnOnce() @suspends -> T>(operation: F) @suspends -> T { operation() }
+        fn sync<F: FnOnce() -> Int32>(operation: F) -> Int32 { operation() }
+        fn main() @suspends {
+            assert(apply(|| { 42 }) == 42, "context determines the effect even without suspension")
+            let factory = apply(move || { task.yield_now(); move || { 42 } })
+            assert(sync(factory) == 42, "outer effect does not change a nested literal")
+            let pointer: fn(Int32) @suspends -> Int32 = |value| { task.yield_now(); value + 1 }
+            assert(pointer(41) == 42, "function pointer context")
+            assert(sync(|| { 42 }) == 42, "synchronous context within suspending caller")
+            let message = "kept"
+            let result = task.timeout(1s, || { task.yield_now(); message.byte_length() })!
+            assert(result == 4 && message == "kept", "borrowed timeout callback")
+            println("passed")
+        }
+    "#,
+    );
+    work.assert_all_backends("context.jk", &[], b"passed\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
 fn concurrent_call_branches_accept_suspending_closures() {
     let work = Workspace::new();
     work.write(

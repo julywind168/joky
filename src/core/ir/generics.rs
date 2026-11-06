@@ -747,6 +747,7 @@ impl FunctionPlan {
                             functions,
                             types,
                             None,
+                            Some(bound.suspends),
                         )?))
                     } else {
                         Some(Type::Record(self.prepare_closure(
@@ -755,6 +756,7 @@ impl FunctionPlan {
                             functions,
                             types,
                             Some(&signature),
+                            Some(bound.suspends),
                         )?))
                     }
                 } else {
@@ -814,8 +816,9 @@ impl FunctionPlan {
         }
         if matches!(formal, Type::Parameter(_)) {
             if let Expr::AnonymousFunction(function) = arg {
-                let actual =
-                    Type::Record(self.prepare_closure(function, vars, functions, types, None)?);
+                let actual = Type::Record(
+                    self.prepare_closure(function, vars, functions, types, None, None)?,
+                );
                 unify(
                     formal,
                     &actual,
@@ -956,7 +959,19 @@ impl FunctionPlan {
         } else {
             self.type_hint(arg, vars, functions, types)
         };
-        if let Some(actual) = hint {
+        if let Some(mut actual) = hint {
+            if let (
+                Type::Function(expected),
+                Expr::AnonymousFunction(function),
+                Type::Function(pointer),
+            ) = (formal, arg, &actual)
+            {
+                if !function.suspends {
+                    let mut pointer = (**pointer).clone();
+                    pointer.suspends = expected.suspends;
+                    actual = Type::Function(Arc::new(pointer));
+                }
+            }
             unify(
                 formal,
                 &actual,

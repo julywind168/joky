@@ -4,7 +4,7 @@ fn main() @suspends {
     let message = "Hello from a suspending closure"
     let result = task.timeout(
         1s,
-        move || @suspends {
+        move || {
             task.yield_now()
             message
         }

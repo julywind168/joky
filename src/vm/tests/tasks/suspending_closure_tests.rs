@@ -18,6 +18,7 @@ const CASES: &[(&str, &[i32])] = &[
     ("closure_borrowed_reference", &[-1, 40, 1]),
     ("closure_borrowed_unused", &[-1, 41, 1]),
     ("closure_borrowed_empty", &[41]),
+    ("closure_contextual_pointer", &[41]),
 ];
 
 fn cleaned() {
@@ -133,9 +134,11 @@ fn suspending_closures_reject_effect_erasure_borrows_and_reuse() {
         "fn bad<F: FnOnce() @suspends -> Unit>(f: F) { f() }",
         "fn bad<F: FnOnce() @suspends -> Unit>(f: F) @suspends { f(); f() }",
         "fn apply<F: FnOnce() -> Unit>(f: F) { f() } fn bad() { apply(move || @suspends {}) }",
-        "fn apply<F: FnOnce() @suspends -> Unit>(f: F) @suspends { f() } fn bad() @suspends { apply(move || {}) }",
+        "fn apply<F: FnOnce() @suspends -> Unit>(f: F) @suspends { f() } fn bad() @suspends { let f = move || {}; apply(f) }",
         "fn bad() { let f: fn() -> Unit = move || @suspends {} }",
-        "fn bad() { let f: fn() @suspends -> Unit = move || {} }",
+        "fn bad() { let f = || {}; let g: fn() @suspends -> Unit = f }",
+        "extern fn pending() @suspends fn bad() @suspends { let f = || { pending() }; f() }",
+        "fn ready() {} fn apply<F: FnOnce() @suspends -> Unit>(f: F) @suspends { f() } fn bad() @suspends { apply(ready) }",
         "fn bad<F: FnOnce() -> Unit + FnOnce() @suspends -> Unit>(f: F) {}",
         "fn bad<F: Fn() @suspends -> Unit>(f: F) {}",
         "fn bad<F: FnMut() @suspends -> Unit>(f: F) {}",

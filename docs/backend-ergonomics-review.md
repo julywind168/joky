@@ -493,11 +493,11 @@ numeric／Decimal 按当前需求暂缓，业务继续用 UInt64 表示最小金
   库不再读取 JOKY_POSTGRES_URL，不引入 open_named 或宿主注册机制。同一程序可连接多个数据库。
 - `postgres.Options { max_connections, acquire_timeout }` 默认 4 个连接、5s 获取超时，支持结构更新。
   无效参数在连接前拒绝，错误不返回连接字符串；多个 URL、占满连接后的自定义超时及恢复由三后端回归覆盖。
-- 已提供 `pool.transaction(|tx| @suspends { ... })`，回调返回 Result<TxOutcome<T>, DbError>。
+- 已提供 `pool.transaction(|tx| { ... })`，回调返回 Result<TxOutcome<T>, DbError>。
   Commit(value) 提交，Rollback(value) 回滚，成功收尾后均返回 Ok(value)；闭包 Err 路径尝试回滚并保留原错误。
   订单示例的 Conflict／Insufficient 明确选择 Rollback，避免业务正常返回却提交了本应撤销的订单。
   回调只借用事务；取消、运行时失败沿用连接弃用与未提交事务清理规则，不承诺取消能撤销已发送的提交。
-  挂起闭包需要 @suspends；只借用外部值时无需 move，转移捕获所有权时显式写 move。类型推导边界及错误优先规则见语言参考。
+  transaction 的 callable 约束可推导字面量的挂起效果，无需重复 @suspends；只借用外部值时无需 move，转移捕获所有权时显式写 move。无上下文的闭包仍默认同步，具体边界见语言参考。
 
 ## 9. 服务启动与并发样板【P1】
 
@@ -572,7 +572,7 @@ DNS 和 PostgreSQL 后台任务仍拥有必要的输入副本；借用接口省�
 ```text
 pub fn place(pool: &pg.Pool, customer: Int64, key: &String, qty: Int64) @suspends -> Result<Order, pg.DbError> {
     if qty <= 0 || key.is_empty() { return Err(pg.DbError.InvalidRequest) }
-    pool.transaction(|tx| @suspends {
+    pool.transaction(|tx| {
         let inserted = tx.execute("INSERT ... ON CONFLICT (customer, request_id) DO NOTHING", [customer, key, qty])?
         let row = tx.query_one("SELECT id, qty FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [customer, key])?
         if row.get::<Int64>("qty")? != qty { return Ok(pg.TxOutcome.Rollback(Order.Conflict)) }

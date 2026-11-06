@@ -1634,7 +1634,7 @@ FnOnce 字段先移出到局部绑定，再消费调用。类型声明仍不接�
 arena、持久实例或 C/宿主 ABI。拥有型 move 环境仍不能进入元组。
 无引用 `move` 环境及其包装记录可在 `@suspends` 函数中创建、保留和调用，
 也可作为普通挂起调用的拥有参数；调用实参可以挂起，环境在所属帧中保持稳定。
-未标注 `@suspends` 的闭包仍是同步 callable。`join`／`race`、`scope` 和 `isolate`
+没有 callable 上下文且未标注 `@suspends` 的闭包仍是同步 callable。`join`／`race`、`scope` 和 `isolate`
 的结果仍不能包含闭包或其包装记录；同树跨 worker 输入的额外资格见[任务执行模式](#任务执行模式)。
 捕获保持期间检查共享/独占冲突，普通借用捕获不能消费非 Copy 值，回调不得返回捕获来源的引用；
 普通实参的引用返回仍按既有规则检查。同步 helper 的不逃逸效果自动证明，无需用户手写 `@noescape`。
@@ -1648,6 +1648,11 @@ arena、持久实例或 C/宿主 ABI。拥有型 move 环境仍不能进入元�
 `|参数| @suspends { ... }` 创建借用捕获的挂起闭包，`move |参数| @suspends { ... }`
 创建拥有捕获的挂起闭包；零参数写作 `|| @suspends { ... }`，可加 `move`。
 显式返回类型放在效果之后：`@suspends -> T`。
+闭包字面量也从预期 callable 类型推导挂起效果：形参约束为 `FnOnce(...) @suspends`，
+或预期函数指针类型含 `@suspends` 时，可省略字面量上的标注，例如 `pool.transaction(|tx| { ... })`
+和 `task.timeout(1s, || { ... })`。move 与非 move 字面量都适用，捕获方式不随效果推导改变。
+没有明确上下文时仍默认同步，不扫描闭包体来自动升级效果；已绑定的闭包和具名函数也不会因后续使用而改变效果。
+显式 `@suspends` 与同步上下文冲突时报错；外层闭包的效果不自动传给内层字面量。
 参数和返回值沿用同步闭包的上下文推导。可运行的超时组合示例见
 [suspending_closures.jk](../examples/suspending_closures.jk)。
 
@@ -7460,7 +7465,8 @@ let latest = tx.query_scalar::<Option<Int64>>("SELECT max(id) FROM orders", [])?
 ```
 
 `pool.transaction` 接受 `F: FnOnce(&mut Transaction) @suspends @noescape -> Result<TxOutcome<T>, DbError>`。
-闭包使用现有 `move |tx| @suspends { ... }` 语法，仅借用助手持有的事务，不能移出或返回该借用。
+闭包可直接写 `|tx| { ... }`，由形参约束推导挂起效果；需要转移捕获所有权时加 move。
+回调仅借用助手持有的事务，不能移出或返回该借用。
 `TxOutcome<T>` 的两个变体分开表达事务决定与业务结果：
 
 | 闭包返回 | 助手行为 |
