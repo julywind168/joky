@@ -373,6 +373,9 @@ M1 Pro／macOS、Release、speed，16 客户端，1／4 房间 × 1／2／4 work
 构建身份、候选补丁、样本及完整 CPU／延迟细项留在忽略的 `target/benchmarks/chat-final/`，不新增 Git 细项报告。
 本轮按优化任务约定运行针对性验证与性能矩阵，未跑全量检查或穷举；最终提交仅保留本段测量记录。
 
+2026-11-06 对当前版本重跑相同配置矩阵，与上述历史中位数的简要比较见
+[Chat 历史基线复测](reports/chat-refresh-2026-11-06.md)。旧版本未同场复跑，暂不能将差异归因于代码回归。
+
 ### Rust/Tokio 应用对照
 
 三轮交替测量及单客户端 RTT 见 [Joky / Tokio 对照报告](reports/chat-tokio-2026-10-30.md)。
