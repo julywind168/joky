@@ -93,6 +93,13 @@ impl Row {
         }
         match found { Some(i) => Ok(i), None => Err(MissingColumn) }
     }
+    pub fn get<T: FromSql>(&self, name: &String) @noescape -> Result<T, DbError> {
+        let i = match self.column_index(name) { Ok(i) => i, Err(reason) => return Err(Column(reason)) }
+        FromSql.from_sql::<T>(self, i)
+    }
+    pub fn get_opt<T: FromSql>(&self, name: &String) @noescape -> Result<Option<T>, DbError> {
+        self.get::<Option<T>>(name)
+    }
     pub fn get_bool(&self, name: &String) -> Result<Option<Bool>, ColumnError> {
         get_bool(self, self.column_index(name)?)
     }
@@ -100,16 +107,51 @@ impl Row {
         get_i64(self, self.column_index(name)?)
     }
     pub fn require_int64(&self, name: &String) -> Result<Int64, DbError> {
-        let i = match self.column_index(name) { Ok(i) => i, Err(reason) => return Err(Column(reason)) }
-        match get_i64(self, i) {
-            Ok(Some(n)) => Ok(n), Ok(None) => Err(Column(UnexpectedNull(i))), Err(reason) => Err(Column(reason))
-        }
+        self.get::<Int64>(name)
     }
     pub fn get_text(&self, name: &String) @noescape(name) -> Result<Option<&String>, ColumnError> {
         get_text(self, self.column_index(name)?)
     }
     pub fn get_bytes(&self, name: &String) @noescape(name) -> Result<Option<&Array<UInt8>>, ColumnError> {
         get_bytes(self, self.column_index(name)?)
+    }
+}
+
+// Decoded values own their data and can outlive the source row.
+pub trait FromSql {
+    fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Self, DbError>
+}
+pub trait FromRow {
+    fn from_row(row: &Row) @noescape -> Result<Self, DbError>
+}
+impl FromSql for Int64 {
+    fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Int64, DbError> {
+        match get_i64(row, i) {
+            Ok(Some(value)) => Ok(value), Ok(None) => Err(Column(UnexpectedNull(i))), Err(reason) => Err(Column(reason))
+        }
+    }
+}
+impl FromSql for Bool {
+    fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Bool, DbError> {
+        match get_bool(row, i) {
+            Ok(Some(value)) => Ok(value), Ok(None) => Err(Column(UnexpectedNull(i))), Err(reason) => Err(Column(reason))
+        }
+    }
+}
+impl FromSql for String {
+    fn from_sql(row: &Row, i: UInt64) @noescape -> Result<String, DbError> {
+        match get_text(row, i) {
+            Ok(Some(value)) => Ok(value.clone()), Ok(None) => Err(Column(UnexpectedNull(i))), Err(reason) => Err(Column(reason))
+        }
+    }
+}
+impl<T: FromSql> FromSql for Option<T> {
+    fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Option<T>, DbError> {
+        match FromSql.from_sql::<T>(row, i) {
+            Ok(value) => Ok(Some(value)),
+            Err(Column(UnexpectedNull(_))) => Ok(None),
+            Err(error) => Err(error)
+        }
     }
 }
 
@@ -238,6 +280,10 @@ impl Pool {
     pub fn query(&self, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
     pub fn query_optional(&self, sql: String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, sql, params) }
     pub fn query_one(&self, sql: String, params: Array<Value>) @suspends -> Result<Row, DbError> { required_row(optional_row(&self.owner, sql, params)?) }
+    pub fn query_one_as<T: FromRow>(&self, sql: String, params: Array<Value>) @suspends -> Result<T, DbError> {
+        let row = self.query_one(sql, params)?
+        FromRow.from_row::<T>(&row)
+    }
     pub fn begin(&self) @suspends -> Result<Transaction, DbError> {
         let owner = __pg_begin(&self.owner)
         check_status(&owner)?
@@ -249,6 +295,10 @@ impl Transaction {
     pub fn query(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
     pub fn query_optional(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, sql, params) }
     pub fn query_one(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Row, DbError> { required_row(optional_row(&self.owner, sql, params)?) }
+    pub fn query_one_as<T: FromRow>(&mut self, sql: String, params: Array<Value>) @suspends -> Result<T, DbError> {
+        let row = self.query_one(sql, params)?
+        FromRow.from_row::<T>(&row)
+    }
     pub fn commit(self) @suspends -> Result<Unit, DbError> { let result = __pg_finish(&self.owner, 1); check_status(&result) }
     pub fn rollback(self) @suspends -> Result<Unit, DbError> { let result = __pg_finish(&self.owner, 0); check_status(&result) }
 }

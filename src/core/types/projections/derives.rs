@@ -31,14 +31,14 @@ impl TypeRegistry {
                 .scope
                 .as_ref()
                 .map_or(&self.trait_environment.root, |s| &s.imports);
-            let name = implementation.trait_name.as_ref().unwrap();
+            let name = &fields.trait_name;
             let id = self.trait_id(name, original_scope, implementation.span)?;
             let local = self.with_parameters(&implementation.type_params)?;
             let mut inference = Inference {
                 parameters: implementation.type_params.iter().map(|p| p.id).collect(),
                 ..Default::default()
             };
-            for field in fields {
+            for field in fields.fields {
                 let ty = local
                     .resolve_scoped(&field.ty, original_scope, &implementation.type_params)
                     .map_err(|e| e.with_span(field.span))?;
@@ -212,11 +212,19 @@ impl TypeRegistry {
                     if implementation.type_params.is_empty() {
                         return Ok(());
                     }
-                    for field in fields {
+                    let field_trait =
+                        self.trait_id(&fields.trait_name, scope, implementation.span)?;
+                    for field in &fields.fields {
                         let field_ty =
                             self.resolve_scoped(&field.ty, scope, &implementation.type_params)?;
                         let field_ty = super::super::substitute(&field_ty, &substitutions, self)?;
-                        self.infer_derive_obligation(&field_ty, id, inference, depth + 1, span)?;
+                        self.infer_derive_obligation(
+                            &field_ty,
+                            field_trait,
+                            inference,
+                            depth + 1,
+                            span,
+                        )?;
                     }
                 } else {
                     for parameter in &implementation.type_params {

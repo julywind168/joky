@@ -575,11 +575,18 @@ pub struct MethodCall {
     pub span: Span,
 }
 
+/// Field obligations can use a different protocol from the generated impl.
+#[derive(joky_image_derive::Image, Debug, Clone)]
+pub(crate) struct DeriveFields {
+    pub trait_name: String,
+    pub fields: Vec<Param>,
+}
+
 /// An inherent or trait implementation for a concrete or generic nominal type.
 #[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct ImplDef {
     /// Original fields/payloads for compiler-generated conditional derive bounds.
-    pub(crate) derive_fields: Option<Vec<Param>>,
+    pub(crate) derive_fields: Option<DeriveFields>,
     pub trait_name: Option<String>,
     pub(crate) origin: Option<String>,
     pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,

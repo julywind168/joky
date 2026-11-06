@@ -1,6 +1,31 @@
 import joky/postgres
 import joky/task
+import joky/mem
 import joky/array.{type Array}
+#derive(FromRow)
+struct NamedRow<T> { Text: T, n: Option<Int64>, flag: Bool }
+#derive(FromRow)
+struct RequiredRow { Text: String, n: Int64 }
+#derive(FromRow)
+struct MissingRow { Text: String, missing: Option<Int64> }
+#derive(FromRow)
+struct WrongRow { Text: String, n: Option<Bool> }
+#derive(FromRow)
+struct Identifier { id: Int64 }
+#derive(FromRow)
+struct EmptyRow {}
+
+struct OrderId { value: Int64 }
+impl postgres.FromSql for OrderId {
+    fn from_sql(row: &postgres.Row, i: UInt64) @noescape -> Result<OrderId, postgres.DbError> {
+        let value = postgres.FromSql.from_sql::<Int64>(row, i)?
+        if value < 0 { return Err(postgres.DbError.Invalid) }
+        Ok(OrderId { value })
+    }
+}
+#derive(FromRow)
+struct WrappedRow<T> { id: T }
+
 fn scalar(p: &postgres.Pool, sql: String) @suspends -> Int64 {
     let rows = p.query(sql, [])!
     match rows.borrow_ref(0).borrow_ref(0) { IntValue(n) => n, _ => panic("expected integer column") }
@@ -35,6 +60,8 @@ fn cells(row: &postgres.Row) {
 }
 fn check_batch(batch: &Array<postgres.Row>) {
     let second = batch.borrow_ref(1)
+    assert(second.get::<Int64>("id")! == 2, "generic required integer")
+    assert(second.get_opt::<Int64>("qty")!! == 12, "generic optional integer")
     assert(second.get_int64("id")!! == 2 && second.get_int64("qty")!! == 12, "column labels on every row")
     assert(second.column_names().borrow_ref(0) == "qty" && second.values().len() == 2, "ordered column metadata")
 }
@@ -46,8 +73,23 @@ fn cardinality(pool: &postgres.Pool) @suspends {
     assert(match tx.query_one("SELECT generate_series(1, 2)", []) { Err(ResultRead(MultipleRows)) => true, _ => false }, "required multiple")
     let row = tx.query_optional("SELECT NULL::bigint AS n, true AS flag, 'x'::text AS \"Text\", $1::bytea AS bytes", [postgres.Value.BytesValue([0,255])])!!
     cells(&row)
+    assert(row.get_opt::<Int64>("n")!.is_none(), "generic typed NULL")
+    assert(row.get::<Bool>("flag")! && row.get::<String>("Text")! == "x", "generic scalar reads")
+    assert(match row.get::<Int64>("n") { Err(Column(UnexpectedNull(0))) => true, _ => false }, "generic required NULL")
+    assert(match row.get_opt::<Bool>("n") { Err(Column(TypeMismatch(0))) => true, _ => false }, "generic NULL type mismatch")
+    assert(match row.get_opt::<String>("text") { Err(Column(MissingColumn)) => true, _ => false }, "generic missing column")
+    assert(match postgres.FromRow.from_row::<RequiredRow>(&row) { Err(Column(UnexpectedNull(0))) => true, _ => false }, "derived partial owning result cleans up")
+    assert(match postgres.FromRow.from_row::<MissingRow>(&row) { Err(Column(MissingColumn)) => true, _ => false }, "optional field still requires its column")
+    assert(match postgres.FromRow.from_row::<WrongRow>(&row) { Err(Column(TypeMismatch(0))) => true, _ => false }, "derived typed NULL")
+    let mapped = postgres.FromRow.from_row::<NamedRow<String>>(&row)!
+    mem.drop(row)
+    assert(mapped.Text == "x" && mapped.n.is_none() && mapped.flag, "derived values outlive the row")
+    let single = tx.query_one_as::<NamedRow<String>>("SELECT true AS flag, 'owned'::text AS \"Text\", 7::bigint AS n, 42 AS extra", [])!
+    assert(single.Text == "owned" && single.n! == 7, "derived mapping ignores order and extra columns")
     let duplicate = tx.query_one("SELECT 9::bigint AS id, 11::bigint AS id", [])!
     assert(match duplicate.get_int64("id") { Err(AmbiguousColumn) => true, _ => false }, "ambiguous label")
+    assert(match duplicate.get::<Int64>("id") { Err(Column(AmbiguousColumn)) => true, _ => false }, "generic ambiguous column")
+    assert(match postgres.FromRow.from_row::<Identifier>(&duplicate) { Err(Column(AmbiguousColumn)) => true, _ => false }, "derived ambiguous column")
     assert(postgres.get_i64(&duplicate, 1)!! == 11, "duplicate labels retain their positions")
     let batch = tx.query("SELECT n+10 AS qty, n AS id FROM generate_series(1,2) AS series(n) ORDER BY n", [])!
     check_batch(&batch)
@@ -76,6 +118,15 @@ fn main() @suspends {
     let observer = postgres.open(1)!
     types(&pool)
     cardinality(&pool)
+    let wrapped = pool.query_one_as::<WrappedRow<OrderId>>("SELECT 42::bigint AS id", [])!
+    assert(wrapped.id.value == 42, "custom FromSql with inferred derive bounds")
+    let invalid = pool.query_one("SELECT -1::bigint AS id", [])!
+    assert(match invalid.get_opt::<OrderId>("id") { Err(Invalid) => true, _ => false }, "optional custom decode preserves errors")
+    let id = pool.query_one_as::<Identifier>("SELECT 42::bigint AS id", [])!
+    assert(id.id == 42, "pool mapped query")
+    pool.query_one_as::<EmptyRow>("SELECT 1 AS extra", [])!
+    assert(match pool.query_one_as::<Identifier>("SELECT 1 AS id WHERE false", []) { Err(ResultRead(NoRows)) => true, _ => false }, "mapped empty query")
+    assert(match pool.query_one_as::<Identifier>("SELECT generate_series(1,2) AS id", []) { Err(ResultRead(MultipleRows)) => true, _ => false }, "mapped multirow query")
     pool.execute("CREATE TABLE IF NOT EXISTS joky_result_probe (id bigint PRIMARY KEY)", [])!;
     pool.execute("DELETE FROM joky_result_probe", [])!;
     assert(match pool.query("INSERT INTO joky_result_probe VALUES (7) RETURNING id::numeric", []) {

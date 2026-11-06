@@ -3368,7 +3368,7 @@ fn example() -> Int32 {
   `enum Bad { Next(Bad) }`、经 Option/元组/记录/别名形成的无限内联布局仍报递归类型错误；
   每轮改变实参而产生无限实例的泛型递归受实例数与类型深度限额约束，不会无限展开。
   未存储的 phantom 实参仍参与依赖、身份、类型有效性及深度检查，不能隐藏声明或别名循环。
-- 编译期间缓存实例，规范化和 IR 规划各自最多 256 个不同枚举实例（含刚性参数实例）；
+- 编译期间缓存实例，规范化和 IR 规划各自最多 512 个不同枚举实例（含刚性参数实例）；
   函数实例限额独立计算。布局最多 65,536 标量槽，类型嵌套最多 256 层，未用于载荷的类型实参也计入嵌套深度。
   共享类型图的比较、替换及身份检查避免重复展开。
 - 枚举实例沿用标签加独立载荷区的内部布局，支持三后端同步 / CPS、值快照、Pending、取消和旧任务保活。
@@ -7255,11 +7255,13 @@ bytea 及这些类型的 SQL NULL；其他类型可在 SQL 中显式转换。查
 结果按行接收并逐行检查；此上限约束交付给 Joky 的结果，SQLx 读取单个 PostgreSQL 协议消息的暂存可能更大。
 
 按名读取使用 PostgreSQL 返回的列名（包括 SQL 中的 `AS` 别名），区分大小写。
-例如查询 `SELECT qty, id FROM orders` 后，`row.require_int64("id")?` 取得订单号，与列的位置无关。
+例如查询 `SELECT qty, id FROM orders` 后，`row.get::<Int64>("id")?` 取得订单号，与列的位置无关。
 每行的 UTF-8 列名及其长度前缀计入 1 MiB 结果上限。
 
 | API | 行为 |
 | --- | --- |
+| `row.get<T: FromSql>(name)` | 返回 `Result<T, DbError>`，按名称解码值；Int64、Bool、String 及 Option<T> 有内置实现，String 克隆为独立拥有值 |
+| `row.get_opt<T: FromSql>(name)` | 等同于 `row.get::<Option<T>>(name)`；将 T 解码时的 UnexpectedNull 转为 None，其他错误原样返回 |
 | `row.require_int64(name)` | 返回 `Result<Int64, DbError>`，列错误包装为 `DbError.Column`。整数列为 NULL 时返回 `Column(UnexpectedNull(i))` |
 | `row.get_bool/get_int64/get_text/get_bytes(name)` | 返回 `Result<Option<T>, ColumnError>`。类型正确的 NULL 返回 None，类型不匹配（包括其他类型的 NULL）返回 TypeMismatch(i)。文本与字节借用行中的存储 |
 | `row.column_index(name)` | 从零开始的列号。所有按名读取接口遇到缺列时报 MissingColumn，遇到重名时报 AmbiguousColumn。重名列仍可按位置读取，也可在 SQL 中指定不同别名 |
@@ -7268,6 +7270,34 @@ bytea 及这些类型的 SQL NULL；其他类型可在 SQL 中显式转换。查
 按列号的 `postgres.get_bool/get_i64/get_text/get_bytes(row, i)` 保留原有签名，越界返回 OutOfBounds(i)。
 原先直接使用 Array 读取接口的代码可改用 `row.values()`；`row.len()`、`row.borrow_ref(i)` 和 `row.get_ref(i)` 可直接使用。
 单行查询共享查询上限；在上限内的多行结果返回 ResultRead(MultipleRows)，事务仍然可用。
+
+`FromSql.from_sql(row: &Row, i: UInt64) @noescape -> Result<Self, DbError>` 定义列解码协议，
+可为业务类型手写实现。`get` 会先检查名称是否唯一，再调用协议。内置非 Option 实现遇到正确类型的
+NULL 时返回 `Column(UnexpectedNull(i))`；`Option<T>` 将该错误转换为 None，其他错误原样传播。
+`@noescape` 要求结果独立于 row 的借用；需要零拷贝文本和 bytea 时使用 `get_text` / `get_bytes`。
+当前语言不支持为 `Array<UInt8>` 单独实现泛型类型的 trait，因此 bytea 暂未提供内置 FromSql 实现。
+
+`#derive(FromRow)` 支持 struct，按字段声明顺序以字段名调用 `row.get::<字段类型>`。
+SQL 可以通过 `AS` 指定匹配名称；额外列被忽略，缺列或重名仍报错，包括 Option 字段。
+字段类型须实现 FromSql，泛型约束按字段推导；不支持 enum、const 泛型及借用结果。
+重复派生或与手写 FromRow 实现重叠会被拒绝，可与 Clone、Eq、Hash 和 JSON 派生组合。
+派生自动绑定标准 postgres.FromRow，无需导入同名 trait。
+
+```joky
+import joky/postgres
+
+#derive(FromRow)
+struct StoredOrder { id: Int64, qty: Int64 }
+
+fn load(tx: &mut postgres.Transaction, id: Int64) @suspends -> Result<StoredOrder, postgres.DbError> {
+    tx.query_one_as::<StoredOrder>("SELECT qty, id FROM orders WHERE id=$1", [postgres.Value.IntValue(id)])
+}
+```
+
+Pool 和 Transaction 均提供 `query_one_as<T: FromRow>(sql, params) -> Result<T, DbError>`，
+先执行 query_one 的行数及资源检查，再调用 `FromRow.from_row(row: &Row) @noescape`。
+映射结果独立拥有其数据；失败时释放临时行和已解码字段。映射错误发生在结果接收之后，事务仍可继续使用。
+手写 FromRow 可用于需要自定义字段转换的结构。
 
 事务边界由 Transaction 管理。不要在普通语句中手动提交或回滚事务。池连接成功归还前执行 DISCARD ALL，
 不跨借用保留临时表、会话参数或锁。取消排队的获取操作不会执行 SQL；取消已在执行的操作、放弃事务、

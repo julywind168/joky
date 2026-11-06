@@ -95,12 +95,12 @@ fn generic_enum_errors_reject_bad_templates_applications_and_constructors() {
 fn generic_enum_instance_limits_count_nominal_and_phantom_arguments() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut source = "enum Marker<T> { Value }".to_owned();
-        for n in 0..257 {
+        for n in 0..513 {
             source.push_str(&format!(" struct R{n} {{}} fn f{n}(x: Marker<R{n}>) {{}}"));
         }
         let error = VmEngine::with_mode(mode).load_source(&source).unwrap_err();
         assert_eq!(error.code(), ErrorCode::ResourceLimit);
-        assert!(error.message().contains("256 instances"));
+        assert!(error.message().contains("512 instances"));
     }
 }
 

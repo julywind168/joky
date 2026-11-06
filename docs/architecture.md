@@ -977,6 +977,12 @@ parser 为每个函数类型参数创建独立的 `Type::Parameter` 身份，`Fn
 对 enum 生成借用匹配；Hash 顺序组合标准字段哈希，并混入 enum 标签。所有调用固定标准协议身份，
 不依赖同名固有方法。生成方法经过普通借用和 noescape 检查，三个后端共用，无新增 ABI。
 
+`core::postgres_derive` 在导入绑定前将 `#derive(FromRow)` 展开为普通 FromRow 实现，
+按字段声明顺序调用 Row.get，生成字段名字符串和带字段 Span 的错误传播表达式。
+`DeriveFields` 显式记录字段所需协议；FromRow 的字段要求 FromSql，其他派生要求各自协议。
+约束推导包含嵌套条件 impl 时继续使用字段协议，保持生成目标协议和字段能力的区别。
+生成方法经过普通 noescape 与拥有值清理检查，允许返回独立拥有值，禁止借用临时查询行。
+
 ### JSON 派生
 
 `core::json_derive` 在根模块和源码依赖的导入绑定前消费 `#derive(ToJson, FromJson)`，

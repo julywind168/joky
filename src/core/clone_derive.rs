@@ -273,7 +273,10 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
             trait_name: Some(format!("{alias}.Clone")),
             origin: None,
             scope: None,
-            derive_fields: Some(obligations),
+            derive_fields: Some(crate::parser::ast::DeriveFields {
+                trait_name: format!("{alias}.Clone"),
+                fields: obligations,
+            }),
             type_params,
             target,
             target_name: name,

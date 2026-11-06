@@ -73,9 +73,9 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 ### 4.1 `?` 的错误类型转换【已验证】
 
-`Result?` 要求调用结果与当前函数使用相同的错误类型。可空列的读取接口返回 `ColumnError`，
-非空整数读取 `row.require_int64` 在标准库内将列错误包装为 `DbError.Column`，因此订单服务可直接写
-`row.require_int64("id")?`。[订单示例](../examples/postgres_orders.jk)
+`Result?` 要求调用结果与当前函数使用相同的错误类型。具体类型的借用读取接口返回 `ColumnError`；
+泛型 `row.get` / `row.get_opt` 将列错误包装为 `DbError.Column`，可直接写 `row.get::<Int64>("id")?`。
+订单服务通过 `query_one_as::<StoredOrder>(...)?` 传播查询和字段映射错误。[订单示例](../examples/postgres_orders.jk)
 
 通用 `From<T>` 降为 P2。一个应用错误类型可能需要分别接受数据库错误和文件错误，而当前 trait 自身不能带类型参数，同一 trait 与目标类型只能有一个实现。等另一个协议也需要按来源类型区分实现时，再一起设计泛型 trait 的实现查找和重叠规则。[当前 trait 规则](language.md#L2182)
 
@@ -448,17 +448,26 @@ explain-parallel 确认直接域操作仍为 Local。仅核验现有能力，没
 - 变体名去掉冗余后缀：`Value.IntValue` → `Value.Int`，`TextValue` → `Text`。
 - 文本参数接受借用，避免 `key.clone()`。
 
-### 8.2 结果读取【按列名读取已实现】
+### 8.2 结果读取【泛型读取与 FromRow 已实现】
 
-Row 持有列名和值，四种现有 SQL 类型均可按名称读取。订单服务用 `row.require_int64("id")?` 和
-`row.require_int64("qty")?` 读取非空整数。列号、重名、缺列及 NULL 的规则见[语言参考](language.md#postgresql-数据库-jokypostgres)。
+Row 持有列名和值，四种现有 SQL 类型均可按名称读取。已提供 `row.get::<T>(name)`、
+`row.get_opt::<T>(name)` 和 FromSql 协议，内置支持 Int64、Bool、String、Option<T>。
+String 解码为独立拥有值；借用文本和 bytea 沿用 `get_text` / `get_bytes`。
+Array<UInt8> 的独立 trait 实现受当前泛型 impl 规则限制，bytea 的统一泛型入口暂缓。
+
+`#derive(FromRow)` 按 struct 字段名映射，支持拥有字段、Option 字段和按字段推导的泛型约束。
+Pool 与 Transaction 提供 `query_one_as::<T>`；订单示例通过 StoredOrder 读取调换了列顺序的
+`SELECT qty, id`。列号、重名、缺列及 NULL 的规则见[语言参考](language.md#postgresql-数据库-jokypostgres)。
+
+2026-11-06 排查确认，原 HTTP 订单程序已占用 254 个枚举实例，其中 121 个含刚性参数。
+泛型读取增加普通 Option/Result 组合后触及总量预算；现将每阶段枚举实例上限调整为与记录一致的
+512，并验证满容量缓存命中、超限拒绝与失败后缓存可用。
 
 后续建议：
 
-- 统一泛型入口 `row.get::<T>(name)`／`row.get_opt::<T>(name)`。本阶段采用具体方法；验证泛型版本时，HTTP 订单程序的导入组合超过了当前 256 个泛型枚举实例的编译预算。
-- `#derive(FromRow)`：`let order: Order = tx.query_one_as::<Order>(sql, params)?`，按字段名映射。
-- 标量便利：`query_scalar::<Int64>(sql, params)`。
-- 命名：`get_i64` 与语言类型名 `Int64` 不一致，见 §10。
+- 标量便利 `query_scalar::<Int64>(sql, params)`。
+- bytea 的泛型读取待具体泛型类型 impl 规则完善后接入。
+- 命名 `get_i64` 与语言类型名 Int64 不一致，见 §10。
 
 ### 8.3 类型覆盖
 

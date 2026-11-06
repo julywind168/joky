@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 // Includes rigid instances from imported standard-library templates.
 pub(super) const MAX_RECORD_INSTANCES: usize = 512;
+pub(super) const MAX_ENUM_INSTANCES: usize = 512;
 
 // Nominal equality intentionally ignores layout metadata. A forward reference
 // may gain ownership after its declaration is resolved; do not reuse an alias
@@ -296,10 +297,10 @@ impl TypeRegistry {
         {
             return Ok(Type::Enum(instance.clone()));
         }
-        if self.enum_instances.borrow().len() >= 256 {
+        if self.enum_instances.borrow().len() >= MAX_ENUM_INSTANCES {
             return Err(error(
                 ErrorCode::ResourceLimit,
-                "Generic enum instantiation exceeds 256 instances",
+                format!("Generic enum instantiation exceeds {MAX_ENUM_INSTANCES} instances"),
             ));
         }
         let substitutions = template
@@ -351,10 +352,10 @@ impl TypeRegistry {
             depth,
         });
         // Nested payload applications may also have populated the shared cache.
-        if self.enum_instances.borrow().len() >= 256 {
+        if self.enum_instances.borrow().len() >= MAX_ENUM_INSTANCES {
             return Err(error(
                 ErrorCode::ResourceLimit,
-                "Generic enum instantiation exceeds 256 instances",
+                format!("Generic enum instantiation exceeds {MAX_ENUM_INSTANCES} instances"),
             ));
         }
         super::fixed_array::validate(&Type::Enum(instance.clone()), self)?;

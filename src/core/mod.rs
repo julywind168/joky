@@ -12,6 +12,7 @@ pub(crate) mod ir;
 mod json_derive;
 mod key_derive;
 pub mod parser;
+mod postgres_derive;
 pub(crate) mod prepared;
 pub(crate) mod resolver;
 pub(crate) mod script;

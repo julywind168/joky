@@ -2419,6 +2419,35 @@ mod generic_enum_tests {
     }
 
     #[test]
+    fn generic_enum_instance_budget_accepts_capacity_and_preserves_cache_after_failure() {
+        let registry = TypeRegistry::new().with_prelude(false);
+        let parsed =
+            crate::parser::parse("enum Marker<T> { Value } fn f(value: Marker<Unit>) {}").unwrap();
+        let resolved = registry.resolve_aliases(&parsed).unwrap();
+        let Item::FnDef(function) = &resolved.items[0] else {
+            panic!()
+        };
+        let Type::Enum(enumeration) = &function.params[0].ty else {
+            panic!()
+        };
+        let instantiate = |n| {
+            let argument = tuple_type(vec![Type::Unit; n + 1], &registry).unwrap();
+            registry.instantiate_enum(enumeration, vec![GenericArgument::Type(argument)])
+        };
+        let first = instantiate(0).unwrap();
+        for n in 1..specialization::MAX_ENUM_INSTANCES {
+            instantiate(n).unwrap();
+        }
+        let error = instantiate(specialization::MAX_ENUM_INSTANCES).unwrap_err();
+        assert_eq!(error.code(), ErrorCode::ResourceLimit);
+        let Type::Enum(cached) = instantiate(0).unwrap() else {
+            panic!()
+        };
+        let Type::Enum(first) = first else { panic!() };
+        assert!(Arc::ptr_eq(&first, &cached));
+    }
+
+    #[test]
     fn generic_enum_shared_phantom_graphs_have_bounded_comparison_and_substitution() {
         let registry = TypeRegistry::new();
         let mut source = "enum Phantom<T> { Value } type T0 = Unit".to_owned();

@@ -13,6 +13,7 @@ fn error(span: Span, message: impl Into<String>) -> Error {
 
 /// Consume attributes on an unbound module. The resulting module can be normalized again.
 pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
+    super::postgres_derive::expand(module)?;
     super::key_derive::expand(module)?;
     super::clone_derive::expand(module)?;
     let mut requests = Vec::new();
@@ -29,7 +30,7 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
             let Some(arguments) = &attribute.arguments else {
                 return Err(error(
                     attribute.span,
-                    "#derive requires Clone, Eq, Hash, ToJson and/or FromJson",
+                    "#derive requires Clone, Eq, Hash, ToJson, FromJson and/or FromRow",
                 ));
             };
             if arguments.is_empty() {
@@ -48,7 +49,7 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
                 {
                     return Err(error(
                         argument.span,
-                        "Only #derive(Clone, Eq, Hash, ToJson, FromJson) is supported",
+                        "Only #derive(Clone, Eq, Hash, ToJson, FromJson, FromRow) is supported",
                     ));
                 }
                 if seen.contains(&name.path) {
@@ -363,7 +364,10 @@ fn implementation(
         trait_name: Some(format!("{typed}.{capability}")),
         origin: None,
         scope: None,
-        derive_fields: Some(fields),
+        derive_fields: Some(crate::parser::ast::DeriveFields {
+            trait_name: format!("{typed}.{capability}"),
+            fields,
+        }),
         type_params,
         target,
         target_name: record.name.clone(),
