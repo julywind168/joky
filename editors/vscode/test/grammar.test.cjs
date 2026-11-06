@@ -126,6 +126,68 @@ test('embedded code resets the TextMate string token type for editor features', 
   assert.equal(typeAt(line.indexOf('after')), 2);
 });
 
+test('SQL templates distinguish parameter and identifier holes from ordinary interpolation', () => {
+  const line = 'let q = sql"SELECT ${customer}, {postgres.ident("name")!}, \'{{}}\', \\u{24}"; let after = 1';
+  const result = tokenize(line);
+  has(result, 0, 'sql', 'storage.type.string.sql');
+  has(result, 0, 'SELECT', 'string.quoted.double.sql');
+  has(result, 0, '${', 'punctuation.section.interpolation.parameter.begin');
+  // SQL-specific scopes keep the distinction available to themes.
+  has(result, 0, 'customer', 'meta.interpolation.parameter.sql');
+  has(result, 0, 'customer', 'meta.embedded.inline');
+  has(result, 0, 'postgres', 'meta.interpolation.identifier.sql');
+  has(result, 0, 'name', 'string.quoted.double');
+  has(result, 0, '{{', 'constant.character.escape');
+  has(result, 0, '\\u{24}', 'constant.character.escape');
+  has(result, 0, 'after', 'variable.other');
+  closed(result);
+
+  const ordinary = tokenize('let sql = "${customer}"; let mysql = r"${customer}"');
+  has(ordinary, 0, 'sql', 'variable.other');
+  has(ordinary, 0, 'customer', 'meta.embedded.inline');
+  assert.ok(!scopes(ordinary, 0, 'customer').includes('meta.interpolation.parameter.sql.joky'));
+  has(ordinary, 0, 'customer', 'string.quoted.double.raw', 1);
+  closed(ordinary);
+});
+
+test('SQL multiline templates balance nested code and restore the containing language', () => {
+  const result = tokenize([
+    'let q = sql"""',
+    '    SELECT ${ { /* } */ let value = "nested {42}"; value } },',
+    '           ${postgres.param_json_as(payload)?}, {postgres.ident("column")!}',
+    '    FROM {table}',
+    '    """',
+    'let nested = "query={ { let q = sql"SELECT ${1}"; q.params().len() } }"',
+    'let done = 1',
+  ].join('\n'));
+  has(result, 1, 'SELECT', 'string.quoted.triple.sql');
+  has(result, 1, '/*', 'comment.block');
+  has(result, 1, 'let', 'storage.type');
+  has(result, 1, 'nested', 'string.quoted.double');
+  has(result, 2, 'param_json_as', 'entity.name.function');
+  has(result, 3, 'table', 'meta.interpolation.identifier.sql');
+  has(result, 5, 'SELECT', 'string.quoted.double.sql');
+  has(result, 5, '1', 'constant.numeric.integer');
+  has(result, 6, 'let', 'storage.type');
+  closed(result);
+});
+
+test('SQL holes reset the string token type and unfinished single-line templates recover', () => {
+  const line = 'sql"SELECT ${value}, {column}"';
+  const { tokens } = grammar.tokenizeLine2(line, INITIAL);
+  const typeAt = (offset) => {
+    let metadata;
+    for (let i = 0; i < tokens.length && tokens[i] <= offset; i += 2) metadata = tokens[i + 1];
+    return (metadata >>> 8) & 3;
+  };
+  assert.equal(typeAt(line.indexOf('SELECT')), 2);
+  assert.equal(typeAt(line.indexOf('value')), 0);
+  assert.equal(typeAt(line.indexOf('column')), 0);
+  const result = tokenize('sql"unfinished\nlet after = 1');
+  has(result, 1, 'let', 'storage.type');
+  closed(result);
+});
+
 test('raw delimiters preserve quotes, escapes and braces until matching hashes', () => {
   for (const count of [0, 1, 2, 16]) {
     const hashes = '#'.repeat(count);

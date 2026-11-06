@@ -61,6 +61,12 @@
     "strings": {
       "patterns": [
         {
+          "include": "#sql-multiline"
+        },
+        {
+          "include": "#sql-string"
+        },
+        {
           "include": "#raw-multiline"
         },
         {
@@ -311,6 +317,118 @@
     "punctuation": {
       "match": "[()\\[\\],.;:]",
       "name": "punctuation.separator.joky"
+    },
+    "sql-multiline": {
+      "begin": "\\b(sql)(\"\"\")",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.string.sql.joky"
+        },
+        "2": {
+          "name": "punctuation.definition.string.begin.joky"
+        }
+      },
+      "end": "\"\"\"",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.joky"
+        }
+      },
+      "name": "string.quoted.triple.sql.joky",
+      "patterns": [
+        {
+          "include": "#sql-content"
+        }
+      ]
+    },
+    "sql-string": {
+      "begin": "\\b(sql)(\")",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.string.sql.joky"
+        },
+        "2": {
+          "name": "punctuation.definition.string.begin.joky"
+        }
+      },
+      "end": "\"|$",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.joky"
+        }
+      },
+      "name": "string.quoted.double.sql.joky",
+      "patterns": [
+        {
+          "include": "#sql-content"
+        }
+      ]
+    },
+    "sql-content": {
+      "patterns": [
+        {
+          "match": "\\\\(?:[nrt0\"\\\\]|u\\{[0-9a-fA-F]{1,6}\\})",
+          "name": "constant.character.escape.joky"
+        },
+        {
+          "match": "\\\\.",
+          "name": "invalid.illegal.escape.joky"
+        },
+        {
+          "match": "\\{\\{|\\}\\}",
+          "name": "constant.character.escape.joky"
+        },
+        {
+          "include": "#sql-parameter"
+        },
+        {
+          "include": "#sql-identifier"
+        },
+        {
+          "match": "\\}",
+          "name": "invalid.illegal.unmatched-brace.joky"
+        }
+      ]
+    },
+    "sql-parameter": {
+      "begin": "\\$\\{",
+      "end": "\\}",
+      "name": "meta.interpolation.parameter.sql.joky meta.embedded.inline.joky",
+      "patterns": [
+        {
+          "include": "$self"
+        }
+      ],
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.parameter.begin.joky"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.parameter.end.joky"
+        }
+      }
+    },
+    "sql-identifier": {
+      "begin": "\\{",
+      "end": "\\}",
+      "name": "meta.interpolation.identifier.sql.joky meta.embedded.inline.joky",
+      "patterns": [
+        {
+          "include": "$self"
+        }
+      ],
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.identifier.begin.joky"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.identifier.end.joky"
+        }
+      }
     }
   }
 }

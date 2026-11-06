@@ -2,7 +2,7 @@
   "name": "joky",
   "displayName": "Joky",
   "description": "Syntax highlighting and basic editing support for the Joky language.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "joky-local",
   "private": true,
   "license": "UNLICENSED",
