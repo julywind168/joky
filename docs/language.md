@@ -7259,6 +7259,25 @@ bytea 及这些类型的 SQL NULL；其他类型可在 SQL 中显式转换。查
 编码后的结果至多 1 MiB。单条 SQL 至多 64 KiB，绑定参数至多 256 个、编码后至多 1 MiB。
 结果按行接收并逐行检查；此上限约束交付给 Joky 的结果，SQLx 读取单个 PostgreSQL 协议消息的暂存可能更大。
 
+`postgres.param<T: ToSql>(value: &T) @noescape -> Value` 将借用值转换为拥有型参数。
+内置 ToSql 实现包括 Bool、Int16/32/64、String、Array<UInt8> 和 Option<T: ToSql>。
+Int16/32 符号扩展为 Int64，三种整数均绑定为 PostgreSQL bigint；文本与字节数组复制为独立拥有值。
+调用结束后可修改或释放原值，参数可跨挂起保存。SQL 参数列表仍是 `Array<postgres.Value>`，
+不会把异构数组隐式转换为参数；也可继续显式构造 Value，直接移入已有 String 或字节数组以避免复制。
+
+```joky
+let customer: Int64 = 42
+let key = "request-1"
+let qty: Option<Int64> = None
+let params = [postgres.param(&customer), postgres.param(&key), postgres.param(&qty)]
+let row = pool.query_one("SELECT $1 AS customer, $2 AS key, $3 AS qty", params)?
+```
+
+ToSql 要求实现 `fn kind() -> postgres.Kind` 和 `fn to_sql(&self) @noescape -> postgres.Value`。
+业务类型的 kind 必须与 to_sql 返回值的 SQL 类型一致；内置 Kind 为 Boolean、Integer、Text、Bytes。
+Option<T> 的 Some 调用 T.to_sql，None 使用 T.kind 生成 `Value.Null(kind)`，无需 SQL 类型转换提示
+即可绑定带类型的 NULL。None 的 T 必须由类型注解或上下文确定。
+
 按名读取使用 PostgreSQL 返回的列名（包括 SQL 中的 `AS` 别名），区分大小写。
 例如查询 `SELECT qty, id FROM orders` 后，`row.get::<Int64>("id")?` 取得订单号，与列的位置无关。
 每行的 UTF-8 列名及其长度前缀计入 1 MiB 结果上限。

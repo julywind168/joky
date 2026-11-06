@@ -89,7 +89,7 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 默认 prelude 已导出 `Array`、`Map`、`Set` 三个类型名。聊天室脚本可直接声明 `members: Array<Member>`。内嵌标准模块继续显式声明自己的依赖；用户关闭 prelude 后也需显式导入。[聊天室脚本](../examples/chat/script/main.jk)
 
-跨模块枚举的裸变体查找降为 P2。订单示例用 `import joky/postgres.{IntValue, TextValue}` 声明所需变体，SQL 参数列表即可写成 `[IntValue(customer), TextValue(key)]`。表达式中的裸构造器须在作用域内唯一；即使是本地枚举，也不会按期望类型消除歧义。以后若扩展这条规则，需同时确定与同名函数、显式导入和泛型推导的优先关系。[订单示例](../examples/postgres_orders.jk)
+跨模块枚举的裸变体查找降为 P2。显式选择性导入仍可让 SQL 参数列表写成 `[IntValue(customer), TextValue(key)]`；订单示例现已迁移为 §8.1 的 `postgres.param(&value)`。表达式中的裸构造器须在作用域内唯一；即使是本地枚举，也不会按期望类型消除歧义。以后若扩展这条规则，需同时确定与同名函数、显式导入和泛型推导的优先关系。[订单示例](../examples/postgres_orders.jk)
 
 ### 4.4 派生与 Show【Show 已补齐，Eq 运算符及 Eq／Hash 派生已实现】
 
@@ -431,22 +431,22 @@ explain-parallel 确认直接域操作仍为 Local。仅核验现有能力，没
 
 ## 8. PostgreSQL【P0】
 
-### 8.1 参数绑定
+### 8.1 参数绑定【ToSql 与显式转换已实现】
 
-现状（[postgres_orders.jk:21](../examples/postgres_orders.jk)）：
+已提供 `postgres.ToSql` 与 `postgres.param(&value)`，订单示例使用：
 
 ```joky
-[IntValue(customer), TextValue(key.clone()), IntValue(qty)]
+[postgres.param(&customer), postgres.param(&key), postgres.param(&qty)]
 ```
 
-建议：
+内置支持 Bool、Int16/32/64、String、Array<UInt8>、Option<T: ToSql>。
+整数统一绑定为 bigint；Option 的 None 根据 T 的 `kind()` 生成带类型的 SQL NULL。
+文本和字节从借用生成独立拥有的参数副本，不保留输入借用，可跨挂起使用；
+这里省去调用方显式 clone，没有消除实际复制。业务类型可实现 ToSql 复用现有四种 SQL 类型。
 
-- 新增 `postgres.ToSql` 协议，Int16/32/64、Bool、String、`&String`、Array<UInt8>、Option<T>、
-  Float64、Uuid、Timestamp 实现；`execute(sql, params)` 的参数改为 `Array<postgres.Param>`，
-  由期望类型自动装箱，目标写法 `[customer, key, qty]`。若首版做不到隐式装箱，退一步用短构造函数
-  `[pg.int(customer), pg.text(&key), pg.int(qty)]`。
-- 变体名去掉冗余后缀：`Value.IntValue` → `Value.Int`，`TextValue` → `Text`。
-- 文本参数接受借用，避免 `key.clone()`。
+参数容器仍为 `Array<postgres.Value>`，原有显式变体构造继续可用。
+尚未实现异构数组 `[customer, key, qty]` 的隐式转换；不为此引入第二套 Param 容器。
+Float64、Uuid、Timestamp 等类型按 §8.3 补齐。Value 变体命名整理仍待处理。
 
 ### 8.2 结果读取【泛型读取、FromRow 与标量查询已实现】
 

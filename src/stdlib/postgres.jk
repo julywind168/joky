@@ -28,6 +28,44 @@ impl Show for Kind {
 }
 
 pub enum Value { Null(Kind), BoolValue(Bool), IntValue(Int64), TextValue(String), BytesValue(Array<UInt8>) }
+
+// Parameters own their data; kind also describes an absent optional value.
+pub trait ToSql {
+    fn kind() -> Kind
+    fn to_sql(&self) @noescape -> Value
+}
+pub fn param<T: ToSql>(value: &T) @noescape -> Value { ToSql.to_sql(value) }
+impl ToSql for Bool {
+    fn kind() -> Kind { Boolean }
+    fn to_sql(&self) @noescape -> Value { BoolValue(*self) }
+}
+impl ToSql for Int16 {
+    fn kind() -> Kind { Integer }
+    fn to_sql(&self) @noescape -> Value { IntValue(int64(*self)) }
+}
+impl ToSql for Int32 {
+    fn kind() -> Kind { Integer }
+    fn to_sql(&self) @noescape -> Value { IntValue(int64(*self)) }
+}
+impl ToSql for Int64 {
+    fn kind() -> Kind { Integer }
+    fn to_sql(&self) @noescape -> Value { IntValue(*self) }
+}
+impl ToSql for String {
+    fn kind() -> Kind { Text }
+    fn to_sql(&self) @noescape -> Value { TextValue(self.clone()) }
+}
+impl ToSql for Array<UInt8> {
+    fn kind() -> Kind { Bytes }
+    fn to_sql(&self) @noescape -> Value { BytesValue(array.clone(self)) }
+}
+impl<T: ToSql> ToSql for Option<T> {
+    fn kind() -> Kind { ToSql.kind::<T>() }
+    fn to_sql(&self) @noescape -> Value {
+        match self { Some(value) => ToSql.to_sql(value), None => Null(ToSql.kind::<T>()) }
+    }
+}
+
 pub enum ReadFailure { UnsupportedType, ResultLimit, NoRows, MultipleRows, ColumnCount(UInt64) }
 impl Show for ReadFailure {
     fn show(&self, output: &mut StringBuilder) @noescape {
