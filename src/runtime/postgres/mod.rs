@@ -36,6 +36,7 @@ pub(crate) enum Operation {
     Status,
     Count,
     Data,
+    Connect,
 }
 const NAMES: &[(&str, Operation)] = &[
     ("__pg_open", Operation::Open),
@@ -46,6 +47,7 @@ const NAMES: &[(&str, Operation)] = &[
     ("__pg_status", Operation::Status),
     ("__pg_count", Operation::Count),
     ("__pg_data", Operation::Data),
+    ("__pg_connect", Operation::Connect),
 ];
 impl Operation {
     pub(crate) fn lookup(name: &str) -> Option<Self> {
@@ -64,6 +66,7 @@ impl Operation {
         let bytes = |ty: &Type| matches!(ty,Type::Record(t) if t.name=="joky/array.Array" && t.arguments==[Type::UInt8] && t.fields.len()==1 && matches!(&t.fields[0].ty,Type::Buffer(b) if **b==Type::UInt8));
         let (p, t) = match self {
             Self::Open => (vec![u], owner),
+            Self::Connect => (vec![Type::String, u.clone(), u], owner),
             Self::Share | Self::Begin => (vec![r], owner),
             Self::Finish => (vec![r, u], owner),
             Self::Count | Self::Status => (vec![r], u),
@@ -261,13 +264,19 @@ unsafe fn step(arena: &mut Arena, f: &mut CpsFrame, op: Operation) -> Result<Opt
     let s = &f.slots;
     let fail = |arena: &mut Arena, e| adopt(arena, Value::Fault(e), None).map(Some);
     if f.host_context.is_null() {
-        let request = if op == Operation::Open {
-            if !(1..=32).contains(&s[0]) {
+        // Reserve the old opcode: its first slot is a scalar, not a URL pointer.
+        if op == Operation::Open {
+            return fail(arena, Fault::Invalid);
+        }
+        let request = if op == Operation::Connect {
+            let timeout = std::time::Duration::from_nanos(s[2]);
+            if !(1..=32).contains(&s[1])
+                || timeout.is_zero()
+                || std::time::Instant::now().checked_add(timeout).is_none()
+            {
                 return fail(arena, Fault::Invalid);
             }
-            let Ok(url) = std::env::var("JOKY_POSTGRES_URL") else {
-                return fail(arena, Fault::Unavailable);
-            };
+            let url = super::owned_text::borrow(s[0] as *const Buffer)?;
             if url.len() > 8192
                 || !(url.starts_with("postgresql://") || url.starts_with("postgres://"))
             {
@@ -283,7 +292,12 @@ unsafe fn step(arena: &mut Arena, f: &mut CpsFrame, op: Operation) -> Result<Opt
                 .clone()
                 .try_acquire_owned()
                 .expect("new service");
-            Request::start(driver, charge, permit, db::open(url, s[0] as u32))
+            Request::start(
+                driver,
+                charge,
+                permit,
+                db::open(url.to_owned(), s[1] as u32, timeout),
+            )
         } else {
             let o = owner(s[0])?;
             match op {

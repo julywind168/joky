@@ -1,3 +1,4 @@
+import joky/process
 import joky/postgres
 import joky/task
 import joky/mem
@@ -223,8 +224,8 @@ fn await_sleep(observer: &postgres.Pool, pid: Int64) @suspends {
 }
 fn shared_session(pool: postgres.Pool) @suspends -> Int64 { scalar(&pool, "SELECT pg_backend_pid()") }
 fn main() @suspends {
-    let pool = postgres.open(1)!
-    let observer = postgres.open(1)!
+    let pool = postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
+    let observer = postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
     types(&pool)
     parameters(&pool)
     scalar_queries(&pool)

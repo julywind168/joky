@@ -485,15 +485,14 @@ Option<T> 允许 SQL NULL，无行仍报 NoRows；列数不符返回带实际数
 float8 现映射 Float64，保留 NaN、Infinity 和有符号零；text[]/int8[] 支持一维数组及可空元素，
 与整列 SQL NULL 分开。多维和非 1 起始下界明确拒绝，每数组上限 65,536 项。
 回归见 `tests/fixtures/postgres_arrays.jk`，同时覆盖参数副本、FromRow 和数组元素 NULL 的错误索引。
-下一项为 numeric（金额），需先设计公开十进制类型的精度、舍入与溢出规则；SQL json 暂须显式转换为 jsonb。
+numeric／Decimal 按当前需求暂缓，业务继续用 UInt64 表示最小金额单位；SQL json 暂须显式转换为 jsonb。
 
-### 8.4 配置与生命周期
+### 8.4 配置与生命周期【显式 URL 与 Options 已实现】
 
-- 连接串只能来自进程环境变量 `JOKY_POSTGRES_URL`，一个进程不能连两个库，也不能从配置文件读取。
-  理解这是安全边界的选择（DSN 不进入 Joky 值）；建议增加宿主命名配置
-  `postgres.open_named("orders", options)`，由宿主登记多个 DSN，Joky 只看到名字。
-- `open(max_connections)` 只接受一个位置参数；建议 `postgres.Options { max_connections, acquire_timeout, ... }`，
-  与 `http.Options` 保持同一套构造约定（§10）。
+- 已改为 `postgres.open(url, options)`，连接字符串来源由调用方决定。示例显式调用 process.env；
+  库不再读取 JOKY_POSTGRES_URL，不引入 open_named 或宿主注册机制。同一程序可连接多个数据库。
+- `postgres.Options { max_connections, acquire_timeout }` 默认 4 个连接、5s 获取超时，支持结构更新。
+  无效参数在连接前拒绝，错误不返回连接字符串；多个 URL、占满连接后的自定义超时及恢复由三后端回归覆盖。
 - 事务句柄被丢弃（未 commit/rollback）时的行为需要在 API 上可见：文档已说明弃用连接，
   建议在 language.md 表格中明确写"丢弃即回滚"，并提供 `pool.transaction(|tx| { ... })` 形式，
   闭包返回 Ok 提交、Err 回滚，消除"提前 return 忘记 rollback"的类别错误
@@ -551,7 +550,7 @@ chat 主文件中的 `serve` 循环（准入、计数 ID、复制脚本、isolat
 
 | 维度 | 现状 | 建议 |
 | --- | --- | --- |
-| 构造 | `Vm.new()`、`StringBuilder.new()`、`shutdown.create()`、`session.create(opts)`、`admission.create(n, 0)`、`domain.directory(n)`、`postgres.open(n)` | 值对象 `Type.new(...)`；I/O 资源用 `open`/`connect`/`listen`；模块级 `create` 改为 `Type.new` |
+| 构造 | `Vm.new()`、`StringBuilder.new()`、`shutdown.create()`、`session.create(opts)`、`admission.create(n, 0)`、`domain.directory(n)`、`postgres.open(url, options)` | 值对象 `Type.new(...)`；I/O 资源用 `open`/`connect`/`listen`；模块级 `create` 改为 `Type.new` |
 | 默认配置 | `http.Options.default()`、`session.Options.default()`、`json.Limits.default()`、`typed.Options.default()`、chat 的 `Config.default()` | Copy／拥有型记录已可用 `..base` 结构更新；已统一 `Type.default()` 普通固有方法；Default trait／派生暂缓 |
 | 数值缩写 | `get_i64`、`to_i64`、`from_u64`、`to_f64` 与类型名 `Int64`/`UInt64`/`Float64` 并存 | 跟随类型名：`to_int64()`，或用泛型 `to::<Int64>()`；列读取用 `row.get::<Int64>` |
 | 长度 | 容器 `len()`，String `byte_length()`，StringBuilder `byte_length()` | 保留 `byte_length` 明确单位是对的；补 `len()` 作为同义词会更符合直觉，二选一需写入约定 |
@@ -595,7 +594,7 @@ fn create_order(request: http.Request<Orders>) @suspends -> http.Response {
 }
 
 fn main() @suspends -> Int32 {
-    let pool = pg.Pool.open(pg.Options { max_connections: 4, ..pg.Options.default() })!
+    let pool = pg.open(process.env("JOKY_POSTGRES_URL")!!, pg.Options.default())!
     var router = http.with_context(Orders { pool })
     router.post("/orders", create_order)!
     http.run("127.0.0.1:0", router)

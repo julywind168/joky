@@ -1,3 +1,4 @@
+import joky/process
 import joky/postgres
 import joky/time
 import joky/uuid
@@ -94,7 +95,7 @@ fn json_errors(pool: &postgres.Pool) @suspends {
 }
 
 fn main() @suspends {
-    let pool = postgres.open(1)!
+    let pool = postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
     timestamps(&pool)
     uuids(&pool)
     json_values(&pool)

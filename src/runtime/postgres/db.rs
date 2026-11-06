@@ -113,9 +113,13 @@ fn failure(e: sqlx::Error, uncertain: bool) -> Fault {
         Fault::Unavailable
     }
 }
-pub(super) async fn open(url: String, max: u32) -> Result<Answer, Fault> {
+pub(super) async fn open(
+    url: String,
+    max: u32,
+    acquire_timeout: std::time::Duration,
+) -> Result<Answer, Fault> {
     let opts: PgConnectOptions = url.parse().map_err(|_| Fault::Invalid)?;
-    // Downgrade is allowed only when the trusted host explicitly selects disable.
+    // Plaintext requires an explicit choice in the caller's connection string.
     let plaintext = url
         .split_once('?')
         .is_some_and(|(_, q)| q.split('&').any(|p| p == "sslmode=disable"));
@@ -131,7 +135,7 @@ pub(super) async fn open(url: String, max: u32) -> Result<Answer, Fault> {
         .statement_cache_capacity(0);
     let pool = PgPoolOptions::new()
         .max_connections(max)
-        .acquire_timeout(std::time::Duration::from_secs(5))
+        .acquire_timeout(acquire_timeout)
         .after_release(|conn, _| {
             Box::pin(async move {
                 // Reset session settings, temp tables and advisory locks. A stray open

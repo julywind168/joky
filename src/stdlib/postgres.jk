@@ -10,7 +10,7 @@ import joky/uuid
 import joky/json
 import joky/json/typed
 
-extern fn __pg_open(max_connections: UInt64) @suspends -> postgres.Owner
+extern fn __pg_connect(url: String, max_connections: UInt64, acquire_timeout_nanos: UInt64) @suspends -> postgres.Owner
 extern fn __pg_share(owner: &postgres.Owner) @suspends -> postgres.Owner
 extern fn __pg_begin(owner: &postgres.Owner) @suspends -> postgres.Owner
 extern fn __pg_run(owner: &postgres.Owner, query: UInt64, sql: String, params: Array<UInt8>) @suspends -> postgres.Owner
@@ -402,8 +402,12 @@ fn check_status(owner: &postgres.Owner) @suspends -> Result<Unit, DbError> {
         _ => panic("invalid database status")
     }
 }
-pub fn open(max_connections: UInt64) @suspends -> Result<Pool, DbError> {
-    let owner = __pg_open(max_connections)
+pub struct Options { pub max_connections: UInt64, pub acquire_timeout: time.Duration }
+impl Options {
+    pub fn default() -> Options { Options { max_connections: 4, acquire_timeout: 5s } }
+}
+pub fn open(url: String, options: Options) @suspends -> Result<Pool, DbError> {
+    let owner = __pg_connect(url, options.max_connections, options.acquire_timeout.as_nanos())
     check_status(&owner)?
     Ok(Pool { owner })
 }

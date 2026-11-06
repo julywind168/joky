@@ -1,5 +1,6 @@
 // Test-only barrier after the production handler has committed and before the
 // HTTP server receives the Response. The parent kills this process at the barrier.
+import joky/process
 import postgres_orders_http.{type Orders}
 import postgres_orders as orders
 import joky/http.{type Service}
@@ -19,7 +20,7 @@ impl Service for Paused {
     }
 }
 fn main() @suspends {
-    let db = postgres.open(1)!
+    let db = postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
     orders.setup(&db)
     let stop = shutdown.create()
     var listener = tcp.listen("127.0.0.1", 0)!

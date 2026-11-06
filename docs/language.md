@@ -7232,9 +7232,11 @@ HTTPS 使用 `http.serve_tls(listener, config, &stop, options, handler)`。它�
 
 ## PostgreSQL 数据库 joky/postgres
 
-宿主用进程环境变量 `JOKY_POSTGRES_URL` 提供 SQLx PostgreSQL 连接串。设置它即允许进程内可调用该模块的 Joky 程序
-以该数据库角色执行 SQL；嵌入多个 VM 时共享此配置。缺省要求 verify-full（验证 CA 和主机名），可在受信任连接串中指定
-`sslrootcert`。本地测试库可显式使用 `?sslmode=disable`。DSN 不传给 Joky 查询接口或错误消息。
+`postgres.open(url: String, options: postgres.Options)` 消费调用方提供的连接字符串，返回独立拥有的连接池。
+URL 可以来自 `process.env`、配置文件或应用自行构造；库不隐式读取 `JOKY_POSTGRES_URL`，不需要宿主注册名字，
+同一程序可以传入不同 URL 连接多个数据库。URL 最多 8192 字节，接受 `postgres://` 和 `postgresql://`。
+缺省要求 verify-full（验证 CA 和主机名），可在连接串中指定 `sslrootcert`；本地测试库可显式使用 `?sslmode=disable`。
+错误只返回类别和可用的 SQLSTATE，不附带 URL、账号或密码。
 
 数据库角色和密码可写在连接串中，如 `postgresql://orders_app:PASSWORD@db.example.com:5432/orders?sslmode=verify-full`。
 密码中的 URI 保留字符需要百分号编码。PostgreSQL 按匹配的 pg_hba.conf 规则决定认证方式；
@@ -7243,7 +7245,7 @@ verify-full 用来验证数据库服务器证书和主机名。订单示例中�
 
 | 操作（均可挂起） | 行为 |
 | --- | --- |
-| `postgres.open(max_connections)` | 建立 SQLx PgPool，返回 Result<Pool, DbError>。容量 1–32，获取连接期限 5s |
+| `postgres.open(url, options)` | 建立 SQLx PgPool，返回 Result<Pool, DbError>；配置见下表 |
 | `pool.share()` | 同一池的独立拥有句柄，可交给其他任务。最后一个持有者释放服务 |
 | `pool.execute(sql, params)` | 执行一条参数化语句，返回受影响行数 UInt64 |
 | `pool.query(sql, params)` | 返回 Array<Row>，每行按 SELECT 列表顺序持有列名和对应的值 |
@@ -7252,6 +7254,30 @@ verify-full 用来验证数据库服务器证书和主机名。订单示例中�
 | `pool.begin()` | 借出一条物理连接，返回拥有型 Transaction。该连接在整个事务内独占 |
 | `tx.execute` / `tx.query` | 与池上方法相同的参数和结果，独占借用事务 |
 | `tx.commit()` / `tx.rollback()` | 消费事务并等待数据库回执，成功返回 Unit |
+
+`postgres.Options.default()` 返回以下配置，支持结构更新：
+
+| 字段 | 类型 | 默认值与约束 |
+| --- | --- | --- |
+| `max_connections` | UInt64 | 默认 4，允许 1–32 |
+| `acquire_timeout` | time.Duration | 默认 5s，必须非零且可表示为运行时期限；用于初始建连及后续池连接获取 |
+
+无效 URL 或 Options 返回 Invalid。认证或初始建连失败返回 Connect；建池后的连接获取超时返回 AcquireTimeout。
+以下是选择从环境变量读取的应用代码；环境变量名只是应用约定：
+
+```joky
+import joky/postgres
+import joky/process
+
+fn main() @suspends {
+    let url = process.env("JOKY_POSTGRES_URL")!!
+    let pool = postgres.open(url, postgres.Options { max_connections: 2, ..postgres.Options.default() })!
+    let answer = pool.query_scalar::<Int64>("SELECT 1", [])!
+    println("{answer}")
+}
+```
+
+原有 `postgres.open(n)` 调用需改为 `postgres.open(url, postgres.Options { max_connections: n, ..postgres.Options.default() })`。
 
 使用 PostgreSQL 的 `$1`、`$2` 参数，不拼接数据。绑定值支持 BoolValue、IntValue(Int64，对应 bigint)、
 TextValue、BytesValue、TimestampValue、UuidValue、JsonValue（JSON 文本）、FloatValue、

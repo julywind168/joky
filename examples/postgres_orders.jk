@@ -1,4 +1,5 @@
-// Run against a dedicated demo database selected by the host.
+// Run against a dedicated demo database selected by this application's environment.
+import joky/process
 import joky/postgres
 
 #derive(FromRow)
@@ -26,7 +27,8 @@ pub fn place(pool: &postgres.Pool, customer: Int64, key: String, qty: Int64) @su
     Ok(Order.Confirmed(id))
 }
 fn main() @suspends {
-    let pool = postgres.open(2)!
+    let url = process.env("JOKY_POSTGRES_URL")!!
+    let pool = postgres.open(url, postgres.Options { max_connections: 2, ..postgres.Options.default() })!
     setup(&pool)
     match place(&pool, 1, "example-order-1", 10)! {
         Confirmed(id) => println("order {id}"), Conflict => println("key conflict"), Insufficient => println("insufficient stock")

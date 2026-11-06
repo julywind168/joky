@@ -1,4 +1,5 @@
 // Observe the last pool alias being dropped while the Joky process is still alive.
+import joky/process
 import postgres_orders_http as api
 import joky/http.{type Service}
 import joky/log
@@ -12,8 +13,8 @@ fn scalar(pool: &postgres.Pool, sql: String) @suspends -> Int64 {
     postgres.get_i64(&row, 0)!!
 }
 fn main() @suspends {
-    let observer = postgres.open(1)!
-    let pool = postgres.open(1)!
+    let observer = postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
+    let pool = postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
     let pid = scalar(&pool, "SELECT pg_backend_pid()")
     let router = api.routes(pool)
     let worker = router.share()

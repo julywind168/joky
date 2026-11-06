@@ -1,3 +1,4 @@
+import joky/process
 import joky/postgres
 import joky/task
 import joky/mem
@@ -99,7 +100,7 @@ fn array_boundaries(pool: &postgres.Pool) @suspends {
 }
 
 fn main() @suspends {
-    let pool = postgres.open(1)!
+    let pool = postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
     floats(&pool)
     arrays(&pool)
     nullable_arrays(&pool)

@@ -1,0 +1,37 @@
+import joky/postgres
+import joky/process
+import joky/task
+import joky/mem
+
+fn invalid_options() @suspends {
+    let defaults = postgres.Options.default()
+    assert(defaults.max_connections == 4 && defaults.acquire_timeout == 5s, "pool option defaults")
+    for max_connections in [uint64(0), 33] {
+        let options = postgres.Options { max_connections, ..defaults }
+        assert(match postgres.open("postgres://user:secret@localhost/example", options) { Err(Invalid) => true, _ => false }, "connection count is checked before connecting")
+    }
+    let zero = postgres.Options { acquire_timeout: 0ns, ..defaults }
+    assert(match postgres.open("postgres://user:secret@localhost/example", zero) { Err(Invalid) => true, _ => false }, "zero acquire timeout is rejected")
+}
+fn checkout(pool: &postgres.Pool) @suspends -> Bool {
+    match pool.query_scalar::<Int64>("SELECT 1", []) { Err(AcquireTimeout) => true, _ => false }
+}
+fn deadline() @suspends -> Bool { task.sleep(3s); false }
+fn main() @suspends {
+    invalid_options()
+    // The harness deliberately sets JOKY_POSTGRES_URL to an invalid string.
+    let first = process.env("TEST_POSTGRES_FIRST")!!
+    let second = process.env("TEST_POSTGRES_SECOND")!!
+    let options = postgres.Options { max_connections: 1, acquire_timeout: 1s }
+    let pool = postgres.open(first, options)!
+    let other = postgres.open(second, postgres.Options.default())!
+    assert(pool.query_scalar::<String>("SELECT current_database()::text", [])! == "postgres", "first explicit URL")
+    assert(other.query_scalar::<String>("SELECT current_database()::text", [])! == "joky_options", "second explicit URL is independent")
+    let tx = pool.begin()!
+    let timed_out = race { checkout(&pool), deadline() }
+    assert(timed_out, "custom acquire timeout wins before the deadline while the only connection is occupied")
+    tx.rollback()!
+    assert(pool.query_scalar::<Int64>("SELECT 42", [])! == 42, "pool remains usable after checkout timeout")
+    mem.drop(pool)
+    assert(other.query_scalar::<Int64>("SELECT 7", [])! == 7, "independent pool remains usable")
+}

@@ -153,12 +153,16 @@ fn postgres_http_order_example_type_checks() {
 }
 
 #[test]
-fn postgres_requires_host_configuration() {
+fn postgres_explicit_configuration_errors_are_redacted() {
     let scratch = scratch::ScratchDir::new("pg-config");
     let dir = scratch.path();
     fs::write(dir.join("app.jk"),r#"import joky/postgres fn main() @suspends {
-        assert(match postgres.open(0) { Err(Invalid) => true, _ => false }, "invalid capacity")
-        assert(match postgres.open(1) { Err(Unavailable) => true, _ => false }, "missing capability")
+        for url in ["", "postgres://user:do-not-log@[invalid"] {
+            match postgres.open(url, postgres.Options.default()) {
+                Err(error) => assert("{error}" == "invalid database request", "connection errors must not expose the URL"),
+                Ok(_) => panic("invalid URL was accepted")
+            }
+        }
     }"#).unwrap();
     bounded(joky(dir).args(["run", "app.jk"]), dir);
 }
@@ -206,8 +210,23 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
     let dir = work.path();
     let cluster = Cluster::start(dir);
     let direct = cluster.url(cluster.port);
-    fs::write(dir.join("denied.jk"),r#"import joky/postgres fn main() @suspends {
-        assert(match postgres.open(1) { Err(Connect(_)) => true, _ => false }, "database must reject the credentials")
+    let second = direct.replace("/postgres?", "/joky_options?");
+    {
+        use sqlx::Connection;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let mut db = sqlx::PgConnection::connect(&direct).await.unwrap();
+            sqlx::query("CREATE DATABASE joky_options")
+                .execute(&mut db)
+                .await
+                .unwrap();
+        });
+    }
+    fs::write(dir.join("denied.jk"),r#"import joky/postgres import joky/process fn main() @suspends {
+        assert(match postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() }) { Err(Connect(_)) => true, _ => false }, "database must reject the credentials")
     }"#).unwrap();
     for userinfo in ["postgres:wrong", "postgres"] {
         let bad = format!(
@@ -227,23 +246,47 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
         ("driver", include_str!("fixtures/postgres.jk")),
         ("types", include_str!("fixtures/postgres_types.jk")),
         ("arrays", include_str!("fixtures/postgres_arrays.jk")),
+        ("options", include_str!("fixtures/postgres_options.jk")),
     ] {
         let file = format!("{name}.jk");
         fs::write(dir.join(&file), source).unwrap();
         for args in [vec!["run", &file], vec!["run", "--interpreter", &file]] {
-            bounded(joky(dir).args(args).env("JOKY_POSTGRES_URL", &direct), dir);
+            bounded(
+                joky(dir)
+                    .args(args)
+                    .env(
+                        "JOKY_POSTGRES_URL",
+                        if name == "options" {
+                            "invalid ambient URL"
+                        } else {
+                            &direct
+                        },
+                    )
+                    .env("TEST_POSTGRES_FIRST", &direct)
+                    .env("TEST_POSTGRES_SECOND", &second),
+                dir,
+            );
         }
         checked(joky(dir).args(["build", "--task-workers", "2", &file]));
         bounded(
             Command::new(dir.join(name))
                 .current_dir(dir)
-                .env("JOKY_POSTGRES_URL", &direct),
+                .env(
+                    "JOKY_POSTGRES_URL",
+                    if name == "options" {
+                        "invalid ambient URL"
+                    } else {
+                        &direct
+                    },
+                )
+                .env("TEST_POSTGRES_FIRST", &direct)
+                .env("TEST_POSTGRES_SECOND", &second),
             dir,
         );
     }
 
-    fs::write(dir.join("verified.jk"),r#"import joky/postgres fn main() @suspends {
-        let p=postgres.open(1)!
+    fs::write(dir.join("verified.jk"),r#"import joky/postgres import joky/process fn main() @suspends {
+        let p=postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
         let r=p.query("SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()",[])!
         assert(match r.borrow_ref(0).borrow_ref(0) {BoolValue(b)=>b,_=>false},"verified TLS connection")
     }"#).unwrap();
@@ -264,15 +307,15 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
         include_str!("../examples/postgres_orders.jk"),
     )
     .unwrap();
-    fs::write(dir.join("setup.jk"),"import orders import joky/postgres fn main() @suspends { let p=postgres.open(1)!; orders.setup(&p) }").unwrap();
+    fs::write(dir.join("setup.jk"),"import orders import joky/postgres import joky/process fn main() @suspends { let p=postgres.open(process.env(\"JOKY_POSTGRES_URL\")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!; orders.setup(&p) }").unwrap();
     bounded(
         joky(dir)
             .args(["run", "setup.jk"])
             .env("JOKY_POSTGRES_URL", &direct),
         dir,
     );
-    fs::write(dir.join("lost.jk"),r#"import orders import joky/postgres fn main() @suspends {
-        let p=postgres.open(1)!
+    fs::write(dir.join("lost.jk"),r#"import orders import joky/postgres import joky/process fn main() @suspends {
+        let p=postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
         assert(match orders.place(&p,1,"lost",10) { Err(OutcomeUnknown)=>true, _=>false }, "lost commit ack")
     }"#).unwrap();
     let (port, proxy) = lose_ack(cluster.port, b"COMMIT\0");
@@ -284,8 +327,8 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
     );
     proxy.join().unwrap();
 
-    fs::write(dir.join("retry.jk"),r#"import orders import joky/postgres fn main() @suspends {
-        let p=postgres.open(1)!
+    fs::write(dir.join("retry.jk"),r#"import orders import joky/postgres import joky/process fn main() @suspends {
+        let p=postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
         assert(match orders.place(&p,1,"lost",10)! { Confirmed(id)=>id==1, _=>false }, "original order")
         assert(match orders.place(&p,1,"lost",11)! { Conflict=>true, _=>false }, "changed quantity")
         let r=p.query("SELECT count(*), (SELECT available FROM joky_demo_stock WHERE sku=1) FROM joky_demo_orders",[])!
@@ -300,8 +343,8 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
         dir,
     );
 
-    fs::write(dir.join("auto.jk"),r#"import joky/postgres fn main() @suspends {
-        let p=postgres.open(1)!
+    fs::write(dir.join("auto.jk"),r#"import joky/postgres import joky/process fn main() @suspends {
+        let p=postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
         assert(match p.execute("INSERT INTO joky_demo_stock VALUES (2, 10)",[]) { Err(OutcomeUnknown)=>true, _=>false },"lost autocommit ack")
     }"#).unwrap();
     let (port, proxy) = lose_ack(cluster.port, b"INSERT 0 1\0");
@@ -312,8 +355,8 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
         dir,
     );
     proxy.join().unwrap();
-    fs::write(dir.join("verify_auto.jk"), r#"import joky/postgres fn main() @suspends {
-        let p=postgres.open(1)!
+    fs::write(dir.join("verify_auto.jk"), r#"import joky/postgres import joky/process fn main() @suspends {
+        let p=postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
         let r=p.query("SELECT available FROM joky_demo_stock WHERE sku=2",[])!
         assert(match r.borrow_ref(0).borrow_ref(0) { IntValue(n)=>n==10,_=>false },"autocommit persisted")
     }"#).unwrap();
@@ -486,9 +529,9 @@ fn http_orders_replay_after_lost_response_and_concurrent_requests() {
     fs::write(
         dir.join("lost_ack_http.jk"),
         r#"import postgres_orders_http as api
-import joky/http import joky/postgres import joky/shutdown import joky/tcp
+import joky/http import joky/postgres import joky/process import joky/shutdown import joky/tcp
 fn main() @suspends {
-    let pool=postgres.open(1)!
+    let pool=postgres.open(process.env("JOKY_POSTGRES_URL")!!, postgres.Options { max_connections: 1, ..postgres.Options.default() })!
     let stop=shutdown.create()
     let signals=stop.subscribe_unix()!
     var listener=tcp.listen("127.0.0.1",0)!
