@@ -6,13 +6,11 @@ import joky/result.{Ok, Err}
 import joky/option.{type Option, Some, None}
 import joky/io.{println, eprintln}
 
-fn stopped(stop: &shutdown.Controller) @suspends -> Option<TcpStream> { stop.wait(); None }
-fn accept(listener: &mut TcpListener) @suspends -> Option<TcpStream> { listener.accept().ok() }
-fn stopped_read(stop: &shutdown.Controller) @suspends -> Option<String> { stop.wait(); None }
-fn read(stream: &mut BufferedTcp) @suspends -> Option<String> { stream.read_line(128).unwrap_or(None) }
 fn connection(stream: TcpStream, stop: &shutdown.Controller) @suspends {
     var stream = BufferedTcp.new(stream)
-    let line = match race { stopped_read(stop), read(&mut stream) } {
+    let input = &mut stream
+    let result: Option<String> = race { { stop.wait(); None }, { input.read_line(128).unwrap_or(None) } }
+    let line = match result {
         Some(line) => line,
         None => return,
     }
@@ -30,9 +28,9 @@ fn connection(stream: TcpStream, stop: &shutdown.Controller) @suspends {
 fn serve(stop: &shutdown.Controller, var listener: TcpListener) @suspends -> Int32 {
     scope {
         while !stop.requested() {
-            let stream = match race { stopped(stop), accept(&mut listener) } {
-                Some(stream) => stream,
-                None => break,
+            let stream = match listener.accept_until(stop) {
+                Ok(Some(stream)) => stream,
+                _ => break,
             }
             if stop.requested() { break }
             branch { connection(stream, stop) }
@@ -49,15 +47,14 @@ fn deadline(stop: &shutdown.Controller) @suspends -> Int32 {
     1
 }
 fn main() @suspends -> Int32 {
-    let stop = shutdown.create()
-    // Keep the signal subscription alive through draining; scope exit releases it automatically.
-    let signals = match stop.subscribe_unix() {
+    let signals = match shutdown.with_signals() {
         Ok(signals) => signals,
         Err(_) => { eprintln("Could not subscribe to Unix signals"); return 2 },
     }
+    let stop = signals.controller()
     var listener = tcp.listen("127.0.0.1", 0).unwrap()
     println("listening {listener.local_addr().unwrap().port()}")
-    let result = race { serve(&stop, listener), deadline(&stop) }
+    let result = race { serve(stop, listener), deadline(stop) }
     println(if result == 0 { "drained" } else { "deadline reached" })
     result
 }

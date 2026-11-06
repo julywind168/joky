@@ -34,6 +34,16 @@ impl Show for SignalError {
 
 pub struct Controller { storage: shutdown.ControllerOwner }
 pub struct Signals { storage: shutdown.SignalsOwner }
+// Keep the subscription in the startup scope; shared controllers do not own it.
+pub struct SignalScope { controller: Controller, signals: Signals }
+impl SignalScope {
+    pub fn controller(&self) -> &Controller { &self.controller }
+}
+pub fn with_signals() @suspends -> Result<SignalScope, SignalError> {
+    let controller = create()
+    let signals = controller.subscribe_unix()?
+    Ok(SignalScope { controller, signals })
+}
 
 pub fn create() @suspends -> Controller { Controller { storage: __shutdown_create() } }
 fn reason(code: UInt64) -> Reason {

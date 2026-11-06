@@ -377,7 +377,6 @@ fn read_request(stream: &mut Wire, context: RequestLog) @suspends -> Result<Requ
     let body = stream.read_body(length.unwrap_or(0))?
     result.Ok(Request { ctx: {}, log: context, request_id: context.request_id, method, target, headers, body })
 }
-fn stop_read(stop: &shutdown.Controller) @suspends -> Result<Request<Unit>, ReadFailure> { stop.wait(); Err(ReadFailure.Stopped) }
 fn read_timeout(timeout: Duration) @suspends -> Result<Request<Unit>, ReadFailure> { task.sleep(timeout); Err(ReadFailure.Timeout) }
 enum WriteOutcome { Complete, Failed, TimedOut }
 fn response_prefix(code: Int32, reason: String, media: String, fields: Array<Header>, size: UInt64, context: RequestLog) -> Option<String> {
@@ -433,7 +432,6 @@ fn respond(io: Wire, context: RequestLog, read_duration: Option<Duration>, start
 fn secure(config: &tls.ServerConfig, stream: TcpStream) @suspends -> Option<Wire> {
     match config.accept(stream) { result.Ok(io) => Some(Secure(io)), Err(_) => None }
 }
-fn stop_handshake(stop: &shutdown.Controller) @suspends -> Option<Wire> { stop.wait(); None }
 fn handshake_timeout(timeout: Duration) @suspends -> Option<Wire> { task.sleep(timeout); None }
 // Each admitted connection owns its service handle until the handler and write finish.
 pub trait Service {
@@ -586,15 +584,16 @@ impl Service for FunctionService {
     fn handle(&self, request: Request<Unit>) @suspends -> Response { let call = self.callback; call(request) }
 }
 fn connection<S: Service>(config: Option<tls.ServerConfig>, stream: TcpStream, stop: shutdown.Controller, options: Options, service: S, _permit: admission.Permit) @suspends {
+    let stopping = &stop
     var io = match config {
         None => Plain(BufferedTcp.new(stream)),
-        Some(config) => match race { secure(&config, stream), stop_handshake(&stop), handshake_timeout(options.read_timeout) } {
+        Some(config) => match race { secure(&config, stream), { stopping.wait(); None }, handshake_timeout(options.read_timeout) } {
             Some(wire) => wire, None => return
         }
     }
     let context = RequestLog { request_id: uuid.v4()!, logger: options.logger }
     let read_started = time.Instant.now()
-    let input = race { read_request(&mut io, context), stop_read(&stop), read_timeout(options.read_timeout) }
+    let input = race { read_request(&mut io, context), { stopping.wait(); Err(ReadFailure.Stopped) }, read_timeout(options.read_timeout) }
     let read_finished = time.Instant.now()
     let read_duration = read_finished.duration_since(read_started)
     // This check admits a complete request. Shutdown lets its handler and write finish.
@@ -618,17 +617,14 @@ fn connection<S: Service>(config: Option<tls.ServerConfig>, stream: TcpStream, s
         }
     }
 }
-enum Accept { Client(TcpStream), Stop, Error }
-fn accept(listener: &mut TcpListener) @suspends -> Accept { match listener.accept() { result.Ok(s) => Client(s), Err(_) => Error } }
-fn stop_accept(stop: &shutdown.Controller) @suspends -> Accept { stop.wait(); Stop }
 fn listen<S: Service>(config: Option<tls.ServerConfig>, var listener: TcpListener, stop: &shutdown.Controller, options: Options, service: S) @suspends -> Result<Unit, ServeError> {
     let pool = admission.create(options.max_connections, 0)
     let clients = pool.handle()
     var failed = false
     scope {
         while !stop.requested() {
-            let stream = match race { accept(&mut listener), stop_accept(stop) } {
-                Client(stream) => stream, Stop => break, Error => { failed = true; break }
+            let stream = match listener.accept_until(stop) {
+                result.Ok(Some(stream)) => stream, result.Ok(None) => break, Err(_) => { failed = true; break }
             }
             if stop.requested() { break }
             let permit = match clients.try_acquire() { result.Ok(p) => p, Err(_) => continue }

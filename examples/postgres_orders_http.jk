@@ -69,10 +69,9 @@ fn main() @suspends -> Int32 {
     let url = process.env("JOKY_POSTGRES_URL")!!
     let pool = postgres.open(url, postgres.Options.default())!
     orders.setup(&pool)
-    let stop = shutdown.create()
-    // Keep signal handling active until all admitted requests finish draining.
-    let signals = stop.subscribe_unix()!
+    let signals = shutdown.with_signals()!
+    let stop = signals.controller()
     var listener = tcp.listen("127.0.0.1", 0)!
     println("listening {listener.local_addr()!.port()}")
-    if http.serve_with(listener, &stop, options, routes(pool)).is_ok() { 0 } else { 1 }
+    if http.serve_with(listener, stop, options, routes(pool)).is_ok() { 0 } else { 1 }
 }

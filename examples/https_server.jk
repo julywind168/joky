@@ -17,10 +17,9 @@ fn main() @suspends -> Int32 {
     var chain = fs.open(chain_path, fs.OpenOptions.default())!
     var key = fs.open(key_path, fs.OpenOptions.default())!
     let config = tls.ServerConfig.from_pem(chain.read_all_limited(131072)!, key.read_all_limited(131072)!)!
-    let stop = shutdown.create()
-    // Keep the subscription until in-flight HTTPS requests finish draining.
-    let signals = stop.subscribe_unix()!
+    let signals = shutdown.with_signals()!
+    let stop = signals.controller()
     var listener = tcp.listen("127.0.0.1", 0)!
     println("listening {listener.local_addr()!.port()}")
-    if http.serve_tls_with(listener, config, &stop, http.Options.default(), routes()).is_ok() { 0 } else { 1 }
+    if http.serve_tls_with(listener, config, stop, http.Options.default(), routes()).is_ok() { 0 } else { 1 }
 }

@@ -6957,6 +6957,8 @@ Controller 的普通借用及 Signals 保持 worker-local，不授予跨 worker 
 | 接口 | 结果与行为 |
 | --- | --- |
 | `shutdown.create() @suspends` | 创建独立的 Controller，不注册进程信号 |
+| `shutdown.with_signals() @suspends` | Result<SignalScope, SignalError>；创建控制器并持有 SIGINT/SIGTERM 订阅 |
+| `signals.controller()` | 借用 SignalScope 内的 Controller，返回 &Controller；借用期间整个信号作用域保持存活 |
 | `controller.share() @suspends` | 返回共享同一状态的独立拥有句柄；释放一个句柄不关闭其他句柄 |
 | `controller.request() @suspends` | Bool，首次请求返回 true，后续返回 false |
 | `controller.requested() @suspends` | Bool，查询是否已经收到请求 |
@@ -6968,6 +6970,13 @@ Reason 为 `Requested`、`Interrupt`、`Terminate`。首次发布的原因保留
 取消 wait 只注销该等待者，不触发停机，也不影响其他等待者。每个通知最多 1024 个 Pending 等待者，
 达到上限返回终止性 ResourceLimit；完成或取消后立即归还等待存储。普通 Controller 清理由拥有型资源机制负责，
 不会等到根任务结束才释放共享状态。
+
+应用启动优先使用 `let signals = shutdown.with_signals()!`，再以 `let stop = signals.controller()`
+取得借用传给 serve_with 等服务入口；完整用法见 [HTTP 示例](../examples/http_server.jk)。
+SignalScope 同时拥有控制器和 Signals，保持 worker-local；作用域退出、取消或运行时失败都会释放订阅。
+`signals.controller().share()` 返回普通 Controller，可跨 worker 转移，但不会延长 SignalScope 或订阅的寿命；
+应用应保持根 SignalScope 到服务排空结束。订阅失败返回原 SignalError，非 Unix 平台为 Unsupported。
+底层 subscribe_unix 仍适用于需要独立控制订阅生命周期的调用方。
 
 Unix 信号订阅必须持有返回的 Signals owner 到服务退出；显式 Drop、取消和失败都会停止并 join 对应桥接线程。
 后台线程只访问 Rust 拥有的通知状态和唤醒令牌，不访问 Joky 帧或借用地址。
@@ -7581,6 +7590,7 @@ CLI、独立 AOT 程序和 Godot 脚本使用同一模块，不需要逐脚本�
 | --- | --- |
 | `TcpListener.bind(address)` | `Result<TcpListener, IoError>` |
 | `listener.accept()` | `Result<TcpStream, IoError>`；对端地址通过 stream.peer_addr 查询 |
+| `listener.accept_until(stop: &shutdown.Controller)` | `Result<Option<TcpStream>, IoError>`；收到连接为 Some，停机为 None，接受错误原样返回 |
 | `TcpStream.connect(address)` | `Result<TcpStream, IoError>` |
 | `stream.split()` | 消费完整连接，返回 `(TcpReader, TcpWriter)` |
 | `listener.local_addr()` / `stream.local_addr()` / `stream.peer_addr()` | `Result<Address, IoError>` |
@@ -7589,6 +7599,12 @@ CLI、独立 AOT 程序和 Godot 脚本使用同一模块，不需要逐脚本�
 | `stream.write_all(bytes: Array<UInt8>)` | `Result<Unit, IoError>`；写完全部输入或返回错误 |
 | `stream.shutdown(Shutdown.Read/Write/Both)` | `Result<Unit, IoError>`；保留拥有者和未关闭方向 |
 | `stream.close()` / `listener.close()` | 消费拥有者，返回 `Result<Unit, IoError>` |
+
+accept_until 在入口观察到已停机时直接返回 Ok(None)，不取走已排队的连接；否则竞争 accept 与 stop.wait。
+停机获胜时取消等待中的 accept，外层取消时清理两个分支，均归还借用且不关闭监听器。
+成功接受不触发停机。连接与停机同时就绪时不保证停机优先，应用应在业务准入前再次检查 requested；
+取消不会撤销已经接受连接等副作用。该方法不负责连接排空或宽限期。
+针对性回环用例见 [tcp_accept_until.jk](../tests/fixtures/tcp_accept_until.jk)。
 
 read 的 limit 必须在 1..=1048576；超过限制或零上限返回 `Err(InvalidInput)`。
 `Ok` 最多返回 limit 字节；正上限下的空 `Ok` 表示 EOF。读取任意字节，不隐式验证 UTF-8。

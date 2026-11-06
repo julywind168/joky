@@ -501,38 +501,29 @@ numeric／Decimal 按当前需求暂缓，业务继续用 UInt64 表示最小金
 
 ## 9. 服务启动与并发样板【P1】
 
-### 9.1 停机与信号
+### 9.1 停机与信号【已实现】
 
-两个 HTTP 示例与 chat 都重复：
+新增 `shutdown.with_signals() -> Result<SignalScope, SignalError>`，拥有对象同时持有控制器与 Unix 信号订阅，
+通过 `signals.controller()` 借用控制器。HTTP、HTTPS、订单 HTTP、chat 与 TCP 排空示例已迁移。
+调用服务时使用的控制器借用会保活整个 SignalScope，不再依赖一个看似未使用的订阅变量。
 
-```joky
-let stop = shutdown.create()
-// Keep signal handling active until all admitted requests finish draining.
-let signals = stop.subscribe_unix()!
-```
+SignalScope 保持 worker-local；`controller().share()` 仍返回可跨 worker 的普通 Controller，
+共享句柄不会延长信号订阅寿命。释放最后一个订阅后，SIGINT/SIGTERM 恢复默认终止行为。
+底层 create／subscribe_unix 保留，供嵌入宿主与自定义订阅生命周期使用。
 
-`signals` 必须保持绑定直到排空结束，但它看起来是未使用变量；若用户写成 `stop.subscribe_unix()!;`
-或改名为 `_`，信号处理会被提前释放。这是一个**静默失效的陷阱**。
+暂不增加一行 http.run：serve_with 已负责宽限期和排空，监听、启动输出及退出码继续由应用决定；
+不为这一项扩展通用未使用值诊断。
 
-建议：
+### 9.2 只为等待停机而写的 race 辅助函数【已实现】
 
-- `shutdown.with_signals() -> Result<Controller, ...>`，控制器自身拥有订阅。
-- 一行启动：`http.run("127.0.0.1:8080", router)` 内部完成监听、信号、宽限期与退出码；
-  现有 `serve_with(listener, &stop, options, service)` 保留为可组合的底层入口。
-- 若保留当前形式，至少对 `subscribe_unix` 返回值加"必须保持存活"的未使用诊断。
+新增 `TcpListener.accept_until(&stop) -> Result<Option<TcpStream>, IoError>`：连接为 Ok(Some(stream))，
+停机为 Ok(None)，接受失败保留 IoError。已停机时不开始 accept；等待中停机取消 accept，监听器仍可复用。
+外层取消会清理 accept 和停机等待，不主动触发停机。连接与停机同时就绪时沿用 race 语义，不保证停机优先；
+业务准入前仍检查 requested，取消不撤销已经发生的副作用。
 
-### 9.2 只为等待停机而写的 race 辅助函数
-
-[chat/main.jk:59](../examples/chat/main.jk) 与 [admin.jk:34](../examples/chat/host/admin.jk) 为了
-"accept 或停机"各写了 2–3 个同型包装函数（`stopped`、`accept`、`stopped_accept`），
-admin 还要把 `Result<TcpStream, _>` 改写成 `Result<Option<TcpStream>, _>` 以凑类型。
-
-建议：
-
-- `stop.until(|| { listener.accept() }) -> Option<T>`：停机时返回 None，与 `task.timeout` 形状一致。
-- 或让 `race` 支持带绑定的分支：
-  `race { s = listener.accept() => Some(s), _ = stop.wait() => None }`，分支各自产生结果，免去同型约束。
-- `TcpListener.accept_until(&stop)` 作为最常见组合的直接方法。
+HTTP 内部循环、chat 主服务与管理端、TCP 排空示例已使用该方法；其余纯停机包装使用现有 race 分支块，
+无需新增带绑定的 race 语法。通用 stop.until 暂缓：挂起闭包尚不能捕获借用，不能直接套用
+`|| listener.accept()` 来反复借用监听器。分支块可以捕获显式引用；None／Err 缺少推导上下文时标注结果类型。
 
 ### 9.3 session 与连接框架
 

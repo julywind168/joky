@@ -1,0 +1,41 @@
+import joky/tcp
+import joky/shutdown
+import joky/task
+
+fn stop_later(stop: &shutdown.Controller) @suspends {
+    task.sleep(5ms)
+    stop.request();
+}
+fn main() @suspends {
+    var listener = tcp.listen("127.0.0.1", 0)!
+    let address = listener.local_addr()!
+    let stopped = shutdown.create()
+    stopped.request();
+    // Even a queued connection must remain untouched when already stopped.
+    let peer = tcp.TcpStream.connect(address)!
+    assert(listener.accept_until(&stopped)!.is_none(), "latched stop does not accept a queued connection")
+    let running = shutdown.create()
+    let accepted = listener.accept_until(&running)!!
+    accepted.close()!;
+    peer.close()!;
+    assert(!running.requested(), "successful accept does not request shutdown")
+
+    let stop = shutdown.create()
+    let (result, _) = join { listener.accept_until(&stop), stop_later(&stop) }
+    assert(result!.is_none(), "pending accept is cancelled by shutdown")
+
+    // Cancelling the whole helper must release both the accept and stop wait.
+    let input = &mut listener
+    let notification = &running
+    race {
+        { input.accept_until(notification)!; }
+        { task.sleep(5ms) }
+    }
+    assert(!running.requested(), "outer cancellation does not request shutdown")
+    let (result, peer) = join { listener.accept_until(&running), tcp.TcpStream.connect(address) }
+    result!!.close()!;
+    peer!.close()!;
+    running.request();
+    assert(listener.accept_until(&running)!.is_none(), "stop still works after helper reuse")
+    listener.close()!;
+}

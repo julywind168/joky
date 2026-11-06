@@ -44,7 +44,7 @@ fn serve(script: &Script, host: Host, var listener: TcpListener, stop: &shutdown
     var next_id: UInt64 = 1
     scope {
         while !stop.requested() {
-            let stream = match race { stopped(stop), accept(&mut listener) } { Some(stream) => stream, None => break }
+            let stream = match listener.accept_until(stop) { Ok(Some(stream)) => stream, _ => break }
             if stop.requested() { break }
             let permit = match entrants.try_acquire() { Ok(permit) => permit, Err(_) => continue }
             let id = next_id
@@ -63,8 +63,6 @@ fn serve(script: &Script, host: Host, var listener: TcpListener, stop: &shutdown
     }
     0
 }
-fn stopped(stop: &shutdown.Controller) @suspends -> Option<TcpStream> { stop.wait(); None }
-fn accept(listener: &mut TcpListener) @suspends -> Option<TcpStream> { listener.accept().ok() }
 fn services(script: &Script, host: Host, chat: TcpListener, admin_listener: TcpListener, stop: &shutdown.Controller) @suspends -> Int32 {
     let (business, admin_status) = join {
         serve(script, host, chat, stop)
@@ -102,17 +100,16 @@ fn main() @suspends -> Int32 {
     var admin_listener = match tcp.listen("127.0.0.1", admin_port) {
         Ok(listener) => listener, Err(_) => { eprintln("Could not bind admin listener"); return 1 }
     }
-    let stop = shutdown.create()
-    // Keep the signal subscription alive through draining; scope exit releases it automatically.
-    let signals = match stop.subscribe_unix() {
+    let signals = match shutdown.with_signals() {
         Ok(signals) => signals,
         Err(_) => { eprintln("Could not subscribe to Unix signals"); return 2 }
     }
+    let stop = signals.controller()
     println("chat {chat.local_addr()!.port()}")
     println("admin {admin_listener.local_addr()!.port()}")
     let script = Script { vm: engine, entries }
     race {
-        services(&script, host, chat, admin_listener, &stop)
-        deadline(&stop)
+        services(&script, host, chat, admin_listener, stop)
+        deadline(stop)
     }
 }

@@ -64,6 +64,9 @@ fn shutdown_allocation_failure_refunds_before_retry() {
 fn shutdown_signatures_and_local_ownership_are_checked() {
     for source in [
         "import joky/shutdown fn f() { shutdown.create(); }",
+        "import joky/shutdown fn f() { shutdown.with_signals(); }",
+        "import joky/shutdown import joky/mem fn f() @suspends { let s = shutdown.with_signals()!; let stop = s.controller(); mem.drop(s); stop.wait(); }",
+        "import joky/shutdown fn f() @suspends { let s = shutdown.with_signals()!; s.signals; }",
         "extern fn __shutdown_wait() @suspends -> UInt64",
         "fn __shutdown_create() {}",
         "import joky/shutdown import joky/mem fn f() @suspends { let s = shutdown.create(); mem.drop(s); s.wait(); }",

@@ -7,6 +7,15 @@ use std::{
     net::{TcpListener, TcpStream},
 };
 #[test]
+fn shutdown_accept_until_cancellation_preserves_listener_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "accept_until.jk",
+        include_str!("../fixtures/tcp_accept_until.jk"),
+    );
+    work.assert_all_backends("accept_until.jk", &[], b"", 0);
+}
+#[test]
 fn shutdown_notification_fixture_executes_in_standalone_aot() {
     let work = Workspace::new();
     work.write("shutdown.jk", include_str!("../fixtures/shutdown.jk"));
@@ -93,32 +102,41 @@ import joky/array.{type Array}
 import joky/result.{Err}
 import joky/check.{assert}
 import joky/io.{println}
-fn subscribed_wait(stop: &shutdown.Controller) @suspends -> Int32 {
-    let signals = stop.subscribe_unix().unwrap()
-    stop.wait();
-    mem.drop(signals)
+fn subscribed_wait() @suspends -> Int32 {
+    let signals = shutdown.with_signals().unwrap()
+    signals.controller().wait();
     0
+}
+fn failed_scope() @suspends {
+    let signals = shutdown.with_signals().unwrap()
+    assert(!signals.controller().requested(), "new scope is not stopped")
+    assert(false, "intentional signal scope failure")
 }
 fn main() @suspends {
     let stop = shutdown.create()
     var i = 0
     while i < 10 {
-        race { subscribed_wait(&stop), { task.yield_now(); 0 } };
+        race { subscribed_wait(), { task.yield_now(); 0 } };
+        let failed = isolate { failed_scope() }
+        assert(failed.is_err(), "failed signal scope is cleaned up")
         i += 1
     }
     var subscriptions: Array<shutdown.Signals> = []
     i = 0
     while i < 8 { subscriptions.push(stop.subscribe_unix().unwrap()); i += 1 }
     assert(match stop.subscribe_unix() { Err(Busy) => true, _ => false }, "subscription limit")
+    assert(match shutdown.with_signals() { Err(Busy) => true, _ => false }, "owning scope forwards subscription failure")
     mem.drop(subscriptions)
     { let old = stop.subscribe_unix().unwrap(); mem.drop(old) }
     let first = stop.subscribe_unix().unwrap()
-    let second = stop.subscribe_unix().unwrap()
+    let second = shutdown.with_signals().unwrap()
+    let shared = second.controller().share()
     mem.drop(first)
     println("ready")
-    match stop.wait() { Interrupt => println("interrupt"), Terminate => println("terminate"), _ => println("wrong") }
-    assert(!stop.request(), "signal reason remains first")
+    match second.controller().wait() { Interrupt => println("interrupt"), Terminate => println("terminate"), _ => println("wrong") }
+    assert(!shared.request(), "signal reason remains first")
     mem.drop(second)
+    assert(shared.requested(), "shared notification survives without retaining signal subscription")
     println("unsubscribed")
     let never = shutdown.create()
     never.wait();
