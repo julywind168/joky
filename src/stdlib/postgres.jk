@@ -28,7 +28,7 @@ impl Show for Kind {
 }
 
 pub enum Value { Null(Kind), BoolValue(Bool), IntValue(Int64), TextValue(String), BytesValue(Array<UInt8>) }
-pub enum ReadFailure { UnsupportedType, ResultLimit, NoRows, MultipleRows }
+pub enum ReadFailure { UnsupportedType, ResultLimit, NoRows, MultipleRows, ColumnCount(UInt64) }
 impl Show for ReadFailure {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(match self {
@@ -36,6 +36,7 @@ impl Show for ReadFailure {
             ResultLimit => "query sent; result limit exceeded"
             NoRows => "query returned no rows"
             MultipleRows => "query returned multiple rows"
+            ColumnCount(count) => "query returned {count} columns; expected one"
         })
     }
 }
@@ -281,12 +282,19 @@ fn optional_row(owner: &postgres.Owner, sql: String, params: Array<Value>) @susp
 fn required_row(found: Option<Row>) -> Result<Row, DbError> {
     match found { Some(row) => Ok(row), None => Err(ResultRead(NoRows)) }
 }
+fn scalar_value<T: FromSql>(row: Row) -> Result<T, DbError> {
+    if row.len() != 1 { return Err(ResultRead(ColumnCount(row.len()))) }
+    FromSql.from_sql::<T>(&row, 0)
+}
 impl Pool {
     pub fn share(&self) @suspends -> Self { Pool { owner: __pg_share(&self.owner) } }
     pub fn execute(&self, sql: String, params: Array<Value>) @suspends -> Result<UInt64, DbError> { exec(&self.owner, sql, params) }
     pub fn query(&self, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
     pub fn query_optional(&self, sql: String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, sql, params) }
     pub fn query_one(&self, sql: String, params: Array<Value>) @suspends -> Result<Row, DbError> { required_row(optional_row(&self.owner, sql, params)?) }
+    pub fn query_scalar<T: FromSql>(&self, sql: String, params: Array<Value>) @suspends -> Result<T, DbError> {
+        scalar_value::<T>(self.query_one(sql, params)?)
+    }
     pub fn query_one_as<T: FromRow>(&self, sql: String, params: Array<Value>) @suspends -> Result<T, DbError> {
         let row = self.query_one(sql, params)?
         FromRow.from_row::<T>(&row)
@@ -302,6 +310,9 @@ impl Transaction {
     pub fn query(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
     pub fn query_optional(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, sql, params) }
     pub fn query_one(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Row, DbError> { required_row(optional_row(&self.owner, sql, params)?) }
+    pub fn query_scalar<T: FromSql>(&mut self, sql: String, params: Array<Value>) @suspends -> Result<T, DbError> {
+        scalar_value::<T>(self.query_one(sql, params)?)
+    }
     pub fn query_one_as<T: FromRow>(&mut self, sql: String, params: Array<Value>) @suspends -> Result<T, DbError> {
         let row = self.query_one(sql, params)?
         FromRow.from_row::<T>(&row)

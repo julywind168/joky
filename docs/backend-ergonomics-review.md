@@ -448,7 +448,7 @@ explain-parallel 确认直接域操作仍为 Local。仅核验现有能力，没
 - 变体名去掉冗余后缀：`Value.IntValue` → `Value.Int`，`TextValue` → `Text`。
 - 文本参数接受借用，避免 `key.clone()`。
 
-### 8.2 结果读取【泛型读取与 FromRow 已实现】
+### 8.2 结果读取【泛型读取、FromRow 与标量查询已实现】
 
 Row 持有列名和值，四种现有 SQL 类型均可按名称读取。已提供 `row.get::<T>(name)`、
 `row.get_opt::<T>(name)` 和 FromSql 协议，内置支持 Int64、Bool、String、Array<UInt8>、Option<T>。
@@ -463,10 +463,10 @@ Pool 与 Transaction 提供 `query_one_as::<T>`；订单示例通过 StoredOrder
 泛型读取增加普通 Option/Result 组合后触及总量预算；现将每阶段枚举实例上限调整为与记录一致的
 512，并验证满容量缓存命中、超限拒绝与失败后缓存可用。
 
-后续建议：
+Pool 与 Transaction 已提供 `query_scalar::<T>`，要求恰好一行一列，复用 FromSql 解码。
+Option<T> 允许 SQL NULL，无行仍报 NoRows；列数不符返回带实际数量的 ColumnCount(n)。
 
-- 标量便利 `query_scalar::<Int64>(sql, params)`。
-- 命名 `get_i64` 与语言类型名 Int64 不一致，见 §10。
+剩余命名整理：`get_i64` 与语言类型名 Int64 不一致，见 §10。
 
 ### 8.3 类型覆盖
 

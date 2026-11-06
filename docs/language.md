@@ -7248,6 +7248,7 @@ verify-full 用来验证数据库服务器证书和主机名。订单示例中�
 | `pool.execute(sql, params)` | 执行一条参数化语句，返回受影响行数 UInt64 |
 | `pool.query(sql, params)` | 返回 Array<Row>，每行按 SELECT 列表顺序持有列名和对应的值 |
 | `pool.query_optional(sql, params)` / `pool.query_one(sql, params)` | 前者无行时返回 None，后者返回 ResultRead(NoRows)；两者遇到多行均拒绝。Transaction 也提供这两个接口 |
+| `pool.query_scalar<T: FromSql>(sql, params)` / `tx.query_scalar<T: FromSql>(sql, params)` | 要求恰好一行一列，返回 Result<T, DbError>。Option<T> 允许该列为 SQL NULL |
 | `pool.begin()` | 借出一条物理连接，返回拥有型 Transaction。该连接在整个事务内独占 |
 | `tx.execute` / `tx.query` | 与池上方法相同的参数和结果，独占借用事务 |
 | `tx.commit()` / `tx.rollback()` | 消费事务并等待数据库回执，成功返回 Unit |
@@ -7303,6 +7304,17 @@ Pool 和 Transaction 均提供 `query_one_as<T: FromRow>(sql, params) -> Result<
 先执行 query_one 的行数及资源检查，再调用 `FromRow.from_row(row: &Row) @noescape`。
 映射结果独立拥有其数据；失败时释放临时行和已解码字段。映射错误发生在结果接收之后，事务仍可继续使用。
 手写 FromRow 可用于需要自定义字段转换的结构。
+
+`query_scalar::<T>` 复用 query_one 的行数与资源检查，再要求该行恰好一列，最后按列号 0 调用 FromSql。
+无行返回 `ResultRead(NoRows)`，多行返回 `ResultRead(MultipleRows)`；一行的列数不是 1 时返回
+`ResultRead(ColumnCount(n))`，n 为实际列数。列数错误发生在结果接收之后，事务仍可继续使用。
+`T = Option<Int64>` 允许整数列为 NULL，但无行仍报 NoRows，其他类型的 NULL 仍报 TypeMismatch(0)。
+文本与 bytea 返回独立拥有值，支持用户定义的 FromSql 实现。例如：
+
+```joky
+let count = pool.query_scalar::<Int64>("SELECT count(*) FROM orders", [])?
+let latest = tx.query_scalar::<Option<Int64>>("SELECT max(id) FROM orders", [])?
+```
 
 事务边界由 Transaction 管理。不要在普通语句中手动提交或回滚事务。池连接成功归还前执行 DISCARD ALL，
 不跨借用保留临时表、会话参数或锁。取消排队的获取操作不会执行 SQL；取消已在执行的操作、放弃事务、
