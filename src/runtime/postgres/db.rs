@@ -24,6 +24,7 @@ impl<const OID: u32> sqlx::Encode<'_, Postgres> for WireValue<OID> {
 const PG_EPOCH_MICROS: i64 = 946_684_800_000_000;
 const TIMESTAMP_MICROS: std::ops::RangeInclusive<i64> =
     -62_135_596_800_000_000..=253_402_300_799_999_999;
+const MAX_ARRAY_ELEMENTS: usize = 65_536;
 
 // An incomplete exchange can never be recycled. Only a fully consumed reply
 // takes the connection out of this guard for normal pool return.
@@ -77,6 +78,7 @@ pub(super) enum Fault {
     AcquireTimeout,
     MultipleRows,
     ResultRange,
+    ArrayShape,
 }
 impl Fault {
     pub(super) fn code(&self) -> u64 {
@@ -94,6 +96,7 @@ impl Fault {
             Self::AcquireTimeout => 11,
             Self::MultipleRows => 12,
             Self::ResultRange => 13,
+            Self::ArrayShape => 14,
         }
     }
 }
@@ -170,6 +173,27 @@ fn take<'a>(input: &mut &'a [u8], n: usize) -> Result<&'a [u8], Fault> {
     *input = b;
     Ok(a)
 }
+fn array_arguments<'a, T>(
+    input: &mut &'a [u8],
+    mut read: impl FnMut(&mut &'a [u8]) -> Result<T, Fault>,
+) -> Result<Vec<Option<T>>, Fault> {
+    let count = u32::from_le_bytes(take(input, 4)?.try_into().unwrap()) as usize;
+    if count > MAX_ARRAY_ELEMENTS {
+        return Err(Fault::Limit);
+    }
+    if count > input.len() {
+        return Err(Fault::Invalid);
+    }
+    let mut values = Vec::with_capacity(count);
+    for _ in 0..count {
+        values.push(match take(input, 1)?[0] {
+            0 => None,
+            1 => Some(read(input)?),
+            _ => return Err(Fault::Invalid),
+        });
+    }
+    Ok(values)
+}
 fn arguments(mut input: &[u8]) -> Result<PgArguments, Fault> {
     let mut args = PgArguments::default();
     while !input.is_empty() {
@@ -185,6 +209,19 @@ fn arguments(mut input: &[u8]) -> Result<PgArguments, Fault> {
             8 => args.add(Option::<WireValue<1184>>::None),
             9 => args.add(Option::<WireValue<2950>>::None),
             10 => args.add(Option::<WireValue<3802>>::None),
+            14 => args.add(Option::<f64>::None),
+            15 => args.add(Option::<Vec<Option<String>>>::None),
+            16 => args.add(Option::<Vec<Option<i64>>>::None),
+            17 => args.add(f64::from_le_bytes(take(&mut input, 8)?.try_into().unwrap())),
+            18 => args.add(array_arguments(&mut input, |input| {
+                let size = u32::from_le_bytes(take(input, 4)?.try_into().unwrap()) as usize;
+                Ok(std::str::from_utf8(take(input, size)?)
+                    .map_err(|_| Fault::Invalid)?
+                    .to_owned())
+            })?),
+            19 => args.add(array_arguments(&mut input, |input| {
+                Ok(i64::from_le_bytes(take(input, 8)?.try_into().unwrap()))
+            })?),
             11 => {
                 let micros = i64::from_le_bytes(take(&mut input, 8)?.try_into().unwrap());
                 if !TIMESTAMP_MICROS.contains(&micros) {
@@ -226,6 +263,62 @@ fn arguments(mut input: &[u8]) -> Result<PgArguments, Fault> {
     }
     Ok(args)
 }
+// Preflight before SQLx allocates a Vec. PostgreSQL uses four-byte element
+// lengths, while the Joky packet uses one-byte presence flags plus payloads.
+fn array_result_size(bytes: &[u8]) -> Result<usize, Fault> {
+    if bytes.len() < 12 {
+        return Err(Fault::ResultType);
+    }
+    let dimensions = i32::from_be_bytes(bytes[..4].try_into().unwrap());
+    if dimensions == 0 {
+        return if bytes.len() == 12 {
+            Ok(4)
+        } else {
+            Err(Fault::ResultType)
+        };
+    }
+    if dimensions != 1 {
+        return Err(Fault::ArrayShape);
+    }
+    if bytes.len() < 20 {
+        return Err(Fault::ResultType);
+    }
+    let count = i32::from_be_bytes(bytes[12..16].try_into().unwrap());
+    let count = usize::try_from(count).map_err(|_| Fault::ResultType)?;
+    if i32::from_be_bytes(bytes[16..20].try_into().unwrap()) != 1 {
+        return Err(Fault::ArrayShape);
+    }
+    if count > MAX_ARRAY_ELEMENTS {
+        return Err(Fault::ResultLimit);
+    }
+    if bytes.len() < 20 + 4 * count {
+        return Err(Fault::ResultType);
+    }
+    // Text values retain their length prefix; integers have a fixed width.
+    // This is a lower bound for text arrays, checked again while emitting.
+    Ok(bytes.len() - 16 - 3 * count)
+}
+fn result_bytes(out: &mut Vec<u8>, bytes: &[u8]) -> Result<(), Fault> {
+    if bytes.len() > MAX - out.len() {
+        return Err(Fault::ResultLimit);
+    }
+    out.extend(bytes);
+    Ok(())
+}
+fn array_result<T>(
+    out: &mut Vec<u8>,
+    values: Vec<Option<T>>,
+    mut write: impl FnMut(&mut Vec<u8>, T) -> Result<(), Fault>,
+) -> Result<(), Fault> {
+    result_bytes(out, &(values.len() as u32).to_le_bytes())?;
+    for value in values {
+        result_bytes(out, &[u8::from(value.is_some())])?;
+        if let Some(value) = value {
+            write(out, value)?;
+        }
+    }
+    Ok(())
+}
 fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow, named: bool) -> Result<(), Fault> {
     if row.len() > 128 || out.len() + 4 > MAX {
         return Err(Fault::ResultLimit);
@@ -240,6 +333,9 @@ fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow, named: bool) -> Result<(),
             "TIMESTAMPTZ" => 8,
             "UUID" => 9,
             "JSONB" => 10,
+            "FLOAT8" => 14,
+            "TEXT[]" => 15,
+            "INT8[]" => 16,
             _ => return Err(Fault::ResultType),
         };
         if !named && tag >= 8 {
@@ -263,6 +359,26 @@ fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow, named: bool) -> Result<(),
         }
         out.push(if tag < 4 { tag + 4 } else { tag + 3 });
         let bytes = raw.as_bytes().map_err(|_| Fault::ResultType)?;
+        if tag == 15 || tag == 16 {
+            if array_result_size(bytes)? > MAX - out.len() {
+                return Err(Fault::ResultLimit);
+            }
+            if tag == 15 {
+                let values = row
+                    .try_get::<Vec<Option<String>>, _>(i)
+                    .map_err(|_| Fault::ResultType)?;
+                array_result(out, values, |out, text| {
+                    result_bytes(out, &(text.len() as u32).to_le_bytes())?;
+                    result_bytes(out, text.as_bytes())
+                })?;
+            } else {
+                let values = row
+                    .try_get::<Vec<Option<i64>>, _>(i)
+                    .map_err(|_| Fault::ResultType)?;
+                array_result(out, values, |out, n| result_bytes(out, &n.to_le_bytes()))?;
+            }
+            continue;
+        }
         let bytes = if tag == 10 {
             if bytes.first() != Some(&1) {
                 return Err(Fault::ResultType);
@@ -273,7 +389,7 @@ fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow, named: bool) -> Result<(),
         };
         let payload = match tag {
             0 => 1,
-            1 | 8 => 8,
+            1 | 8 | 14 => 8,
             _ => 4 + bytes.len(),
         };
         if payload > MAX - out.len() {
@@ -299,6 +415,11 @@ fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow, named: bool) -> Result<(),
                     .ok_or(Fault::ResultRange)?;
                 out.extend(micros.to_le_bytes());
             }
+            14 => out.extend(
+                row.try_get::<f64, _>(i)
+                    .map_err(|_| Fault::ResultType)?
+                    .to_le_bytes(),
+            ),
             _ => {
                 if tag == 9 && bytes.len() != 16 {
                     return Err(Fault::ResultType);
@@ -363,4 +484,52 @@ pub(super) async fn run(
         None
     };
     Ok(Answer { value, restore })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn postgres_array_packet_rejects_malformed_parameters() {
+        for packet in [
+            vec![19, 1, 0, 0, 0, 2],                   // Invalid presence flag.
+            vec![19, 1, 0, 0, 0, 1, 0],                // Truncated integer.
+            vec![18, 1, 0, 0, 0, 1, 2, 0, 0, 0, b'x'], // Truncated text.
+            vec![18, 1, 0, 0, 0, 1, 1, 0, 0, 0, 255],  // Invalid UTF-8.
+        ] {
+            assert!(matches!(arguments(&packet), Err(Fault::Invalid)));
+        }
+        let mut packet = vec![19];
+        packet.extend(((MAX_ARRAY_ELEMENTS + 1) as u32).to_le_bytes());
+        assert!(matches!(arguments(&packet), Err(Fault::Limit)));
+    }
+
+    #[test]
+    fn postgres_array_packet_preflights_result_shape_and_allocation() {
+        let header = |dimensions: i32, count: i32, lower: i32| {
+            [dimensions, 0, 20, count, lower]
+                .into_iter()
+                .flat_map(i32::to_be_bytes)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(array_result_size(&header(0, 0, 0)[..12]).unwrap(), 4);
+        assert!(matches!(array_result_size(&[0; 4]), Err(Fault::ResultType)));
+        assert!(matches!(
+            array_result_size(&header(2, 2, 1)),
+            Err(Fault::ArrayShape)
+        ));
+        assert!(matches!(
+            array_result_size(&header(1, 2, 0)),
+            Err(Fault::ArrayShape)
+        ));
+        assert!(matches!(
+            array_result_size(&header(1, 65_537, 1)),
+            Err(Fault::ResultLimit)
+        ));
+        assert!(matches!(
+            array_result_size(&header(1, 2, 1)),
+            Err(Fault::ResultType)
+        ));
+    }
 }

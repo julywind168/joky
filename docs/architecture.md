@@ -2495,6 +2495,13 @@ UUID 保持原始 16 字节，不引入宿主 JSON 数值转换。结果时间�
 映射为 ResultRead(ValueRange)。标准库编码前拒绝亚微秒时间；类型化 JSON 编解码在 Joky 层执行，
 拥有型 CodecError 不携带源借用，不修改 CPS 帧或宿主资源 ABI。
 
+新增 NULL 标签 14/15/16 对应 float8/text[]/int8[]，非 NULL 标签为 17/18/19。
+float8 载荷为 IEEE 754 位模式的小端 8 字节。数组载荷为小端 UInt32 元素数，逐项使用 0/1 标记 NULL／有值；
+文本有值项附 UInt32 字节数及 UTF-8，整数有值项附小端 Int64。SQLx 负责原生 PostgreSQL 数组编解码，
+宿主在分配结果 Vec 前检查维数、下界、65,536 项上限及结果字节数下界，写入包时再次检查精确字节预算。
+不支持的维数／下界映射到状态 14（ResultRead(ArrayShape)）。标准库保留元素 NULL；
+读取为非可空元素数组时返回 Column(NullElement((列号, 元素索引)))，不会误判为整列 NULL。
+
 ### TLS 记录与传输边界
 
 `joky/tls` 的受检内置操作仅在一次 poll 内处理 rustls 配置或记录。CPS 帧中不保存借用的证书、

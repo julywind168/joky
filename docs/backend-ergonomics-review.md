@@ -439,7 +439,8 @@ explain-parallel 确认直接域操作仍为 Local。仅核验现有能力，没
 [postgres.param(&customer), postgres.param(&key), postgres.param(&qty)]
 ```
 
-内置支持 Bool、Int16/32/64、String、Array<UInt8>、time.Timestamp、uuid.Uuid、Option<T: ToSql>。
+内置支持 Bool、Int16/32/64、Float64、String、Array<UInt8>、time.Timestamp、uuid.Uuid、
+文本／Int64 数组（含可空元素）及 Option<T: ToSql>。
 整数统一绑定为 bigint；Option 的 None 根据 T 的 `kind()` 生成带类型的 SQL NULL。
 文本和字节从借用生成独立拥有的参数副本，不保留输入借用，可跨挂起使用；
 这里省去调用方显式 clone，没有消除实际复制。业务类型可实现 ToSql 复用已支持的 SQL 类型。
@@ -447,13 +448,13 @@ explain-parallel 确认直接域操作仍为 Local。仅核验现有能力，没
 参数容器仍为 `Array<postgres.Value>`，原有显式变体构造继续可用。
 尚未实现异构数组 `[customer, key, qty]` 的隐式转换；不为此引入第二套 Param 容器。
 Timestamp、Uuid 已接入 ToSql，jsonb 使用显式可失败参数构造函数，见 §8.3。
-Float64 等类型和 Value 变体命名整理仍待处理。
+float8、text[]、int8[] 已接入同一协议；numeric 和 Value 变体命名整理仍待处理。
 
 ### 8.2 结果读取【泛型读取、FromRow 与标量查询已实现】
 
 Row 持有列名和值，已支持的 SQL 类型均可按名称读取。已提供 `row.get::<T>(name)`、
-`row.get_opt::<T>(name)` 和 FromSql 协议，内置支持 Int64、Bool、String、Array<UInt8>、
-time.Timestamp、uuid.Uuid、json.Value、Json<T: FromJson>、Option<T>。
+`row.get_opt::<T>(name)` 和 FromSql 协议，内置支持 Int64、Float64、Bool、String、Array<UInt8>、
+time.Timestamp、uuid.Uuid、json.Value、Json<T: FromJson>、文本／Int64 数组及 Option<T>。
 String 与 bytea 解码为独立拥有值；借用读取使用 `get_text` / `get_bytes`。
 具体泛型类型的 trait 实现已支持，FromRow 可映射 Array<UInt8> 与 Option<Array<UInt8>> 字段。
 
@@ -470,7 +471,7 @@ Option<T> 允许 SQL NULL，无行仍报 NoRows；列数不符返回带实际数
 
 剩余命名整理：`get_i64` 与语言类型名 Int64 不一致，见 §10。
 
-### 8.3 类型覆盖【timestamptz、uuid、jsonb 已实现】
+### 8.3 类型覆盖【时间、UUID、JSON、float8 与基础数组已实现】
 
 已在 bool、int2/4/8、text 族、bytea 基础上增加三种类型的参数绑定、结果读取及带类型的 SQL NULL：
 
@@ -481,7 +482,10 @@ Option<T> 允许 SQL NULL，无行仍报 NoRows；列数不符返回带实际数
   CodecError 保留解析位置、映射路径及限额错误；不为所有 FromJson 类型隐式实现 FromSql。
 
 相关三后端回归见 `tests/fixtures/postgres_types.jk`，契约与用法见[语言参考](language.md#postgresql-数据库-jokypostgres)。
-后续补 float8、numeric（金额）、text[]/int8[]；SQL json 暂须显式转换为 jsonb。
+float8 现映射 Float64，保留 NaN、Infinity 和有符号零；text[]/int8[] 支持一维数组及可空元素，
+与整列 SQL NULL 分开。多维和非 1 起始下界明确拒绝，每数组上限 65,536 项。
+回归见 `tests/fixtures/postgres_arrays.jk`，同时覆盖参数副本、FromRow 和数组元素 NULL 的错误索引。
+下一项为 numeric（金额），需先设计公开十进制类型的精度、舍入与溢出规则；SQL json 暂须显式转换为 jsonb。
 
 ### 8.4 配置与生命周期
 

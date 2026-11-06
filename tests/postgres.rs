@@ -226,6 +226,7 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
     for (name, source) in [
         ("driver", include_str!("fixtures/postgres.jk")),
         ("types", include_str!("fixtures/postgres_types.jk")),
+        ("arrays", include_str!("fixtures/postgres_arrays.jk")),
     ] {
         let file = format!("{name}.jk");
         fs::write(dir.join(&file), source).unwrap();
