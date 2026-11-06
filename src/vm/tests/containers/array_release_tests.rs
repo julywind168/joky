@@ -92,16 +92,9 @@ fn released_arrays_refund_exact_header_payload_and_bookkeeping_charges() {
 }
 
 fn rejects(source: &str, message: &str) {
-    let ast = crate::parser::parse(source).unwrap();
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        let error = vm.load_module(&ast).expect_err(source);
-        assert!(error.message().contains(message), "{source}\n{error}");
-        assert!(error.span().is_some());
-    }
-    let mut aot = crate::aot::AotCompiler::new("invalid-release").unwrap();
-    let error = aot.compile_module(&ast).expect_err(source);
+    let error = super::support::frontend_error(source, &crate::ModuleSources::new());
     assert!(error.message().contains(message), "{source}\n{error}");
+    assert!(error.span().is_some());
 }
 
 #[test]

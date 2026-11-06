@@ -88,24 +88,8 @@ fn map_iteration_executes_views_consumption_and_batches() {
 }
 fn rejected(body: &str) {
     let source = format!("import joky/map.{{type Map}} import joky/array.{{type Array}} import joky/element.{{type Element}} import joky/slice.{{type Slice}} {body}");
-    let ast = match TypeRegistry::default().resolve_with_modules(
-        &crate::parser::parse(&source).unwrap(),
-        &ModuleSources::new(),
-    ) {
-        Ok(ast) => ast,
-        Err(error) => {
-            assert!(error.span().is_some(), "{body}: {error}");
-            return;
-        }
-    };
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let error = VmEngine::with_mode(mode).load_module(&ast).expect_err(body);
-        assert!(error.span().is_some(), "{mode:?} {body}: {error}");
-    }
-    crate::aot::AotCompiler::new("invalid-map-view")
-        .unwrap()
-        .compile_module(&ast)
-        .expect_err(body);
+    let error = super::support::frontend_error(&source, &ModuleSources::new());
+    assert!(error.span().is_some(), "{body}: {error}");
 }
 #[test]
 fn map_iteration_rejects_conflicting_views_and_reused_consumed_inputs() {

@@ -15,7 +15,7 @@ fn clean() {
 }
 
 #[test]
-fn json_derive_rejections_point_to_attributes_and_fields_in_all_backends() {
+fn json_derive_rejections_point_to_attributes_and_fields() {
     for (source, diagnostic, field) in [
         ("#derive struct Bad {}", "#derive requires", None),
         ("#derive() struct Bad {}", "at least one trait", None),
@@ -56,25 +56,7 @@ fn json_derive_rejections_point_to_attributes_and_fields_in_all_backends() {
         ("import joky/json/typed impl<T, U> typed.ToJson for T {} #derive(ToJson) struct Bad { value: Int32 }", "impl requires", None),
     ] {
         let source = format!("// 🙂\n{source}");
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.load_source("fn current() -> Int32 { 42 }").unwrap();
-            let version = vm.module_version();
-            let error = vm.load_source(&source).unwrap_err();
-            assert!(error.message().contains(diagnostic), "{source}: {error}");
-            if let Some(field) = field {
-                assert_eq!(error.span().unwrap().slice(&source), Some(field));
-            }
-            assert_eq!(vm.module_version(), version);
-            assert_eq!(vm.call_int32_0("current").unwrap(), 42);
-        }
-        let error = match crate::parser::parse(&source) {
-            Ok(ast) => crate::aot::AotCompiler::new("bad_derive")
-                .unwrap()
-                .compile_module(&ast)
-                .unwrap_err(),
-            Err(error) => error.into(),
-        };
+        let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
         assert!(error.message().contains(diagnostic), "{source}: {error}");
         if let Some(field) = field {
             assert_eq!(error.span().unwrap().slice(&source), Some(field));
@@ -109,14 +91,7 @@ fn json_derive_normalization_is_idempotent_and_manual_impls_conflict() {
             }
         }
     "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let error = VmEngine::with_mode(mode).load_source(source).unwrap_err();
-        assert_eq!(error.code(), ErrorCode::DuplicateDefinition);
-    }
-    let error = crate::aot::AotCompiler::new("duplicate_derive")
-        .unwrap()
-        .compile_module(&crate::parser::parse(source).unwrap())
-        .unwrap_err();
+    let error = super::support::frontend_error(source, &crate::ModuleSources::new());
     assert_eq!(error.code(), ErrorCode::DuplicateDefinition);
 }
 

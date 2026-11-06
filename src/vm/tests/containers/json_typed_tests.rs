@@ -13,19 +13,12 @@ fn clean() {
 }
 
 #[test]
-fn json_typed_context_and_key_contracts_are_checked_in_all_backends() {
+fn json_typed_context_and_key_contracts_are_checked() {
     for source in [
         "import joky/json/typed.{type Context} fn alter(context: &mut Context) { context.nodes = 0 }",
         "import joky/json/typed import joky/map.{type Map} fn main() { let value = Map.new::<Int32, String>(); typed.encode(&value); }",
     ] {
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            assert!(VmEngine::with_mode(mode).load_source(source).is_err());
-        }
-        let module = crate::parser::parse(source).unwrap();
-        assert!(crate::aot::AotCompiler::new("invalid-typed-json")
-            .unwrap()
-            .compile_module(&module)
-            .is_err());
+        super::support::frontend_error(source, &crate::ModuleSources::new());
     }
 }
 

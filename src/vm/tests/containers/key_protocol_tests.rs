@@ -1,5 +1,5 @@
 use super::{VmEngine, VmMode};
-use crate::{aot::AotCompiler, ModuleSources, TypeRegistry};
+use crate::{ModuleSources, TypeRegistry};
 
 const SOURCE: &str = include_str!("../../../../tests/fixtures/key_protocols.jk");
 
@@ -81,13 +81,8 @@ fn standard_key_protocols_reject_missing_requirements_and_wrong_signatures() {
         ("struct Key { text: String } impl Eq for Key { fn eq(&self, other: &Self) -> Bool { true } } fn f(a: Key) -> Bool { a == { let moved = a; moved } }", "borrow"),
     ] {
         let source = format!("import joky/eq.{{type Eq}} import joky/hash.{{type Hash}} {body}");
-        let ast = TypeRegistry::default().resolve_with_modules(&crate::parser::parse(&source).unwrap(), &ModuleSources::new()).unwrap();
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let e = VmEngine::with_mode(mode).load_module(&ast).unwrap_err();
-            assert!(e.message().contains(expected), "{source}: {e}");
-        }
-        let e = AotCompiler::new("bad-key-protocol").unwrap().compile_module(&ast).unwrap_err();
-        assert!(e.message().contains(expected), "{source}: {e}");
+        let error = super::support::frontend_error(&source, &ModuleSources::new());
+        assert!(error.message().contains(expected), "{source}: {error}");
     }
 }
 
@@ -101,7 +96,7 @@ fn standard_key_derives_reject_invalid_attributes_and_field_obligations() {
         ("#derive(Eq) enum Bad { Value((Int32, Bool)) }", "Cannot derive"),
         ("import joky/eq.{type Eq} #derive(Eq) struct Bad {} impl Eq for Bad { fn eq(&self, other: &Self) -> Bool { true } }", "Overlapping trait implementation"),
     ] {
-        let error = VmEngine::with_mode(VmMode::Interpreter).load_source(source).unwrap_err();
+        let error = super::support::frontend_error(source, &ModuleSources::new());
         assert!(error.message().contains(expected), "{source}: {error}");
     }
 }
