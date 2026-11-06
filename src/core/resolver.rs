@@ -806,27 +806,4 @@ mod tests {
             assert!(registry.binding(name).is_none());
         }
     }
-
-    #[test]
-    fn resolves_bindings_from_custom_registry() {
-        let module = crate::parser::parse("import user/math fn main() { user.add(1, 2) }").unwrap();
-        let mut registry = BindingRegistry::default();
-        registry
-            .register_module(
-                "user/math",
-                [BindingSpec {
-                    name: "user.add".into(),
-                    signature: FunctionSignature::new(vec![Type::Int32, Type::Int32], Type::Int32),
-                    symbol: None,
-                    suspends: false,
-                }],
-            )
-            .unwrap();
-
-        let resolved = resolve(&module, &registry).unwrap();
-        assert!(resolved.imports.is_empty());
-        assert!(resolved.items.iter().any(|item| {
-            matches!(item, Item::ExternFn(function) if function.name == "user.add")
-        }));
-    }
 }

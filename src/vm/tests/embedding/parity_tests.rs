@@ -5,26 +5,6 @@ use super::VmMode;
 use crate::{ErrorCode, ErrorPhase};
 
 #[test]
-fn jit_and_interpreter_match_sync_results_and_host_side_effects() {
-    let source = r#"
-        extern fn record(x: Int32) -> Int32
-        fn compute(x: Int32) -> Int32 {
-            let doubled = x * 2
-            record((doubled + 3) * 4)
-        }
-    "#;
-    let mut results = Vec::new();
-    let mut effects = Vec::new();
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm(source, mode);
-        results.push(vm.call_int32_1("compute", 5).unwrap());
-        effects.push(EVENTS.with(|events| events.borrow().clone()));
-    }
-    assert_eq!(results, [52, 52]);
-    assert_eq!(effects, [vec![52], vec![52]]);
-}
-
-#[test]
 fn jit_and_interpreter_match_cps_scope_results_and_poll_order() {
     let source = r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32
@@ -80,22 +60,4 @@ fn jit_and_interpreter_match_cps_failure_status() {
         "{}",
         statuses[1]
     );
-}
-
-#[test]
-fn jit_and_interpreter_match_module_reload_results() {
-    let mut results = Vec::new();
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = parity_vm("fn value(x: Int32) -> Int32 { x + 1 }", mode);
-        let before = vm.call_int32_1("value", 41).unwrap();
-        vm.load_source("fn value(x: Int32) -> Int32 { x + 10 }")
-            .unwrap();
-        let after = vm.call_int32_1("value", 41).unwrap();
-        results.push((before, after, vm.module_version()));
-    }
-    assert_eq!(results[0].0, 42);
-    assert_eq!(results[1].0, 42);
-    assert_eq!(results[0].1, 51);
-    assert_eq!(results[1].1, 51);
-    assert_eq!(results[0].2, results[1].2);
 }

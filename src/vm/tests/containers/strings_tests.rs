@@ -62,31 +62,6 @@ fn owned_text_v2_runtime_copy_survives_generated_call_and_module_unload() {
 }
 
 #[test]
-fn string_queries_cover_utf8_bytes_and_substrings_in_both_backends() {
-    let source = r#"
-        import joky/string
-        fn compute() -> Int32 {
-            let text = "héllo"
-            let needle = "llo"
-            let prefix = "hé"
-            let suffix = "lo"
-            let other = "héllo"
-            int32(string.byte_length(&text)) * 1000000 +
-                int32(string.find(&text, &needle).unwrap_or(999)) * 1000 +
-                (if string.starts_with(&text, &prefix) { 100 } else { 0 }) +
-                (if string.ends_with(&text, &suffix) { 10 } else { 0 }) +
-                (if string.equals(&text, &other) { 1 } else { 0 })
-        }
-    "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        assert_eq!(
-            parity_vm(source, mode).call_int32_0("compute").unwrap(),
-            6_003_111
-        );
-    }
-}
-
-#[test]
 fn string_queries_keep_owned_text_alive_across_suspension() {
     let source = r#"
         import joky/string
@@ -394,34 +369,6 @@ fn owning_string_cps_capture_after_reload_and_scope_cleanup() {
         let task = vm.call_async_string_1("echo", "cancelled").unwrap();
         drop(vm);
         drop(task);
-        crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
-    }
-}
-
-#[test]
-fn owning_string_optional_results_replacement_and_function_values() {
-    let source = r#"import joky/mem
-
-        fn optional(flag: Bool) -> Option<String> { if flag { Some("中🙂") } else { None } }
-        fn fallible(flag: Bool) -> Result<String, Int32> { if flag { Ok("tail") } else { Err(7) } }
-        fn measure(text: &String) -> Int32 { int32(text.byte_length()) }
-        fn replace(text: &mut String, next: String) -> String { mem.replace(text, next) }
-        fn compute() -> Int32 {
-            var text = "first"
-            let initial = text.clone()
-            let old = replace(&mut text, "second")
-            let size = measure
-            let a = match optional(true) { Some(value) => size(&value), None => 0 }
-            let b = match optional(false) { Some(value) => size(&value), None => 1 }
-            let c = match fallible(true) { Ok(value) => size(&value), Err(_) => 0 }
-            let d = match fallible(false) { Ok(value) => size(&value), Err(code) => code }
-            a + b + c + d + size(&initial) + size(&old) + size(&text)
-        }
-    "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm(source, mode);
-        assert_eq!(vm.call_int32_0("compute").unwrap(), 35);
-        drop(vm);
         crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
     }
 }

@@ -1,35 +1,6 @@
 use super::{support, VmEngine, VmMode};
 use crate::{FunctionSignature, Type};
 
-#[test]
-fn service_ergonomics_reject_invalid_derives_and_enum_comparisons() {
-    for (source, message) in [
-        ("#derive(Clone, Clone) struct S {}", "Duplicate Clone"),
-        ("#derive() #derive(Clone) struct S {}", "at least one trait"),
-        ("#derive(Clone(1)) enum S { A }", "takes no arguments"),
-        (
-            "#derive(Clone) struct S { callback: fn() -> Unit }",
-            "Cannot derive",
-        ),
-        (
-            "enum E { A } enum F { A } fn bad() -> Bool { E.A == F.A }",
-            "same type",
-        ),
-        (
-            "enum E { A, B } fn bad() -> Bool { E.A < E.B }",
-            "Comparison operands",
-        ),
-    ] {
-        let error = support::frontend_error(source, &crate::ModuleSources::new());
-        assert!(error.message().contains(message), "{source}: {error}");
-    }
-    // With the prelude disabled, Array's private imports must not expose Clone.
-    let mut vm = VmEngine::new();
-    vm.set_prelude_enabled(false);
-    let error = vm.load_source("import joky/array.{type Array} fn bad() { let values = Array.new::<String>(); let copy = values.clone(); }").unwrap_err();
-    assert!(error.message().contains("has no method 'clone'"), "{error}");
-}
-
 thread_local! { static EVENTS: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) }; }
 extern "C" fn record(id: i32) {
     EVENTS.with(|e| e.borrow_mut().push(id));

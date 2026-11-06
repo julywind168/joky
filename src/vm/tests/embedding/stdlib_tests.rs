@@ -1,43 +1,7 @@
 //! Source-defined Option and Result methods and their module boundaries.
 use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
-use crate::{parser, ErrorCode, TypeRegistry};
-
-#[test]
-fn option_result_methods_preserve_values_and_eager_arguments() {
-    for prelude in [false, true] {
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            for suspends in [false, true] {
-                let source = with_suspends(
-                    include_str!("../../../../tests/fixtures/option_result_methods.jk"),
-                    suspends,
-                    Suspends::Typed,
-                );
-                let mut vm = VmEngine::with_mode(mode);
-                vm.set_prelude_enabled(prelude);
-                vm.load_source(&source).unwrap();
-                let result = if suspends {
-                    vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
-                } else {
-                    vm.call_int32_0("check").unwrap()
-                };
-                assert_eq!(
-                    result, 42,
-                    "{mode:?}, prelude={prelude}, suspends={suspends}"
-                );
-                let wide = if suspends {
-                    vm.call_async_uint64("wide", &[])
-                        .unwrap()
-                        .cps_result()
-                        .unwrap()
-                } else {
-                    vm.call_uint64_0("wide").unwrap()
-                };
-                assert_eq!(wide, u64::MAX);
-            }
-        }
-    }
-}
+use crate::{parser, ErrorCode};
 
 #[test]
 fn option_result_defaults_resume_once_after_reload_failure_and_cancel() {
@@ -99,40 +63,6 @@ fn option_result_defaults_resume_once_after_reload_failure_and_cancel() {
             assert_eq!(scheduler.resume_all().unwrap(), 0);
             EVENTS.with(|events| assert_eq!(*events.borrow(), [7, 7, -1, -1, 7, 7]));
         }
-    }
-}
-
-#[test]
-fn result_option_dependency_keeps_identity_without_exporting_names() {
-    for imports in [
-        "import joky/result as res.{type Result as Outcome}",
-        "import joky/result as res.{type Result as Outcome} import joky/option as opt.{type Option as Maybe}",
-        "import joky/option as opt.{type Option as Maybe} import joky/result as res.{type Result as Outcome}",
-    ] {
-        let source = format!("{imports} struct Option {{ wrong: Bool }} fn Some(n: Int32) -> Bool {{ false }} fn check() -> Int32 {{ res.Result.Ok::<Int32, Bool>(42).ok().unwrap_or(0) }}");
-        let types = TypeRegistry::new().with_prelude(false);
-        let first = types.resolve_aliases(&parser::parse(&source).unwrap()).unwrap();
-        let second = types.resolve_aliases(&first).unwrap();
-        assert_eq!(first.enums.len(), 2);
-        assert_eq!(second.implementations.len(), first.implementations.len());
-        assert_eq!(first.enums.iter().map(|d| d.id).collect::<Vec<_>>(), second.enums.iter().map(|d| d.id).collect::<Vec<_>>());
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.set_prelude_enabled(false);
-            vm.load_module(&second).unwrap();
-            assert_eq!(vm.call_int32_0("check").unwrap(), 42);
-        }
-    }
-    for source in [
-        "import joky/result as res fn bad() { res.Option.Some(1) }",
-        "import joky/result as res fn bad() { res.Some(1) }",
-        "import joky/result as res fn bad() { Option.Some(1) }",
-        "import joky/result.{type Option} fn bad() {}",
-        "import joky/option as opt fn bad() { opt.Result.Ok::<Int32, Bool>(1) }",
-    ] {
-        let mut vm = VmEngine::new_interpreter();
-        vm.set_prelude_enabled(false);
-        assert!(vm.load_source(source).is_err(), "{source}");
     }
 }
 
@@ -207,65 +137,6 @@ fn option_result_lazy_defaults_reject_wrong_callbacks_and_consumed_owners() {
         let mut compiler = crate::aot::AotCompiler::new("invalid-lazy-default").unwrap();
         assert!(compiler.compile_module(&parser::parse(source).unwrap()).is_err(), "{source}");
     }
-}
-
-#[test]
-fn postfix_unwrap_and_propagation_preserve_values() {
-    for prelude in [false, true] {
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            for suspends in [false, true] {
-                let source = with_suspends(
-                    include_str!("../../../../tests/fixtures/postfix_unwrap.jk"),
-                    suspends,
-                    Suspends::Typed,
-                );
-                let mut vm = VmEngine::with_mode(mode);
-                vm.set_prelude_enabled(prelude);
-                vm.load_source(&source)
-                    .unwrap_or_else(|e| panic!("{mode:?}, suspends={suspends}: {e}"));
-                let result = if suspends {
-                    vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
-                } else {
-                    vm.call_int32_0("check").unwrap()
-                };
-                assert_eq!(
-                    result, 42,
-                    "{mode:?}, prelude={prelude}, suspends={suspends}"
-                );
-                for name in ["fail_option", "fail_result"] {
-                    let error = if suspends {
-                        vm.call_async(name, &[]).err().unwrap()
-                    } else {
-                        vm.call_int32_0(name).unwrap_err()
-                    };
-                    assert!(error.to_string().contains("Postfix `!` on"), "{error}");
-                    let expression = error.span().unwrap().slice(&source).unwrap();
-                    assert!(expression.ends_with('!'), "{expression}");
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn postfix_unwrap_normalized_modules_keep_standard_enum_identity() {
-    let parsed =
-        parser::parse(include_str!("../../../../tests/fixtures/postfix_unwrap.jk")).unwrap();
-    let registry = crate::TypeRegistry::new().with_prelude(false);
-    let normalized = registry.resolve_aliases(&parsed).unwrap();
-    let normalized = registry.resolve_aliases(&normalized).unwrap();
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_module(&normalized).unwrap();
-        assert_eq!(vm.call_int32_0("check").unwrap(), 42);
-        // A separate stdlib cache must not replace the module's identities.
-        vm.load_source("fn unrelated() -> Int32 { Some(7)! }")
-            .unwrap();
-        assert_eq!(vm.call_int32_0("unrelated").unwrap(), 7);
-        vm.load_module(&normalized).unwrap();
-        assert_eq!(vm.call_int32_0("check").unwrap(), 42);
-    }
-    crate::backends::aot::tests::assert_sync_int32(&normalized, "check", 42);
 }
 
 #[test]

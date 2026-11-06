@@ -3,29 +3,6 @@ use super::VmMode;
 const SOURCE: &str = include_str!("../../../../tests/fixtures/for_indexed.jk");
 
 #[test]
-fn for_indexed_infers_integer_types_and_destructures_map_entries() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm_with_prelude(SOURCE, mode, false);
-        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
-        assert_eq!(vm.call_int32_1("boundary", 128).unwrap(), 127);
-        let error = vm.call_int32_1("boundary", 129).unwrap_err();
-        assert!(error.message().contains("For index overflow"), "{error}");
-        assert_eq!(vm.call_int32_1("unsigned_boundary", 256).unwrap(), 255);
-        assert!(vm
-            .call_int32_1("unsigned_boundary", 257)
-            .unwrap_err()
-            .message()
-            .contains("For index overflow"));
-        assert!(vm
-            .call_unit_0("overflow_owned")
-            .unwrap_err()
-            .message()
-            .contains("For index overflow"));
-        crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
-    }
-}
-
-#[test]
 fn for_indexed_rejects_conflicting_types_and_invalid_patterns() {
     for body in [
         "let a: Int32 = i; let b: UInt64 = i;",

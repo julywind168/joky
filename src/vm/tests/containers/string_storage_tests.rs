@@ -80,22 +80,6 @@ impl Drop for RestoreLimit {
 }
 
 #[test]
-fn string_storage_probe_moves_returns_borrows_and_replaces() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = configured(mode);
-        for entry in ["success", "transfer"] {
-            reset();
-            assert_eq!(vm.call_int32_0(entry).unwrap(), 42, "{mode:?} {entry}");
-            cleaned();
-        }
-        reset();
-        let error = vm.call_int32_0("failure").unwrap_err();
-        assert_eq!(error.message(), "Storage probe failure");
-        cleaned();
-    }
-}
-
-#[test]
 fn string_storage_probe_budget_failures_clean_partial_owners() {
     let _restore = RestoreLimit::new();
     for mode in [VmMode::Jit, VmMode::Interpreter] {

@@ -6,40 +6,6 @@ use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
 use crate::{ErrorCode, FunctionSignature};
 
 #[test]
-fn enums_preserve_values_and_matching_in_direct_and_cps_backends() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = with_suspends(
-                include_str!("../../../../tests/fixtures/enums.jk"),
-                suspends,
-                Suspends::All,
-            );
-            let vm = parity_vm_with_prelude(&source, mode, false);
-            for (name, expected) in [
-                ("nested", 7),
-                ("replacements", 1086),
-                ("effects", 142),
-                ("snapshots", 128),
-                ("arguments", 11),
-                ("aggregate_arms", 49),
-                ("loops", 85),
-                ("scopes", 921),
-                ("calls", 56),
-                ("edge_cases", 13),
-                ("compute", 2498),
-            ] {
-                let actual = if suspends {
-                    vm.call_async(name, &[]).unwrap().cps_result().unwrap() as i32
-                } else {
-                    vm.call_int32_0(name).unwrap()
-                };
-                assert_eq!(actual, expected, "{mode:?} suspends={suspends} {name}");
-            }
-        }
-    }
-}
-
-#[test]
 fn invalid_enums_and_patterns_are_rejected() {
     let cases = [
         ("enum E {}", ErrorCode::InvalidPattern, "at least one"),

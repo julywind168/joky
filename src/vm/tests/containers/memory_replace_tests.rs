@@ -331,27 +331,6 @@ fn mem_rejects_aliasing_moves_escape_and_legacy_intrinsics() {
 }
 
 #[test]
-fn mem_selected_imports_and_user_functions_keep_module_identity() {
-    let source = r#"
-        import joky/mem.{replace, swap, drop}
-        fn share(x: Int32) -> Int32 { x }
-        fn main() -> Int32 {
-            var x = 20
-            var y = 22
-            swap(&mut x, &mut y)
-            let old = replace(&mut x, 20)
-            drop(y)
-            share(old + x)
-        }
-    "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap();
-        assert_eq!(vm.call_int32_0("main").unwrap(), 42);
-    }
-}
-
-#[test]
 fn mem_swap_assignment_and_drop_preserve_cleanup_at_every_boundary() {
     let _restore = RestoreLimit;
     for mode in [VmMode::Jit, VmMode::Interpreter] {

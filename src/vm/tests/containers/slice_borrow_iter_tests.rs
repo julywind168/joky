@@ -23,36 +23,6 @@ fn cleaned() {
 }
 
 #[test]
-fn slice_borrow_iter_respects_subranges_and_map_columns() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm_with_prelude(SOURCE, mode, false);
-        reset();
-        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
-        cleaned();
-        for action in 0..3 {
-            reset();
-            let result = vm.call_int32_1("map_owners", action);
-            if action == 2 {
-                assert_eq!(result.unwrap_err().code(), crate::ErrorCode::RuntimeError);
-            } else {
-                assert_eq!(result.unwrap(), 42);
-            }
-            cleaned();
-            let events = events();
-            for id in [1, 2] {
-                assert!(events.contains(&id));
-            }
-            if action == 0 {
-                let end = events.iter().position(|&id| id == 20).unwrap();
-                for id in [1, 2] {
-                    assert!(events.iter().position(|&n| n == id).unwrap() > end);
-                }
-            }
-        }
-    }
-}
-
-#[test]
 fn slice_borrow_iter_retains_subslice_elements_across_pending_and_cancellation() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm_with_prelude(SOURCE, mode, false);

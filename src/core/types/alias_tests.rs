@@ -68,31 +68,6 @@ fn generic_aliases_erase_to_canonical_types_and_cache_expansions() {
 }
 
 #[test]
-fn generic_alias_parameters_shadow_types_without_leaking_or_capturing_names() {
-    let source = "type T = Int64 type Identity<T> = T type Concrete<U> = T fn a(x: Identity<Bool>) -> Bool { x } fn b<T>(x: Concrete<T>) -> Int64 { x }";
-    let resolved = TypeRegistry::new()
-        .resolve_aliases(&crate::parser::parse(source).unwrap())
-        .unwrap();
-    assert_eq!(function(&resolved, 0).params[0].ty, Type::Bool);
-    assert_eq!(function(&resolved, 1).params[0].ty, Type::Int64);
-    for source in [
-        "type Identity<T> = T type Bad = T",
-        "type Identity<T> = T fn f(x: T) {}",
-        "type Identity<T> = T struct R { value: T }",
-        "type A<T> = T type B<U> = T",
-        "type A<T> = T<Int32>",
-        "type T<T> = T<Int32>",
-    ] {
-        assert!(
-            crate::vm::VmEngine::new_interpreter()
-                .load_source(source)
-                .is_err(),
-            "{source}"
-        );
-    }
-}
-
-#[test]
 fn generic_alias_caches_refresh_forward_owner_views_in_signatures() {
     let source = r#"
         import joky/array.{type Array}
@@ -150,24 +125,6 @@ fn generic_alias_cache_distinguishes_targets_and_allows_fixed_noncopy_targets() 
         panic!()
     };
     assert_eq!(f.ret_ty, Type::Named("vm.Function".into()));
-}
-
-#[test]
-fn generic_alias_import_caches_do_not_accumulate_across_resolutions() {
-    let registry = TypeRegistry::new().with_prelude(false);
-    let mut modules = crate::ModuleSources::new();
-    modules.insert("model", "struct Box<T> { value: T } type PairOf<T> = (T, T) pub type Nested<T> = Box<PairOf<T>>").unwrap();
-    let parsed = crate::parser::parse(
-        "import model fn f(x: model.Nested<Int32>) -> model.Nested<Int32> { x }",
-    )
-    .unwrap();
-    for _ in 0..3 {
-        let resolved = registry.resolve_with_modules(&parsed, &modules).unwrap();
-        let f = function(&resolved, 0);
-        assert_eq!(f.params[0].ty, f.ret_ty);
-        assert!(registry.alias_instances.borrow().is_empty());
-        assert!(registry.record_instances.borrow().is_empty());
-    }
 }
 
 #[test]

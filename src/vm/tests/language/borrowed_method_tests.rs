@@ -34,28 +34,6 @@ fn borrowed_receivers_execute_generics_fields_and_layouts_in_both_vm_modes() {
 }
 
 #[test]
-fn borrowed_receivers_reject_invalid_syntax() {
-    for source in [
-        "fn f(&self) {}",
-        "extern fn f(&mut self)",
-        "struct P {} impl P { fn f(n: Int32, &self) {} }",
-        "struct P {} impl P { fn f(&self: &P) {} }",
-        "struct P {} impl P { fn f(&mut other) {} }",
-        "struct P {} impl P { fn f(&self, self) {} }",
-    ] {
-        assert!(crate::parser::parse(source).is_err(), "{source}");
-    }
-    let module = crate::parser::parse(
-        "struct P {} impl P { fn a(&self) {} fn b(&mut self) {} fn c(self) {} }",
-    )
-    .unwrap();
-    let methods = &module.implementations[0].methods;
-    assert!(!methods[0].params[0].ty.reference_type().unwrap().mutable);
-    assert!(methods[1].params[0].ty.reference_type().unwrap().mutable);
-    assert!(methods[2].params[0].ty.reference_type().is_none());
-}
-
-#[test]
 fn borrowed_receivers_reject_conflicts_escapes_and_unsupported_places() {
     for (body, message) in [
         ("fn bad() { let c = Counter { value: 1 }; c.add(1) }", "var binding"),

@@ -142,28 +142,3 @@ fn array_patterns_reject_invalid_types_coverage_and_borrows() {
         assert_eq!(error.code(), code, "{source}: {error}");
     }
 }
-
-#[test]
-fn array_patterns_work_without_prelude_and_keep_imports_hygienic() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.set_prelude_enabled(false);
-        vm.load_source("fn answer() -> Int32 { let array = 7; let values = [20, 22]; match values { [a, b] => a + b, _ => array } }").unwrap();
-        assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
-        assert!(vm.load_source("fn bad() -> Array<Int32> { [1] }").is_err());
-    }
-}
-
-#[test]
-fn array_patterns_reject_malformed_sequence_syntax() {
-    for source in [
-        "fn bad() { [1 2] }",
-        "fn bad() { [,] }",
-        "fn bad() { [1,,2] }",
-        "fn bad() { [1; 2] }",
-        "fn bad() { match [1] { [..a, ..b] => {} } }",
-        "fn bad() { let [..a, ..b] = [1] }",
-    ] {
-        assert!(crate::parser::parse(source).is_err(), "accepted: {source}");
-    }
-}

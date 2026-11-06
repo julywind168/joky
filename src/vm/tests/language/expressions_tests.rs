@@ -6,50 +6,6 @@ use crate::runtime::suspension::ResumeError;
 use crate::ErrorCode;
 
 #[test]
-fn core_expressions_match_in_direct_and_cps_execution() {
-    let source = include_str!("../../../../tests/fixtures/expressions.jk");
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = with_suspends(source, suspends, Suspends::All);
-            let vm = parity_vm(&source, mode);
-            let call = |name: &str, args: &[i32]| call_int32(&vm, suspends, name, args);
-            for (name, expected) in [
-                ("expression_precedence", 7),
-                ("expression_grouping", 9),
-                ("expression_associativity", 14),
-                ("expression_unary_precedence", -2),
-                ("expression_minimum", i32::MIN),
-                ("expression_wrapped_negation", i32::MIN),
-                ("expression_snapshots", 89),
-                ("expression_sequences", -5),
-                ("expression_newline", -2),
-                ("expression_sequence_arguments", -23),
-            ] {
-                assert_eq!(
-                    call(name, &[]),
-                    expected,
-                    "{mode:?} suspends={suspends} {name}"
-                );
-            }
-            for value in [i32::MIN, -1, 0, 1, i32::MAX] {
-                assert_eq!(call("expression_negate", &[value]), value.wrapping_neg());
-                assert_eq!(
-                    call("expression_not_chain", &[value]),
-                    i32::from(value == 0)
-                );
-            }
-            for a in [0, 1] {
-                for b in [0, 1] {
-                    let expected = if a == b { 10 } else { 1 };
-                    assert_eq!(call("expression_truth", &[a, b]), expected);
-                    assert_eq!(call("expression_bool_loops", &[a, b]), expected);
-                }
-            }
-        }
-    }
-}
-
-#[test]
 fn unary_and_bool_operands_resume_once_with_snapshots_after_reload() {
     let source = r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32

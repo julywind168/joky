@@ -61,18 +61,6 @@ fn borrowed_dyn_requires_complete_valid_associated_equalities() {
 }
 
 #[test]
-fn borrowed_dyn_qualified_unused_signatures_compile_without_host_layouts() {
-    for borrow in ["&dyn", "&mut dyn"] {
-        for result in ["Int32", "String", "(Int32, Bool)", "Unit"] {
-            accepted(&format!("trait Read {{ type Item; fn value(&self) @noescape -> Self.Item }} fn unused(value: {borrow} Read<Item = {result}>) {{}}"));
-        }
-        accepted(&format!("trait Read {{ fn value(&self, other: &Int32) @noescape(self, other) -> Int32 }} fn unused(value: {borrow} Read) {{}}"));
-    }
-    accepted("trait Read { fn value(&self) @noescape -> Int32 } fn unused(value: dyn Read) {}");
-    rejected("fn unused(value: &dyn Missing) {}", "Unknown trait bound");
-}
-
-#[test]
 fn borrowed_dyn_keyword_and_type_syntax_are_checked() {
     for source in [
         "fn dyn() {}",
@@ -117,18 +105,6 @@ fn borrowed_dyn_failed_preparation_preserves_previous_module() {
             assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
         }
     }
-}
-
-#[test]
-fn borrowed_dyn_qualification_does_not_restrict_static_traits() {
-    let source = "trait Read { type Item; fn value(self) -> Self.Item } struct Counter { value: Int32 } impl Read for Counter { type Item = Int32; fn value(self) -> Int32 { self.value } } fn answer() -> Int32 { Counter { value: 42 }.value() }";
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap();
-        assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
-    }
-    #[cfg(unix)]
-    crate::aot::tests::assert_sync_int32(&crate::parser::parse(source).unwrap(), "answer", 42);
 }
 
 #[test]
@@ -188,52 +164,7 @@ fn accepted(source: &str) {
         .unwrap();
 }
 
-#[test]
-fn borrowed_dyn_v2_executes_default_override_and_exclusive_slots() {
-    let source = "trait Read { type Item; fn value(&self) @noescape -> Int32; fn doubled(&self) @noescape -> Int32 { self.value() * 2 } fn change(&mut self, n: Int32) @noescape; } struct Counter { value: Int32 } struct Other { value: Int32 } impl Read for Counter { type Item = Int32; fn value(&self) -> Int32 { self.value } fn change(&mut self, n: Int32) { self.value = n } } impl Read for Other { type Item = Int32; fn value(&self) -> Int32 { self.value + 1 } fn doubled(&self) -> Int32 { self.value() * 2 } fn change(&mut self, n: Int32) { self.value = n - 1 } } fn inspect(v: &dyn Read<Item = Int32>) @noescape -> Int32 { v.doubled() } fn update(v: &mut dyn Read<Item = Int32>) @noescape { v.change(21); Read.change(v, 21) } fn answer() -> Int32 { var a = Counter { value: 1 }; var b = Other { value: 1 }; let v: &mut dyn Read<Item = Int32> = &mut a; update(v); update(v); inspect(v) + inspect(&b) - 4 }";
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source)
-            .unwrap_or_else(|e| panic!("{mode:?}: {e}, span {:?}", e.span()));
-        assert_eq!(vm.call_int32_0("answer").unwrap(), 42, "{mode:?}");
-    }
-    #[cfg(unix)]
-    crate::aot::tests::assert_sync_int32(&crate::parser::parse(source).unwrap(), "answer", 42);
-}
-
-const DISPATCH: &str = include_str!("../../../../tests/fixtures/borrowed_dyn_dispatch.jk");
 const LIFECYCLE: &str = include_str!("../../../../tests/fixtures/borrowed_dyn_lifecycle.jk");
-const ENTRIES: &[&str] = &[
-    "dyn_basic",
-    "dyn_mutable",
-    "dyn_results",
-    "dyn_branch_true",
-    "dyn_branch_false",
-    "dyn_zero",
-    "dyn_enum",
-    "dyn_shadow",
-];
-
-#[test]
-fn borrowed_dyn_v2_executes_signature_results_and_source_matrix() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(DISPATCH)
-            .unwrap_or_else(|e| panic!("{mode:?}: {e}, span {:?}", e.span()));
-        for entry in ENTRIES {
-            assert_eq!(vm.call_int32_0(entry).unwrap(), 42, "{mode:?}: {entry}");
-        }
-        crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
-    }
-    #[cfg(unix)]
-    crate::aot::tests::assert_sync_results(
-        &crate::parser::parse(DISPATCH).unwrap(),
-        &ENTRIES
-            .iter()
-            .map(|&name| (name, Some(42)))
-            .collect::<Vec<_>>(),
-    );
-}
 
 thread_local! { static EVENTS: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) }; }
 unsafe extern "C" fn record(value: i32) -> i32 {

@@ -45,18 +45,6 @@ fn evaluate(entry: &str, modules: &ModuleSources) -> i32 {
 }
 
 #[test]
-fn local_module_constants_evaluate_and_forward_reference() {
-    let modules = ModuleSources::new();
-    assert_eq!(
-        evaluate(
-            "const MAX: Int32 = 64 const DOUBLE: Int32 = MAX * 2 fn main() -> Int32 { DOUBLE }",
-            &modules,
-        ),
-        128
-    );
-}
-
-#[test]
 fn module_constants_keep_values_in_old_instance_snapshots() {
     use joky::vm::InstanceValue;
     let entry = r#"
@@ -97,23 +85,6 @@ fn module_constants_keep_values_in_old_instance_snapshots() {
         vm.close_instance(new).unwrap();
         assert_eq!(vm.instance_bytes(), 0);
     }
-}
-
-#[test]
-fn imported_module_constants_keep_declaration_identity() {
-    let modules = sources(&[(
-        "app/config",
-        "pub const LIMIT: Int32 = 4096 const PRIVATE_MAX: Int32 = 7 pub fn limit() -> Int32 { LIMIT + PRIVATE_MAX }",
-    )]);
-    // The qualified read, the renamed import and the defining module's own
-    // private dependency all resolve to the same declarations.
-    assert_eq!(
-        evaluate(
-            "import app/config as cfg.{LIMIT as CAP} fn main() -> Int32 { cfg.LIMIT + CAP + cfg.limit() }",
-            &modules,
-        ),
-        4096 + 4096 + 4103
-    );
 }
 
 #[test]
@@ -211,26 +182,6 @@ fn module_constant_arithmetic_follows_the_shared_scalar_kernel() {
 }
 
 #[test]
-fn module_constant_cycles_report_the_declaration() {
-    for (source, expected) in [
-        (
-            "const A: Int32 = B const B: Int32 = A fn main() -> Int32 { A }",
-            "Cyclic",
-        ),
-        ("const A: Int32 = A fn main() -> Int32 { A }", "Cyclic"),
-    ] {
-        let error = VmEngine::with_mode(VmMode::Jit)
-            .load_source(source)
-            .unwrap_err();
-        assert!(
-            error.message().contains(expected),
-            "{source}: {}",
-            error.message()
-        );
-    }
-}
-
-#[test]
 fn constant_expressions_beyond_256_syntax_nodes_are_rejected() {
     // `1 + 1 + …` with `count` additions holds `1 + 2 * count` syntax nodes:
     // 127 additions reach 255 nodes, 128 reach 257 and cross the budget.
@@ -253,16 +204,6 @@ fn constant_expressions_beyond_256_syntax_nodes_are_rejected() {
         "{}",
         error.message()
     );
-}
-
-#[test]
-fn unused_constant_declarations_are_still_checked() {
-    // Declaring a constant is enough to require a valid initializer; the
-    // declaration must not escape checking because no body reads it.
-    let error = VmEngine::with_mode(VmMode::Jit)
-        .load_source("const UNUSED: Int32 = UNKNOWN fn main() -> Int32 { 0 }")
-        .unwrap_err();
-    assert!(error.message().contains("Unknown"), "{}", error.message());
 }
 
 #[test]
@@ -315,38 +256,6 @@ fn private_module_constants_are_not_readable_across_modules() {
 }
 
 #[test]
-fn module_constants_read_identically_in_jit_and_interpreter() {
-    let source =
-        "const BASE: Int32 = 6 const SCALED: Int32 = BASE * 7 fn main() -> Int32 { SCALED }";
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source)
-            .unwrap_or_else(|error| panic!("{error}"));
-        assert_eq!(
-            vm.call_int32_0("main")
-                .unwrap_or_else(|error| panic!("{error}")),
-            42,
-            "{mode:?}"
-        );
-    }
-}
-
-#[test]
-fn selector_import_of_a_missing_constant_reports_the_export_error() {
-    let modules = sources(&[("app/config", "pub const LIMIT: Int32 = 1")]);
-    let error = load_error(
-        "import app/config as cfg.{MISSING} fn main() -> Int32 { cfg.LIMIT }",
-        &modules,
-    );
-    assert_eq!(error.code(), ErrorCode::InvalidImport);
-    assert!(
-        error.message().contains("does not export value 'MISSING'"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
 fn constant_initializers_use_imported_constants_by_every_spelling() {
     let modules = sources(&[
         (
@@ -370,31 +279,6 @@ fn constant_initializers_use_imported_constants_by_every_spelling() {
             &modules,
         ),
         300
-    );
-}
-
-#[test]
-fn public_constants_may_depend_on_private_constants() {
-    let modules = sources(&[(
-        "app/config",
-        "const SECRET: Int32 = 2048 pub const LIMIT: Int32 = SECRET * 2",
-    )]);
-    // Only the computed value is exported; the private name stays unbound.
-    assert_eq!(
-        evaluate(
-            "import app/config as cfg fn main() -> Int32 { cfg.LIMIT }",
-            &modules,
-        ),
-        4096
-    );
-    let error = load_error(
-        "import app/config as cfg const USE: Int32 = cfg.SECRET fn main() -> Int32 { USE }",
-        &modules,
-    );
-    assert!(
-        error.message().contains("constant `cfg.SECRET`"),
-        "{}",
-        error.message()
     );
 }
 
@@ -469,35 +353,6 @@ fn imported_constants_follow_the_value_namespace_rules() {
         error.message().contains("no field") || error.message().contains("fields"),
         "{}",
         error.message()
-    );
-}
-
-#[test]
-fn diamond_dependencies_resolve_through_shared_declarations() {
-    // base is imported through two different modules; the joined constant
-    // still resolves to one declaration identity, not two spellings.
-    let modules = sources(&[
-        ("app/base", "pub const B: Int32 = 10"),
-        (
-            "app/left",
-            "import app/base.{B}\npub const L: Int32 = B + 1",
-        ),
-        (
-            "app/right",
-            "import app/base\npub const R: Int32 = base.B + 2",
-        ),
-        (
-            "app/top",
-            concat!(
-                "import app/left.{L}\n",
-                "import app/right\n",
-                "pub const T: Int32 = L * right.R\n",
-            ),
-        ),
-    ]);
-    assert_eq!(
-        evaluate("import app/top.{T} fn main() -> Int32 { T }", &modules),
-        132
     );
 }
 

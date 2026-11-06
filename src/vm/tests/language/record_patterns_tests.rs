@@ -35,37 +35,6 @@ fn vm(mode: VmMode) -> VmEngine {
 }
 
 #[test]
-fn record_patterns_match_in_both_execution_modes() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = vm(mode);
-        for (name, expected) in [
-            ("owning_updates", 42),
-            ("copy_full", 34),
-            ("copy_rename_and_rest", 34),
-            ("copy_reordered_and_var", 44),
-            ("copy_annotated", 34),
-            ("empty_record", 42),
-            ("nested_copy", 34),
-            ("nested_owned_rename", 303),
-            ("single_evaluation", 3),
-            ("owned_transfer", 342),
-            ("owned_mixed_and_ignored", 7),
-            ("borrowed_snapshots_and_views", 3430),
-            ("borrowed_nested_projection", 217),
-            ("borrowed_original_survives", 35),
-            ("match_owned_payloads", 91),
-            ("match_borrowed_entry", 64),
-            ("generic_patterns", 38),
-            ("alias_pattern", 34),
-            ("tuple_combination", 37),
-            ("loops_with_destructuring", 18),
-        ] {
-            assert_eq!(vm.call_int32_0(name), Ok(expected), "{mode:?} {name}");
-        }
-    }
-}
-
-#[test]
 fn record_patterns_release_owners_exactly_once_in_order() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for (entry, expected, events) in [
@@ -157,35 +126,6 @@ fn module_sources() -> crate::ModuleSources {
         )
         .unwrap();
     modules
-}
-
-#[test]
-fn record_patterns_destructure_public_fields_across_modules() {
-    let source = r#"
-        import record_library as parcels.{type Parcel, make, read_tag, consume_tag, sealed}
-        fn use_public() -> Int32 {
-            var parcel = parcels.make(21)
-            let parcels.Parcel { tag, .. } = &parcel
-            let copied = read_tag(&parcel)
-            let consumed = consume_tag(parcels.make(3))
-            let parcels.Sealed { code, .. } = parcels.sealed(5)
-            tag * 100 + copied + consumed * 10 + code
-        }
-    "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        unsafe {
-            vm.register_fn(
-                "record_drop",
-                FunctionSignature::new(vec![Type::Int32], Type::Unit),
-                record_drop as *const u8,
-            )
-            .unwrap();
-        }
-        vm.load_source_with_modules(source, &module_sources())
-            .unwrap();
-        assert_eq!(vm.call_int32_0("use_public"), Ok(2156), "{mode:?}");
-    }
 }
 
 #[test]

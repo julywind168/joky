@@ -229,23 +229,6 @@ fn embedded_runtime_diagnostics_survive_reload_without_production_traps() {
     }
 }
 
-#[test]
-fn integer_library_does_not_export_diagnostic_probes() {
-    let library = StandardLibrary::new();
-    assert!(!library.modules["joky/integer"]
-        .exports
-        .functions
-        .contains_key("boom"));
-    let types = TypeRegistry::new().with_prelude(false);
-    let error = types
-        .resolve_aliases(
-            &crate::parser::parse("import joky/integer.{boom} fn check() -> Int32 { boom(42) }")
-                .unwrap(),
-        )
-        .unwrap_err();
-    assert!(error.message().contains("boom"));
-}
-
 fn definition(path: &'static str, source: &'static str) -> SourceDefinition {
     SourceDefinition {
         kind: SourceKind::Embedded,

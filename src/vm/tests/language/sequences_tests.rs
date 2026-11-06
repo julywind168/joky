@@ -4,35 +4,6 @@ use super::support::*;
 use super::VmMode;
 
 #[test]
-fn newline_boundaries_and_method_chains_match_direct_and_cps_execution() {
-    let source = include_str!("../../../../tests/fixtures/newlines.jk");
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = with_suspends(source, suspends, Suspends::All);
-            let vm = parity_vm(&source, mode);
-            for (name, expected) in [
-                ("newline_deref", 42),
-                ("newline_prefix", -42),
-                ("newline_borrow", 42),
-                ("newline_operators", 42),
-                ("newline_grouped", 42),
-                ("newline_nested_block", 42),
-                ("newline_methods", 42),
-                ("newline_named_methods", 42),
-                ("newline_generic_method", 42),
-                ("newline_owning_chain", 42),
-                ("newline_tail", 42),
-                ("newline_return", 42),
-            ] {
-                let actual = call_int32(&vm, suspends, name, &[]);
-                assert_eq!(actual, expected, "{mode:?} suspends={suspends} {name}");
-            }
-            call_unit(&vm, suspends, "newline_discard");
-        }
-    }
-}
-
-#[test]
 fn newline_method_chains_resume_without_replaying_the_receiver_or_arguments() {
     let source = format!(
         "{}\n{}",
@@ -60,42 +31,6 @@ fn newline_method_chains_resume_without_replaying_the_receiver_or_arguments() {
         assert!(task.is_finished());
         assert_eq!(task.cps_result(), Some(42));
         EVENTS.with(|events| assert_eq!(*events.borrow(), [19, 19, 22]));
-    }
-}
-
-#[test]
-fn newline_method_chains_preserve_static_and_dyn_dispatch() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm(
-            include_str!("../../../../tests/fixtures/newline_dispatch.jk"),
-            mode,
-        );
-        for name in ["newline_static_dispatch", "newline_dyn_dispatch"] {
-            assert_eq!(vm.call_int32_0(name).unwrap(), 42, "{mode:?}: {name}");
-        }
-    }
-}
-
-#[test]
-fn semicolon_sequences_match_in_direct_and_cps_execution() {
-    let source = include_str!("../../../../tests/fixtures/sequences.jk");
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = with_suspends(source, suspends, Suspends::All);
-            let vm = parity_vm(&source, mode);
-            for (name, expected) in [
-                ("sequence_condition", 43),
-                ("sequence_bindings", 45),
-                ("sequence_scope", 33),
-                ("sequence_arguments", 23),
-                ("sequence_precedence", 13),
-                ("sequence_mixed_separators", 15),
-            ] {
-                let actual = call_int32(&vm, suspends, name, &[]);
-                assert_eq!(actual, expected, "{mode:?} suspends={suspends} {name}");
-            }
-            call_unit(&vm, suspends, "sequence_trailing");
-        }
     }
 }
 

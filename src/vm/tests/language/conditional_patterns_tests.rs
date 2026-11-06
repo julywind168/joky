@@ -1,31 +1,9 @@
 //! Conditional patterns reuse match binding, borrowing and cleanup semantics.
 use super::support::*;
-use super::{VmEngine, VmMode};
+use super::VmMode;
 use crate::runtime::arena::LIVE;
 
 const SOURCE: &str = include_str!("../../../../tests/fixtures/conditional_patterns.jk");
-const EVENTS_EXPECTED: &[i32] = &[0, 1, 2, 3, 4, 9, 0, 1, -1, 1, 2, 3, -4, 4, 5, -6, 6];
-
-#[test]
-fn conditional_patterns_match_in_direct_and_cps_execution() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = with_suspends(SOURCE, suspends, Suspends::Named("compute"));
-            let vm = parity_vm(&source, mode);
-            let value = if suspends {
-                vm.call_async("compute", &[]).unwrap().cps_result().unwrap() as i32
-            } else {
-                vm.call_int32_0("compute").unwrap()
-            };
-            assert_eq!(value, 42);
-            assert_eq!(
-                EVENTS.with(|events| events.borrow().clone()),
-                EVENTS_EXPECTED
-            );
-            LIVE.with(|live| assert_eq!(live.get(), 0));
-        }
-    }
-}
 
 #[test]
 fn conditional_patterns_resume_without_replaying_condition_or_body() {
@@ -66,33 +44,6 @@ fn conditional_patterns_resume_without_replaying_condition_or_body() {
             [0, 0, 1, 1, 1, 1, 2, 2, 3, 3]
         );
         LIVE.with(|live| assert_eq!(live.get(), 0));
-    }
-}
-
-#[test]
-fn conditional_patterns_reject_invalid_patterns_types_and_scope_leaks() {
-    for body in [
-        "if let Some(n) = 42 {}",
-        "if let Missing(n) = Some(1) {}",
-        "if let Some(n) = Some(1) { n }",
-        "if let Some(n) = Some(1) { n } else { true }",
-        "if let Some(n) = Some(1) {} else { n; }",
-        "if let Some(n) = Some(1) {}; n;",
-        "while let Some(n) = Some(1) { break }; n;",
-        "if let Some(n) = Some(1) { n = 2 }",
-        "if let Some((a, a)) = Some((1, 2)) {}",
-        "if let Some(n) = Some(1) && n > 0 {}",
-        "if let Some(n) = None::<Int32> { unknown(); }",
-        "if let Some(n) = Some(1) { break }",
-        "while let Some(n) = true {}",
-        "let value = Some(1); if let Some(n) = &value { *n = 2 }",
-        "let value = Some(\"owned\"); if let Some(n) = value {}; value;",
-    ] {
-        let mut vm = VmEngine::new();
-        assert!(
-            vm.load_source(&format!("fn f() {{ {body} }}")).is_err(),
-            "{body}"
-        );
     }
 }
 

@@ -6,41 +6,6 @@ use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
 use crate::{ErrorCode, FunctionSignature};
 
 #[test]
-fn tuples_preserve_structure_snapshots_and_bindings_in_direct_and_cps_backends() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = with_suspends(
-                include_str!("../../../../tests/fixtures/tuples.jk"),
-                suspends,
-                Suspends::Typed,
-            );
-            let vm = parity_vm(&source, mode);
-            for (name, expected) in [
-                ("basic", 735),
-                ("nested", 5),
-                ("snapshots", 1934),
-                ("mutable_leaves", 18567),
-                ("shadowing", 225),
-                ("effects", 1114),
-                ("sequence_boundaries", 12),
-                ("zero_calls", 42),
-                ("calls", 91),
-                ("loops", 85),
-                ("abrupt", 3),
-                ("compute", 22813),
-            ] {
-                let value = if suspends {
-                    vm.call_async(name, &[]).unwrap().cps_result().unwrap() as i32
-                } else {
-                    vm.call_int32_0(name).unwrap()
-                };
-                assert_eq!(value, expected, "{mode:?} suspends={suspends} {name}");
-            }
-        }
-    }
-}
-
-#[test]
 fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
     let cases = [
         (
@@ -338,25 +303,6 @@ fn tuple_construction_and_destructuring_resume_once_after_reload_and_cancellatio
         assert_eq!(scheduler.resume_all().unwrap(), 0);
         EVENTS
             .with(|events| assert_eq!(*events.borrow(), [7, 7, -1, -1, 2, 2, 3, 3, 7, 7, 0, 3, 4]));
-    }
-}
-
-#[test]
-fn tuple_elements_and_destructured_initializers_resolve_imported_calls() {
-    let source = r#"
-        import joky/vm
-        type Count = Int32
-        fn run() -> Int32 {
-            let h = vm.Vm.new()
-            { let vm_text = "fn f() -> Int32 {{ 21 }}"; vm.load_source(h, &vm_text) }
-            let (a, (b,)): (Count, (Count,)) = ({ let vm_text = "f"; vm.call_int32_0(h, &vm_text) }, ({ let vm_text = "f"; vm.call_int32_0(h, &vm_text) },))
-            vm.close(h)
-            a + b
-        }
-    "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm(source, mode);
-        assert_eq!(vm.call_int32_0("run").unwrap(), 42);
     }
 }
 

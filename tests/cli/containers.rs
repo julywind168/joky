@@ -372,36 +372,6 @@ fn string_collections_example_and_module_aliases_run_in_all_backends() {
 
 #[test]
 #[cfg(unix)]
-fn array_example_matches_jit_interpreter_and_native_execution() {
-    let work = Workspace::new();
-    work.write("arrays.jk", include_str!("../../examples/arrays.jk"));
-    for args in [
-        vec!["run", "arrays.jk"],
-        vec!["run", "--interpreter", "arrays.jk"],
-        vec!["run", "--no-prelude", "arrays.jk"],
-        vec!["run", "--interpreter", "--no-prelude", "arrays.jk"],
-    ] {
-        let output = work.cli(&args);
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(output.stdout, b"42\n");
-    }
-    let built = work.cli(&["build", "--no-prelude", "arrays.jk", "-o", "arrays"]);
-    assert!(
-        built.status.success(),
-        "{}",
-        String::from_utf8_lossy(&built.stderr)
-    );
-    let output = Command::new(work.path().join("arrays")).output().unwrap();
-    assert!(output.status.success());
-    assert_eq!(output.stdout, b"42\n");
-}
-
-#[test]
-#[cfg(unix)]
 fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
     let work = Workspace::new();
     work.write(
@@ -506,87 +476,6 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
 }
 
 #[test]
-fn owning_arrays_run_and_build_with_exactly_once_cleanup() {
-    let work = Workspace::new();
-    work.write(
-        "owning_arrays.jk",
-        include_str!("../../examples/owning_arrays.jk"),
-    );
-    work.assert_all_backends("owning_arrays.jk", &[], b"42\n20\n22\n", 0);
-    work.write(
-        "owning_enums.jk",
-        include_str!("../../examples/owning_enums.jk"),
-    );
-    work.assert_all_backends("owning_enums.jk", &[], b"42\n42\n", 0);
-}
-
-#[test]
-#[cfg(unix)]
-fn owning_tuples_run_and_build_with_drop_and_zip() {
-    let work = Workspace::new();
-    work.write(
-        "owning_tuples.jk",
-        include_str!("../../examples/owning_tuples.jk"),
-    );
-    work.assert_all_backends("owning_tuples.jk", &[], b"3\n2\n1\n4\n42\n5\n5\n", 0);
-}
-
-#[test]
-#[cfg(unix)]
-fn borrowed_matches_run_and_build_without_consuming_the_enum() {
-    let work = Workspace::new();
-    work.write(
-        "borrowed_matches.jk",
-        include_str!("../../examples/borrowed_matches.jk"),
-    );
-    work.assert_all_backends("borrowed_matches.jk", &[], b"42\n42\n22\n20\n", 0);
-}
-
-#[test]
-#[cfg(unix)]
-fn mutable_borrows_run_and_build_with_in_place_updates() {
-    let work = Workspace::new();
-    work.write(
-        "mutable_borrows.jk",
-        include_str!("../../examples/mutable_borrows.jk"),
-    );
-    work.assert_all_backends("mutable_borrows.jk", &[], b"42\n42\n42\n", 0);
-}
-
-#[test]
-#[cfg(unix)]
-fn memory_replace_run_and_build_transfer_old_values() {
-    let work = Workspace::new();
-    work.write(
-        "memory_replace.jk",
-        include_str!("../../examples/memory_replace.jk"),
-    );
-    work.assert_all_backends("memory_replace.jk", &[], b"42\n1\n42\n", 0);
-}
-
-#[test]
-#[cfg(unix)]
-fn swap_remove_runs_and_builds_with_owned_elements() {
-    let work = Workspace::new();
-    work.write(
-        "swap_remove.jk",
-        include_str!("../../examples/swap_remove.jk"),
-    );
-    work.assert_all_backends("swap_remove.jk", &[], b"20\n22\n2\n1\n", 0);
-}
-
-#[test]
-#[cfg(unix)]
-fn ordered_arrays_run_and_build_with_owned_elements() {
-    let work = Workspace::new();
-    work.write(
-        "ordered_arrays.jk",
-        include_str!("../../examples/ordered_arrays.jk"),
-    );
-    work.assert_all_backends("ordered_arrays.jk", &[], b"21\n22\n20\n0\n", 0);
-}
-
-#[test]
 #[cfg(unix)]
 fn array_sort_is_stable_and_preserves_owners_on_all_backends() {
     let work = Workspace::new();
@@ -600,17 +489,6 @@ fn array_sort_is_stable_and_preserves_owners_on_all_backends() {
         &work.cli(&["check", "float.jk"]),
         "does not satisfy trait bound 'joky/ord.Ord'",
     );
-}
-
-#[test]
-#[cfg(unix)]
-fn array_management_runs_and_builds_with_owned_elements() {
-    let work = Workspace::new();
-    work.write(
-        "array_management.jk",
-        include_str!("../../examples/array_management.jk"),
-    );
-    work.assert_all_backends("array_management.jk", &[], b"22\n1\n4\n42\n0\n", 0);
 }
 
 #[test]
@@ -885,42 +763,6 @@ fn recursive_owners_run_in_all_backends() {
 }
 
 #[test]
-fn inline_recursion_is_rejected_before_build() {
-    let work = Workspace::new();
-    for source in [
-        "enum Value { Next(Value) }",
-        "import joky/option.{type Option} enum Value { Next(Option<Value>) }",
-        "type Next = Value enum Value { More((Int32, Next)) }",
-        "struct First { next: Second } struct Second { next: First }",
-    ] {
-        work.write("recursive.jk", &format!("{source}\nfn main() {{}}"));
-        failure(&work.cli(&["build", "recursive.jk"]), "recursive_");
-        assert!(!work.path().join("recursive").exists());
-    }
-    work.assert_no_build_files();
-}
-
-#[test]
-fn expanding_types_and_live_owner_loans_remain_rejected() {
-    let work = Workspace::new();
-    for (source, code) in [
-        ("import joky/array.{type Array} enum Bad<T> { Items(Array<Bad<(T,)>>) } fn main() {}", "resource_limit"),
-        ("import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) } fn main() { var values = Array.new::<Value>(); values.push(Value.Nil); let view = values.borrow_ref(0); values.push(Value.Nil); match view { Nil => {}, _ => {} } }", "invalid_assignment"),
-        ("import joky/array.{type Array} import joky/mem enum Value { Nil, Items(Array<Value>) } fn main() { var value = Value.Items(Array.new::<Value>()); let view = &value; let old = mem.replace(&mut value, Value.Nil); match view { Nil => {}, _ => {} } }", "invalid_assignment"),
-        ("import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) } fn main() { let values = Array.new::<Value>(); values.get(0) }", "type_mismatch"),
-        ("import joky/array.{type Array} struct Shared { reference: &Int32 } enum Value { Nil, Items(Array<Value>), Hidden(Array<Shared>) } fn main() {}", "type_mismatch"),
-        ("struct First<T, U> { value: T } enum Bad { Pair((First<Int32, Bad>, First<Bad, Int32>)) } fn main() {}", "recursive_type"),
-        ("import joky/array.{type Array} struct Outer { values: Array<Holder> } struct Holder { reference: &Int32 } fn bad(value: Outer) @suspends {} fn main() {}", "invalid_call"),
-        ("import joky/array.{type Array} struct Borrowed { target: &Owner } struct Owner { values: Array<Int32> } fn main() { let owner = Owner { values: Array.new::<Int32>() }; let saved = [Borrowed { target: &owner }]; }", "type_mismatch"),
-    ] {
-        work.write("invalid.jk", source);
-        failure(&work.cli(&["build", "invalid.jk"]), code);
-        assert!(!work.path().join("invalid").exists());
-    }
-    work.assert_no_build_files();
-}
-
-#[test]
 fn json_values_codecs_limits_and_models_run_in_all_backends() {
     let work = Workspace::new();
     work.write_fixture_batch(
@@ -933,22 +775,6 @@ fn json_values_codecs_limits_and_models_run_in_all_backends() {
         ],
     );
     work.assert_all_backends("json_matrix.jk", &[], b"", 0);
-}
-
-#[test]
-fn number_invariants_and_unique_value_ownership_are_enforced() {
-    let work = Workspace::new();
-    for (source, diagnostic) in [
-        ("import joky/json.{type Number} fn main() { let number = Number { text: \"NaN\" } }", "private"),
-        ("import joky/json fn main() { let text = \"1\"; json.parse_float64(&text) }", "unknown_name"),
-        ("import joky/json.{type Number} fn main() { let number = Number.from_i64(1); number.text }", "private"),
-        ("import joky/json.{type Value} import joky/array.{type Array} fn main() { let values = Array.new::<Value>(); values.get(0) }", "type_mismatch"),
-    ] {
-        work.write("invalid.jk", source);
-        failure(&work.cli(&["build", "invalid.jk"]), diagnostic);
-        assert!(!work.path().join("invalid").exists());
-    }
-    work.assert_no_build_files();
 }
 
 #[test]

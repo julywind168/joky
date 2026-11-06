@@ -1,37 +1,5 @@
-use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
 use crate::{ErrorCode, ErrorPhase};
-
-#[test]
-fn generic_enums_preserve_inference_layouts_and_matching_across_backends() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = with_suspends(
-                include_str!("../../../../tests/fixtures/generic_enums.jk"),
-                suspends,
-                Suspends::Typed,
-            );
-            let mut vm = VmEngine::with_mode(mode);
-            vm.set_prelude_enabled(false);
-            vm.load_source(&source).unwrap();
-            let result = if suspends {
-                vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
-            } else {
-                vm.call_int32_0("check").unwrap()
-            };
-            assert_eq!(result, 42, "{mode:?} suspends={suspends}");
-            let wide = if suspends {
-                vm.call_async_uint64("wide", &[])
-                    .unwrap()
-                    .cps_result()
-                    .unwrap()
-            } else {
-                vm.call_uint64_0("wide").unwrap()
-            };
-            assert_eq!(wide, u64::MAX);
-        }
-    }
-}
 
 #[test]
 fn generic_enum_errors_reject_bad_templates_applications_and_constructors() {

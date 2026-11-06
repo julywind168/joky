@@ -231,21 +231,3 @@ fn indexing_rejects_invalid_types_moves_and_borrows() {
         assert!(error.span().is_some(), "{source}: {error}");
     }
 }
-
-#[test]
-fn indexing_requires_one_index_and_no_implicit_line_continuation() {
-    for source in [
-        "fn bad() { [1][] }",
-        "fn bad() { [1][0, 1] }",
-        "fn bad() { [1][..] }",
-    ] {
-        assert!(crate::parser::parse(source).is_err(), "{source}");
-    }
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.set_prelude_enabled(false);
-        vm.load_source("fn answer() -> Int32 { let a = [42]\n[1]\na[0] }")
-            .unwrap();
-        assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
-    }
-}

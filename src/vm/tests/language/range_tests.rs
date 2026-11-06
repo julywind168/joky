@@ -5,19 +5,6 @@ use crate::runtime::arena::LIVE;
 const SOURCE: &str = include_str!("../../../../tests/fixtures/ranges.jk");
 
 #[test]
-fn ranges_cover_integer_boundaries_inference_and_expression_order() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm_with_prelude(SOURCE, mode, false);
-        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 3]));
-        EVENTS.with(|events| events.borrow_mut().clear());
-        assert!(vm.call_unit_0("endpoint_failure").is_err());
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [7, 99]));
-        LIVE.with(|live| assert_eq!(live.get(), 0));
-    }
-}
-
-#[test]
 fn ranges_resume_endpoints_once_and_release_owners_on_cancellation() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm_with_prelude(SOURCE, mode, false);

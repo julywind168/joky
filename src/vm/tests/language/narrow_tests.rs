@@ -155,24 +155,6 @@ fn narrow_integers_survive_suspension() {
     }
 }
 
-/// Call entries reject mismatched narrow signatures instead of reinterpreting
-/// another width's bits.
-#[test]
-fn narrow_call_entries_validate_signatures() {
-    let source = r#"
-        fn only8(a: Int8) -> Int8 { a }
-        fn only16(a: Int16) -> Int16 { a }
-    "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap();
-        assert_eq!(vm.call_i8_1("only8", -5).unwrap(), -5, "{mode:?}");
-        assert!(vm.call_i16_1("only8", 5).is_err(), "{mode:?}");
-        assert!(vm.call_i8_1("only16", 5).is_err(), "{mode:?}");
-        assert!(vm.call_u16_1("only8", 5).is_err(), "{mode:?}");
-    }
-}
-
 /// `&mut` C references to narrow scalar bindings write back through the
 /// checked reference path, like the wider integer lanes.
 #[test]

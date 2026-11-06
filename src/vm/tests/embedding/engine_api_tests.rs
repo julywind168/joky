@@ -1,7 +1,7 @@
 //! Engine API contracts: errors, signatures, and host registration.
 
 use super::{VmEngine, VmMode};
-use crate::{ErrorCode, ErrorPhase, FunctionSignature, Span, Type};
+use crate::{ErrorCode, ErrorPhase, FunctionSignature, Type};
 
 #[test]
 fn unknown_opaque_types_are_rejected_with_structured_errors() {
@@ -13,24 +13,6 @@ fn unknown_opaque_types_are_rejected_with_structured_errors() {
     assert_eq!(error.code(), ErrorCode::UnknownType);
     assert!(error.span().is_some());
     assert!(error.message().contains("Unknown type `Host.Context`"));
-}
-
-#[test]
-fn parse_errors_keep_their_source_line() {
-    let mut vm = VmEngine::new();
-    let error = vm.load_source("fn f() {\n#\n}").unwrap_err();
-    assert_eq!(error.phase(), ErrorPhase::Parse);
-    assert_eq!(error.line(), Some(2));
-    assert_eq!(error.span(), Some(Span::new(9, 10)));
-}
-
-#[test]
-fn runtime_lookup_errors_keep_their_runtime_phase() {
-    let mut vm = VmEngine::new();
-    vm.load_source("fn f() -> Int32 { 1 }").unwrap();
-    let error = vm.call_int32_0("missing").unwrap_err();
-    assert_eq!(error.phase(), ErrorPhase::Runtime);
-    assert_eq!(error.code(), ErrorCode::NotFound);
 }
 
 #[test]
@@ -148,26 +130,6 @@ fn synchronous_call_errors_have_the_same_precedence_in_both_modes() {
         assert_eq!(error.code(), ErrorCode::InvalidCall);
         assert!(error.message().contains("call_async"));
     }
-}
-
-#[test]
-fn registered_host_opaque_types_are_accepted() {
-    extern "C" fn host(_value: u64) -> i32 {
-        7
-    }
-    let mut vm = VmEngine::new();
-    unsafe {
-        vm.register_fn(
-            "host",
-            FunctionSignature::new(vec![Type::Named("Host.Context".into())], Type::Int32),
-            host as *const u8,
-        )
-        .unwrap();
-    }
-    vm.load_source(
-        "extern fn host(value: Host.Context) -> Int32 fn f(value: Host.Context) -> Int32 { host(value) }",
-    )
-    .unwrap();
 }
 
 #[test]

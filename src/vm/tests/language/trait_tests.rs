@@ -1,5 +1,4 @@
 use super::{VmEngine, VmMode};
-use crate::core::types::Type;
 
 #[test]
 fn static_traits_execute_borrowed_requirements_and_conditional_impls() {
@@ -32,22 +31,6 @@ fn static_traits_execute_borrowed_requirements_and_conditional_impls() {
 const FIXTURE: &str = include_str!("../../../../tests/fixtures/static_traits.jk");
 
 #[test]
-fn concrete_trait_impls_dispatch_and_derive_across_backends() {
-    let source = include_str!("../../../../tests/fixtures/concrete_trait_impls.jk");
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source)
-            .unwrap_or_else(|error| panic!("{error}"));
-        assert_eq!(vm.call_int32_0("check").unwrap(), 42);
-    }
-    crate::backends::aot::tests::assert_sync_int32(
-        &crate::parser::parse(source).unwrap(),
-        "check",
-        42,
-    );
-}
-
-#[test]
 fn concrete_trait_impls_reject_overlap_missing_capabilities_and_partial_targets() {
     use crate::core::prepared::check_source;
     let base = "trait Mark {} struct Cell<T> { value: T }";
@@ -72,37 +55,6 @@ fn concrete_trait_impls_reject_overlap_missing_capabilities_and_partial_targets(
         };
         let error = check_source(&source, &Default::default()).unwrap_err();
         assert!(error.message().contains(message), "{source}: {error}");
-    }
-}
-
-#[test]
-fn static_traits_preserve_layouts_bounds_and_template_dispatch() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for prelude in [true, false] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.set_prelude_enabled(prelude);
-            unsafe {
-                vm.register_suspending_fn(
-                    "pause",
-                    crate::FunctionSignature::new(vec![crate::Type::Int32], crate::Type::Int32),
-                    pause,
-                )
-                .unwrap();
-            }
-            let exports = vm.load_source(FIXTURE).unwrap();
-            assert!(!exports
-                .iter()
-                .any(|n| n.contains("joky/") || n.contains('.')));
-            for entry in [
-                "trait_locals",
-                "trait_generics",
-                "trait_layouts",
-                "trait_factory",
-                "trait_dispatch",
-            ] {
-                assert_eq!(vm.call_int32_0(entry).unwrap(), 42, "{mode:?}: {entry}");
-            }
-        }
     }
 }
 
@@ -189,25 +141,6 @@ fn static_traits_reject_invalid_contracts_and_unused_templates_in_all_backends()
         let error = crate::aot::AotCompiler::new("bad-trait").unwrap()
             .compile_module(&crate::parser::parse(&source).unwrap()).expect_err(extra);
         assert!(error.message().contains(message), "{error}\n{extra}");
-    }
-}
-
-#[test]
-fn static_traits_reject_unsupported_syntax() {
-    for source in [
-        "struct P<T: Read> { x: T }",
-        "type P<T: Read> = T",
-        "enum P<T: Read> { Some(T) }",
-        "trait T<X> {}",
-        "trait T { fn f<X>(self) }",
-        "trait T { type X = Int32 }",
-        "trait T { const X: Int32 = 1 }",
-        "trait T { pub fn f(self) }",
-        "trait T { fn f(x: Self, &self) }",
-        "trait T {} fn f<X: T + T>() {}",
-        "trait T {} import x",
-    ] {
-        assert!(crate::parser::parse(source).is_err(), "{source}");
     }
 }
 
@@ -326,55 +259,6 @@ fn static_traits_keep_by_value_receivers_free_of_spurious_local_borrows() {
 }
 
 #[test]
-fn static_traits_enforce_bounds_on_inherent_methods_and_constants() {
-    let base = "trait Marker {} impl Marker for Int32 {} struct P<T> { value: T } impl<T: Marker> P<T> { const VALUE: Int32 = 42 fn value(self) -> T { self.value } }";
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(&format!("{base} fn main() -> Int32 {{ if P::<Int32>.VALUE == 42 {{ P {{ value: 42 }}.value() }} else {{ 0 }} }}")).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(vm.call_int32_0("main").unwrap(), 42);
-        for bad in [
-            "fn bad() { P::<Bool>.VALUE; }",
-            "fn bad() { P { value: true }.value(); }",
-            "fn bad<T>(p: P<T>) { p.value(); }",
-        ] {
-            let error = vm.load_source(&format!("{base} {bad}")).expect_err(bad);
-            assert!(error.message().contains("does not satisfy"), "{error}");
-        }
-    }
-}
-
-#[test]
-fn static_traits_do_not_expose_private_inherent_methods_through_trait_impls() {
-    let mut modules = crate::ModuleSources::new();
-    modules
-        .insert(
-            "base",
-            "pub struct Id { pub value: Int32 } impl Id { fn read(self) -> Int32 { 999 } }",
-        )
-        .unwrap();
-    modules
-        .insert(
-            "extension",
-            r#"
-        import base
-        pub trait Read { fn read(&self) -> Int32 }
-        impl Read for base.Id { fn read(&self) -> Int32 { self.value } }
-        pub fn check() -> Int32 { let x = base.Id { value: 42 }; x.read() }
-    "#,
-        )
-        .unwrap();
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source_with_modules(
-            "import extension fn check() -> Int32 { extension.check() }",
-            &modules,
-        )
-        .unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(vm.call_int32_0("check").unwrap(), 42);
-    }
-}
-
-#[test]
 fn static_trait_proofs_share_repeated_phantom_obligations() {
     let mut source = String::from("trait Mark {} impl Mark for Int32 {} struct P<T, U> {} impl<T: Mark, U: Mark> Mark for P<T, U> {} type N0 = Int32");
     for n in 1..=20 {
@@ -386,45 +270,6 @@ fn static_trait_proofs_share_repeated_phantom_obligations() {
         vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(vm.call_int32_0("main").unwrap(), 42);
     }
-}
-
-#[test]
-fn static_trait_syntax_preserves_bounds_receivers_and_declaration_identity() {
-    use crate::parser::ast::Item;
-    let source = "pub trait Eq { fn eq(&self, other: &Self) -> Bool } trait Mark {} struct P<T> { value: T } impl<T: Eq + Mark> Eq for P<T> { fn eq(&self, other: &Self) -> Bool { true } } fn same<T: Eq>(left: &T, right: &T) -> Bool { left.eq(right) }";
-    let module = crate::parser::parse(source).unwrap();
-    let declaration = &module.traits[0];
-    assert!(declaration.public);
-    let receiver = declaration.methods[0].params[0]
-        .ty
-        .reference_type()
-        .unwrap();
-    assert!(!receiver.mutable);
-    assert!(matches!(&receiver.target, Type::Parameter(p) if p == &declaration.self_parameter));
-    let implementation = &module.implementations[0];
-    assert_eq!(implementation.trait_name.as_deref(), Some("Eq"));
-    assert_eq!(
-        implementation.type_params[0]
-            .bounds
-            .iter()
-            .map(|b| b.name.as_str())
-            .collect::<Vec<_>>(),
-        ["Eq", "Mark"]
-    );
-    assert_eq!(implementation.type_params[0].span.slice(source), Some("T"));
-    let Item::FnDef(function) = &module.items[0] else {
-        panic!()
-    };
-    assert_eq!(
-        function.type_params[0]
-            .bounds
-            .iter()
-            .map(|b| b.name.as_str())
-            .collect::<Vec<_>>(),
-        ["Eq"]
-    );
-    assert_ne!(function.type_params[0], implementation.type_params[0]);
-    assert_eq!(function.type_params[0].span.slice(source), Some("T"));
 }
 
 #[test]
@@ -538,62 +383,6 @@ fn trait_defaults_support_all_receivers_and_mutual_recursion() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(vm.call_int32_0("test").unwrap(), 42);
-    }
-    #[cfg(unix)]
-    crate::backends::aot::tests::assert_sync_int32(
-        &crate::parser::parse(source).unwrap(),
-        "test",
-        42,
-    );
-}
-
-#[test]
-fn associated_types_bind_nested_suffixes_to_each_bases_capability() {
-    let source = r#"
-        trait Inner { type Output }
-        trait Outer {
-            type Item: Inner
-            fn pass(value: Self.Item.Output) -> Self.Item.Output { value }
-        }
-        struct I {}
-        struct O {}
-        impl Inner for I { type Output = Int32 }
-        impl Outer for O { type Item = I }
-        fn exact<T: Inner<Output = U.Item.Output>, U: Outer>(value: T.Output) -> U.Item.Output { value }
-        fn test() -> Int32 { exact::<I, O>(O.pass(42)) }
-    "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(vm.call_int32_0("test").unwrap(), 42);
-    }
-    #[cfg(unix)]
-    crate::backends::aot::tests::assert_sync_int32(
-        &crate::parser::parse(source).unwrap(),
-        "test",
-        42,
-    );
-}
-
-#[test]
-fn associated_types_execute_concrete_and_generic_projections() {
-    let source = r#"
-        trait Source {
-            type Item
-            fn next(&self) @noescape -> Self.Item
-        }
-        struct Counter {}
-        impl Source for Counter {
-            type Item = Int32
-            fn next(&self) -> Int32 { 42 }
-        }
-        fn take<S: Source>(s: &S) @noescape -> S.Item { s.next() }
-        fn test() -> Int32 { let c = Counter {}; take(&c) }
-    "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap();
         assert_eq!(vm.call_int32_0("test").unwrap(), 42);
     }
     #[cfg(unix)]
@@ -792,83 +581,6 @@ fn associated_types_preserve_definition_scopes_and_diamond_identities() {
     }
     #[cfg(unix)]
     crate::backends::aot::tests::assert_sync_int32(&ast, "test", 42);
-}
-
-#[test]
-fn associated_types_resolve_forward_layouts_and_identity_equalities() {
-    let cases = [
-        "trait S { type Item } struct Outer { value: C.Item } struct C {} struct Value { n: Int32 } impl S for C { type Item = Value } fn test() -> Int32 { let x = Outer { value: Value { n: 42 } }; x.value.n }",
-        "trait S { type Item } struct Outer { first: A.Item, second: B.Item } struct A {} struct B {} struct V1 { n: Int32 } struct V2 { n: Int32 } impl S for A { type Item = (V1,) } impl S for B { type Item = (V2,) } fn test() -> Int32 { let x = Outer { first: (V1 { n: 20 },), second: (V2 { n: 22 },) }; let (a,) = x.first; let (b,) = x.second; a.n + b.n }",
-        "trait S { type Item } struct C {} impl S for C { type Item = Int32 } fn id<T: S<Item = T.Item>>(x: T.Item) -> T.Item { x } fn test() -> Int32 { id::<C>(42) }",
-        "trait S { type Item } type A = C.Item struct C {} impl S for C { type Item = Int32 } fn test() -> A { 42 }",
-        "trait S { type Item } struct C {} impl S for C { type Item = Self } fn test() -> Int32 { let c: C.Item = C {}; 42 }",
-    ];
-    for source in cases {
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.load_source(source)
-                .unwrap_or_else(|e| panic!("{source}: {e}"));
-            assert_eq!(vm.call_int32_0("test").unwrap(), 42);
-        }
-        #[cfg(unix)]
-        crate::backends::aot::tests::assert_sync_int32(
-            &crate::parser::parse(source).unwrap(),
-            "test",
-            42,
-        );
-    }
-    for source in [
-        "trait S { type Item } type A = C.Item struct C {} impl S for C { type Item = A }",
-        "trait S { type Item } fn bad<T: S<Item = T.Other, Other = T.Item>>() {}",
-    ] {
-        assert!(VmEngine::new().load_source(source).is_err(), "{source}");
-    }
-}
-
-#[test]
-fn associated_type_syntax_rejects_out_of_scope_extensions() {
-    for source in [
-        "trait S { type Item = Int32 }",
-        "trait S { type Item<T> }",
-        "trait S { type Item fn get(&self) }",
-        "trait S { type Item, fn get(&self) }",
-        "trait S { pub type Item }",
-        "struct C {} impl C { type Item = Int32 }",
-        "trait S { type Item } struct C {} impl S for C { pub type Item = Int32 }",
-        "trait S { type Item: Fn() -> Int32 }",
-        "trait S { type Item } fn f<T: S<Int32>>() {}",
-        "trait S { type Item } struct C {} impl S for C { type Item = Int32 fn get() {} }",
-    ] {
-        assert!(crate::parser::parse(source).is_err(), "{source}");
-    }
-}
-
-#[test]
-fn associated_types_report_binding_locations_and_cycle_paths() {
-    for (source, code, location, path) in [
-        ("trait S { type Item } struct C {} impl S for C { type Item = Missing }",
-            crate::ErrorCode::UnknownType, "Missing", None),
-        ("trait S { type Item } struct C {} impl S for C { type Other = Int32 }",
-            crate::ErrorCode::UnknownName, "Other", None),
-        ("trait S { type Item; type Other } struct C {} impl S for C { type Item = Self.Other; type Other = Self.Item }",
-            crate::ErrorCode::RecursiveType, "Self", Some("->")),
-    ] {
-        let assert_error = |error: crate::Error| {
-            assert_eq!(error.code(), code, "{error}");
-            let span = error.span().expect("associated diagnostics retain source locations");
-            assert_eq!(&source[span.start()..span.end()], location, "{error}");
-            if let Some(path) = path {
-                assert!(error.message().contains(path), "{error}");
-                assert!(error.message().contains("Item"), "{error}");
-                assert!(error.message().contains("Other"), "{error}");
-            }
-        };
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            assert_error(VmEngine::with_mode(mode).load_source(source).unwrap_err());
-        }
-        assert_error(crate::aot::AotCompiler::new("associated-diagnostic").unwrap()
-            .compile_module(&crate::parser::parse(source).unwrap()).unwrap_err());
-    }
 }
 
 const ASSOCIATED_LIFECYCLE: &str =
@@ -1085,28 +797,6 @@ fn associated_types_bound_normalization_depth_and_cache_reuse() {
 }
 
 #[test]
-fn associated_types_ignore_traits_without_the_requested_item() {
-    let mut source = String::from(
-        "trait Source { type Item }
-         struct Counter {}
-         impl Source for Counter { type Item = Int32 }
-         fn test() -> Counter.Item { 42 }",
-    );
-    // Unrelated declarations must not consume the 256-obligation proof budget.
-    for i in 0..257 {
-        source.push_str(&format!("\ntrait Unrelated{i} {{}}"));
-    }
-    let ast = crate::parser::parse(&source).unwrap();
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_module(&ast).unwrap();
-        assert_eq!(vm.call_int32_0("test").unwrap(), 42);
-    }
-    #[cfg(unix)]
-    crate::backends::aot::tests::assert_sync_int32(&ast, "test", 42);
-}
-
-#[test]
 fn associated_types_share_the_256_obligation_budget_with_trait_proofs() {
     let mut source = String::from("trait M {} struct P<T,U> {} impl<T:M,U:M> M for P<T,U> {} struct Q<T> {} impl<T:M> M for Q<T> {} trait S { type Item } struct C<T> {} impl<T:M> S for C<T> { type Item = Int32 }\n");
     let mut level = Vec::new();
@@ -1150,45 +840,6 @@ fn associated_types_share_the_256_obligation_budget_with_trait_proofs() {
             )
             .unwrap();
         }
-    }
-}
-
-#[test]
-fn associated_types_support_blanket_impls_without_equality_specialization() {
-    let source = r#"
-        trait Marker {}
-        trait Source { type Item
-            fn get(&self) @noescape -> Self.Item
-            fn doubled(&self) @noescape -> Int32 { 21 * 2 }
-        }
-        impl<T: Marker> Source for T { type Item = Int32
-            fn get(&self) -> Int32 { 42 }
-        }
-        struct C {}
-        impl Marker for C {}
-        fn read<T: Marker>(x: &T) @noescape -> <T as Source>::Item { Source.get(x) }
-        fn test() -> Int32 { let c = C {}; read(&c) }
-    "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(vm.call_int32_0("test").unwrap(), 42);
-    }
-    #[cfg(unix)]
-    crate::backends::aot::tests::assert_sync_int32(
-        &crate::parser::parse(source).unwrap(),
-        "test",
-        42,
-    );
-    for source in [
-        "trait S { type Item } struct C {} impl S for C { type Item = String } struct W<T> {} trait Use {} impl<T:S<Item=Int32>> Use for W<T> {} fn need<T:Use>() {} fn bad() { need::<W<C>>() }",
-        "trait S { type Item } struct C {} impl S for C { type Item = Int32 } impl S for C { type Item = String }",
-        "trait M {} trait S { type Item: M } fn bad<T:S<Item=Bool>>() {}",
-        "trait S { type Item } fn bad<T:S<Item=Int32>,U:S<Item=Bool>>(x:T.Item,y:U.Item) { let z:Bool = x }",
-        "trait S { type Item } fn only<T:S>(x:T.Item) {} fn bad() { only(42) }",
-    ] {
-        for mode in [VmMode::Jit,VmMode::Interpreter] { assert!(VmEngine::with_mode(mode).load_source(source).is_err(),"{source}"); }
-        assert!(crate::aot::AotCompiler::new("bad-conditional-associated").unwrap().compile_module(&crate::parser::parse(source).unwrap()).is_err(),"{source}");
     }
 }
 

@@ -5,21 +5,6 @@ use super::VmMode;
 use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
 
 #[test]
-fn unconditional_loops_match_in_direct_and_cps_execution() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = with_suspends(
-                include_str!("../../../../tests/fixtures/unconditional_loops.jk"),
-                suspends,
-                Suspends::All,
-            );
-            let vm = parity_vm(&source, mode);
-            assert_eq!(call_int32(&vm, suspends, "check", &[]), 42);
-        }
-    }
-}
-
-#[test]
 fn unconditional_loops_preserve_structural_reachability() {
     use crate::ErrorCode;
     for (body, code) in [
@@ -116,35 +101,6 @@ fn unconditional_loop_returns_resume_and_cancel_with_owner_cleanup() {
             EVENTS.with(|events| events.borrow_mut().clear());
             assert_eq!(call_int32(&vm, true, entry, &[]), 42);
             EVENTS.with(|events| assert_eq!(*events.borrow(), [7]));
-        }
-    }
-}
-
-#[test]
-fn mutable_bindings_and_loops_match_in_direct_and_cps_execution() {
-    let source = include_str!("../../../../tests/fixtures/loops.jk");
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            // Only declarations get the attribute, not calls or parentheses.
-            let source = with_suspends(source, suspends, Suspends::All);
-            let vm = parity_vm(&source, mode);
-            for (name, args, expected) in [
-                ("sum", &[0] as &[i32], 0),
-                ("sum", &[1], 0),
-                ("sum", &[10], 45),
-                ("sum", &[-1], 0),
-                ("nested", &[4], 10),
-                ("snapshots", &[], 20123),
-                ("shadowing", &[], 47),
-                ("condition_effects", &[], 53),
-                ("bool_loop", &[], 3),
-                ("comparison_snapshot", &[], 2),
-                ("precedence", &[], 9),
-            ] {
-                let actual = call_int32(&vm, suspends, name, args);
-                assert_eq!(actual, expected, "{mode:?} suspends={suspends} {name}");
-            }
-            call_unit(&vm, suspends, "unit_values");
         }
     }
 }

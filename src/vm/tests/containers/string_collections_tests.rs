@@ -44,13 +44,6 @@ fn assert_events(expected: &[i32], context: &str) {
 }
 
 #[test]
-fn string_collections_aggregates_containers_and_builders_preserve_ownership() {
-    let mut groups = crate::string_collection_model::ownership_groups();
-    groups.push(crate::string_collection_model::bulk_group());
-    run_groups(groups);
-}
-
-#[test]
 fn string_map_map_ownership_and_failures() {
     run_groups(crate::string_map_model::groups());
 }

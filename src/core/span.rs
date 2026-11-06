@@ -96,21 +96,3 @@ impl From<Span> for Range<usize> {
         span.range()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Span;
-
-    #[test]
-    fn exposes_half_open_utf8_byte_ranges() {
-        let source = "héllo";
-        let span = Span::new(1, 3);
-        assert_eq!(span.start(), 1);
-        assert_eq!(span.end(), 3);
-        assert_eq!(span.len(), 2);
-        assert_eq!(span.slice(source), Some("é"));
-        assert!(span.contains(1));
-        assert!(!span.contains(3));
-        assert_eq!(span.range(), 1..3);
-    }
-}

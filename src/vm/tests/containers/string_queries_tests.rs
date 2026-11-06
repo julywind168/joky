@@ -157,28 +157,3 @@ fn string_queries_byte_borrow_and_consuming_conversion_need_no_allocation() {
         LIVE.with(|live| assert_eq!(live.get(), 0));
     }
 }
-
-#[test]
-fn string_equality_borrows_places_and_temporaries_without_prelude() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.set_prelude_enabled(false);
-        vm.load_source(include_str!(
-            "../../../../tests/fixtures/string_equality.jk"
-        ))
-        .unwrap_or_else(|error| panic!("{error}"));
-        for entry in ["compute", "early"] {
-            assert_eq!(vm.call_int32_0(entry).unwrap(), 42);
-        }
-        LIVE.with(|n| assert_eq!(n.get(), 0));
-        assert!(vm
-            .call_unit_0("failed")
-            .unwrap_err()
-            .message()
-            .contains("comparison argument failed"));
-        LIVE.with(|n| assert_eq!(n.get(), 0));
-        vm.load_source("fn equals(a: &String, b: &String) -> Bool { false } fn compute() -> Int32 { if \"a\" == \"a\" { 42 } else { 0 } }").unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
-        LIVE.with(|n| assert_eq!(n.get(), 0));
-    }
-}

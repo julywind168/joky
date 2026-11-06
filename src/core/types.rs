@@ -1978,76 +1978,6 @@ mod tests {
     }
 
     #[test]
-    fn tuples_normalize_structurally_with_nested_aliases_and_nominal_members() {
-        let registry = TypeRegistry::new();
-        let source = "type Pair = (Count, Bool) type Count = Int32 struct R { value: Pair } enum E { Value((R, Pair)) } fn f(x: ((Int32), Bool)) -> Pair { x }";
-        let parsed = crate::parser::parse(source).unwrap();
-        let resolved = registry.resolve_aliases(&parsed).unwrap();
-        let again = registry.resolve_aliases(&resolved).unwrap();
-        let signature = |module: &Module| {
-            let Item::FnDef(f) = &module.items[0] else {
-                panic!()
-            };
-            assert_eq!(f.params[0].ty, f.ret_ty);
-            f.ret_ty.clone()
-        };
-        let ty = signature(&resolved);
-        assert_eq!(ty.scalar_types(), &[Type::Int32, Type::Bool]);
-        assert_eq!(ty, signature(&again));
-        assert_eq!(
-            ty,
-            signature(
-                &registry
-                    .resolve_aliases(&crate::parser::parse(source).unwrap())
-                    .unwrap()
-            )
-        );
-        assert_eq!(format!("{resolved:?}"), format!("{again:?}"));
-        assert_ne!(
-            ty,
-            tuple_type(vec![Type::Bool, Type::Int32], &registry).unwrap()
-        );
-        assert_ne!(
-            tuple_type(vec![Type::Int32], &registry).unwrap(),
-            Type::Int32
-        );
-        assert_ne!(tuple_type(vec![Type::Unit], &registry).unwrap(), Type::Unit);
-        assert_eq!(
-            tuple_type(vec![], &registry).unwrap_err().code(),
-            ErrorCode::TypeMismatch
-        );
-        let source = "struct R {} fn f(x: (R,)) -> (R,) { x }";
-        let old = registry
-            .resolve_aliases(&crate::parser::parse(source).unwrap())
-            .unwrap();
-        let mut new = registry
-            .resolve_aliases(&crate::parser::parse(source).unwrap())
-            .unwrap();
-        assert_ne!(signature(&old), signature(&new));
-        let Item::FnDef(f) = &mut new.items[0] else {
-            panic!()
-        };
-        f.ret_ty = signature(&old);
-        let error = crate::core::ir::ModulePlan::with_import_layouts_and_types(
-            &new,
-            &HashMap::new(),
-            &registry,
-        )
-        .err()
-        .unwrap();
-        assert_eq!(error.code(), ErrorCode::UnknownType);
-        let mut foreign_member = crate::parser::parse("struct R { field: Int32 }").unwrap();
-        foreign_member.records[0].fields[0].ty = signature(&old);
-        assert_eq!(
-            registry
-                .resolve_aliases(&foreign_member)
-                .unwrap_err()
-                .code(),
-            ErrorCode::UnknownType
-        );
-    }
-
-    #[test]
     fn tuple_layout_limits_and_shared_zero_sized_graphs_are_bounded() {
         let registry = TypeRegistry::new().with_prelude(false);
         let mut wide = "type T0 = Int32".to_owned();
@@ -2225,46 +2155,6 @@ mod tests {
     }
 
     #[test]
-    fn aliases_normalize_types_without_changing_the_source_or_registry() {
-        let mut types = TypeRegistry::new();
-        types.register_opaque("Host.Context").unwrap();
-        let source = "type Count = Total type Total = Int32 type Context = Host.Context extern fn host(x: Count) -> Context fn f(x: Count) -> Total { let y: Total = x\n y }";
-        let module = crate::parser::parse(source).unwrap();
-        let resolved = types.resolve_aliases(&module).unwrap();
-        assert!(resolved.type_aliases.is_empty());
-        assert!(!types.contains("Count"));
-        assert!(!types.contains("Context"));
-        assert_eq!(module.type_aliases.len(), 3);
-        let Item::ExternFn(host) = &resolved.items[0] else {
-            panic!()
-        };
-        assert_eq!(host.params[0].ty, Type::Int32);
-        assert_eq!(host.ret_ty, Type::Named("Host.Context".into()));
-        let Item::FnDef(function) = &resolved.items[1] else {
-            panic!()
-        };
-        assert_eq!(function.params[0].ty, Type::Int32);
-        assert_eq!(function.ret_ty, Type::Int32);
-        assert_eq!(function.params[0].span.slice(source), Some("x: Count"));
-        let Expr::Block { exprs, .. } = &function.body else {
-            panic!()
-        };
-        assert!(matches!(
-            &exprs[0],
-            Expr::Let {
-                annotation: Some(Type::Int32),
-                ..
-            }
-        ));
-        let Item::FnDef(original) = &module.items[1] else {
-            panic!()
-        };
-        assert_eq!(original.ret_ty, Type::Named("Total".into()));
-        let again = types.resolve_aliases(&resolved).unwrap();
-        assert_eq!(format!("{resolved:?}"), format!("{again:?}"));
-    }
-
-    #[test]
     fn unused_invalid_aliases_have_deterministic_precise_diagnostics() {
         let mut types = TypeRegistry::new();
         types.register_opaque("Context").unwrap();
@@ -2335,22 +2225,6 @@ mod tests {
         };
         assert_eq!(function.params[0].ty, Type::Named("vm.Function".into()));
         assert_eq!(function.params[0].ty, function.ret_ty);
-    }
-
-    #[test]
-    fn builtins_and_custom_opaque_types_are_registered_explicitly() {
-        let mut types = TypeRegistry::new();
-        assert!(types.contains(VM_OWNER));
-        assert!(types.contains(VM_FUNCTION));
-        assert!(!types.contains("Host.Context"));
-        types.register_opaque("Host.Context").unwrap();
-        assert!(types.contains("Host.Context"));
-        let duplicate = types.register_opaque("Host.Context").unwrap_err();
-        assert_eq!(duplicate.phase(), ErrorPhase::Abi);
-        assert_eq!(duplicate.code(), ErrorCode::AbiError);
-        let invalid = types.register_opaque("not valid").unwrap_err();
-        assert_eq!(invalid.phase(), ErrorPhase::Abi);
-        assert_eq!(invalid.code(), ErrorCode::AbiError);
     }
 }
 

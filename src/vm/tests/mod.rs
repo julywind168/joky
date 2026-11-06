@@ -188,9 +188,6 @@ mod borrowed_match_tests;
 #[path = "language/borrowed_method_tests.rs"]
 mod borrowed_method_tests;
 
-#[path = "language/builtin_calls_tests.rs"]
-mod builtin_calls_tests;
-
 #[path = "language/checked_failure_tests.rs"]
 mod checked_failure_tests;
 

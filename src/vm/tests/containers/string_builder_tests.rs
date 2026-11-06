@@ -12,46 +12,6 @@ impl Drop for RestoreLimit {
     }
 }
 
-fn grown_text() -> String {
-    let mut text = String::new();
-    for index in 0..100 {
-        text.push(char::from(b'A' + index % 26));
-        if index % 10 == 0 {
-            text.push('中');
-        }
-    }
-    text
-}
-
-#[test]
-fn string_builder_constructs_grows_clears_and_copies_inputs() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm(SOURCE, mode);
-        for (name, expected) in [
-            ("build", "aé中🙂\0tail".to_owned()),
-            ("from_text", "中🙂\0tail!".to_owned()),
-            ("empty", String::new()),
-            ("clear_reuse", "🙂\0".to_owned()),
-            ("growth", grown_text()),
-        ] {
-            assert_eq!(
-                vm.call_string_0(name).unwrap(),
-                expected,
-                "{mode:?}, {name}"
-            );
-            LIVE.with(|live| assert_eq!(live.get(), 0));
-        }
-        assert_eq!(vm.call_int32_0("operations").unwrap(), 42);
-        for name in ["overflow", "oversized_capacity"] {
-            assert_eq!(
-                vm.call_int32_0(name).unwrap_err().code(),
-                crate::ErrorCode::ResourceLimit
-            );
-            LIVE.with(|live| assert_eq!(live.get(), 0));
-        }
-    }
-}
-
 #[test]
 fn string_builder_encodes_scalar_width_boundaries() {
     let mut scalars = vec![

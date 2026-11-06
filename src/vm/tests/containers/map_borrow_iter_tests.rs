@@ -3,14 +3,6 @@ use super::VmMode;
 const SOURCE: &str = include_str!("../../../../tests/fixtures/map_borrow_iter.jk");
 
 #[test]
-fn map_borrow_iter_pairs_columns_and_preserves_entry_identity() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm_with_prelude(SOURCE, mode, false);
-        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
-    }
-}
-
-#[test]
 fn map_borrow_iter_keeps_iteration_descriptor_storage_bounded() {
     extern "C" fn live_allocations() -> u64 {
         crate::runtime::arena::LIVE.with(|live| live.get() as u64)

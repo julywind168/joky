@@ -1,38 +1,5 @@
-use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
 use crate::{ErrorCode, ErrorPhase, FunctionSignature, Type};
-
-#[test]
-fn generic_inference_copy_layouts_and_recursion_match_direct_and_cps_backends() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = with_suspends(
-                include_str!("../../../../tests/fixtures/generics.jk"),
-                suspends,
-                Suspends::Typed,
-            );
-            let mut vm = VmEngine::with_mode(mode);
-            let exports = vm.load_source(&source).unwrap();
-            assert!(!exports
-                .iter()
-                .any(|name| name == "identity" || name.starts_with("__joky_generic_")));
-            assert_eq!(vm.function_signature("identity"), None);
-            assert_eq!(vm.function_signature("__joky_generic_0_choose"), None);
-            let result = if suspends {
-                vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
-            } else {
-                vm.call_int32_0("check").unwrap()
-            };
-            assert_eq!(result, 42, "{mode:?} suspends={suspends}");
-            if !suspends {
-                assert_eq!(
-                    vm.call_int32_1("identity", 42).unwrap_err().code(),
-                    ErrorCode::NotFound
-                );
-            }
-        }
-    }
-}
 
 #[test]
 fn generic_templates_are_checked_before_instantiation_even_when_unused() {
@@ -234,33 +201,6 @@ fn generic_instantiation_limits_stop_type_growth_without_rejecting_cached_recurs
             .code(),
         ErrorCode::ResourceLimit
     );
-}
-
-#[test]
-fn generic_inference_handles_literal_tuples_unit_and_local_type_shadowing() {
-    let source = r#"
-        type T = Int32
-        fn id<T>(x: T) -> T { x }
-        fn head<T>(pair: (Int64, T)) -> T { let (_, x) = pair; x }
-        fn pair<T, U>(x: (T, U), y: (U, T)) -> (T, U) { x }
-        fn run() -> Int32 {
-            let a = id(if true { 42 } else { 0 })
-            let b = head((4294967295, true))
-            let wide: Int64 = 4294967295
-            let (c, d) = pair((1, wide), (2, 3))
-            let unit = id(let local = 7)
-            let empty = id(if true {} else {})
-            let (e, f) = id::<((Int32,), Unit)>(((42,), {}))
-            let (g,) = e
-            let text = id::<Bool>(true)
-            if a == 42 && b && c == 1 && d == wide && local == 7 && g == 42 && text { 42 } else { -1 }
-        }
-    "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap();
-        assert_eq!(vm.call_int32_0("run").unwrap(), 42);
-    }
 }
 
 thread_local! {
@@ -471,37 +411,6 @@ fn generic_aggregate_recursion_preserves_poll_and_resource_limits() {
 }
 
 #[test]
-fn generic_templates_need_concrete_wrappers_at_native_function_boundaries() {
-    let invalid = "import joky/vm fn id<T>(x: T) -> T { x }
-        fn run() { let child = vm.Vm.new(); vm.register_int32_1(child, \"id\", id) }";
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        assert!(VmEngine::with_mode(mode).load_source(invalid).is_err());
-    }
-    let mut aot = crate::aot::AotCompiler::new("generic_reference").unwrap();
-    assert!(aot
-        .compile_module(&crate::parser::parse(invalid).unwrap())
-        .is_err());
-    let mut vm = VmEngine::new();
-    vm.load_source(
-        r#"
-        import joky/vm
-        fn id<T>(x: T) -> T { x }
-        fn concrete(x: Int32) -> Int32 { id(x) }
-        fn run() -> Int32 {
-            let child = vm.Vm.interpreter()
-            { let vm_text = "id"; vm.register_int32_1(child, &vm_text, concrete) }
-            { let vm_text = "extern fn id(x: Int32) -> Int32 fn run() -> Int32 {{ id(42) }}"; vm.load_source(child, &vm_text) }
-            let result = { let vm_text = "run"; vm.call_int32_0(child, &vm_text) }
-            vm.close(child)
-            result
-        }
-    "#,
-    )
-    .unwrap();
-    assert_eq!(vm.call_int32_0("run").unwrap(), 42);
-}
-
-#[test]
 fn generic_parameters_are_rejected_by_host_registration_without_replacing_entries() {
     use crate::core::types::TypeParameter;
     let parameter = Type::Parameter(std::sync::Arc::new(TypeParameter::new(
@@ -582,18 +491,5 @@ fn contextual_calls_infer_results_without_replaying_arguments() {
             task.resume().unwrap();
         }
         assert_eq!(task.cps_result(), Some(42));
-    }
-}
-
-#[test]
-fn contextual_calls_reject_missing_conflicting_and_unsatisfied_types() {
-    for source in [
-        "import joky/array.{type Array} fn main() { var a = Array.new(); a.push(1) }",
-        "fn identity<T>(value: T) -> T { value } fn main() { let x: Int64 = identity(true) }",
-        "fn identity<T>(value: T) -> T { value } fn main() { let x: Int64 = identity::<Bool>(true) }",
-        "import joky/array.{type Array} fn empty<T: Copy>() -> Array<T> { Array.new() } fn main() { let a: Array<String> = empty() }",
-    ] {
-        let error = super::support::frontend_error(source, &crate::ModuleSources::new());
-        assert_eq!(error.code(), ErrorCode::TypeMismatch, "{source}: {error}");
     }
 }

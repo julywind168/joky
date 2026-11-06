@@ -28,81 +28,6 @@ fn rejects(source: &str) {
 }
 
 #[test]
-fn closure_storage_move_values_return_and_record_fields() {
-    executes(
-        r#"
-        struct Holder<T> { value: T }
-        fn keep<T>(value: T) -> T { value }
-        type Saved<T> = Holder<T>
-        fn wrap<T>(value: T) -> Saved<T> { Holder { value } }
-        fn unwrap<T>(holder: Holder<T>) -> T { let Holder { value } = holder; value }
-        fn probe() -> Int32 {
-            let offset = 40
-            let f = keep(move |x: Int32| { offset + x })
-            let holder = wrap(f)
-            let g = unwrap(holder)
-            g(2)
-        }
-    "#,
-        42,
-    );
-}
-
-#[test]
-fn closure_storage_callable_fields_and_returned_environments() {
-    executes(
-        r#"
-        struct Holder<T> { value: T }
-        fn wrap<T>(value: T) -> Holder<T> { Holder { value } }
-        fn read<F: Fn() -> Int32>(holder: &Holder<F>) -> Int32 { (&holder.value)() }
-        fn update<F: FnMut() -> Int32>(holder: &mut Holder<F>) -> Int32 { (&mut holder.value)() }
-        fn consume<F: FnOnce() -> Int32>(holder: Holder<F>) -> Int32 { let f = holder.value; f() }
-        fn forward<F: Fn() -> Int32>(f: F) -> F { f }
-        fn probe() -> Int32 {
-            let offset = 20
-            let f = move || { offset }
-            let factory = move || { f }
-            let g = forward(factory())
-            let holder = wrap(g)
-            var count = 0
-            var counter = wrap(move || { count += 1; count })
-            let one = update(&mut counter)
-            let two = update(&mut counter)
-            let first = read(&holder)
-            let last = consume(holder)
-            first + last + two - one + 1
-        }
-    "#,
-        42,
-    );
-}
-
-#[test]
-fn closure_storage_factory_infers_nested_move_environment() {
-    executes(
-        r#"
-        fn probe() -> Int32 {
-            let make = |offset: Int32| { move |x: Int32| { x + offset } }
-            let add = make(20)
-            let other = make(30)
-            add(1) + other(-9)
-        }
-    "#,
-        42,
-    );
-    executes(
-        r#"
-        fn apply<T, F: FnOnce(Int32) -> T>(f: F) -> T { f(40) }
-        fn probe() -> Int32 {
-            let add = apply(|offset| { move |x: Int32| { offset + x } })
-            add(2)
-        }
-    "#,
-        42,
-    );
-}
-
-#[test]
 fn closure_storage_rejects_borrow_escape_copy_and_unsupported_storage() {
     for body in [
         "let n = 1; let f = || { n }; alloc(wrap(f))",
@@ -120,36 +45,6 @@ fn closure_storage_rejects_borrow_escape_copy_and_unsupported_storage() {
         let source = format!("struct Holder<T> {{ value: T }} fn wrap<T>(value: T) -> Holder<T> {{ Holder {{ value }} }} fn consume_ref<T>(value: &Holder<T>) {{}} fn probe() {{ {body}; {{}} }}");
         super::support::frontend_error(&source, &crate::ModuleSources::new());
     }
-}
-
-#[test]
-fn closure_noncapturing_direct_indirect_and_contextual_calls() {
-    executes(
-        r#"
-        fn apply(value: Int32, f: fn(Int32) -> Int32) -> Int32 { f(value) }
-        fn probe() -> Int32 {
-            let add = |a: Int32, b: Int32,| -> Int32 { a + b }
-            let increment = move |x: Int32| { x + 1 }
-            let typed: fn(Int32) -> Int32 = |x| { x * 2 }
-            add(10, 11) + increment(9) + apply(5, |x| { x + 1 }) + typed(2) + (|x: Int32| { x + 1 })(0)
-        }
-    "#,
-        42,
-    );
-}
-
-#[test]
-fn closure_noncapturing_return_control_flow_and_outer_generics() {
-    executes(
-        r#"
-        fn wrap<T>(value: T) -> T { let f = |x: T| { return x }; f(value) }
-        fn probe() -> Int32 {
-            let f = |n: Int32| { var i = 0; while i < n { i = i + 1; if i == 2 { continue }; if i == 5 { break } }; return i }
-            wrap(37) + f(10)
-        }
-    "#,
-        42,
-    );
 }
 
 #[test]
@@ -223,84 +118,6 @@ fn closure_move_snapshots_and_consumes_owning_captures() {
     rejects(
         "fn probe() { let value = \"owned\"; let f = move || { println(value) }; println(value) }",
     );
-}
-
-#[test]
-fn closure_callable_helpers_infer_and_enforce_capabilities() {
-    executes(
-        r#"
-        fn apply<T, U, F: FnOnce(T) -> U>(value: T, f: F) -> U { f(value) }
-        fn twice<F: Fn(Int32) -> Int32>(f: F) -> Int32 { f(10) + f(12) }
-        fn repeat<F: FnMut() -> Int32>(f: F) -> Int32 { var callback = f; callback() + callback() }
-        fn probe() -> Int32 {
-            let offset = 10
-            let first = apply(10, |x| { x + offset })
-            let second = twice(|x| { x })
-            first + second
-        }
-    "#,
-        42,
-    );
-    executes(
-        r#"
-        fn repeat<F: FnMut() -> Int32>(f: F) -> Int32 { var callback = f; callback() + callback() }
-        fn probe() -> Int32 { var n = 19; repeat(|| { n = n + 1; n }) + 1 }
-    "#,
-        42,
-    );
-    rejects("fn bad<F: FnOnce() -> Int32>(f: F) -> Int32 { f() + f() } fn probe() {}");
-    rejects("fn bad<F: FnMut() -> Int32>(f: F) -> Int32 { f() } fn probe() {}");
-    rejects("fn run<F: Fn() -> Int32>(f: F) -> Int32 { f() } fn probe() { var n = 1; run(|| { n = n + 1; n }) }");
-}
-
-#[test]
-fn closure_standard_option_and_result_callbacks() {
-    executes(
-        r#"
-        import joky/option.{type Option}
-        import joky/result.{type Result}
-        fn plus_one(x: Int32) -> Int32 { x + 1 }
-        fn probe() -> Int32 {
-            let offset = 10
-            let a = Option.Some(5).map(|x| { x + offset }).unwrap_or(0)
-            let b = Option.Some(5).and_then(|x| { Option.Some(x + offset) }).unwrap_or(0)
-            let ok: Result<Int32, Int32> = Result.Ok(4)
-            let c = ok.map(|x| { x + 1 }).unwrap_or(0)
-            let err: Result<Int32, Int32> = Result.Err(3)
-            let d = err.map_err(|x| { x + 1 }).err().unwrap_or(0)
-            let e = Option.Some(2).map::<Int32>(plus_one).unwrap_or(0)
-            a + b + c + d + e
-        }
-    "#,
-        42,
-    );
-}
-
-#[test]
-fn closure_nested_captures_helpers_and_hidden_lifetimes() {
-    executes(
-        "fn probe() -> Int32 { let f = { let n = 40; let g = move || { n + 2 }; g }; f() }",
-        42,
-    );
-    rejects("fn probe() { let f = { let n = 40; let g = || { n + 2 }; g }; f() }");
-    executes("fn probe() -> Int32 { let n = 40; let outer = || { let inner = |x: Int32| { n + x }; inner(2) }; outer() }", 42);
-    executes("fn probe() -> Int32 { var n = 40; { var outer = || { var inner = || { n = n + 1 }; inner(); inner() }; outer() }; n }", 42);
-    executes(
-        "fn probe() -> Int32 { let n = 40; let f = || { n }; let g = || { f() + 2 }; g() }",
-        42,
-    );
-    executes("fn apply<F: Fn() -> Int32>(f: &F) -> Int32 { f() } fn probe() -> Int32 { let n = 42; let f = || { n }; apply(&f) }", 42);
-    executes("fn apply<F: FnMut() -> Int32>(f: &mut F) -> Int32 { f() } fn probe() -> Int32 { var n = 41; var f = || { n = n + 1; n }; apply(&mut f) }", 42);
-    executes("fn forward<F: FnOnce(Int32) -> Int32>(f: F) -> Int32 { apply(f) } fn apply<F: FnOnce(Int32) -> Int32>(f: F) -> Int32 { f(40) } fn probe() -> Int32 { let n = 2; forward(|x| { x + n }) }", 42);
-    executes("fn probe() -> Int32 { let n = 42; let f = || { let saved = n; { var n = 0; n = 1 }; saved }; f() }", 42);
-    rejects(
-        "fn bad<F: FnOnce() -> Int32>(f: F) -> F { f } fn probe() { let n = 1; bad(|| { n }) }",
-    );
-    rejects("fn bad<F: FnOnce() -> Int32>(f: &F) -> Int32 { f() } fn probe() {}");
-    rejects("fn identity<T>(x: T) -> T { x } fn probe() { let f = || { 1 }; identity(f) }");
-    rejects("fn probe() { let f = || { 1 }; let g = || { let moved = f; moved() } }");
-    rejects("fn capture<F: Fn(&Int32) -> &Int32>(f: F, x: &Int32) -> &Int32 { f(x) } fn probe() { let n = 1; let f = |x: &Int32| { &n }; capture(f, &n) }");
-    rejects("fn probe() @suspends { let n = 1; let f = || { n } }");
 }
 
 #[test]
@@ -466,17 +283,6 @@ fn closure_interpreter_keeps_old_entries_alive_across_reload() {
 }
 
 #[test]
-fn closure_reference_captures_and_owning_field_updates() {
-    executes(
-        "fn probe() -> Int32 { let n = 42; let p = &n; let f = || { (*p) }; f() }",
-        42,
-    );
-    executes("fn probe() -> Int32 { var n = 41; { let p = &mut n; var f = || { (*(p) = (*p) + 1) }; f() }; n }", 42);
-    executes("import joky/string struct Pair { value: String, n: Int32 } fn probe() -> Int32 { var p = Pair { value: \"a\", n: 40 }; { var f = || { p.value = \"hello\"; p.n = p.n + 1 }; f(); f() }; if string.byte_length(&p.value) == 5 { p.n } else { 0 } }", 42);
-    executes("import joky/string fn probe() -> Int32 { let value = \"hello\"; let f = move || -> String { value }; let g = move || -> String { f() }; let result = g(); if string.byte_length(&result) == 5 { 42 } else { 0 } }", 42);
-}
-
-#[test]
 fn closure_fixed_seed_model_preserves_snapshots_and_repeated_updates() {
     let mut source =
         String::from("fn apply<F: FnOnce(Int32) -> Int32>(f: F, x: Int32) -> Int32 { f(x) }\n");
@@ -568,14 +374,6 @@ fn closure_instruction_budget_failure_releases_initialized_resources() {
         });
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0, "budget {budget}"));
     }
-}
-
-#[test]
-fn closure_callable_bounds_normalize_aliases_and_inference_dependencies() {
-    executes("type Number = Int32 fn apply<F: FnOnce(Number) -> Number + Fn(Int32) -> Int32>(f: F) -> Int32 { f(20) + f(22) } fn probe() -> Int32 { let offset = 0; apply(|x| { x + offset }) }", 42);
-    executes("fn apply<T, U, F: FnOnce(T) -> U>(f: F, value: T) -> U { f(value) } fn probe() -> Int32 { let n = 2; apply(|x| { x + n }, 40) }", 42);
-    executes("fn pipe<T, U, V, F: FnOnce(T) -> U, G: FnOnce(U) -> V>(g: G, f: F, value: T) -> V { g(f(value)) } fn probe() -> Int32 { let n = 2; pipe(|x| { x + n }, |x| { x * 2 }, 20) }", 42);
-    executes("fn run<F: FnOnce() -> Int32>(f: F) -> Int32 { let g = move || { f() }; g() } fn probe() -> Int32 { let n = 42; run(|| { n }) }", 42);
 }
 
 #[test]

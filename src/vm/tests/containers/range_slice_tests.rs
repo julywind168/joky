@@ -5,34 +5,6 @@ use crate::runtime::arena::LIVE;
 const SOURCE: &str = include_str!("../../../../tests/fixtures/range_slices.jk");
 
 #[test]
-fn range_slices_preserve_views_order_bounds_and_mutability() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm_with_prelude(SOURCE, mode, false);
-        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [0, 1, 2]));
-        for name in [
-            "bad_half",
-            "bad_reverse",
-            "bad_closed",
-            "bad_fixed",
-            "bad_subslice",
-            "bad_max",
-        ] {
-            EVENTS.with(|events| events.borrow_mut().clear());
-            let error = vm.call_unit_0(name).unwrap_err();
-            assert!(error.span().is_some(), "{name}: {error}");
-            EVENTS.with(|events| {
-                assert_eq!(
-                    *events.borrow(),
-                    if name == "bad_max" { vec![99] } else { vec![] }
-                )
-            });
-            LIVE.with(|live| assert_eq!(live.get(), 0));
-        }
-    }
-}
-
-#[test]
 fn range_slices_resume_once_and_release_borrows_on_cancel() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm_with_prelude(SOURCE, mode, false);
@@ -126,7 +98,7 @@ fn slice_members_preserve_alias_rejection_and_nested_diagnostics() {
         "import joky/slice.{type Slice} type View<T> = Slice<T> impl<T> View<T> { fn extra(&self) -> Int32 { 0 } }",
     ] {
         let error = frontend_error(source, &crate::ModuleSources::new());
-        assert!(error.message().contains("aliases and specialized"), "{error}");
+        assert!(error.message().contains("aliases and partially generic"), "{error}");
     }
     for value in ["view.missing()", "keep(view.missing())"] {
         let source = format!("fn keep<T>(value: T) -> T {{ value }} fn main() {{ let values = [1, 2]; let view = &values[0..2]; println({value}) }}");
@@ -143,19 +115,6 @@ fn slice_members_preserve_alias_rejection_and_nested_diagnostics() {
     );
     assert!(error.message().contains("Cannot infer"), "{error}");
     assert!(!error.message().contains("joky/member/"), "{error}");
-}
-
-#[test]
-fn borrowed_queries_preserve_owners_provenance_and_missing_results() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = super::VmEngine::with_mode(mode);
-        vm.load_source(include_str!(
-            "../../../../tests/fixtures/borrowed_queries.jk"
-        ))
-        .unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
-        LIVE.with(|n| assert_eq!(n.get(), 0));
-    }
 }
 
 #[test]

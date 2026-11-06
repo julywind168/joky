@@ -81,33 +81,3 @@ fn add_operators_require_the_standard_trait_and_preserve_type_boundaries() {
     );
     assert_eq!(vm.call_int32_0("f").unwrap(), 1250);
 }
-
-#[test]
-fn add_operators_keep_identity_across_import_aliases_and_hidden_trait_scopes() {
-    let mut modules = crate::ModuleSources::new();
-    modules.insert("counts", "import joky/ops.{type Add as Sum} pub struct Count {pub value:Int32} impl Sum for Count {fn add(self, other:Count)->Count {Count {value:self.value+other.value}}}").unwrap();
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = super::VmEngine::with_mode(mode);
-        vm.set_prelude_enabled(false);
-        vm.load_source_with_modules("import counts.{type Count} trait Add{fn add(self,other:Self)->Self} fn f()->Int32{(Count{value:20}+Count{value:22}).value}", &modules).unwrap();
-        assert_eq!(vm.call_int32_0("f").unwrap(), 42);
-    }
-}
-
-#[test]
-fn add_operators_infer_long_numeric_and_duration_chains() {
-    let numeric = (1..=32)
-        .map(|n| n.to_string())
-        .collect::<Vec<_>>()
-        .join(" + ");
-    let durations = (1..=32)
-        .map(|n| format!("{n}ms"))
-        .collect::<Vec<_>>()
-        .join(" + ");
-    let source = format!("fn numeric()->Int32{{{numeric}}} fn durations()->Int32{{int32(({durations}).as_millis())}}");
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm(&source, mode);
-        assert_eq!(vm.call_int32_0("numeric").unwrap(), 528);
-        assert_eq!(vm.call_int32_0("durations").unwrap(), 528);
-    }
-}

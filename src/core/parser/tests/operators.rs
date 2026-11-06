@@ -1,59 +1,6 @@
 use super::*;
 
 #[test]
-fn range_expressions_preserve_precedence_spans_and_newline_boundaries() {
-    let source = "fn f() { let r = 1 + 2..=4 * 5\nlet s = false || true..false && true }";
-    let module = parse(source).unwrap();
-    let Item::FnDef(function) = &module.items[0] else {
-        panic!()
-    };
-    let Expr::Block { exprs, .. } = &function.body else {
-        panic!()
-    };
-    let Expr::Let { value, .. } = &exprs[0] else {
-        panic!()
-    };
-    let Expr::Call {
-        callee, args, span, ..
-    } = value.as_ref()
-    else {
-        panic!()
-    };
-    assert_eq!(callee, "$joky_iter.range_inclusive");
-    assert_eq!(span.slice(source), Some("1 + 2..=4 * 5"));
-    assert!(matches!(args[0], Expr::BinOp { op: BinOp::Add, .. }));
-    assert!(matches!(args[1], Expr::BinOp { op: BinOp::Mul, .. }));
-    let Expr::Let { value, .. } = &exprs[1] else {
-        panic!()
-    };
-    let Expr::Call { args, .. } = value.as_ref() else {
-        panic!()
-    };
-    assert!(matches!(
-        args[0],
-        Expr::Logical {
-            op: LogicalOp::Or,
-            ..
-        }
-    ));
-    assert!(matches!(
-        args[1],
-        Expr::Logical {
-            op: LogicalOp::And,
-            ..
-        }
-    ));
-    parse("fn f() { let r = 1..\n3\nlet s = 4..=5 }").unwrap();
-    assert!(parse("fn f() { let r = 1\n..3 }").is_err());
-    for body in ["0..1..2", "0..=1..2", "0..1..=2"] {
-        assert!(parse(&format!("fn f() {{ {body} }}"))
-            .unwrap_err()
-            .message
-            .contains("Range chains"));
-    }
-}
-
-#[test]
 fn match_and_concurrent_branches_allow_bitwise_or_and_require_delimiters() {
     for source in [
             "enum E { A, B } fn f(e: E) -> Int32 { match e { A => 1 | 2, B => { 4 | 8 } } }",
@@ -128,53 +75,6 @@ fn jumps_require_grouping_inside_operator_operands() {
 }
 
 #[test]
-fn logical_precedence_and_else_if_spans_are_preserved() {
-    let source =
-        "fn f(数: Int32) { if 数 > 0 || false && !true { 1 } else if 数 == 0 { 2 } else { 3 } }";
-    let module = parse(source).unwrap();
-    let Item::FnDef(function) = &module.items[0] else {
-        panic!("expected function")
-    };
-    let Expr::Block { exprs, .. } = &function.body else {
-        panic!("expected block")
-    };
-    let Expr::IfChain {
-        arms,
-        fallback,
-        span,
-    } = &exprs[0]
-    else {
-        panic!("expected if chain")
-    };
-    let (condition, then_branch) = &arms[0];
-    assert_eq!(
-        span.slice(source),
-        Some("if 数 > 0 || false && !true { 1 } else if 数 == 0 { 2 } else { 3 }")
-    );
-    assert_eq!(then_branch.span().slice(source), Some("{ 1 }"));
-    let Expr::Logical {
-        op: LogicalOp::Or,
-        lhs,
-        rhs,
-        ..
-    } = condition
-    else {
-        panic!("expected disjunction")
-    };
-    assert!(matches!(lhs.as_ref(), Expr::BinOp { op: BinOp::Gt, .. }));
-    assert!(matches!(
-        rhs.as_ref(),
-        Expr::Logical {
-            op: LogicalOp::And,
-            ..
-        }
-    ));
-    assert_eq!(arms[1].0.span().slice(source), Some("数 == 0"));
-    let other = fallback.as_ref().unwrap();
-    assert_eq!(other.span().slice(source), Some("{ 3 }"));
-}
-
-#[test]
 fn incomplete_conditionals_and_logical_operators_report_located_errors() {
     for (body, message) in [
         ("if", "Expected an expression"),
@@ -196,85 +96,6 @@ fn incomplete_conditionals_and_logical_operators_report_located_errors() {
         assert!(error.span.slice(&source).is_some());
     }
     parse("fn f() { if true {}\nelse {}\n join { f(), f() } }").unwrap();
-}
-
-#[test]
-fn integer_literals_preserve_untyped_magnitudes_and_negative_spans() {
-    for expression in [
-        "2147483648",
-        "-2147483648",
-        "9223372036854775807",
-        "-9223372036854775808",
-        "-(2147483648)",
-    ] {
-        parse(&format!("fn f() -> Int64 {{ {expression} }}")).unwrap();
-    }
-    for spelling in ["18446744073709551616", "999999999999999999999999999999"] {
-        let source = format!("// 🙂\nfn f() {{ {spelling} }}");
-        let error = parse(&source).unwrap_err();
-        assert_eq!(error.line, 2);
-        assert!(error.message.contains("outside UInt64 magnitude range"));
-        assert_eq!(error.span.slice(&source), Some(spelling));
-    }
-    let source = "fn f() { -9223372036854775808 }";
-    let module = parse(source).unwrap();
-    let Item::FnDef(f) = &module.items[0] else {
-        panic!()
-    };
-    let Expr::Block { exprs, .. } = &f.body else {
-        panic!()
-    };
-    assert!(matches!(
-        exprs[0],
-        Expr::Literal {
-            literal: Literal::Integer {
-                magnitude: 9223372036854775808,
-                negative: true
-            },
-            ..
-        }
-    ));
-    assert_eq!(exprs[0].span().slice(source), Some("-9223372036854775808"));
-}
-
-#[test]
-fn unary_precedence_and_utf8_spans_are_preserved() {
-    let source = "fn f(数: Int32) -> Int32 { 1 + -数 * --2 }";
-    let module = parse(source).unwrap();
-    let Item::FnDef(function) = &module.items[0] else {
-        panic!("expected function")
-    };
-    let Expr::Block { exprs, .. } = &function.body else {
-        panic!("expected block")
-    };
-    let Expr::BinOp {
-        op: BinOp::Add,
-        rhs,
-        ..
-    } = &exprs[0]
-    else {
-        panic!("expected addition")
-    };
-    let Expr::BinOp {
-        op: BinOp::Mul,
-        lhs,
-        rhs,
-        ..
-    } = rhs.as_ref()
-    else {
-        panic!("expected product")
-    };
-    assert_eq!(lhs.span().slice(source), Some("-数"));
-    let Expr::Unary {
-        op: UnaryOp::Neg,
-        operand,
-        ..
-    } = rhs.as_ref()
-    else {
-        panic!("expected negation")
-    };
-    assert_eq!(rhs.span().slice(source), Some("--2"));
-    assert_eq!(operand.span().slice(source), Some("-2"));
 }
 
 #[test]

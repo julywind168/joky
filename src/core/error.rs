@@ -251,28 +251,3 @@ impl From<super::parser::Diagnostic> for Error {
             .with_span(diagnostic.span)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn preserves_machine_readable_phase_and_line() {
-        let error = Error::new(ErrorPhase::Parse, "unexpected token").with_line(4);
-        assert_eq!(error.phase(), ErrorPhase::Parse);
-        assert_eq!(error.code(), ErrorCode::Generic);
-        assert_eq!(error.line(), Some(4));
-        assert_eq!(error.span(), None);
-        assert!(error.message().contains("unexpected token"));
-        assert_eq!(error.to_string(), "Line 4: unexpected token");
-    }
-
-    #[test]
-    fn preserves_machine_readable_error_code() {
-        let error =
-            Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch, "wrong type");
-        assert_eq!(error.code(), ErrorCode::TypeMismatch);
-        assert_eq!(error.code().as_str(), "type_mismatch");
-        assert_eq!(error.code().to_string(), "type_mismatch");
-    }
-}

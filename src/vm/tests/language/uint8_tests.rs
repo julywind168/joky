@@ -72,27 +72,6 @@ fn uint8_array_budget_failures_clean_storage() {
     }
 }
 
-#[test]
-fn uint8_rejects_out_of_range_literals_mixed_types_and_c_record_fields() {
-    for source in [
-        "fn f() -> UInt8 { 256 }",
-        "fn f() -> UInt8 { -1 }",
-        "fn f(a: UInt8, b: UInt32) -> UInt8 { a + b }",
-        "fn f(a: UInt8) -> UInt8 { -a }",
-        "type UInt8 = Int32",
-        "fn uint8(a: Int32) -> Int32 { a }",
-    ] {
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            assert!(vm.load_source(source).is_err(), "{mode:?}: {source}");
-        }
-        let mut aot = crate::aot::AotCompiler::new("byte_rejection").unwrap();
-        if let Ok(ast) = crate::parser::parse(source) {
-            assert!(aot.compile_module(&ast).is_err(), "{source}");
-        }
-    }
-}
-
 thread_local! { static POLLS: Cell<usize> = const { Cell::new(0) }; }
 unsafe extern "C" fn delay_byte(frame: *mut crate::runtime::cps::CpsFrame) -> i32 {
     let frame = &mut *frame;

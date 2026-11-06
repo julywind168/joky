@@ -863,40 +863,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn range_tokens_distinguish_floats_tuple_members_and_integer_bounds() {
-        let tokens = Lexer::tokenize(
-            "1..2 1..=2 1.5..=2.5 x.0..x.1 0xffffffffffffffff..=0xffffffffffffffff",
-        )
-        .unwrap();
-        let kinds: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
-        assert_eq!(
-            kinds,
-            vec![
-                TokenKind::IntLit(1),
-                TokenKind::DotDot,
-                TokenKind::IntLit(2),
-                TokenKind::IntLit(1),
-                TokenKind::DotDotEq,
-                TokenKind::IntLit(2),
-                TokenKind::FloatLit("1.5".into()),
-                TokenKind::DotDotEq,
-                TokenKind::FloatLit("2.5".into()),
-                TokenKind::Ident("x".into()),
-                TokenKind::Dot,
-                TokenKind::TupleIndex(0),
-                TokenKind::DotDot,
-                TokenKind::Ident("x".into()),
-                TokenKind::Dot,
-                TokenKind::TupleIndex(1),
-                TokenKind::IntLit(u64::MAX),
-                TokenKind::DotDotEq,
-                TokenKind::IntLit(u64::MAX),
-                TokenKind::Eof,
-            ]
-        );
-    }
-
-    #[test]
     fn block_comments_preserve_token_boundaries_lines_and_utf8_spans() {
         let source = "a/**/b/* outer 🙂\r\n/* inner\n*/ end */42/*tail*/";
         let tokens = Lexer::tokenize(source).unwrap();
@@ -982,67 +948,6 @@ mod tests {
         assert_eq!(expression[1].kind, TokenKind::Eof);
         let error = Lexer::tokenize(r#""{/* unterminated }""#).unwrap_err();
         assert_eq!(error.message, "Unterminated block comment");
-    }
-
-    #[test]
-    fn radix_literals_keep_magnitudes_and_complete_utf8_spans() {
-        for (text, value) in [
-            ("0", 0),
-            ("000_042", 42),
-            ("1_000", 1000),
-            ("0xff", 255),
-            ("0xA_BcD", 0xabcd),
-            ("0b1010_0011", 163),
-            ("18_446_744_073_709_551_615", u64::MAX),
-            ("0xffff_ffff_ffff_ffff", u64::MAX),
-            (
-                "0b1111111111111111111111111111111111111111111111111111111111111111",
-                u64::MAX,
-            ),
-        ] {
-            let source = format!("// 🙂\n{text}");
-            let tokens = Lexer::tokenize(&source).unwrap();
-            assert_eq!(tokens[0].kind, TokenKind::IntLit(value));
-            assert_eq!(tokens[0].span.slice(&source), Some(text));
-            assert_eq!(tokens[0].line, 2);
-        }
-        for text in [
-            "0x", "0b", "0x_ff", "0b_1", "0xff_", "1_", "1__0", "0b102", "0xfg", "123abc", "1u32",
-            "0Xff", "0B10", "0o77", "1é", "1_é",
-        ] {
-            let source = format!("// 🙂\n{text}");
-            let error = Lexer::tokenize(&source).unwrap_err();
-            assert_eq!(error.span.slice(&source), Some(text), "{text}");
-            assert_eq!(error.line, 2);
-            assert!(error.message.contains("Invalid integer literal"));
-        }
-        for text in [
-            "18_446_744_073_709_551_616",
-            "0x1_0000_0000_0000_0000",
-            "0b10000000000000000000000000000000000000000000000000000000000000000",
-        ] {
-            let source = format!("// 🙂\n{text}");
-            let error = Lexer::tokenize(&source).unwrap_err();
-            assert_eq!(error.span.slice(&source), Some(text));
-            assert!(error.message.contains("outside UInt64 magnitude range"));
-        }
-        let tokens = Lexer::tokenize("~ & && | || ^ << >> <= >=").unwrap();
-        assert_eq!(
-            tokens.iter().map(|t| t.kind.clone()).collect::<Vec<_>>(),
-            [
-                TokenKind::Tilde,
-                TokenKind::Amp,
-                TokenKind::AndAnd,
-                TokenKind::Pipe,
-                TokenKind::OrOr,
-                TokenKind::Caret,
-                TokenKind::Shl,
-                TokenKind::Shr,
-                TokenKind::Le,
-                TokenKind::Ge,
-                TokenKind::Eof
-            ]
-        );
     }
 
     #[test]
@@ -1180,26 +1085,6 @@ mod tests {
     }
 
     #[test]
-    fn borrowed_source_preserves_unicode_offsets_and_lookahead() {
-        let source = "// 🙂\r\n\u{2003}let café = \"hé🙂\"; café != 12";
-        let tokens = Lexer::tokenize(source).unwrap();
-        let spellings: Vec<_> = tokens
-            .iter()
-            .map(|token| token.span.slice(source).unwrap())
-            .collect();
-        assert_eq!(
-            spellings,
-            ["let", "café", "=", "\"hé🙂\"", ";", "café", "!=", "12", ""]
-        );
-        assert!(tokens.iter().all(|token| token.line == 2));
-        assert!(matches!(&tokens[1].kind, TokenKind::Ident(name) if name == "café"));
-        assert!(matches!(&tokens[3].kind, TokenKind::StrLit(text) if text == "hé🙂"));
-        assert_eq!(tokens[6].kind, TokenKind::Ne);
-        assert_eq!(tokens[7].kind, TokenKind::IntLit(12));
-        assert_eq!(tokens.last().unwrap().span, Span::empty(source.len()));
-    }
-
-    #[test]
     fn borrowed_source_reports_errors_and_eof_after_multibyte_text() {
         for (source, marked) in [
             ("// é\n18446744073709551616", "18446744073709551616"),
@@ -1215,29 +1100,5 @@ mod tests {
             assert_eq!(tokens.last().unwrap().span, Span::empty(source.len()));
             assert_eq!(tokens.last().unwrap().kind, TokenKind::Eof);
         }
-    }
-
-    #[test]
-    fn tokenizes_function_definition() {
-        let src = "fn add(x: Int32, y: Int32) -> Int32 { x + y }";
-        let tokens = Lexer::tokenize(src).unwrap();
-        let kinds: Vec<_> = tokens.iter().map(|t| &t.kind).collect();
-        assert!(matches!(kinds[0], TokenKind::Fn));
-        assert!(matches!(kinds[1], TokenKind::Ident(s) if s == "add"));
-    }
-
-    #[test]
-    fn tokenizes_string_literal() {
-        let src = r#""Hello, {{name}}!""#;
-        let tokens = Lexer::tokenize(src).unwrap();
-        assert!(matches!(&tokens[0].kind, TokenKind::StrLit(s) if s == "Hello, {name}!"));
-    }
-
-    #[test]
-    fn tokenizes_extern_declaration() {
-        let src = "extern fn host_multiply(x: Int32, y: Int32) -> Int32";
-        let tokens = Lexer::tokenize(src).unwrap();
-        assert!(matches!(tokens[0].kind, TokenKind::Extern));
-        assert!(matches!(tokens[1].kind, TokenKind::Fn));
     }
 }

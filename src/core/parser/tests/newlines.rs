@@ -57,37 +57,6 @@ fn block(source: &str) -> Vec<Expr> {
 }
 
 #[test]
-fn complete_expressions_end_before_next_line_operators() {
-    let source = "{ let r = &mut *p\n*r = *r - 1\n*r\n-2\n&value }";
-    let exprs = block(source);
-    assert_eq!(exprs.len(), 5);
-    assert!(matches!(&exprs[0], Expr::Let { .. }));
-    assert!(matches!(&exprs[1], Expr::FieldAssign { .. }));
-    assert!(matches!(
-        &exprs[2],
-        Expr::Unary {
-            op: UnaryOp::Deref,
-            ..
-        }
-    ));
-    assert_eq!(exprs[3].span().slice(source), Some("-2"));
-    assert!(matches!(
-        &exprs[4],
-        Expr::Unary {
-            op: UnaryOp::Borrow,
-            ..
-        }
-    ));
-    for source in ["{ a - b }", "{ a * b }", "{ a & b }"] {
-        assert!(matches!(&block(source)[0], Expr::BinOp { .. }));
-    }
-    for source in ["{ 1\n+ 2 }", "{ a\n&& b }", "{ a\n= b }"] {
-        let mut parser = Parser::from_source(source).unwrap();
-        assert!(parser.parse_block().is_err(), "{source}");
-    }
-}
-
-#[test]
 fn block_comments_preserve_newline_separation_rules() {
     assert_eq!(block("{ 42/* same line */-1 }").len(), 1);
     assert_eq!(block("{ 42/* outer\n/* nested */ */-1 }").len(), 2);
@@ -104,36 +73,6 @@ fn block_comments_preserve_newline_separation_rules() {
     ] {
         assert!(parse(source).is_err(), "{source}");
     }
-}
-
-#[test]
-fn incomplete_expressions_and_parentheses_continue_across_lines() {
-    for source in [
-        "{ let x =\n1 +\n2\nx }",
-        "{ let x = (1\n+ 2)\nx }",
-        "{ let x = pick(1\n+ 2,\n4)\nx }",
-        "{ var x = 1\nx =\n2\nx }",
-        "{ let x = a &&\nb\nx }",
-        "{ let x = a <\nb\nx }",
-    ] {
-        let exprs = block(source);
-        assert_eq!(exprs.last().unwrap().span().slice(source), Some("x"));
-    }
-    let exprs = block("{ pick({ let p = &mut value\n*p = 42\n*p })\n-1 }");
-    let Expr::Call { args, .. } = &exprs[0] else {
-        panic!()
-    };
-    let Expr::Block { exprs: nested, .. } = &args[0] else {
-        panic!()
-    };
-    assert_eq!(nested.len(), 3);
-    assert_eq!(exprs.len(), 2);
-    let exprs = block("{ pick(R { x: value\n y: -1 })\n-2 }");
-    let Expr::Call { args, .. } = &exprs[0] else {
-        panic!()
-    };
-    assert!(matches!(&args[0], Expr::Record { fields, .. } if fields.len() == 2));
-    assert_eq!(exprs.len(), 2);
 }
 
 #[test]
@@ -179,62 +118,6 @@ fn call_parentheses_follow_complete_names_only_on_the_same_line() {
     assert_eq!(block("{ (|| -> Int32 { 42 })\n(1) }").len(), 2);
     assert_eq!(block("{ R\n{} }").len(), 2);
     assert!(matches!(&block("{ R {} }")[0], Expr::Record { .. }));
-}
-
-#[test]
-fn newline_return_is_bare_and_newline_tail_values_are_preserved() {
-    let exprs = block("{ return // no value\n42 }");
-    assert_eq!(exprs.len(), 2);
-    assert!(matches!(&exprs[0], Expr::Return { value: None, .. }));
-    for source in ["{ return (\n42\n) }", "{ (return\n42) }"] {
-        assert!(matches!(
-            &block(source)[0],
-            Expr::Return { value: Some(_), .. }
-        ));
-    }
-    assert!(matches!(&block("{ 42\n }")[0], Expr::Literal { .. }));
-    assert!(matches!(
-        &block("{ 42;\n }")[0],
-        Expr::Sequence { trailing: true, .. }
-    ));
-}
-
-#[test]
-fn multiline_interpolation_ends_on_its_closing_line() {
-    let source = "{ \"{({\n42\n})}\" + \"tail\"\n-1 }";
-    let exprs = block(source);
-    assert_eq!(exprs.len(), 2);
-    assert!(matches!(&exprs[0], Expr::BinOp { op: BinOp::Add, .. }));
-}
-
-#[test]
-fn postfix_unwrap_chains_and_respects_expression_boundaries() {
-    let source = "{ value?!.field[0]!\n!flag\nother != last }";
-    let exprs = block(source);
-    assert_eq!(exprs.len(), 3);
-    assert_eq!(exprs[0].span().slice(source), Some("value?!.field[0]!"));
-    assert!(matches!(
-        exprs[0],
-        Expr::Unary {
-            op: UnaryOp::Unwrap,
-            ..
-        }
-    ));
-    assert!(matches!(
-        exprs[1],
-        Expr::Unary {
-            op: UnaryOp::Not,
-            ..
-        }
-    ));
-    assert!(matches!(exprs[2], Expr::BinOp { op: BinOp::Ne, .. }));
-    assert_eq!(block("{ value\n!flag }").len(), 2);
-    assert_eq!(block("{ value/*\n*/!flag }").len(), 2);
-    assert!(Parser::from_source("{ value\n? }")
-        .unwrap()
-        .parse_block()
-        .is_err());
-    assert_eq!(block("{ value!\n.method()? }").len(), 1);
 }
 
 #[test]

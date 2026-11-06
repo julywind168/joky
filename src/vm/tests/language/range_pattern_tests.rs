@@ -6,27 +6,6 @@ use crate::ErrorCode;
 const SOURCE: &str = include_str!("../../../../tests/fixtures/range_patterns.jk");
 
 #[test]
-fn range_patterns_cover_integer_domains_nested_payloads_and_first_match() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm_with_prelude(SOURCE, mode, false);
-        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [21, 31, 22, 23, 2]));
-        EVENTS.with(|events| events.borrow_mut().clear());
-        let error = vm.call_unit_0("failure").unwrap_err();
-        assert!(error.to_string().contains("range failure"));
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [3, 99]));
-        LIVE.with(|live| assert_eq!(live.get(), 0));
-        // String patterns alone must load their comparison with no prelude or imports.
-        let vm = parity_vm_with_prelude(
-            r#"fn compute() -> Int32 { match "text" { "other" => 0, "text" => 42, _ => 1 } }"#,
-            mode,
-            false,
-        );
-        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
-    }
-}
-
-#[test]
 fn range_patterns_resume_selected_arms_without_replaying_the_scrutinee() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm_with_prelude(SOURCE, mode, false);

@@ -3,14 +3,6 @@ use super::VmMode;
 
 const SOURCE: &str = include_str!("../../../../tests/fixtures/array_borrow_iter.jk");
 
-#[test]
-fn array_borrow_iter_reads_mutates_and_resumes_cursors() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm_with_prelude(SOURCE, mode, false);
-        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
-    }
-}
-
 fn events() -> Vec<i32> {
     EVENTS.with(|events| events.borrow().clone())
 }

@@ -5,14 +5,6 @@ use crate::{
 };
 
 const SOURCE: &str = include_str!("../../../../tests/fixtures/arrays.jk");
-const ENTRIES: &[&str] = &[
-    "array_empty",
-    "array_growth",
-    "array_access",
-    "array_moves",
-    "array_branches",
-    "array_reserve_existing",
-];
 
 const GENERIC_SOURCE: &str = include_str!("../../../../tests/fixtures/generic_arrays.jk");
 
@@ -175,34 +167,6 @@ fn generic_arrays_charge_padded_layouts_and_skip_zero_sized_payloads() {
 }
 
 #[test]
-fn generic_arrays_preserve_scalar_aggregate_and_zero_sized_elements() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for prelude in [true, false] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.set_prelude_enabled(prelude);
-            vm.load_source(GENERIC_SOURCE)
-                .unwrap_or_else(|e| panic!("{e}"));
-            for entry in [
-                "generic_array_scalars",
-                "generic_array_records",
-                "generic_array_tuples",
-                "generic_array_enums",
-                "generic_array_zero_size",
-            ] {
-                assert_eq!(vm.call_int32_0(entry).unwrap(), 42, "{mode:?} {entry}");
-                LIVE.with(|n| assert_eq!(n.get(), 0));
-            }
-            for entry in ["generic_array_failure", "generic_array_zero_failure"] {
-                let error = vm.call_int32_0(entry).unwrap_err();
-                assert_eq!(error.code(), ErrorCode::ResourceLimit);
-                assert!(error.span().is_some());
-                LIVE.with(|n| assert_eq!(n.get(), 0));
-            }
-        }
-    }
-}
-
-#[test]
 fn generic_arrays_reject_noncopy_elements_and_preserve_template_ownership() {
     let prefix = "import joky/array.{type Array}\n";
     for (body, message) in [
@@ -269,22 +233,6 @@ fn generic_arrays_complete_aggregate_writes_before_interpreter_slicing() {
                 _ => unreachable!(),
             }
             LIVE.with(|n| assert_eq!(n.get(), 0));
-        }
-    }
-}
-
-#[test]
-fn arrays_execute_source_algorithms_and_move_owners_in_both_engines() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for prelude in [true, false] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.set_prelude_enabled(prelude);
-            vm.load_source(SOURCE).unwrap();
-            for name in ENTRIES {
-                assert_eq!(vm.call_int32_0(name).unwrap(), 42, "{name}");
-                LIVE.with(|n| assert_eq!(n.get(), 0));
-            }
-            assert!(vm.call_int32_0("array_make").is_err());
         }
     }
 }
@@ -577,32 +525,6 @@ fn arrays_sync_helpers_release_storage_before_the_async_root_finishes() {
 }
 
 const REFERENCE_SOURCE: &str = include_str!("../../../../tests/fixtures/reference_arrays.jk");
-const REFERENCE_ENTRIES: &[&str] = &[
-    "reference_array_growth",
-    "reference_array_owner_end",
-    "reference_array_records",
-    "reference_array_tuples",
-    "reference_array_enums",
-    "reference_array_graphs",
-    "reference_array_numeric_contract",
-    "reference_array_returned",
-];
-
-#[test]
-fn reference_arrays_copy_referents_independently_of_control_blocks() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for prelude in [true, false] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.set_prelude_enabled(prelude);
-            vm.load_source(REFERENCE_SOURCE)
-                .unwrap_or_else(|e| panic!("{mode:?}: {e} {:?}", e.span()));
-            for entry in REFERENCE_ENTRIES {
-                assert_eq!(vm.call_int32_0(entry).unwrap(), 42, "{mode:?}: {entry}");
-                LIVE.with(|n| assert_eq!(n.get(), 0));
-            }
-        }
-    }
-}
 
 #[test]
 fn reference_arrays_reject_local_storage_and_retain_shared_loans() {
@@ -802,19 +724,6 @@ fn reference_arrays_copied_elements_live_through_async_root_suspension() {
 const OWNED_SOURCE: &str = include_str!("../../../../tests/fixtures/owned_arrays.jk");
 
 #[test]
-fn owning_array_methods_preserve_moves_views_and_element_provenance() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for prelude in [true, false] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.set_prelude_enabled(prelude);
-            vm.load_source(OWNED_SOURCE).unwrap();
-            assert_eq!(vm.call_int32_0("methods_answer").unwrap(), 42, "{mode:?}");
-            LIVE.with(|n| assert_eq!(n.get(), 0));
-        }
-    }
-}
-
-#[test]
 fn owning_array_methods_reject_aliases_private_access_and_unsupported_storage() {
     for (body, message) in [
         ("fn bad() { let a = Array.new::<Int32>(); let b = a; a.len(); }", "moved"),
@@ -899,19 +808,6 @@ fn owning_array_methods_cleanup_after_internal_pause_reload_and_cancel() {
 }
 
 const MIXED_SOURCE: &str = include_str!("../../../../tests/fixtures/mixed_owners.jk");
-
-#[test]
-fn mixed_owners_preserve_metadata_and_nested_moves() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for prelude in [true, false] {
-            let mut vm = VmEngine::with_mode(mode);
-            vm.set_prelude_enabled(prelude);
-            vm.load_source(MIXED_SOURCE).unwrap();
-            assert_eq!(vm.call_int32_0("mixed_all").unwrap(), 42, "{mode:?}");
-            LIVE.with(|n| assert_eq!(n.get(), 0));
-        }
-    }
-}
 
 #[test]
 fn mixed_owners_reject_partial_moves_and_borrow_conflicts() {

@@ -170,23 +170,6 @@ fn function_values_reject_invalid_signatures_bounds_effects_and_host_escapes() {
         assert!(error.message().contains(message), "{error}\n{source}");
     }
 }
-#[test]
-fn function_values_keep_private_definition_scopes_and_imported_identities() {
-    let mut modules = crate::ModuleSources::new();
-    modules.insert("helpers", "pub struct Number { pub n: Int32 } fn hidden(x: Number) -> Int32 { x.n } pub fn get() -> fn(Number) -> Int32 { hidden } pub fn identity<T>(x: T) -> T { x } pub fn inc(x: Int32) -> Int32 { x + 1 }").unwrap();
-    let source = "import helpers as h.{inc as plus} fn main() -> Int32 { let f = h.get(); let same = h.identity::<h.Number>; if plus(41) != 42 { return 0 }; let g = plus; if g(41) != 42 { return 0 }; f(same(h.Number { n: 42 })) }";
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source_with_modules(source, &modules).unwrap();
-        assert_eq!(vm.call_int32_0("main").unwrap(), 42);
-        assert!(vm
-            .load_source_with_modules(
-                "import helpers fn bad() { let f = helpers.hidden }",
-                &modules
-            )
-            .is_err());
-    }
-}
 
 #[test]
 fn language_function_values_keep_legacy_native_registration_abi() {

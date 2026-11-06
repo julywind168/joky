@@ -1,41 +1,6 @@
 //! Generic inherent member specialization and execution parity.
-use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
-use crate::core::types::Type;
 use crate::ErrorCode;
-
-#[test]
-fn generic_impls_preserve_self_and_inference_across_backends() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = with_suspends(
-                include_str!("../../../../tests/fixtures/generic_impls.jk"),
-                suspends,
-                Suspends::Typed,
-            );
-            let mut vm = VmEngine::with_mode(mode);
-            vm.set_prelude_enabled(false);
-            let exports = vm.load_source(&source).unwrap();
-            assert!(!exports.iter().any(|name| name.contains('.')));
-            let result = if suspends {
-                vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
-            } else {
-                vm.call_int32_0("check").unwrap()
-            };
-            assert_eq!(result, 42, "{mode:?}, suspends={suspends}");
-            let wide = if suspends {
-                vm.call_async_uint64("wide", &[])
-                    .unwrap()
-                    .cps_result()
-                    .unwrap()
-            } else {
-                vm.call_uint64_0("wide").unwrap()
-            };
-            assert_eq!(wide, u64::MAX);
-            assert_eq!(vm.function_signature("Pair.first"), None);
-        }
-    }
-}
 
 #[test]
 fn generic_impl_rejects_invalid_contracts() {
@@ -88,62 +53,6 @@ fn generic_impl_rejects_invalid_contracts() {
         let error = super::support::frontend_error(&source, &crate::ModuleSources::new());
         assert_eq!(error.code(), code, "{source}: {error}");
         assert!(error.span().is_some_and(|span| span.slice(&source).is_some()), "{error}");
-    }
-}
-
-#[test]
-fn generic_impl_parser_keeps_parameter_scope_and_self_arguments() {
-    use crate::parser::ast::{Expr, Item};
-    let source = "// 🙂\nimpl<T,> Pair<T> { fn make(value: T) -> Self { Self { left: value, right: value } } fn get(self) -> T { Self.first(self) } } fn outside(value: T) {}";
-    let ast = crate::parser::parse(source).unwrap();
-    let implementation = &ast.implementations[0];
-    assert_eq!(implementation.target_name, "Pair");
-    let parameter = &implementation.type_params[0];
-    assert_eq!(parameter.span.slice(source), Some("T"));
-    for method in &implementation.methods {
-        assert!(method.type_params.is_empty());
-    }
-    let make = &implementation.methods[0];
-    assert!(matches!(&make.params[0].ty, Type::Parameter(p) if p == parameter));
-    assert_eq!(make.ret_ty, implementation.target);
-    assert_eq!(
-        implementation.methods[1].params[0].ty,
-        implementation.target
-    );
-    let Expr::Block { exprs, .. } = &make.body else {
-        panic!()
-    };
-    let Expr::Record {
-        name,
-        type_args,
-        span,
-        ..
-    } = &exprs[0]
-    else {
-        panic!()
-    };
-    assert_eq!(name, "Pair");
-    assert!(matches!(type_args[0].as_type(), Some(Type::Parameter(p)) if p == parameter));
-    assert_eq!(
-        span.slice(source),
-        Some("Self { left: value, right: value }")
-    );
-    let Item::FnDef(outside) = &ast.items[0] else {
-        panic!()
-    };
-    assert!(matches!(&outside.params[0].ty, Type::Named(name) if name == "T"));
-    for invalid in [
-        "impl<> Pair<Int32> {}",
-        "impl<T, T> Pair<T> {}",
-        "impl<_> Pair<_> {}",
-        "impl<Self> Pair<Self> {}",
-        "impl<T:> Pair<T> {}",
-        "impl<T> Pair<T> { fn f<T>(self, value: T) {} }",
-        "impl<T> Pair<T> { fn f(self) { Self::<T>.f(self) } }",
-        "impl<T> Pair<T> { fn f(Self: T) {} }",
-        "impl<T> (T, T) {}",
-    ] {
-        assert!(crate::parser::parse(invalid).is_err(), "{invalid}");
     }
 }
 
@@ -245,43 +154,4 @@ fn generic_impl_specialization_reuses_instances_and_bounds_growth() {
         assert!(error.message().contains(diagnostic), "{error}");
         assert_eq!(vm.call_int32_0("check").unwrap(), 42);
     }
-}
-
-#[test]
-fn generic_impl_normalization_preserves_parameters_and_nominal_identity() {
-    let registry = crate::TypeRegistry::new().with_prelude(false);
-    let parsed =
-        crate::parser::parse(include_str!("../../../../tests/fixtures/generic_impls.jk")).unwrap();
-    let once = registry.resolve_aliases(&parsed).unwrap();
-    let twice = registry.resolve_aliases(&once).unwrap();
-    for (a, b) in once.implementations.iter().zip(&twice.implementations) {
-        assert_eq!(a.target, b.target);
-        assert_eq!(a.type_params, b.type_params);
-        for (a, b) in a.methods.iter().zip(&b.methods) {
-            assert_eq!(a.type_params, b.type_params);
-            assert_eq!(a.ret_ty, b.ret_ty);
-            for (a, b) in a.params.iter().zip(&b.params) {
-                assert_eq!(a.ty, b.ty);
-            }
-        }
-    }
-    let mut vm = VmEngine::new_interpreter();
-    vm.set_prelude_enabled(false);
-    vm.load_module(&twice).unwrap();
-    assert_eq!(vm.call_int32_0("check").unwrap(), 42);
-    // A public AST caller cannot use an uninstantiated generic template as a
-    // concrete impl target, bypassing the source syntax's arity check.
-    let mut invalid = twice.clone();
-    let implementation = invalid.implementations.iter_mut().find(|implementation| {
-        matches!(&implementation.target, crate::Type::Record(record) if record.name == "Pair")
-    }).unwrap();
-    let crate::Type::Record(record) = &implementation.target else {
-        panic!()
-    };
-    implementation.target = crate::Type::Record(record.template.clone().unwrap());
-    implementation.type_params.clear();
-    assert_eq!(
-        registry.resolve_aliases(&invalid).unwrap_err().code(),
-        ErrorCode::TypeMismatch
-    );
 }

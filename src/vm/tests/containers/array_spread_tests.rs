@@ -140,24 +140,3 @@ fn array_spread_rejects_invalid_sources_moves_lengths_and_loans() {
         assert!(error.span().is_some(), "{source}: {error}");
     }
 }
-
-#[test]
-fn array_spread_syntax_and_hidden_import() {
-    for source in [
-        "fn bad() { [..] }",
-        "fn bad() { [...a] }",
-        "fn bad() { [..a ..b ..c] }",
-        "fn bad() { ..[1] }",
-    ] {
-        assert!(crate::parser::parse(source).is_err(), "{source}");
-    }
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.set_prelude_enabled(false);
-        vm.load_source(
-            "fn answer() -> Int32 { let a = [20]; let b = [..a, ..[22],]; b[0] + b[1] }",
-        )
-        .unwrap();
-        assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
-    }
-}

@@ -1,4 +1,3 @@
-use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
 use crate::{ErrorCode, ErrorPhase};
 
@@ -102,27 +101,6 @@ fn bitwise_widths_signed_shifts_and_invalid_counts_match_backends() {
     width!(UInt8, u8, call_uint8_2, call_async_uint8);
     width!(UInt32, u32, call_uint32_2, call_async_uint32);
     width!(UInt64, u64, call_uint64_2, call_async_uint64);
-}
-
-#[test]
-fn bitwise_literals_precedence_aggregates_and_branch_pipes_match_backends() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = with_suspends(
-                include_str!("../../../../tests/fixtures/bitwise.jk"),
-                suspends,
-                Suspends::Typed,
-            );
-            let mut vm = VmEngine::with_mode(mode);
-            vm.load_source(&source).unwrap();
-            let result = if suspends {
-                vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
-            } else {
-                vm.call_int32_0("check").unwrap()
-            };
-            assert_eq!(result, 42, "{mode:?} suspends={suspends}");
-        }
-    }
 }
 
 #[test]

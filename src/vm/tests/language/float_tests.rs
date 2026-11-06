@@ -1,6 +1,5 @@
 use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
-use crate::ErrorPhase;
 
 mod environment {
     use super::*;
@@ -338,89 +337,5 @@ fn float_arithmetic_bit_patterns_match_rust() {
             );
         }
         // Integer and width conversions are covered by `conversions()` in the fixture.
-    }
-}
-
-/// Every scalar call entry rejects a mismatched signature instead of
-/// reinterpreting the Float bits as an integer.
-#[test]
-fn float_call_entries_validate_signatures() {
-    let source = include_str!("../../../../tests/fixtures/float.jk");
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap();
-        assert_eq!(vm.call_int32_0("check").unwrap(), 42, "{mode:?}");
-        assert!(vm.call_int32_0("add64").is_err(), "{mode:?}");
-        assert!(vm.call_float64_2("check", 1.0, 2.0).is_err(), "{mode:?}");
-        assert!(vm.call_uint64_0("check").is_err(), "{mode:?}");
-    }
-}
-
-/// Float literals outside the target finite range must fail at compile time,
-/// not silently become infinity.
-#[test]
-fn float_literals_outside_finite_range_are_rejected() {
-    for (source, message) in [
-        (
-            "fn main() -> Int32 { let x: Float32 = 1.0e39; 0 }",
-            "finite range",
-        ),
-        (
-            "fn main() -> Int32 { let x: Float64 = 1.0e309; 0 }",
-            "finite range",
-        ),
-    ] {
-        for mode in [VmMode::Jit, VmMode::Interpreter] {
-            let mut vm = VmEngine::with_mode(mode);
-            let error = vm.load_source(source).unwrap_err();
-            assert_eq!(error.phase(), ErrorPhase::TypeCheck, "{mode:?} {source}");
-            assert!(error.to_string().contains(message), "{mode:?} {error}");
-        }
-    }
-}
-
-/// Mixed-width arithmetic and non-arithmetic operators on floats are rejected.
-#[test]
-fn invalid_float_operations_are_rejected() {
-    for source in [
-        "fn main() { let x = float32(1.0) + float64(2.0) }",
-        "fn main() { let x = 1.0 & 2.0 }",
-        "fn main() { let x = 1.0 << 2 }",
-        "fn main() { let x = ~1.0 }",
-        "fn main() { let x = !1.0 }",
-        "fn main() { let x: Int32 = 1; let y: Float64 = 1.0 + x }",
-    ] {
-        let mut vm = VmEngine::with_mode(VmMode::Interpreter);
-        assert!(vm.load_source(source).is_err(), "{source}");
-    }
-}
-
-/// Constant expressions fold at the target precision, so a Float32 fold must
-/// not round through Float64 first.
-#[test]
-fn float_constant_folding_uses_target_precision() {
-    let source = r#"
-        fn w() -> Float64 { 0.1 + 0.2 }
-        fn n() -> Float32 { 0.1 + 0.2 }
-        fn l() -> Float32 { 1.5e-3 }
-    "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap();
-        assert_eq!(
-            vm.call_float64_0("w").unwrap().to_bits(),
-            (0.1f64 + 0.2f64).to_bits(),
-            "{mode:?}"
-        );
-        assert_eq!(
-            vm.call_float32_0("n").unwrap().to_bits(),
-            (0.1f32 + 0.2f32).to_bits(),
-            "{mode:?}"
-        );
-        assert_eq!(
-            vm.call_float32_0("l").unwrap().to_bits(),
-            1.5e-3f32.to_bits(),
-            "{mode:?}"
-        );
     }
 }

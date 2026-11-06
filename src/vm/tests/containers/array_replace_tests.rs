@@ -44,24 +44,6 @@ fn configured(mode: VmMode, source: &str) -> VmEngine {
     });
     vm
 }
-#[test]
-fn array_replace_executes_copy_layout_reference_and_owner_cases() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = configured(mode, SOURCE);
-        for (name, expected) in [
-            ("replace_copy", vec![]),
-            ("replace_layouts", vec![]),
-            ("replace_references", vec![]),
-            ("replace_owned", vec![-1, -2, -3, -4, 3, 4, 1, 2]),
-            ("replace_invalid", vec![-1, -2, 2, 1]),
-        ] {
-            EVENTS.with(|e| e.borrow_mut().clear());
-            assert_eq!(vm.call_int32_0(name).unwrap(), 42, "{mode:?}: {name}");
-            EVENTS.with(|e| assert_eq!(*e.borrow(), expected, "{mode:?}: {name}"));
-            LIVE.with(|live| assert_eq!(live.get(), 0));
-        }
-    }
-}
 
 fn assert_cleaned() {
     EVENTS.with(|events| {

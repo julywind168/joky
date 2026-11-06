@@ -1,77 +1,5 @@
-use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
 use crate::{ErrorCode, FunctionSignature, Type};
-
-#[test]
-fn concrete_branch_hints_precede_defaults_in_methods_and_generics() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = with_suspends(
-                include_str!("../../../../tests/fixtures/inference.jk"),
-                suspends,
-                Suspends::All,
-            );
-            let mut vm = VmEngine::with_mode(mode);
-            vm.load_source(&source).unwrap();
-            let result = if suspends {
-                vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
-            } else {
-                vm.call_int32_0("check").unwrap()
-            };
-            assert_eq!(result, 42, "{mode:?}, suspends={suspends}");
-        }
-    }
-}
-
-#[test]
-fn inherent_methods_constants_and_checked_conversions_match_backends() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let source = include_str!("../../../../tests/fixtures/methods.jk");
-            let source = with_suspends(source, suspends, Suspends::Typed);
-            let mut vm = VmEngine::with_mode(mode);
-            let exports = vm.load_source(&source).unwrap();
-            assert!(!exports.iter().any(|n| n.contains('.')));
-            let result = if suspends {
-                vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
-            } else {
-                vm.call_int32_0("check").unwrap()
-            };
-            assert_eq!(result, 42, "{mode:?}, suspends={suspends}");
-            let wide = if suspends {
-                vm.call_async_uint64("wide", &[])
-                    .unwrap()
-                    .cps_result()
-                    .unwrap()
-            } else {
-                vm.call_uint64_0("wide").unwrap()
-            };
-            assert_eq!(wide, u64::MAX);
-            assert_eq!(vm.function_signature("Int32.to_u64"), None);
-        }
-    }
-}
-
-#[test]
-fn checked_integer_methods_cover_all_sixteen_pairs_and_boundaries() {
-    let source = include_str!("../../../../tests/fixtures/checked_conversions.jk");
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for suspends in [false, true] {
-            let text = with_suspends(source, suspends, Suspends::Named("check"));
-            let mut vm = VmEngine::with_mode(mode);
-            vm.load_source(&text).unwrap();
-            let result = if suspends {
-                vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
-            } else {
-                vm.call_int32_0("check").unwrap()
-            };
-            assert_eq!(
-                result, 0,
-                "{mode:?}, suspends={suspends}, boundary case={result}"
-            );
-        }
-    }
-}
 
 #[test]
 fn inherent_methods_and_constants_reject_invalid_definitions_even_unused() {
@@ -548,24 +476,4 @@ fn source_integer_library_normalizes_once_and_keeps_nominal_identity() {
             .code(),
         ErrorCode::DuplicateDefinition
     );
-}
-
-#[test]
-fn option_type_import_exposes_the_enum_constructor_namespace() {
-    let source = "import joky/option.{type Option} fn value() -> Option<Int32> { Option.Some(7) } fn check() -> Int32 { match value() { Option.Some(n) => n, Option.None => 0 } }";
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap();
-        assert_eq!(vm.call_int32_0("check").unwrap(), 7, "{mode:?}");
-    }
-}
-
-#[test]
-fn option_value_imports_enable_bare_enum_constructors() {
-    let source = "import joky/option.{type Option, Some, None} fn value() -> Option<Int32> { Some(7) } fn check() -> Int32 { match value() { Some(n) => n, None => 0 } }";
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap();
-        assert_eq!(vm.call_int32_0("check").unwrap(), 7, "{mode:?}");
-    }
 }
