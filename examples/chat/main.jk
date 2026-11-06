@@ -18,7 +18,8 @@ fn script_path() -> String { "script/main.jk" }
 // Each handler owns its script handle and client identity.
 struct ClientHandler { script: Script, client: Client }
 impl session.Handler for ClientHandler {
-    fn on_line(&self, text: String) @suspends @noescape -> Bool {
+    type Message = String
+    fn on_message(&self, text: String) @suspends @noescape -> Bool {
         let script = &self.script
         let call = Call { host: self.client.host, id: self.client.id, line: text }
         script.entries.dispatch.try_call(&script.vm, call).unwrap_or(false)
@@ -38,7 +39,7 @@ fn connection(script: Script, host: Host, id: UInt64, stream: TcpStream, permit:
     let initialized = script.entries.init_account.try_call(&script.vm, account).is_ok()
     let handler = ClientHandler { script, client }
     if initialized {
-        session.run_draining(connection, stream, &handler, &stop)
+        session.run_draining(connection, stream, host.config.input, &handler, &stop)
     } else {
         handler.on_close()
     }

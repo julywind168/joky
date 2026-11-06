@@ -521,6 +521,13 @@ fn associated_types_preserve_definition_scopes_and_diamond_identities() {
             fn next(&self) @noescape -> Self.Item
             fn forwarded(&self) @noescape -> Self.Item { helper(self.next()) }
         }
+        pub trait Consumer {
+            type Item
+            fn accept(&self, value: Self.Item) @noescape -> Int32
+        }
+        pub fn transfer<S: Source, C: Consumer<Item = S.Item>>(source: &S, consumer: &C) @noescape -> Int32 {
+            consumer.accept(source.next())
+        }
         fn helper<T>(x: T) -> T { x }
         pub fn take<T: Source>(x: &T) @noescape -> T.Item { x.forwarded() }
     "#,
@@ -562,13 +569,19 @@ fn associated_types_preserve_definition_scopes_and_diamond_identities() {
     let source = r#"
         import protocol as p import left import right import implementation as i import other
         type Number = String
+        type Payload = Int32
+        struct Root {}
+        impl p.Consumer for Root {
+            type Item = Payload
+            fn accept(&self, value: Int32) @noescape -> Int32 { value }
+        }
         fn read_int(value: &dyn p.Source<Item = Int32>) @noescape -> Int32 { value.forwarded() }
         fn read_bool(value: &dyn p.Source<Item = Bool>) @noescape -> Bool { value.forwarded() }
         fn test() -> Int32 {
-            let c = i.C {}; let d = other.C {}
+            let c = i.C {}; let d = other.C {}; let root = Root {}
             let integer: &dyn p.Source<Item = Int32> = &c
             let boolean: &dyn p.Source<Item = Bool> = &d
-            if p.take(&d) && read_bool(boolean) { p.take(&c) + read_int(integer) - 42 } else { 0 }
+            if p.take(&d) && read_bool(boolean) { p.take(&c) + read_int(integer) + p.transfer(&c, &root) - 84 } else { 0 }
         }
     "#;
     let ast = crate::TypeRegistry::default()

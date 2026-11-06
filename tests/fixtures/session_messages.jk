@@ -1,0 +1,167 @@
+import joky/session
+import joky/shutdown
+import joky/domain
+import joky/check
+import joky/task
+import joky/array.{type Array}
+import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader}
+
+#state
+struct Counts { messages: UInt64, closed: UInt64, reading: Bool }
+fn make(_: Unit) -> Counts { Counts { messages: 0, closed: 0, reading: false } }
+struct BinaryHandler { counts: domain.WriteHandle<Counts>, output: session.Output, draining: Bool }
+impl session.Handler for BinaryHandler {
+    type Message = Array<UInt8>
+    fn on_message(&self, bytes: Array<UInt8>) @suspends @noescape -> Bool {
+        let counts = self.counts
+        let output = self.output
+        let number = when (mut counts) { counts.messages += 1; counts.messages }!
+        if number == 1 {
+            check.assert(bytes.len() == 4 && bytes[0] == 255 && bytes[1] == 10 && bytes[2] == 0 && bytes[3] == 128, "binary payload preserves newlines, NUL and non-UTF-8 bytes")
+        } else { check.assert(number == 2 && bytes.is_empty(), "zero-length frame is a message, not EOF") }
+        task.yield_now()
+        if number == 1 || self.draining {
+            when (counts) { let reply: Array<UInt8> = [0, 0, 0, 1, 42]; output.send(&reply) }!
+        }
+        number < 2
+    }
+    fn on_close(&self) @suspends @noescape {
+        let counts = self.counts
+        when (mut counts) { counts.closed += 1 }!
+    }
+}
+fn binary_peer(var stream: TcpStream, scenario: UInt64) @suspends {
+    if scenario <= 1 {
+        // Split the header across writes, then complete it with the payload.
+        stream.write_all([0, 0])!
+        task.yield_now()
+        stream.write_all([0, 4, 255, 10, 0, 128])!
+    } else if scenario == 2 { stream.write_all([0, 0, 0, 5])! }
+    else if scenario == 3 {
+        stream.write_all([0, 0, 0, 4, 255])!
+        stream.shutdown(tcp.Shutdown.Write)!
+    } else if scenario == 4 { stream.write_all([0, 0])! }
+    else { stream.shutdown(tcp.Shutdown.Write)! }
+    var stream = BufferedTcp.new(stream)
+    if scenario <= 1 {
+        let reply = stream.read_message(1)!.unwrap()
+        check.assert(reply.len() == 1 && reply[0] == 42, "output keeps application-supplied framing")
+        // Coalesced frames: the third message must not be admitted after false.
+        stream.write_all([0, 0, 0, 0, 0, 0, 0, 1, 99])!
+        if scenario == 1 { check.assert(stream.read_message(1)!.unwrap()[0] == 42, "draining flushes the last binary reply") }
+    }
+    check.assert(stream.read(1)!.is_empty(), "session closes after EOF, rejection, read error or timeout")
+}
+fn binary(scenario: UInt64) @suspends {
+    var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
+    let peer = TcpStream.connect(listener.local_addr()!)!
+    let stream = listener.accept()!
+    let options = session.Options { idle_timeout: if scenario == 4 { 2ms } else { 0ns }, ..session.Options.default() }
+    let connection = session.create(options)
+    let owner = domain.create(make, {})
+    let handler = BinaryHandler { counts: owner.handle(), output: connection.output(), draining: scenario == 1 }
+    let protocol = session.LengthPrefixed { max_bytes: 4 }
+    if scenario == 1 {
+        let stop = shutdown.create()
+        join { session.run_draining(connection, stream, protocol, &handler, &stop), binary_peer(peer, scenario) }
+    } else { join { session.run(connection, stream, protocol, &handler), binary_peer(peer, scenario) } }
+    let counts = owner.handle()
+    when (counts) {
+        check.assert(counts.messages == if scenario <= 1 { 2 } else { 0 }, "only complete valid frames reach the handler")
+        check.assert(counts.closed == 1, "normal termination closes once")
+    }!
+}
+
+struct Packet { sequence: UInt64, label: String, bytes: Array<UInt8> }
+struct Packets { sequence: UInt64, label: String, pause: Bool, counts: domain.WriteHandle<Counts> }
+impl session.Reader for Packets {
+    type Message = Packet
+    type Error = String
+    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<Option<Packet>, String> {
+        let bytes = match input.read_exact(1) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => return Ok(None),
+            Err(_) => return Err("transport error")
+        }
+        if bytes[0] == 0 { return Err("custom decoding error") }
+        let message = Packet { sequence: self.sequence, label: self.label.clone(), bytes }
+        if self.pause {
+            let counts = self.counts
+            when (mut counts) { counts.reading = true }!
+            task.sleep(60s)
+        }
+        task.yield_now()
+        self.sequence += 1
+        Ok(Some(message))
+    }
+}
+struct PacketHandler { counts: domain.WriteHandle<Counts>, output: session.Output }
+impl session.Handler for PacketHandler {
+    type Message = Packet
+    fn on_message(&self, message: Packet) @suspends @noescape -> Bool {
+        task.yield_now()
+        check.assert(message.label == "packet" && message.bytes[0] == 255, "custom reader returns an owning struct")
+        let counts = self.counts
+        let output = self.output
+        let sequence = message.sequence
+        when (mut counts) {
+            check.assert(sequence == counts.messages, "reader state persists between messages")
+            counts.messages += 1
+            let reply: Array<UInt8> = [42]
+            output.send(&reply)
+        }!
+        true
+    }
+    fn on_close(&self) @suspends @noescape {
+        let counts = self.counts
+        when (mut counts) { counts.closed += 1 }!
+    }
+}
+fn packet_peer(var stream: TcpStream, invalid: Bool) @suspends {
+    stream.write_all([255, 255])!
+    var stream = BufferedTcp.new(stream)
+    let reply = stream.read_exact(2)!.unwrap()
+    check.assert(reply[0] == 42 && reply[1] == 42, "both custom messages finish before EOF")
+    if invalid { stream.write_all([0])! }
+    else {
+        var (reader, writer) = stream.split()
+        writer.shutdown()!
+        check.assert(reader.read(1)!.is_empty(), "custom EOF closes the session")
+        return
+    }
+    check.assert(stream.read(1)!.is_empty(), "custom error closes the session")
+}
+fn packets(invalid: Bool) @suspends {
+    var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
+    let peer = TcpStream.connect(listener.local_addr()!)!
+    let stream = listener.accept()!
+    let connection = session.create(session.Options.default())
+    let owner = domain.create(make, {})
+    let handler = PacketHandler { counts: owner.handle(), output: connection.output() }
+    let protocol = Packets { sequence: 0, label: "packet", pause: false, counts: owner.handle() }
+    join { session.run(connection, stream, protocol, &handler), packet_peer(peer, invalid) }
+    let counts = owner.handle()
+    when (counts) { check.assert(counts.messages == 2 && counts.closed == 1, "custom EOF and errors preserve cleanup") }!
+}
+fn wait_reading(counts: domain.WriteHandle<Counts>) @suspends {
+    while !when (counts) { counts.reading }! { task.yield_now() }
+}
+fn cancel_pending_packet() @suspends {
+    var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
+    var peer = TcpStream.connect(listener.local_addr()!)!
+    let stream = listener.accept()!
+    peer.write_all([255])!
+    let connection = session.create(session.Options.default())
+    let owner = domain.create(make, {})
+    let handler = PacketHandler { counts: owner.handle(), output: connection.output() }
+    let protocol = Packets { sequence: 0, label: "packet", pause: true, counts: owner.handle() }
+    // Cancel only after the reader has constructed its owning message.
+    race { session.run(connection, stream, protocol, &handler), wait_reading(owner.handle()) }
+    check.assert(peer.read(1)!.is_empty(), "cancelling a custom reader releases the socket")
+    let counts = owner.handle()
+    when (counts) { check.assert(counts.messages == 0 && counts.closed == 0, "parent cancellation skips callbacks") }!
+}
+fn main() @suspends {
+    binary(0); binary(1); binary(2); binary(3); binary(4); binary(5)
+    packets(false); packets(true); cancel_pending_packet()
+}

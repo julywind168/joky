@@ -7021,40 +7021,64 @@ SIGKILL 不可接入，不能期待强制杀进程时执行清理。
 
 ## 连接运行组件 joky/session
 
-显式导入 `joky/session`。`Options` 的公开字段为 `max_line_bytes`、`queue_messages`、
-`queue_bytes`（以上均为 UInt64）和 `idle_timeout: Duration`；`session.Options.default()` 分别返回 4096、64、65536 和 `0ns`。
-行长含结束符，容量沿用 TCP／outbox 的有效范围。`idle_timeout = 0ns` 关闭超时；例如 `idle_timeout = 30s` 限制
-等到下一条完整行的时间，零散字节不会重置期限。
+显式导入 `joky/session`。组件管理 TCP 会话的收发、背压、超时与停止；消息边界由显式传入的读取器决定。
+`Options` 的公开字段为 `queue_messages: UInt64`、`queue_bytes: UInt64` 和 `idle_timeout: Duration`；
+`session.Options.default()` 分别返回 64、65536 和 `0ns`，队列容量沿用 outbox 的有效范围。
+`idle_timeout = 0ns` 关闭超时；例如 `30s` 限制一次读取器调用等待下一条完整消息的时间，
+零散字节不会重置期限，业务回调耗时不计入这段期限。
+
+读取器实现 `session.Reader`，声明关联类型 `Message`、`Error`，以及
+`read(&mut self, input: &mut tcp.BufferedTcpReader) @suspends @noescape -> Result<Option<Self.Message>, Self.Error>`。
+每次调用返回一条完整消息：`Ok(Some(message))` 交给处理器，`Ok(None)` 表示正常结束，`Err(error)` 表示读取或解码错误。
+当前会话把读取器返回的错误视为结束接收，释放错误值并执行正常关闭／排空流程，不向调用者返回错误原因。
+需要记录错误时可在自定义读取器内显式处理；运行时失败仍直接传播。
+
+内置两种可选读取器，均使用 `tcp.ReadError`：
+
+| 读取器 | 消息类型与边界 | 默认值 |
+| --- | --- | --- |
+| `Lines { max_bytes }` | `String`；沿用 `read_line` 的 UTF-8、LF／CRLF 与 EOF 规则；上限包含结束符 | `Lines.default()`：4096 字节 |
+| `LengthPrefixed { max_bytes }` | `Array<UInt8>`；4 字节大端长度前缀，上限只计算负载，与 TCP `read_message`／`write_message` 配套；零长度负载仍是一条消息 | `LengthPrefixed.default()`：65536 字节 |
+
+`Lines.max_bytes` 的有效范围为 1..1048576，`LengthPrefixed.max_bytes` 为 0..1048576；
+超过上限、非法 UTF-8 或截断消息按对应 TCP 读取错误结束接收。
+自定义读取器可以返回拥有型业务 struct、维护跨消息的协议状态，并定义自己的错误类型。
+会话拥有读取器并顺序调用它；读取被停止、超时或父任务取消中断后，会话结束，不会重试已经部分消费的读取。
 
 `create(options) @suspends -> Connection` 创建 Disconnect 出站队列和独立的 Reject 控制队列。
 `Connection.output() @suspends -> Output` 返回可复制、不保活连接的输出端；`Output` 是
 outbox.Handle 的源库别名，可以通过 Script 契约或状态保存。业务在 `when` 内调用
 `output.send(&bytes)`，无需创建批次或比较目标身份；`output.close() @suspends` 关闭输出并停止会话。
+输出始终是应用已编码的字节，不会自动添加换行或长度前缀；选择输入读取器不会改变输出内容。
 `stop_handle()` 仍提供控制信箱的弱 Handle，兼容显式停止需求。输出溢出在提交区间关闭控制信箱，
 使 `race` 即使在 TCP 写阻塞时也能取消写分支；发送方无需清理慢客户端并重放业务。
-单连接处理器实现 `session.Handler`，把共享服务句柄和连接上下文放在一个对象中：
+
+单连接处理器实现 `session.Handler`，声明关联类型 `Message`，并把共享服务句柄和连接上下文放在一个对象中：
 
 | 方法 | 契约 |
 | --- | --- |
-| `on_line(&self, text: String) @suspends @noescape -> Bool` | 按顺序处理完整行；true 继续读取，false 结束接收 |
+| `on_message(&self, message: Self.Message) @suspends @noescape -> Bool` | 按顺序处理完整消息；true 继续读取，false 结束接收 |
 | `on_close(&self) @suspends @noescape` | 正常会话结束后执行一次业务清理，返回 Unit |
 
-`run<H: Handler>(connection, stream, handler: &H) @suspends @noescape`
-消费 Connection 和 TcpStream，沿用创建时的 Options，仅借用处理器；处理器可持有 String、VM 等拥有值，
-调用结束后仍由调用者持有。两个方法使用共享借用，不把处理器引用保留到调用之外；业务状态变更可经 domain 句柄完成。
-原来的 shared、ctx 和两个函数指针合并为 handler，不再分别传入。
-完整用法见 [chat 的 ClientHandler](../examples/chat/main.jk) 和 [会话回归](../tests/fixtures/session.jk)。
+`run<R: Reader, H: Handler<Message = R.Message>>(connection, stream, protocol: R, handler: &H) @suspends @noescape`
+消费 Connection、TcpStream 和读取器，沿用创建时的 Options，仅借用处理器；消息类型不匹配会在编译期拒绝。
+例如行协议传入 `session.Lines.default()`，处理器声明 `type Message = String`。
+处理器可持有 String、VM 等拥有值，调用结束后仍由调用者持有。两个方法使用共享借用，
+不把处理器引用保留到调用之外；业务状态变更可经 domain 句柄完成。
+完整用法见 [chat 的 ClientHandler](../examples/chat/main.jk)、[行协议回归](../tests/fixtures/session.jk)
+和 [二进制及自定义 struct 消息回归](../tests/fixtures/session_messages.jk)。chat 的协议配置放在 `Config.input`，
+会话队列与超时配置放在 `Config.connection`；原 `Options.max_line_bytes` 由 `Lines.max_bytes` 替代。
 
-组件竞速接收、发送和控制等待。EOF、TCP／UTF-8／行长错误、超时、控制队列收到消息或关闭，
-以及 on_line 返回 false，都会结束竞速并调用一次 on_close；两个邮箱 Owner 保留到回调完成。
-业务可用 `Vm.try_call` 在 on_line 中处理脚本失败。组件不会隐式捕获任意回调异常，也不保证
-断开前排空输出队列。父任务取消会结构化停止子任务、释放 socket 和邮箱，不运行挂起清理回调；
+组件竞速接收、发送和控制等待。EOF、读取器返回错误、超时、控制队列收到消息或关闭，
+以及 on_message 返回 false，都会结束竞速并调用一次 on_close；两个邮箱 Owner 保留到回调完成。
+业务可用 `Vm.try_call` 在 on_message 中处理脚本失败。组件不会隐式捕获任意回调异常，也不保证
+断开前排空输出队列。父任务取消会结构化停止子任务、释放 socket、读取器和邮箱，不运行挂起清理回调；
 应用应让账户等资源由外层作用域持有。chat 的成员清理与空房回收策略在业务层显式实现。
 
-`run_draining<H: Handler>(connection, stream, handler: &H, shutdown: &shutdown.Controller) @suspends @noescape`
-使用相同的 Handler，增加显式停机通知。通知只与下一次读取竞速：完整行读出后再检查停机状态，
-通过检查才准入 on_line。已准入回调执行完毕后封口出站队列，发送分支继续写完已取出的消息和剩余 FIFO。
-EOF、读取错误、空闲超时或 on_line 返回 false 也走这条排空路径。
+`run_draining<R: Reader, H: Handler<Message = R.Message>>(connection, stream, protocol: R, handler: &H, shutdown: &shutdown.Controller) @suspends @noescape`
+使用相同的读取器与处理器约束，增加显式停机通知。通知只与下一次读取竞速：完整消息读出后再检查停机状态，
+通过检查才准入 on_message。已准入回调执行完毕后封口出站队列，发送分支继续写完已取出的消息和剩余 FIFO。
+EOF、读取器返回错误、空闲超时或 on_message 返回 false 也走这条排空路径。
 发送失败、输出溢出、显式 close 或 control 停止仍立即取消会话；回调异常沿用原有传播规则。
 
 发送结束后调用一次 on_close；回调可以清理业务状态，但不能依赖向本连接继续发送消息：
@@ -7062,8 +7086,8 @@ EOF、读取错误、空闲超时或 on_line 返回 false 也走这条排空路�
 其他连接回调在该封口之后产生的广播不保证投递。write_all 完成仅表示写入 TCP，不等于对端业务确认。
 组件没有隐含宽限期；应用在外层 race 组合截止时间，超时后取消剩余任务。
 父任务取消不启动 on_close；若取消发生在 on_close 执行期间，也会中断该回调，仍释放队列、socket 和结构化子任务。
-on_line 运行时失败直接传播且不调用 on_close；on_close 自身失败同样传播，不重试。调用者可在外层用 isolate 建立失败边界。
-处理器本身的拥有值由其外层作用域释放，异步业务清理不替代结构化资源释放。
+读取器或 on_message 的运行时失败直接传播且不调用 on_close；on_close 自身失败同样传播，不重试。
+调用者可在外层用 isolate 建立失败边界。处理器本身的拥有值由其外层作用域释放，异步业务清理不替代结构化资源释放。
 
 ## 结构化日志 joky/log
 

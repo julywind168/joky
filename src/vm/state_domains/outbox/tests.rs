@@ -496,9 +496,9 @@ fn session_blocked_writer(draining: bool) {
             .unwrap();
         }
         let run = if draining {
-            "let stop = shutdown.create(); session.run_draining(connection,stream,&handler,&stop)"
+            "let stop = shutdown.create(); session.run_draining(connection,stream,session.Lines.default(),&handler,&stop)"
         } else {
-            "session.run(connection,stream,&handler)"
+            "session.run(connection,stream,session.Lines.default(),&handler)"
         };
         let keep_reading = !draining;
         vm.load_source(&format!(
@@ -511,7 +511,8 @@ struct Membership {{ live:Bool, closed:Int32 }}
 fn make(_:Unit)->Membership {{ Membership{{live:true,closed:0}} }}
 struct MemberHandler {{ member:domain.WriteHandle<Membership> }}
 impl session.Handler for MemberHandler {{
-    fn on_line(&self, _text:String) @suspends @noescape ->Bool {{ {keep_reading} }}
+    type Message = String
+    fn on_message(&self, _text:String) @suspends @noescape ->Bool {{ {keep_reading} }}
     fn on_close(&self) @suspends @noescape {{
         let member=self.member
         when(mut member) {{ member.live=false; member.closed+=1 }}!
@@ -747,6 +748,7 @@ fn outbox_sealing_and_session_draining_preserve_committed_output() {
     for source in [
         include_str!("../../../../tests/fixtures/outbox_seal.jk"),
         include_str!("../../../../tests/fixtures/session_drain.jk"),
+        include_str!("../../../../tests/fixtures/session_messages.jk"),
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
@@ -759,4 +761,24 @@ fn outbox_sealing_and_session_draining_preserve_committed_output() {
             crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
         }
     }
+}
+
+#[test]
+fn session_rejects_mismatched_reader_and_handler_messages() {
+    let source = r#"
+import joky/session
+import joky/tcp.{type TcpStream}
+struct TextHandler {}
+impl session.Handler for TextHandler {
+    type Message = String
+    fn on_message(&self, _text: String) @suspends @noescape -> Bool { true }
+    fn on_close(&self) @suspends @noescape {}
+}
+fn invalid(connection: session.Connection, stream: TcpStream) @suspends {
+    let handler = TextHandler {}
+    session.run(connection, stream, session.LengthPrefixed.default(), &handler)
+}
+"#;
+    let error = crate::core::prepared::check_source(source, &Default::default()).unwrap_err();
+    assert_eq!(error.code(), crate::ErrorCode::TypeMismatch, "{error}");
 }

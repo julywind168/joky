@@ -5,13 +5,14 @@ import joky/session
 
 pub struct Config {
     pub connection: session.Options,
+    pub input: session.Lines,
     pub max_rooms: UInt64,
     pub max_clients: UInt64,
     pub reclaim_empty: Bool
 }
 impl Config {
     pub fn default() -> Self {
-        Config { connection: session.Options.default(), max_rooms: 4096, max_clients: 512, reclaim_empty: true }
+        Config { connection: session.Options.default(), input: session.Lines.default(), max_rooms: 4096, max_clients: 512, reclaim_empty: true }
     }
 }
 pub struct Host {

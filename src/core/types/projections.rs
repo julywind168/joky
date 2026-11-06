@@ -15,6 +15,8 @@ pub(super) struct Environment {
     declarations: Rc<[TraitDef]>,
     implementations: Rc<[ImplDef]>,
     parameters: Rc<ParameterScopes>,
+    // Root declarations keep their scope while projection resolution visits imports.
+    declaration_root: Arc<ImportScope>,
     root: Arc<ImportScope>,
 }
 
@@ -111,7 +113,7 @@ impl TypeRegistry {
             let scope = declaration
                 .scope
                 .as_ref()
-                .map_or(&self.trait_environment.root, |s| &s.imports);
+                .map_or(&self.trait_environment.declaration_root, |s| &s.imports);
             for associated in &declaration.associated_types {
                 if !names.insert(&associated.name) {
                     return Err(
@@ -151,7 +153,7 @@ impl TypeRegistry {
             let scope = implementation
                 .scope
                 .as_ref()
-                .map_or(&self.trait_environment.root, |s| &s.imports);
+                .map_or(&self.trait_environment.declaration_root, |s| &s.imports);
             let id = self.trait_id(name, scope, implementation.span)?;
             let declaration = self
                 .trait_environment
@@ -274,7 +276,7 @@ impl TypeRegistry {
                     let declaration_scope = declaration
                         .scope
                         .as_ref()
-                        .map_or(&self.trait_environment.root, |s| &s.imports);
+                        .map_or(&self.trait_environment.declaration_root, |s| &s.imports);
                     if !self.bounds_hold(
                         &associated.bounds,
                         declaration_scope,
@@ -297,7 +299,7 @@ impl TypeRegistry {
             let scope = implementation
                 .scope
                 .as_ref()
-                .map_or(&self.trait_environment.root, |s| &s.imports);
+                .map_or(&self.trait_environment.declaration_root, |s| &s.imports);
             let id = self.trait_id(name, scope, implementation.span)?;
             let declaration = self
                 .trait_environment
@@ -323,7 +325,7 @@ impl TypeRegistry {
                 let declaration_scope = declaration
                     .scope
                     .as_ref()
-                    .map_or(&self.trait_environment.root, |s| &s.imports);
+                    .map_or(&self.trait_environment.declaration_root, |s| &s.imports);
                 if !self.bounds_hold(
                     &associated.bounds,
                     declaration_scope,
@@ -394,6 +396,7 @@ impl TypeRegistry {
             declarations: module.traits.clone().into(),
             implementations: module.implementations.clone().into(),
             parameters: Rc::new(parameters),
+            declaration_root: root.clone(),
             root,
         });
         local.trait_work = Rc::new(RefCell::new(Work::default()));
@@ -740,7 +743,7 @@ impl TypeRegistry {
                 let scope = implementation
                     .scope
                     .as_ref()
-                    .map_or(&self.trait_environment.root, |s| &s.imports);
+                    .map_or(&self.trait_environment.declaration_root, |s| &s.imports);
                 let Some(name) = &implementation.trait_name else {
                     continue;
                 };
@@ -768,7 +771,7 @@ impl TypeRegistry {
             let scope = implementation
                 .scope
                 .as_ref()
-                .map_or(&self.trait_environment.root, |s| &s.imports);
+                .map_or(&self.trait_environment.declaration_root, |s| &s.imports);
             let declaration = self
                 .trait_environment
                 .declarations
@@ -845,7 +848,7 @@ impl TypeRegistry {
             let scope = declaration
                 .scope
                 .as_ref()
-                .map_or(&self.trait_environment.root, |s| &s.imports);
+                .map_or(&self.trait_environment.declaration_root, |s| &s.imports);
             return declaration
                 .associated_types
                 .get(index)
@@ -898,7 +901,7 @@ impl TypeRegistry {
                 let scope = implementation
                     .scope
                     .as_ref()
-                    .map_or(&self.trait_environment.root, |s| &s.imports);
+                    .map_or(&self.trait_environment.declaration_root, |s| &s.imports);
                 let Some(name) = &implementation.trait_name else {
                     continue;
                 };
@@ -928,7 +931,7 @@ impl TypeRegistry {
         let scope = implementation
             .scope
             .as_ref()
-            .map_or(&self.trait_environment.root, |s| &s.imports);
+            .map_or(&self.trait_environment.declaration_root, |s| &s.imports);
         let target =
             self.resolve_scoped(&implementation.target, scope, &implementation.type_params)?;
         if implementation.type_params.is_empty() && target != *actual {

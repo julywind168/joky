@@ -10,7 +10,8 @@ struct Counts { lines: UInt64, closed: UInt64 }
 fn make(_: Unit) -> Counts { Counts { lines: 0, closed: 0 } }
 struct Context { counts: domain.WriteHandle<Counts>, output: session.Output, stop: shutdown.Controller, slow: Bool }
 impl session.Handler for Context {
-    fn on_line(&self, _text: String) @suspends @noescape -> Bool {
+    type Message = String
+    fn on_message(&self, _text: String) @suspends @noescape -> Bool {
         let counts = self.counts
         let output = self.output
         when(mut counts) { counts.lines += 1; let bytes = "first\n".into_bytes(); output.send(&bytes) }!
@@ -32,8 +33,8 @@ impl session.Handler for Context {
 fn deadline(stop: &shutdown.Controller) @suspends { stop.wait(); task.sleep(2ms) }
 fn server(connection: session.Connection, stream: TcpStream, ctx: &Context) @suspends {
     if ctx.slow {
-        race { session.run_draining(connection, stream, ctx, &ctx.stop), deadline(&ctx.stop) }
-    } else { session.run_draining(connection, stream, ctx, &ctx.stop) }
+        race { session.run_draining(connection, stream, session.Lines.default(), ctx, &ctx.stop), deadline(&ctx.stop) }
+    } else { session.run_draining(connection, stream, session.Lines.default(), ctx, &ctx.stop) }
 }
 fn peer(stream: TcpStream, scenario: Int32) @suspends {
     var stream = BufferedTcp.new(stream)

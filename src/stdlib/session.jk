@@ -2,26 +2,57 @@ import joky/shutdown
 import joky/outbox
 import joky/time.{type Duration}
 import joky/task
-import joky/result.{Ok, Err}
+import joky/result.{type Result, Ok, Err}
+import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
-import joky/tcp.{type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
+import joky/tcp.{type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter, type ReadError}
 
 pub struct Options {
-    pub max_line_bytes: UInt64,
     pub queue_messages: UInt64,
     pub queue_bytes: UInt64,
     pub idle_timeout: Duration
 }
 impl Options {
     pub fn default() -> Self {
-        Options { max_line_bytes: 4096, queue_messages: 64, queue_bytes: 65536, idle_timeout: 0ns }
+        Options { queue_messages: 64, queue_bytes: 65536, idle_timeout: 0ns }
     }
 }
 // Copyable output endpoint; send stages bytes in when, close stops the session.
 pub type Output = outbox.Handle
+// A reader owns protocol state; each call returns one complete message or EOF.
+// Cancellation terminates the session, so a partially consumed read is never retried.
+pub trait Reader {
+    type Message
+    type Error
+    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<Option<Self.Message>, Self.Error>
+}
+pub struct Lines { pub max_bytes: UInt64 }
+impl Lines {
+    pub fn default() -> Self { Lines { max_bytes: 4096 } }
+}
+impl Reader for Lines {
+    type Message = String
+    type Error = ReadError
+    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<Option<String>, ReadError> {
+        input.read_line(self.max_bytes)
+    }
+}
+// Four-byte big-endian payload length, compatible with TcpWriter.write_message.
+pub struct LengthPrefixed { pub max_bytes: UInt64 }
+impl LengthPrefixed {
+    pub fn default() -> Self { LengthPrefixed { max_bytes: 65536 } }
+}
+impl Reader for LengthPrefixed {
+    type Message = Array<UInt8>
+    type Error = ReadError
+    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<Option<Array<UInt8>>, ReadError> {
+        input.read_message(self.max_bytes)
+    }
+}
 // One handler holds the shared service and per-connection context.
 pub trait Handler {
-    fn on_line(&self, text: String) @suspends @noescape -> Bool
+    type Message
+    fn on_message(&self, message: Self.Message) @suspends @noescape -> Bool
     fn on_close(&self) @suspends @noescape
 }
 pub struct Connection { outgoing: outbox.Mailbox, control: outbox.Mailbox, options: Options }
@@ -34,16 +65,16 @@ impl Connection {
     pub fn output(&self) @suspends -> Output { self.outgoing.handle() }
     pub fn stop_handle(&self) @suspends -> outbox.Handle { self.control.handle() }
 }
-fn read(reader: &mut BufferedTcpReader, limit: UInt64) @suspends -> Option<String> {
-    match reader.read_line(limit) { Ok(line) => line, Err(_) => None }
+fn read<R: Reader>(protocol: &mut R, input: &mut BufferedTcpReader) @suspends @noescape -> Option<R.Message> {
+    match Reader.read(protocol, input) { Ok(message) => message, Err(_) => None }
 }
-fn timeout(duration: Duration) @suspends -> Option<String> { task.sleep(duration); None }
-fn receive<H: Handler>(handler: &H, var reader: BufferedTcpReader, options: Options) @suspends @noescape {
+fn timeout<M>(duration: Duration) @suspends -> Option<M> { task.sleep(duration); None }
+fn receive<R: Reader, H: Handler<Message = R.Message>>(handler: &H, var reader: BufferedTcpReader, var protocol: R, options: Options) @suspends @noescape {
     while true {
-        let next = if options.idle_timeout.is_zero() { read(&mut reader, options.max_line_bytes) }
-        else { race { read(&mut reader, options.max_line_bytes), timeout(options.idle_timeout) } }
-        let line = match next { Some(line) => line, None => return }
-        if !handler.on_line(line) { return }
+        let next = if options.idle_timeout.is_zero() { read(&mut protocol, &mut reader) }
+        else { race { read(&mut protocol, &mut reader), timeout::<R.Message>(options.idle_timeout) } }
+        let message = match next { Some(message) => message, None => return }
+        if !handler.on_message(message) { return }
     }
 }
 fn send(queue: &mut outbox.Mailbox, var writer: TcpWriter) @suspends {
@@ -53,11 +84,11 @@ fn send(queue: &mut outbox.Mailbox, var writer: TcpWriter) @suspends {
     }
 }
 fn stop(queue: &mut outbox.Mailbox) @suspends { queue.receive(); }
-pub fn run<H: Handler>(connection: Connection, stream: TcpStream, handler: &H) @suspends @noescape {
+pub fn run<R: Reader, H: Handler<Message = R.Message>>(connection: Connection, stream: TcpStream, protocol: R, handler: &H) @suspends @noescape {
     var (outgoing, control, options) = split(connection)
     let (reader, writer) = BufferedTcp.new(stream).split()
     race {
-        receive(handler, reader, options)
+        receive(handler, reader, protocol, options)
         send(&mut outgoing, writer)
         stop(&mut control)
     }
@@ -70,18 +101,18 @@ fn split(connection: Connection) -> (outbox.Mailbox, outbox.Mailbox, Options) {
     (outgoing, control, options)
 }
 
-// Shutdown only competes with reading, never with an admitted on_line callback.
-fn shutdown_read(stop: &shutdown.Controller) @suspends -> Option<String> { stop.wait(); None }
-fn receive_draining<H: Handler>(handler: &H, var reader: BufferedTcpReader, options: Options, stop: &shutdown.Controller, output: Output) @suspends @noescape {
+// Shutdown only competes with reading, never with an admitted on_message callback.
+fn shutdown_read<M>(stop: &shutdown.Controller) @suspends -> Option<M> { stop.wait(); None }
+fn receive_draining<R: Reader, H: Handler<Message = R.Message>>(handler: &H, var reader: BufferedTcpReader, var protocol: R, options: Options, stop: &shutdown.Controller, output: Output) @suspends @noescape {
     while !stop.requested() {
         let next = if options.idle_timeout.is_zero() {
-            race { shutdown_read(stop), read(&mut reader, options.max_line_bytes) }
+            race { shutdown_read::<R.Message>(stop), read(&mut protocol, &mut reader) }
         } else {
-            race { shutdown_read(stop), read(&mut reader, options.max_line_bytes), timeout(options.idle_timeout) }
+            race { shutdown_read::<R.Message>(stop), read(&mut protocol, &mut reader), timeout::<R.Message>(options.idle_timeout) }
         }
-        let line = match next { Some(line) => line, None => break }
+        let message = match next { Some(message) => message, None => break }
         if stop.requested() { break }
-        if !handler.on_line(line) { break }
+        if !handler.on_message(message) { break }
     }
     output.seal()
 }
@@ -91,19 +122,19 @@ fn send_draining(queue: &mut outbox.Mailbox, var writer: TcpWriter, control: out
         if writer.write_all(bytes).is_err() { control.close(); return }
     }
 }
-fn drain<H: Handler>(handler: &H, reader: BufferedTcpReader, writer: TcpWriter, queue: &mut outbox.Mailbox, options: Options, stop: &shutdown.Controller, output: Output, control: outbox.Handle) @suspends @noescape {
+fn drain<R: Reader, H: Handler<Message = R.Message>>(handler: &H, reader: BufferedTcpReader, protocol: R, writer: TcpWriter, queue: &mut outbox.Mailbox, options: Options, stop: &shutdown.Controller, output: Output, control: outbox.Handle) @suspends @noescape {
     join {
-        receive_draining(handler, reader, options, stop, output)
+        receive_draining(handler, reader, protocol, options, stop, output)
         send_draining(queue, writer, control)
     }
 }
-pub fn run_draining<H: Handler>(connection: Connection, stream: TcpStream, handler: &H, shutdown: &shutdown.Controller) @suspends @noescape {
+pub fn run_draining<R: Reader, H: Handler<Message = R.Message>>(connection: Connection, stream: TcpStream, protocol: R, handler: &H, shutdown: &shutdown.Controller) @suspends @noescape {
     var (outgoing, control, options) = split(connection)
     let output = outgoing.handle()
     let abort = control.handle()
     let (reader, writer) = BufferedTcp.new(stream).split()
     race {
-        drain(handler, reader, writer, &mut outgoing, options, shutdown, output, abort)
+        drain(handler, reader, protocol, writer, &mut outgoing, options, shutdown, output, abort)
         stop(&mut control)
     }
     // The queue may be sealed: cleanup must not depend on sending more to it.

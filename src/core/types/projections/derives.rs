@@ -30,7 +30,7 @@ impl TypeRegistry {
             let original_scope = implementation
                 .scope
                 .as_ref()
-                .map_or(&self.trait_environment.root, |s| &s.imports);
+                .map_or(&self.trait_environment.declaration_root, |s| &s.imports);
             let name = &fields.trait_name;
             let id = self.trait_id(name, original_scope, implementation.span)?;
             let local = self.with_parameters(&implementation.type_params)?;
@@ -177,7 +177,7 @@ impl TypeRegistry {
             let scope = implementation
                 .scope
                 .as_ref()
-                .map_or(&self.trait_environment.root, |s| &s.imports);
+                .map_or(&self.trait_environment.declaration_root, |s| &s.imports);
             let Some(name) = &implementation.trait_name else {
                 continue;
             };

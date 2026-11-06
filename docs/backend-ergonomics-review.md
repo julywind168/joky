@@ -527,14 +527,20 @@ HTTP 内部循环、chat 主服务与管理端、TCP 排空示例已使用该方
 
 ### 9.3 session 与连接框架【Handler 已实现；serve 待做】
 
-已新增 `session.Handler`，统一提供 `on_line(&self, String) @suspends @noescape -> Bool` 与
-`on_close(&self) @suspends @noescape`。run 接收 connection、stream、&handler，run_draining 再传入 &stop，
-原有共享上下文、连接上下文与两个函数指针由处理器对象统一表达。
-chat 的 ClientHandler 持有 Script 与 Client；账户目录仍留在连接外层作用域，保持取消时的资源清理规则。
+已新增 `session.Reader` 与 `session.Handler`：Reader 通过关联类型 Message／Error 定义完整消息读取，
+Handler 声明匹配的 Message，并提供 `on_message(&self, Self.Message) @suspends @noescape -> Bool`
+与 `on_close(&self) @suspends @noescape`。run 接收 connection、stream、protocol、&handler，
+run_draining 再传入 &stop。原有共享上下文、连接上下文与两个函数指针由处理器对象统一表达。
 
-正常结束调用一次 on_close；排空模式保留已准入 on_line 的完成与输出封口顺序。
-取消或 on_line 运行时失败不启动异步清理回调；on_close 自身失败传播，不重试。
-处理器只被借用，可持有拥有值；现有回归覆盖正常结束、超时、排空、取消和处理器失败。
+输入协议不再固定为行：`Lines` 返回 String，`LengthPrefixed` 返回字节数组，自定义 Reader 可返回业务 struct。
+长度限制由读取器配置，session.Options 只保留队列与超时；出站数据仍由应用编码。
+chat 的 ClientHandler 持有 Script 与 Client，`Config.input` 显式选择 Lines；
+账户目录仍留在连接外层作用域，保持取消时的资源清理规则。
+
+正常结束调用一次 on_close；排空模式保留已准入 on_message 的完成与输出封口顺序。
+读取器返回 Err 结束接收并走正常关闭／排空；父取消或读取器／处理器运行时失败不启动异步清理回调。
+on_close 自身失败传播，不重试。处理器只被借用，可持有拥有值；现有回归覆盖正常结束、
+超时、排空、取消、处理器失败，以及二进制边界和自定义拥有型消息。
 
 下一步再设计 `session.serve(listener, &stop, options, service)`，明确每连接初始化、准入、失败报告和宽限期，
 再下沉 chat 主文件中的 accept／isolate 循环，不把业务账户初始化与热重载策略写入通用组件。

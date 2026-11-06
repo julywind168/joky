@@ -791,6 +791,10 @@ fn session_drain_and_outbox_seal_run_in_aot() {
                 "session_drain.jk",
                 include_str!("../fixtures/session_drain.jk"),
             ),
+            (
+                "session_messages.jk",
+                include_str!("../fixtures/session_messages.jk"),
+            ),
         ],
     );
     work.assert_native("drain.jk", &[], b"", 0);
