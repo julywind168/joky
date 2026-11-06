@@ -921,10 +921,18 @@ fn expanding_types_and_live_owner_loans_remain_rejected() {
 }
 
 #[test]
-fn values_and_numbers_run_in_all_backends() {
+fn json_values_codecs_limits_and_models_run_in_all_backends() {
     let work = Workspace::new();
-    work.write("values.jk", include_str!("../fixtures/json_values.jk"));
-    work.assert_all_backends("values.jk", &[], b"", 0);
+    work.write_fixture_batch(
+        "json_matrix.jk",
+        &[
+            ("values.jk", include_str!("../fixtures/json_values.jk")),
+            ("decode.jk", include_str!("../fixtures/json_decode.jk")),
+            ("models.jk", include_str!("../fixtures/json_model.jk")),
+            ("encode.jk", include_str!("../fixtures/json_encode.jk")),
+        ],
+    );
+    work.assert_all_backends("json_matrix.jk", &[], b"", 0);
 }
 
 #[test]
@@ -941,27 +949,6 @@ fn number_invariants_and_unique_value_ownership_are_enforced() {
         assert!(!work.path().join("invalid").exists());
     }
     work.assert_no_build_files();
-}
-
-#[test]
-fn strict_decoding_and_limits_run_in_all_backends() {
-    let work = Workspace::new();
-    work.write("decode.jk", include_str!("../fixtures/json_decode.jk"));
-    work.assert_all_backends("decode.jk", &[], b"", 0);
-}
-
-#[test]
-fn roundtrips_match_independent_semantic_models_in_all_backends() {
-    let work = Workspace::new();
-    work.write("models.jk", include_str!("../fixtures/json_model.jk"));
-    work.assert_all_backends("models.jk", &[], b"", 0);
-}
-
-#[test]
-fn compact_encoding_limits_and_borrowed_inputs_run_in_all_backends() {
-    let work = Workspace::new();
-    work.write("encode.jk", include_str!("../fixtures/json_encode.jk"));
-    work.assert_all_backends("encode.jk", &[], b"", 0);
 }
 
 #[test]
@@ -1015,7 +1002,7 @@ fn json_typed_structs_and_example_run_in_all_backends() {
 }
 
 #[test]
-fn json_typed_scalars_containers_and_limits_run_in_all_backends() {
+fn json_typed_scalars_containers_keys_and_limits_run_in_all_backends() {
     let work = Workspace::new();
     work.write_fixture_batch(
         "typed_matrix.jk",
@@ -1056,23 +1043,11 @@ fn json_typed_scalars_containers_and_limits_run_in_all_backends() {
                 "cancel.jk",
                 include_str!("../fixtures/json_typed_cancel.jk"),
             ),
+            ("keys.jk", include_str!("../fixtures/json_typed_keys.jk")),
+            ("map.jk", include_str!("../fixtures/json_typed_map.jk")),
         ],
     );
     work.assert_all_backends("typed_matrix.jk", &[], b"", 0);
-}
-
-#[test]
-fn json_typed_custom_keys_reject_collisions_in_all_backends() {
-    let work = Workspace::new();
-    work.write("keys.jk", include_str!("../fixtures/json_typed_keys.jk"));
-    work.assert_all_backends("keys.jk", &[], b"", 0);
-}
-
-#[test]
-fn json_typed_nested_map_roundtrip_runs_in_all_backends() {
-    let work = Workspace::new();
-    work.write("map.jk", include_str!("../fixtures/json_typed_map.jk"));
-    work.assert_all_backends("map.jk", &[], b"", 0);
 }
 
 #[test]

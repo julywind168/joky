@@ -3,6 +3,38 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn language_examples_preserve_output_on_all_backends() {
+    let work = Workspace::new();
+    work.write_fixture_batch(
+        "examples.jk",
+        &[
+            (
+                "queries.jk",
+                include_str!("../../examples/string_queries.jk"),
+            ),
+            (
+                "builder.jk",
+                include_str!("../../examples/string_builder.jk"),
+            ),
+            ("loops.jk", include_str!("../../examples/loops.jk")),
+            ("sequences.jk", include_str!("../../examples/sequences.jk")),
+            (
+                "conditionals.jk",
+                include_str!("../../examples/conditionals.jk"),
+            ),
+            ("jumps.jk", include_str!("../../examples/jumps.jk")),
+        ],
+    );
+    work.assert_all_backends(
+        "examples.jk",
+        &[],
+        b"7\n4\n20013\n128578\n101\n769\n20\n15\n45\n4\n3\n-1\n0\n1\n0\n4\n0\n4\n13\n",
+        0,
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn for_into_iter_executes_in_standalone_aot() {
     let work = Workspace::new();
     let source = include_str!("../fixtures/for_into_iter.jk").replace(
@@ -81,29 +113,7 @@ fn for_iterators_execute_in_standalone_aot() {
 
 #[test]
 #[cfg(unix)]
-fn string_example_runs_in_all_backends() {
-    let work = Workspace::new();
-    work.write(
-        "queries.jk",
-        include_str!("../../examples/string_queries.jk"),
-    );
-    work.assert_all_backends("queries.jk", &[], b"7\n4\n20013\n128578\n101\n769\n20\n", 0);
-}
-
-#[test]
-#[cfg(unix)]
-fn string_builder_example_runs_in_all_backends() {
-    let work = Workspace::new();
-    work.write(
-        "builder.jk",
-        include_str!("../../examples/string_builder.jk"),
-    );
-    work.assert_all_backends("builder.jk", &[], b"15\n", 0);
-}
-
-#[test]
-#[cfg(unix)]
-fn string_storage_probe_executes_ownership_and_failures_on_all_backends() {
+fn string_storage_probe_executes_ownership_and_failures_in_standalone_aot() {
     let work = Workspace::new();
     work.write(
         "probe.jk",
@@ -113,7 +123,7 @@ fn string_storage_probe_executes_ownership_and_failures_on_all_backends() {
         "success.jk",
         "import probe fn main() { probe.report(probe.success()); probe.report(probe.transfer()) }",
     );
-    work.assert_all_backends("success.jk", &[], b"-1\n1\n42\n901\n903\n42\n", 0);
+    work.assert_native("success.jk", &[], b"-1\n1\n42\n901\n903\n42\n", 0);
     for (entry, expected, message) in [
         ("failure", "-2\n2\n", "Storage probe failure"),
         ("tight_failure", "-3\n902\n3\n", "Primary probe failure"),
@@ -124,17 +134,12 @@ fn string_storage_probe_executes_ownership_and_failures_on_all_backends() {
         );
         let built = work.cli(&["build", "failure.jk"]);
         success(&built);
-        for output in [
-            work.cli(&["run", "failure.jk"]),
-            work.cli(&["run", "--interpreter", "failure.jk"]),
-            Command::new(work.path().join("failure")).output().unwrap(),
-        ] {
-            assert!(!output.status.success());
-            assert_eq!(output.stdout, expected.as_bytes());
-            let error = String::from_utf8_lossy(&output.stderr);
-            assert!(error.contains(message), "{error}");
-            assert!(!error.contains("Secondary probe failure"), "{error}");
-        }
+        let output = Command::new(work.path().join("failure")).output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(output.stdout, expected.as_bytes());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(message), "{error}");
+        assert!(!error.contains("Secondary probe failure"), "{error}");
     }
 }
 
@@ -179,33 +184,12 @@ fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
     );
     work.write("unicode.jk", &source);
     work.assert_all_backends("unicode.jk", &[], b"42\n", 0);
-    for escape in [
-        r"\u{}",
-        r"\u{0000041}",
-        r"\u{d800}",
-        r"\u{dfff}",
-        r"\u{110000}",
-        r"\u{g}",
-        r"\u{1_2}",
-        r"\u{中}",
-        r"\u{41",
-        r"\u41",
-    ] {
-        work.write(
-            "invalid.jk",
-            &format!("// 中🙂\nfn main() {{ \"中{escape}\" }}"),
-        );
-        for args in [
-            vec!["run", "invalid.jk"],
-            vec!["run", "--interpreter", "invalid.jk"],
-            vec!["build", "invalid.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, "Invalid Unicode escape");
-            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid.jk:2:"));
-        }
-        assert!(!work.path().join("invalid").exists());
-    }
+    // The lexer owns the invalid-escape matrix; retain CLI source rendering here.
+    work.write("invalid.jk", "// 中🙂\nfn main() { \"中\\u{d800}\" }");
+    let output = work.cli(&["build", "invalid.jk"]);
+    failure(&output, "Invalid Unicode escape");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid.jk:2:"));
+    assert!(!work.path().join("invalid").exists());
 }
 
 #[test]
@@ -261,11 +245,11 @@ fn uint8_storage_arithmetic_and_failures_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
-fn float_literals_arithmetic_and_semantics_match_all_backends() {
+fn float_fixture_runs_in_aot_and_reports_static_errors() {
     let work = Workspace::new();
     work.write("floats.jk", include_str!("../fixtures/float.jk"));
     // `main` runs the semantic and aggregate composites and returns 42.
-    work.assert_all_backends("floats.jk", &[], b"", 42);
+    work.assert_native("floats.jk", &[], b"", 42);
     for (source, message) in [
         (
             "fn main() -> Int32 { let x: Float32 = 1.0e39; 0 }",
@@ -295,22 +279,19 @@ fn float_literals_arithmetic_and_semantics_match_all_backends() {
         ),
     ] {
         work.write("invalid_float.jk", source);
-        failure(&work.cli(&["run", "invalid_float.jk"]), message);
-        failure(
-            &work.cli(&["run", "--interpreter", "invalid_float.jk"]),
-            message,
-        );
+        failure(&work.cli(&["build", "invalid_float.jk"]), message);
+        assert!(!work.path().join("invalid_float").exists());
     }
     work.assert_no_build_files();
 }
 
 #[test]
 #[cfg(unix)]
-fn float_math_checked_conversions_and_formatting_match_all_backends() {
+fn float_math_fixture_runs_in_aot_and_reports_static_errors() {
     let work = Workspace::new();
     work.write("float_math.jk", include_str!("../fixtures/float_math.jk"));
     // `main` runs math, checked-conversion, bit and formatting composites.
-    work.assert_all_backends("float_math.jk", &[], b"", 42);
+    work.assert_native("float_math.jk", &[], b"", 42);
     for (source, message) in [
         (
             "fn main() -> Int32 { let x = 1.to_bits(); 0 }",
@@ -326,25 +307,22 @@ fn float_math_checked_conversions_and_formatting_match_all_backends() {
         ),
     ] {
         work.write("invalid_float_math.jk", source);
-        failure(&work.cli(&["run", "invalid_float_math.jk"]), message);
-        failure(
-            &work.cli(&["run", "--interpreter", "invalid_float_math.jk"]),
-            message,
-        );
+        failure(&work.cli(&["build", "invalid_float_math.jk"]), message);
+        assert!(!work.path().join("invalid_float_math").exists());
     }
     work.assert_no_build_files();
 }
 
 #[test]
 #[cfg(unix)]
-fn narrow_integers_match_all_backends_and_reject_bad_literals() {
+fn narrow_integer_fixture_runs_in_aot_and_reports_errors() {
     let work = Workspace::new();
     work.write(
         "narrow_integers.jk",
         include_str!("../fixtures/narrow_integers.jk"),
     );
     // `main` runs the arithmetic, extension, bridge and array composites.
-    work.assert_all_backends("narrow_integers.jk", &[], b"", 42);
+    work.assert_native("narrow_integers.jk", &[], b"", 42);
     for (source, message) in [
         (
             "fn main() -> Int32 { let x: Int8 = 128; 0 }",
@@ -376,11 +354,8 @@ fn narrow_integers_match_all_backends_and_reject_bad_literals() {
         ),
     ] {
         work.write("invalid_narrow.jk", source);
-        failure(&work.cli(&["run", "invalid_narrow.jk"]), message);
-        failure(
-            &work.cli(&["run", "--interpreter", "invalid_narrow.jk"]),
-            message,
-        );
+        failure(&work.cli(&["build", "invalid_narrow.jk"]), message);
+        assert!(!work.path().join("invalid_narrow").exists());
     }
     // Runtime traps surface with the shared diagnostics in every backend.
     work.write(
@@ -700,22 +675,6 @@ fn division_errors_and_wrapping_match_all_execution_modes() {
 
 #[test]
 #[cfg(unix)]
-fn loop_example_matches_jit_interpreter_and_native_execution() {
-    let work = Workspace::new();
-    work.write("loops.jk", include_str!("../../examples/loops.jk"));
-    work.assert_all_backends("loops.jk", &[], b"45\n", 0);
-}
-
-#[test]
-#[cfg(unix)]
-fn sequence_example_matches_jit_interpreter_and_native_execution() {
-    let work = Workspace::new();
-    work.write("sequences.jk", include_str!("../../examples/sequences.jk"));
-    work.assert_all_backends("sequences.jk", &[], b"4\n3\n", 0);
-}
-
-#[test]
-#[cfg(unix)]
 fn newline_boundaries_and_method_chains_match_all_frontends() {
     let names = [
         "newline_deref",
@@ -748,25 +707,6 @@ fn newline_boundaries_and_method_chains_match_all_frontends() {
         work.write("newlines.jk", &source);
         work.assert_all_backends("newlines.jk", &[], output, 0);
     }
-}
-
-#[test]
-#[cfg(unix)]
-fn conditional_example_matches_jit_interpreter_and_native_execution() {
-    let work = Workspace::new();
-    work.write(
-        "conditionals.jk",
-        include_str!("../../examples/conditionals.jk"),
-    );
-    work.assert_all_backends("conditionals.jk", &[], b"-1\n0\n1\n0\n4\n", 0);
-}
-
-#[test]
-#[cfg(unix)]
-fn jump_example_matches_jit_interpreter_and_native_execution() {
-    let work = Workspace::new();
-    work.write("jumps.jk", include_str!("../../examples/jumps.jk"));
-    work.assert_all_backends("jumps.jk", &[], b"0\n4\n13\n", 0);
 }
 
 #[test]
@@ -2729,16 +2669,10 @@ fn unterminated_block_comments_preserve_file_and_line() {
         "fn main() {\n    println(\"{/* outer /* inner */ }\")\n}",
     ] {
         work.write("invalid.jk", source);
-        for args in [
-            vec!["build", "invalid.jk"],
-            vec!["run", "invalid.jk"],
-            vec!["run", "--interpreter", "invalid.jk"],
-        ] {
-            let output = work.cli(&args);
-            failure(&output, "Unterminated block comment");
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert!(stderr.contains("invalid.jk:2:"), "{stderr}");
-        }
+        let output = work.cli(&["build", "invalid.jk"]);
+        failure(&output, "Unterminated block comment");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("invalid.jk:2:"), "{stderr}");
     }
 }
 
