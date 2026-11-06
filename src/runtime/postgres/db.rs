@@ -4,6 +4,27 @@ use futures_util::TryStreamExt;
 use sqlx::postgres::{PgArguments, PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::{Arguments, AssertSqlSafe, Column, Postgres, Row, TypeInfo, ValueRef};
 
+// PostgreSQL's built-in OIDs and binary payloads. Keep JSON numbers as text,
+// without routing them through a host floating-point representation.
+struct WireValue<const OID: u32>(Vec<u8>);
+impl<const OID: u32> sqlx::Type<Postgres> for WireValue<OID> {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        sqlx::postgres::PgTypeInfo::with_oid(sqlx::postgres::types::Oid(OID))
+    }
+}
+impl<const OID: u32> sqlx::Encode<'_, Postgres> for WireValue<OID> {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        buf.extend_from_slice(&self.0);
+        Ok(sqlx::encode::IsNull::No)
+    }
+}
+const PG_EPOCH_MICROS: i64 = 946_684_800_000_000;
+const TIMESTAMP_MICROS: std::ops::RangeInclusive<i64> =
+    -62_135_596_800_000_000..=253_402_300_799_999_999;
+
 // An incomplete exchange can never be recycled. Only a fully consumed reply
 // takes the connection out of this guard for normal pool return.
 pub(super) struct Loan(Option<sqlx::pool::PoolConnection<Postgres>>);
@@ -55,6 +76,7 @@ pub(super) enum Fault {
     Acquire,
     AcquireTimeout,
     MultipleRows,
+    ResultRange,
 }
 impl Fault {
     pub(super) fn code(&self) -> u64 {
@@ -71,6 +93,7 @@ impl Fault {
             Self::Acquire => 10,
             Self::AcquireTimeout => 11,
             Self::MultipleRows => 12,
+            Self::ResultRange => 13,
         }
     }
 }
@@ -159,19 +182,42 @@ fn arguments(mut input: &[u8]) -> Result<PgArguments, Fault> {
             1 => args.add(Option::<i64>::None),
             2 => args.add(Option::<String>::None),
             3 => args.add(Option::<Vec<u8>>::None),
+            8 => args.add(Option::<WireValue<1184>>::None),
+            9 => args.add(Option::<WireValue<2950>>::None),
+            10 => args.add(Option::<WireValue<3802>>::None),
+            11 => {
+                let micros = i64::from_le_bytes(take(&mut input, 8)?.try_into().unwrap());
+                if !TIMESTAMP_MICROS.contains(&micros) {
+                    return Err(Fault::Invalid);
+                }
+                args.add(WireValue::<1184>(
+                    (micros - PG_EPOCH_MICROS).to_be_bytes().to_vec(),
+                ))
+            }
             4 => args.add(match take(&mut input, 1)?[0] {
                 0 => false,
                 1 => true,
                 _ => return Err(Fault::Invalid),
             }),
             5 => args.add(i64::from_le_bytes(take(&mut input, 8)?.try_into().unwrap())),
-            6 | 7 => {
+            6 | 7 | 12 | 13 => {
                 let n = u32::from_le_bytes(take(&mut input, 4)?.try_into().unwrap());
                 let bytes = take(&mut input, n as usize)?;
                 if tag == 6 {
                     args.add(std::str::from_utf8(bytes).map_err(|_| Fault::Invalid)?)
-                } else {
+                } else if tag == 7 {
                     args.add(bytes)
+                } else if tag == 12 {
+                    if bytes.len() != 16 {
+                        return Err(Fault::Invalid);
+                    }
+                    args.add(WireValue::<2950>(bytes.to_vec()))
+                } else {
+                    std::str::from_utf8(bytes).map_err(|_| Fault::Invalid)?;
+                    let mut json = Vec::with_capacity(bytes.len() + 1);
+                    json.push(1);
+                    json.extend_from_slice(bytes);
+                    args.add(WireValue::<3802>(json))
                 }
             }
             _ => return Err(Fault::Invalid),
@@ -191,8 +237,14 @@ fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow, named: bool) -> Result<(),
             "INT2" | "INT4" | "INT8" => 1,
             "TEXT" | "VARCHAR" | "BPCHAR" | "NAME" => 2,
             "BYTEA" => 3,
+            "TIMESTAMPTZ" => 8,
+            "UUID" => 9,
+            "JSONB" => 10,
             _ => return Err(Fault::ResultType),
         };
+        if !named && tag >= 8 {
+            return Err(Fault::ResultType);
+        }
         if named {
             let name = col.name().as_bytes();
             if 4 + name.len() > MAX - out.len() {
@@ -209,11 +261,19 @@ fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow, named: bool) -> Result<(),
             out.push(tag);
             continue;
         }
-        out.push(tag + 4);
+        out.push(if tag < 4 { tag + 4 } else { tag + 3 });
         let bytes = raw.as_bytes().map_err(|_| Fault::ResultType)?;
+        let bytes = if tag == 10 {
+            if bytes.first() != Some(&1) {
+                return Err(Fault::ResultType);
+            }
+            &bytes[1..]
+        } else {
+            bytes
+        };
         let payload = match tag {
             0 => 1,
-            1 => 8,
+            1 | 8 => 8,
             _ => 4 + bytes.len(),
         };
         if payload > MAX - out.len() {
@@ -232,8 +292,18 @@ fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow, named: bool) -> Result<(),
                 };
                 out.extend(n.to_le_bytes());
             }
+            8 => {
+                let micros = i64::from_be_bytes(bytes.try_into().map_err(|_| Fault::ResultType)?)
+                    .checked_add(PG_EPOCH_MICROS)
+                    .filter(|value| TIMESTAMP_MICROS.contains(value))
+                    .ok_or(Fault::ResultRange)?;
+                out.extend(micros.to_le_bytes());
+            }
             _ => {
-                if tag == 2 {
+                if tag == 9 && bytes.len() != 16 {
+                    return Err(Fault::ResultType);
+                }
+                if tag == 2 || tag == 10 {
                     std::str::from_utf8(bytes).map_err(|_| Fault::ResultType)?;
                 }
                 out.extend((bytes.len() as u32).to_le_bytes());

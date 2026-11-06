@@ -223,20 +223,23 @@ fn postgres_driver_transactions_cancellation_and_unknown_outcomes() {
             dir,
         );
     }
-    fs::write(dir.join("driver.jk"), include_str!("fixtures/postgres.jk")).unwrap();
-    for args in [
-        vec!["run", "driver.jk"],
-        vec!["run", "--interpreter", "driver.jk"],
+    for (name, source) in [
+        ("driver", include_str!("fixtures/postgres.jk")),
+        ("types", include_str!("fixtures/postgres_types.jk")),
     ] {
-        bounded(joky(dir).args(args).env("JOKY_POSTGRES_URL", &direct), dir);
+        let file = format!("{name}.jk");
+        fs::write(dir.join(&file), source).unwrap();
+        for args in [vec!["run", &file], vec!["run", "--interpreter", &file]] {
+            bounded(joky(dir).args(args).env("JOKY_POSTGRES_URL", &direct), dir);
+        }
+        checked(joky(dir).args(["build", "--task-workers", "2", &file]));
+        bounded(
+            Command::new(dir.join(name))
+                .current_dir(dir)
+                .env("JOKY_POSTGRES_URL", &direct),
+            dir,
+        );
     }
-    checked(joky(dir).args(["build", "--task-workers", "2", "driver.jk"]));
-    bounded(
-        Command::new(dir.join("driver"))
-            .current_dir(dir)
-            .env("JOKY_POSTGRES_URL", &direct),
-        dir,
-    );
 
     fs::write(dir.join("verified.jk"),r#"import joky/postgres fn main() @suspends {
         let p=postgres.open(1)!

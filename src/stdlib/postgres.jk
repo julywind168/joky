@@ -5,6 +5,10 @@ import joky/result.{type Result, Ok, Err}
 import joky/check.{panic}
 import joky/show.{type Show}
 import joky/string.{type StringBuilder}
+import joky/time
+import joky/uuid
+import joky/json
+import joky/json/typed
 
 extern fn __pg_open(max_connections: UInt64) @suspends -> postgres.Owner
 extern fn __pg_share(owner: &postgres.Owner) @suspends -> postgres.Owner
@@ -15,7 +19,7 @@ extern fn __pg_status(owner: &postgres.Owner) @suspends -> UInt64
 extern fn __pg_count(owner: &postgres.Owner) @suspends -> UInt64
 extern fn __pg_data(owner: &postgres.Owner) @suspends -> Array<UInt8>
 
-pub enum Kind { Boolean, Integer, Text, Bytes }
+pub enum Kind { Boolean, Integer, Text, Bytes, Timestamp, Uuid, Jsonb }
 impl Show for Kind {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(match self {
@@ -23,11 +27,26 @@ impl Show for Kind {
             Integer => "integer"
             Text => "text"
             Bytes => "bytes"
+            Timestamp => "timestamptz"
+            Uuid => "uuid"
+            Jsonb => "jsonb"
         })
     }
 }
 
-pub enum Value { Null(Kind), BoolValue(Bool), IntValue(Int64), TextValue(String), BytesValue(Array<UInt8>) }
+pub enum Value { Null(Kind), BoolValue(Bool), IntValue(Int64), TextValue(String), BytesValue(Array<UInt8>), TimestampValue(time.Timestamp), UuidValue(uuid.Uuid), JsonValue(String) }
+
+pub struct Json<T> { pub value: T }
+// JSON encoding is fallible. These helpers retain codec details and own the text.
+pub fn param_json(value: &json.Value) @noescape -> Result<Value, DbError> {
+    match json.encode(value) { Ok(text) => Ok(JsonValue(text)), Err(error) => Err(JsonCodec(typed.CodecError.Encoding(error))) }
+}
+pub fn param_json_as<T: typed.ToJson>(value: &T) @noescape -> Result<Value, DbError> {
+    match typed.encode(value) { Ok(text) => Ok(JsonValue(text)), Err(error) => Err(JsonCodec(error)) }
+}
+pub fn param_json_optional<T: typed.ToJson>(value: &Option<T>) @noescape -> Result<Value, DbError> {
+    match value { Some(value) => param_json_as(value), None => Ok(Null(Jsonb)) }
+}
 
 // Parameters own their data; kind also describes an absent optional value.
 pub trait ToSql {
@@ -59,6 +78,14 @@ impl ToSql for Array<UInt8> {
     fn kind() -> Kind { Bytes }
     fn to_sql(&self) @noescape -> Value { BytesValue(array.clone(self)) }
 }
+impl ToSql for time.Timestamp {
+    fn kind() -> Kind { Timestamp }
+    fn to_sql(&self) @noescape -> Value { TimestampValue(*self) }
+}
+impl ToSql for uuid.Uuid {
+    fn kind() -> Kind { Uuid }
+    fn to_sql(&self) @noescape -> Value { UuidValue(*self) }
+}
 impl<T: ToSql> ToSql for Option<T> {
     fn kind() -> Kind { ToSql.kind::<T>() }
     fn to_sql(&self) @noescape -> Value {
@@ -66,7 +93,7 @@ impl<T: ToSql> ToSql for Option<T> {
     }
 }
 
-pub enum ReadFailure { UnsupportedType, ResultLimit, NoRows, MultipleRows, ColumnCount(UInt64) }
+pub enum ReadFailure { UnsupportedType, ResultLimit, NoRows, MultipleRows, ColumnCount(UInt64), ValueRange }
 impl Show for ReadFailure {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(match self {
@@ -75,12 +102,13 @@ impl Show for ReadFailure {
             NoRows => "query returned no rows"
             MultipleRows => "query returned multiple rows"
             ColumnCount(count) => "query returned {count} columns; expected one"
+            ValueRange => "query sent; result value outside the supported range"
         })
     }
 }
 
 pub enum ColumnError { OutOfBounds(UInt64), TypeMismatch(UInt64), UnexpectedNull(UInt64), MissingColumn, AmbiguousColumn }
-pub enum DbError { Invalid, Unavailable, Closed, Limit, OutcomeUnknown, Database(String), ResultRead(ReadFailure), Connect(String), AcquireFailed, AcquireTimeout, Column(ColumnError) }
+pub enum DbError { Invalid, Unavailable, Closed, Limit, OutcomeUnknown, Database(String), ResultRead(ReadFailure), Connect(String), AcquireFailed, AcquireTimeout, Column(ColumnError), TimestampPrecision, JsonCodec(typed.CodecError) }
 impl Show for ColumnError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
@@ -109,6 +137,8 @@ impl Show for DbError {
             AcquireTimeout => output.push_str("pool checkout timed out"),
             Column(reason) => reason.show(output),
             ResultRead(reason) => reason.show(output)
+            TimestampPrecision => output.push_str("timestamp parameter requires microsecond precision")
+            JsonCodec(error) => error.show(output)
         }
     }
 }
@@ -191,6 +221,44 @@ impl FromSql for Array<UInt8> {
         }
     }
 }
+impl FromSql for time.Timestamp {
+    fn from_sql(row: &Row, i: UInt64) @noescape -> Result<time.Timestamp, DbError> {
+        if i >= row.len() { return Err(Column(OutOfBounds(i))) }
+        match row.borrow_ref(i) {
+            TimestampValue(value) => Ok(value), Null(Timestamp) => Err(Column(UnexpectedNull(i))), _ => Err(Column(TypeMismatch(i)))
+        }
+    }
+}
+impl FromSql for uuid.Uuid {
+    fn from_sql(row: &Row, i: UInt64) @noescape -> Result<uuid.Uuid, DbError> {
+        if i >= row.len() { return Err(Column(OutOfBounds(i))) }
+        match row.borrow_ref(i) {
+            UuidValue(value) => Ok(value), Null(Uuid) => Err(Column(UnexpectedNull(i))), _ => Err(Column(TypeMismatch(i)))
+        }
+    }
+}
+fn json_text(row: &Row, i: UInt64) -> Result<&String, ColumnError> {
+    if i >= row.len() { return Err(OutOfBounds(i)) }
+    match row.borrow_ref(i) {
+        JsonValue(value) => Ok(value), Null(Jsonb) => Err(UnexpectedNull(i)), _ => Err(TypeMismatch(i))
+    }
+}
+impl FromSql for json.Value {
+    fn from_sql(row: &Row, i: UInt64) @noescape -> Result<json.Value, DbError> {
+        let text = match json_text(row, i) { Ok(text) => text, Err(error) => return Err(Column(error)) }
+        match json.decode(text) {
+            Ok(value) => Ok(value), Err(error) => Err(JsonCodec(typed.CodecError.Syntax(error)))
+        }
+    }
+}
+impl<T: typed.FromJson> FromSql for Json<T> {
+    fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Json<T>, DbError> {
+        let text = match json_text(row, i) { Ok(text) => text, Err(error) => return Err(Column(error)) }
+        match typed.decode::<T>(text) {
+            Ok(value) => Ok(Json { value }), Err(error) => Err(JsonCodec(error))
+        }
+    }
+}
 impl<T: FromSql> FromSql for Option<T> {
     fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Option<T>, DbError> {
         match FromSql.from_sql::<T>(row, i) {
@@ -230,6 +298,7 @@ fn check_status(owner: &postgres.Owner) @suspends -> Result<Unit, DbError> {
         0 => Ok({}), 1 => Err(Invalid), 2 => Err(Unavailable), 3 => Err(Closed), 4 => Err(Limit),
         5 => Err(OutcomeUnknown), 6 => Err(Database(String.from_utf8(__pg_data(owner))!)), 7 => Err(ResultRead(UnsupportedType)), 8 => Err(ResultRead(ResultLimit)),
         9 => Err(Connect(String.from_utf8(__pg_data(owner))!)), 10 => Err(AcquireFailed), 11 => Err(AcquireTimeout), 12 => Err(ResultRead(MultipleRows)),
+        13 => Err(ResultRead(ValueRange)),
         _ => panic("invalid database status")
     }
 }
@@ -254,11 +323,27 @@ fn encode(params: Array<Value>) -> Result<Array<UInt8>, DbError> {
     var data: Array<UInt8> = []
     for param in params {
         match param {
-            Null(kind) => data.push(match kind { Boolean => 0, Integer => 1, Text => 2, Bytes => 3 }),
+            Null(kind) => data.push(match kind { Boolean => 0, Integer => 1, Text => 2, Bytes => 3, Timestamp => 8, Uuid => 9, Jsonb => 10 }),
             BoolValue(value) => { data.push(4); data.push(if value { 1 } else { 0 }) },
             IntValue(value) => { data.push(5); word(&mut data, uint64(value), 8) },
             TextValue(value) => { if value.byte_length() > 1048576 { return Err(Limit) }; let bytes = value.into_bytes(); blob(&mut data, 6, &bytes)? },
-            BytesValue(bytes) => blob(&mut data, 7, &bytes)?
+            BytesValue(bytes) => blob(&mut data, 7, &bytes)?,
+            TimestampValue(value) => {
+                if value.subsec_nanos() % 1000 != 0 { return Err(TimestampPrecision) }
+                data.push(11)
+                word(&mut data, uint64(value.as_unix_micros()), 8)
+            },
+            UuidValue(value) => {
+                let bytes = value.to_bytes()
+                data.push(12)
+                word(&mut data, 16, 4)
+                for i in uint64(0) .. 16 { data.push(bytes[i]) }
+            },
+            JsonValue(text) => {
+                if text.byte_length() > 1048576 { return Err(Limit) }
+                let bytes = text.into_bytes()
+                blob(&mut data, 13, &bytes)?
+            }
         }
     }
     if data.len() > 1048576 { return Err(Limit) }
@@ -282,7 +367,13 @@ fn cell(data: &Array<UInt8>, offset: &mut UInt64) -> Value {
     if tag < 4 { return Null(match tag { 0 => Boolean, 1 => Integer, 2 => Text, _ => Bytes }) }
     if tag == 4 { return BoolValue(take(data, offset, 1) != 0) }
     if tag == 5 { return IntValue(int64(take(data, offset, 8))) }
+    if tag == 8 { return Null(Timestamp) }
+    if tag == 9 { return Null(Uuid) }
+    if tag == 10 { return Null(Jsonb) }
+    if tag == 11 { return TimestampValue(time.Timestamp.from_unix_micros(int64(take(data, offset, 8)))!) }
     let bytes = take_bytes(data, offset)
+    if tag == 12 { return UuidValue(uuid.Uuid.from_slice(bytes.slice(0, bytes.len()))!) }
+    if tag == 13 { return JsonValue(String.from_utf8(bytes)!) }
     if tag == 6 { TextValue(String.from_utf8(bytes)!) } else { BytesValue(bytes) }
 }
 fn rows(data: Array<UInt8>) -> Array<Row> {

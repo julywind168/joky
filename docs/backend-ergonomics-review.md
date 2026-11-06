@@ -439,19 +439,21 @@ explain-parallel 确认直接域操作仍为 Local。仅核验现有能力，没
 [postgres.param(&customer), postgres.param(&key), postgres.param(&qty)]
 ```
 
-内置支持 Bool、Int16/32/64、String、Array<UInt8>、Option<T: ToSql>。
+内置支持 Bool、Int16/32/64、String、Array<UInt8>、time.Timestamp、uuid.Uuid、Option<T: ToSql>。
 整数统一绑定为 bigint；Option 的 None 根据 T 的 `kind()` 生成带类型的 SQL NULL。
 文本和字节从借用生成独立拥有的参数副本，不保留输入借用，可跨挂起使用；
-这里省去调用方显式 clone，没有消除实际复制。业务类型可实现 ToSql 复用现有四种 SQL 类型。
+这里省去调用方显式 clone，没有消除实际复制。业务类型可实现 ToSql 复用已支持的 SQL 类型。
 
 参数容器仍为 `Array<postgres.Value>`，原有显式变体构造继续可用。
 尚未实现异构数组 `[customer, key, qty]` 的隐式转换；不为此引入第二套 Param 容器。
-Float64、Uuid、Timestamp 等类型按 §8.3 补齐。Value 变体命名整理仍待处理。
+Timestamp、Uuid 已接入 ToSql，jsonb 使用显式可失败参数构造函数，见 §8.3。
+Float64 等类型和 Value 变体命名整理仍待处理。
 
 ### 8.2 结果读取【泛型读取、FromRow 与标量查询已实现】
 
-Row 持有列名和值，四种现有 SQL 类型均可按名称读取。已提供 `row.get::<T>(name)`、
-`row.get_opt::<T>(name)` 和 FromSql 协议，内置支持 Int64、Bool、String、Array<UInt8>、Option<T>。
+Row 持有列名和值，已支持的 SQL 类型均可按名称读取。已提供 `row.get::<T>(name)`、
+`row.get_opt::<T>(name)` 和 FromSql 协议，内置支持 Int64、Bool、String、Array<UInt8>、
+time.Timestamp、uuid.Uuid、json.Value、Json<T: FromJson>、Option<T>。
 String 与 bytea 解码为独立拥有值；借用读取使用 `get_text` / `get_bytes`。
 具体泛型类型的 trait 实现已支持，FromRow 可映射 Array<UInt8> 与 Option<Array<UInt8>> 字段。
 
@@ -468,12 +470,18 @@ Option<T> 允许 SQL NULL，无行仍报 NoRows；列数不符返回带实际数
 
 剩余命名整理：`get_i64` 与语言类型名 Int64 不一致，见 §10。
 
-### 8.3 类型覆盖
+### 8.3 类型覆盖【timestamptz、uuid、jsonb 已实现】
 
-当前只支持 bool、int2/4/8、text 族、bytea。一个普通订单/用户服务至少还需要：
-`float8`、`numeric`（金额）、`timestamptz`（映射 `time.Timestamp`）、`uuid`（映射 `uuid.Uuid`）、
-`jsonb`（映射 `json.Value` 或 FromJson 类型）、`text[]`/`int8[]`。
-建议按 timestamptz → uuid → jsonb → numeric → 数组 的顺序补，前三项都有现成的 Joky 类型可映射。
+已在 bool、int2/4/8、text 族、bytea 基础上增加三种类型的参数绑定、结果读取及带类型的 SQL NULL：
+
+- timestamptz 映射 time.Timestamp；拒绝参数的亚微秒精度，结果拒绝 Timestamp 范围外的时间和正负 infinity。
+- uuid 映射 uuid.Uuid，保持完整 128 位。
+- jsonb 通过 json.Value 动态读取，或用 postgres.Json<T> 调用 FromJson；两者均可用于 FromRow 派生。
+  `param_json` / `param_json_as` 显式返回编码错误，`param_json_optional` 区分 SQL NULL 与 JSON null。
+  CodecError 保留解析位置、映射路径及限额错误；不为所有 FromJson 类型隐式实现 FromSql。
+
+相关三后端回归见 `tests/fixtures/postgres_types.jk`，契约与用法见[语言参考](language.md#postgresql-数据库-jokypostgres)。
+后续补 float8、numeric（金额）、text[]/int8[]；SQL json 暂须显式转换为 jsonb。
 
 ### 8.4 配置与生命周期
 

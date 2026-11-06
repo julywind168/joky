@@ -7254,13 +7254,14 @@ verify-full 用来验证数据库服务器证书和主机名。订单示例中�
 | `tx.commit()` / `tx.rollback()` | 消费事务并等待数据库回执，成功返回 Unit |
 
 使用 PostgreSQL 的 `$1`、`$2` 参数，不拼接数据。绑定值支持 BoolValue、IntValue(Int64，对应 bigint)、
-TextValue、BytesValue 和 Null(Kind)。查询结果支持 bool、int2/4/8（统一为 Int64）、text/varchar/bpchar/name、
-bytea 及这些类型的 SQL NULL；其他类型可在 SQL 中显式转换。查询最多返回 1024 行，每行至多 128 列，
+TextValue、BytesValue、TimestampValue、UuidValue、JsonValue（JSON 文本）和 Null(Kind)。
+查询结果支持 bool、int2/4/8（统一为 Int64）、text/varchar/bpchar/name、bytea、timestamptz、uuid、jsonb
+及这些类型的 SQL NULL；其他类型可在 SQL 中显式转换。查询最多返回 1024 行，每行至多 128 列，
 编码后的结果至多 1 MiB。单条 SQL 至多 64 KiB，绑定参数至多 256 个、编码后至多 1 MiB。
 结果按行接收并逐行检查；此上限约束交付给 Joky 的结果，SQLx 读取单个 PostgreSQL 协议消息的暂存可能更大。
 
 `postgres.param<T: ToSql>(value: &T) @noescape -> Value` 将借用值转换为拥有型参数。
-内置 ToSql 实现包括 Bool、Int16/32/64、String、Array<UInt8> 和 Option<T: ToSql>。
+内置 ToSql 实现包括 Bool、Int16/32/64、String、Array<UInt8>、time.Timestamp、uuid.Uuid 和 Option<T: ToSql>。
 Int16/32 符号扩展为 Int64，三种整数均绑定为 PostgreSQL bigint；文本与字节数组复制为独立拥有值。
 调用结束后可修改或释放原值，参数可跨挂起保存。SQL 参数列表仍是 `Array<postgres.Value>`，
 不会把异构数组隐式转换为参数；也可继续显式构造 Value，直接移入已有 String 或字节数组以避免复制。
@@ -7274,9 +7275,49 @@ let row = pool.query_one("SELECT $1 AS customer, $2 AS key, $3 AS qty", params)?
 ```
 
 ToSql 要求实现 `fn kind() -> postgres.Kind` 和 `fn to_sql(&self) @noescape -> postgres.Value`。
-业务类型的 kind 必须与 to_sql 返回值的 SQL 类型一致；内置 Kind 为 Boolean、Integer、Text、Bytes。
+业务类型的 kind 必须与 to_sql 返回值的 SQL 类型一致；内置 Kind 为 Boolean、Integer、Text、Bytes、Timestamp、Uuid、Jsonb。
 Option<T> 的 Some 调用 T.to_sql，None 使用 T.kind 生成 `Value.Null(kind)`，无需 SQL 类型转换提示
 即可绑定带类型的 NULL。None 的 T 必须由类型注解或上下文确定。
+
+`timestamptz` 对应 `time.Timestamp`，结果规范化为 UTC，不保留输入的时区偏移。
+参数必须精确到微秒：带亚微秒部分的值在执行 SQL 前返回 `DbError.TimestampPrecision`，不会截断或舍入。
+结果只接受 Timestamp 的公元 0001–9999 年范围；更早、更晚或正负 infinity 返回 `ResultRead(ValueRange)`。
+`uuid` 对应 `uuid.Uuid`，按网络字节顺序传输完整 128 位，不限定 UUID 版本。
+两者均支持 FromSql、ToSql、Option 和 FromRow 派生。
+
+`jsonb` 读取有两层：`json.Value` 用于动态结构，`postgres.Json<T: typed.FromJson>` 用于业务类型，
+后者的公开 `value: T` 字段持有解码值。它们都实现 FromSql，可作为 `#derive(FromRow)` 字段，
+也可用于 query_scalar；不会给所有 FromJson 类型自动添加 FromSql 实现。
+读取返回独立拥有值，复用 JSON 默认限额与类型映射规则；失败返回 `DbError.JsonCodec(typed.CodecError)`，
+保留 Syntax 的 offset 或 Mapping 的字段路径。SQL 列类型不符仍为 Column(TypeMismatch(i))。
+
+JSON 编码可能失败，因此参数使用显式的同步构造函数，均返回 `Result<postgres.Value, DbError>`：
+
+| API | 行为 |
+| --- | --- |
+| `postgres.param_json(&json.Value)` | 按默认 JSON 限额编码动态值 |
+| `postgres.param_json_as<T: typed.ToJson>(&T)` | 按默认类型化 JSON 规则编码业务值，Option 的 None 编码为 JSON null |
+| `postgres.param_json_optional<T: typed.ToJson>(&Option<T>)` | Some 编码其内容，None 绑定 SQL NULL |
+
+这些函数返回拥有的 JSON 文本副本，可在原值释放后跨挂起使用；不实现无失败返回的 ToSql。
+原始 JSON 的 SQL NULL 可用 `Value.Null(Kind.Jsonb)`；`Option<json.Value>` 或 `Option<Json<T>>`
+在读取时表示 SQL NULL，而 `json.Value.Null` 或 `Json<Option<T>>` 中的 None 表示 JSON null。
+直接构造 `Value.JsonValue(text)` 时，JSON 文本由数据库验证；服务端拒绝（包括 jsonb 不接受的数字范围或 Unicode）
+返回 Database(SQLSTATE)。JSON 数字不经过宿主浮点转换，但 jsonb 不保证保留输入空白、对象键顺序、重复键或数字拼写。
+SQL `json` 类型尚不直接支持，可显式转换为 jsonb。
+
+```joky
+#derive(ToJson, FromJson)
+struct Payload { source: String, version: Int64 }
+#derive(FromRow)
+struct Event {
+    created: time.Timestamp,
+    id: uuid.Uuid,
+    payload: postgres.Json<Payload>,
+    raw: json.Value,
+    optional: Option<postgres.Json<Payload>>
+}
+```
 
 按名读取使用 PostgreSQL 返回的列名（包括 SQL 中的 `AS` 别名），区分大小写。
 例如查询 `SELECT qty, id FROM orders` 后，`row.get::<Int64>("id")?` 取得订单号，与列的位置无关。
@@ -7284,7 +7325,7 @@ Option<T> 的 Some 调用 T.to_sql，None 使用 T.kind 生成 `Value.Null(kind)
 
 | API | 行为 |
 | --- | --- |
-| `row.get<T: FromSql>(name)` | 返回 `Result<T, DbError>`，按名称解码值；Int64、Bool、String、Array<UInt8> 及 Option<T> 有内置实现，文本和字节数组克隆为独立拥有值 |
+| `row.get<T: FromSql>(name)` | 返回 `Result<T, DbError>`，按名称解码值；内置支持 Int64、Bool、String、Array<UInt8>、time.Timestamp、uuid.Uuid、json.Value、Json<T: typed.FromJson> 及 Option<T>，结果独立拥有 |
 | `row.get_opt<T: FromSql>(name)` | 等同于 `row.get::<Option<T>>(name)`；将 T 解码时的 UnexpectedNull 转为 None，其他错误原样返回 |
 | `row.require_int64(name)` | 返回 `Result<Int64, DbError>`，列错误包装为 `DbError.Column`。整数列为 NULL 时返回 `Column(UnexpectedNull(i))` |
 | `row.get_bool/get_int64/get_text/get_bytes(name)` | 返回 `Result<Option<T>, ColumnError>`。类型正确的 NULL 返回 None，类型不匹配（包括其他类型的 NULL）返回 TypeMismatch(i)。文本与字节借用行中的存储 |
@@ -7341,7 +7382,8 @@ let latest = tx.query_scalar::<Option<Int64>>("SELECT max(id) FROM orders", [])?
 何时观察到断连；下一位借用者不会复用仍在执行的连接。可通过数据库角色配置 statement_timeout 来限制服务端运行时间。
 
 DbError 可用 Show 输出。建连失败为 Connect（无 SQLSTATE 时为空串），借出连接失败为 AcquireFailed 或 AcquireTimeout。
-Limit 表示发送前的请求限制。ResultRead(UnsupportedType / ResultLimit) 表示已发送 SQL，但列无法解码或结果超限；自动提交写入可能已经生效，不能直接重试。事务中发生这种错误会弃用连接。
+Limit 表示发送前的请求限制。ResultRead(UnsupportedType / ResultLimit / ValueRange) 表示已发送 SQL，但列无法解码、结果超限或值超出语言类型范围；自动提交写入可能已经生效，不能直接重试。事务中发生这种错误会弃用连接。
+JsonCodec 若来自参数构造则尚未发送 SQL；若来自 FromSql 读取则已接收结果，事务保持可用，错误同样不代表自动提交写入没有生效。
 提交或自动提交语句已交给驱动而连接丢失时，结果可能未知；模块不重试 SQL。取消任务不返回错误回执。
 结果超限、不能解码、语言任务失败同样不能作为外部效果未发生的证据。每个进程最多 8 个独立池，
 每池最多 64 个待完成调用（还受任务预算约束）；使用 share 可以共用池。

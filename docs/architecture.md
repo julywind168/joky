@@ -2487,6 +2487,14 @@ VM 持有实例任务执行器；每个根另持实例访问环境，保活不�
 小端 UInt32 列名字节数和 UTF-8 名称，再编码原有类型标签及载荷。完整行包含列数，名称也受结果字节预算约束。
 模式 1 和 2 保留旧行格式，允许原先编译的调用方使用同一运行时。
 
+PostgreSQL 参数与结果字节包保留原有 0–7 标签，新增 NULL 标签 8/9/10 对应 timestamptz/uuid/jsonb，
+非 NULL 标签为 11/12/13。时间载荷为小端 Int64 Unix 微秒；UUID 为长度前缀加 16 个网络序字节；
+jsonb 为长度前缀加 UTF-8 JSON 文本。旧模式 1/2 对新类型仍返回 UnsupportedType。
+SQLx 侧使用内置类型 OID 的二进制参数：时间转换到 PostgreSQL 2000 年纪元，jsonb 添加或移除版本字节 1，
+UUID 保持原始 16 字节，不引入宿主 JSON 数值转换。结果时间先做溢出及公元 0001–9999 年检查，失败状态 13
+映射为 ResultRead(ValueRange)。标准库编码前拒绝亚微秒时间；类型化 JSON 编解码在 Joky 层执行，
+拥有型 CodecError 不携带源借用，不修改 CPS 帧或宿主资源 ABI。
+
 ### TLS 记录与传输边界
 
 `joky/tls` 的受检内置操作仅在一次 poll 内处理 rustls 配置或记录。CPS 帧中不保存借用的证书、
