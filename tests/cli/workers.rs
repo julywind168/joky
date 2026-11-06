@@ -87,7 +87,10 @@ fn startup_workers_run_build_and_nonexecution_policy() {
         }
     }
     // Mode selection still requires the transitive Parallel proof even with N=1.
-    work.write("local.jk", "import joky/domain struct State {n:Int32} fn make(n:Int32)->State {State{n:n}} fn main() @suspends {let owner=domain.create(make,1)}");
+    work.write(
+        "local.jk",
+        "import joky/domain fn main() @suspends { let timer = domain.timer() }",
+    );
     failure(&work.cli(&["build", "local.jk", "--parallel"]), "Parallel");
 }
 

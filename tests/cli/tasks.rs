@@ -400,7 +400,10 @@ fn task_pool_cli_explicit_mode_and_standalone_driver() {
             .code(),
         Some(42)
     );
-    work.write("local.jk", "import joky/domain struct State {n:Int32} fn make(n:Int32)->State {State{n:n}} fn main() @suspends {let owner=domain.create(make,1)}");
+    work.write(
+        "local.jk",
+        "import joky/domain fn main() @suspends { let timer = domain.timer() }",
+    );
     for route in ["run", "build"] {
         let rejected = work
             .command()
