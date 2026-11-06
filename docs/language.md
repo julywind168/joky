@@ -7282,7 +7282,7 @@ verify-full 用来验证数据库服务器证书和主机名。订单示例中�
 | `max_connections` | UInt64 | 默认 4，允许 1–32 |
 | `acquire_timeout` | time.Duration | 默认 5s，必须非零且可表示为运行时期限；用于初始建连及后续池连接获取 |
 
-无效 URL 或 Options 返回 Invalid。认证或初始建连失败返回 Connect；建池后的连接获取超时返回 AcquireTimeout。
+无效 URL 或 Options 返回 InvalidRequest。认证或初始建连失败返回 Connect；建池后的连接获取超时返回 AcquireTimeout。
 以下是选择从环境变量读取的应用代码；环境变量名只是应用约定：
 
 ```joky
@@ -7296,6 +7296,10 @@ fn main() @suspends {
     println("{answer}")
 }
 ```
+
+URL 和 SQL 仍按拥有型 String 传入。当前省略 `&` 的实参自动借用只支持同步调用；
+直接改成 &String 会使挂起调用中的字面量与临时字符串失去现有写法。
+重复使用命名字符串时由调用方显式 clone；宿主在提交后台任务前仍建立独立输入副本，不把语言借用传给 Tokio。
 
 原有 `postgres.open(n)` 调用需改为 `postgres.open(url, postgres.Options { max_connections: n, ..postgres.Options.default() })`。
 
@@ -7340,7 +7344,7 @@ Option<T> 的 Some 调用 T.to_sql，None 使用 T.kind 生成 `Value.Null(kind)
 Array<Option<Int64>>；这些类型同时实现 ToSql 和 FromSql，可用于 FromRow 派生。参数和解码数组均为独立副本。
 仅支持一维、SQL 下标从 1 开始的数组及空数组；多维或其他下界返回 ResultRead(ArrayShape)，不会静默展平或重编号。
 Joky 数组与错误中的元素索引从 0 开始。每个数组至多 65,536 项，仍受整条请求／结果的 1 MiB 字节上限约束；
-参数超限返回 Limit，结果超限返回 ResultRead(ResultLimit)。其他 SQL 数组类型不自动转换，
+参数超限返回 LimitExceeded，结果超限返回 ResultRead(ResultLimit)。其他 SQL 数组类型不自动转换，
 包括 int4[]、varchar[]、复合类型数组；业务 struct 列表可使用下文的 JSON 参数接口和 Json<Array<Item>>。
 
 | Joky 类型（T 为 String 或 Int64） | SQL 含义 |
@@ -7452,7 +7456,7 @@ let latest = tx.query_scalar::<Option<Int64>>("SELECT max(id) FROM orders", [])?
 | --- | --- |
 | `Ok(TxOutcome.Commit(value))` | 等待提交成功后返回 Ok(value)；提交失败返回提交错误，包括 OutcomeUnknown，不重试 |
 | `Ok(TxOutcome.Rollback(value))` | 等待回滚成功后返回 Ok(value)；回滚失败返回回滚错误 |
-| `Err(error)` | 尝试回滚后返回原始 error；即使连接已因 SQL 错误被弃用，也不让回滚的 Closed 等错误覆盖原错误 |
+| `Err(error)` | 尝试回滚后返回原始 error；即使连接已因 SQL 错误被弃用，也不让回滚的 TransactionClosed 等错误覆盖原错误 |
 
 begin 成功后回调只调用一次；begin 失败时不调用。闭包内的 `return` 只退出闭包，不会绕过事务收尾。
 取消或运行时失败沿用拥有事务的释放规则，弃用连接并由服务器终止未提交事务；提交已发出时仍可能结果未知。
@@ -7470,8 +7474,10 @@ begin 成功后回调只调用一次；begin 失败时不调用。闭包内的 `
 数据库执行错误或结果解码失败会弃用该连接，在途事务句柄失效。该后端停止执行的时刻取决于 PostgreSQL
 何时观察到断连；下一位借用者不会复用仍在执行的连接。可通过数据库角色配置 statement_timeout 来限制服务端运行时间。
 
-DbError 可用 Show 输出。建连失败为 Connect（无 SQLSTATE 时为空串），借出连接失败为 AcquireFailed 或 AcquireTimeout。
-Limit 表示发送前的请求限制。ResultRead(UnsupportedType / ResultLimit / ValueRange / ArrayShape) 表示已发送 SQL，但列无法解码、结果超限或值／数组形状超出语言支持范围；自动提交写入可能已经生效，不能直接重试。事务中发生这种错误会弃用连接。
+DbError 可用 Show 输出。原 Invalid、Closed、Limit 变体分别改名为 InvalidRequest、TransactionClosed、LimitExceeded；宿主状态码不变。
+InvalidRequest 表示 URL、Options 或参数编码无效；TransactionClosed 表示事务连接已被弃用，不能继续操作该事务。
+建连失败为 Connect（无 SQLSTATE 时为空串），借出连接失败为 AcquireFailed 或 AcquireTimeout。
+LimitExceeded 表示未提交本次 SQL 的请求或服务资源限制，包括 SQL／参数大小、参数数量、后台驱动数量与在途请求上限。ResultRead(UnsupportedType / ResultLimit / ValueRange / ArrayShape) 表示已发送 SQL，但列无法解码、结果超限或值／数组形状超出语言支持范围；自动提交写入可能已经生效，不能直接重试。事务中发生这种错误会弃用连接。
 JsonCodec 若来自参数构造则尚未发送 SQL；若来自 FromSql 读取则已接收结果，事务保持可用，错误同样不代表自动提交写入没有生效。
 提交或自动提交语句已交给驱动而连接丢失时，结果可能未知；模块不重试 SQL。取消任务不返回错误回执。
 结果超限、不能解码、语言任务失败同样不能作为外部效果未发生的证据。每个进程最多 8 个独立池，

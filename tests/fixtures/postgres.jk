@@ -47,7 +47,7 @@ impl postgres.ToSql for OrderId {
 impl postgres.FromSql for OrderId {
     fn from_sql(row: &postgres.Row, i: UInt64) @noescape -> Result<OrderId, postgres.DbError> {
         let value = postgres.FromSql.from_sql::<Int64>(row, i)?
-        if value < 0 { return Err(postgres.DbError.Invalid) }
+        if value < 0 { return Err(postgres.DbError.InvalidRequest) }
         Ok(OrderId { value })
     }
 }
@@ -127,7 +127,7 @@ fn scalar_queries(pool: &postgres.Pool) @suspends {
     assert(match pool.query_scalar::<Int64>("SELECT 'wrong'::text", []) { Err(Column(TypeMismatch(0))) => true, _ => false }, "scalar type mismatch")
     let id = pool.query_scalar::<OrderId>("SELECT 42::bigint", [])!
     assert(id.value == 42, "scalar custom FromSql")
-    assert(match pool.query_scalar::<OrderId>("SELECT -1::bigint", []) { Err(Invalid) => true, _ => false }, "scalar custom error")
+    assert(match pool.query_scalar::<OrderId>("SELECT -1::bigint", []) { Err(InvalidRequest) => true, _ => false }, "scalar custom error")
     let error = postgres.DbError.ResultRead(postgres.ReadFailure.ColumnCount(2))
     assert("{error}" == "query returned 2 columns; expected one", "scalar column count diagnostic")
 
@@ -236,7 +236,7 @@ fn main() @suspends {
     let wrapped = pool.query_one_as::<WrappedRow<OrderId>>("SELECT 42::bigint AS id", [])!
     assert(wrapped.id.value == 42, "custom FromSql with inferred derive bounds")
     let invalid = pool.query_one("SELECT -1::bigint AS id", [])!
-    assert(match invalid.get_opt::<OrderId>("id") { Err(Invalid) => true, _ => false }, "optional custom decode preserves errors")
+    assert(match invalid.get_opt::<OrderId>("id") { Err(InvalidRequest) => true, _ => false }, "optional custom decode preserves errors")
     let id = pool.query_one_as::<Identifier>("SELECT 42::bigint AS id", [])!
     assert(id.id == 42, "pool mapped query")
     pool.query_one_as::<EmptyRow>("SELECT 1 AS extra", [])!

@@ -153,7 +153,7 @@ impl Show for ReadFailure {
 }
 
 pub enum ColumnError { OutOfBounds(UInt64), TypeMismatch(UInt64), UnexpectedNull(UInt64), MissingColumn, AmbiguousColumn, NullElement((UInt64, UInt64)) }
-pub enum DbError { Invalid, Unavailable, Closed, Limit, OutcomeUnknown, Database(String), ResultRead(ReadFailure), Connect(String), AcquireFailed, AcquireTimeout, Column(ColumnError), TimestampPrecision, JsonCodec(typed.CodecError) }
+pub enum DbError { InvalidRequest, Unavailable, TransactionClosed, LimitExceeded, OutcomeUnknown, Database(String), ResultRead(ReadFailure), Connect(String), AcquireFailed, AcquireTimeout, Column(ColumnError), TimestampPrecision, JsonCodec(typed.CodecError) }
 impl Show for ColumnError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
@@ -169,10 +169,10 @@ impl Show for ColumnError {
 impl Show for DbError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
-            Invalid => output.push_str("invalid database request"),
+            InvalidRequest => output.push_str("invalid database request"),
             Unavailable => output.push_str("database service unavailable"),
-            Closed => output.push_str("transaction closed"),
-            Limit => output.push_str("database request limit exceeded"),
+            TransactionClosed => output.push_str("transaction closed"),
+            LimitExceeded => output.push_str("database resource limit exceeded"),
             OutcomeUnknown => output.push_str("database outcome unknown"),
             Database(code) => { output.push_str("database error "); output.push_str(code) },
             Connect(code) => {
@@ -395,7 +395,7 @@ pub fn get_bytes(row: &Row, i: UInt64) -> Result<Option<&Array<UInt8>>, ColumnEr
 }
 fn check_status(owner: &postgres.Owner) @suspends -> Result<Unit, DbError> {
     match __pg_status(owner) {
-        0 => Ok({}), 1 => Err(Invalid), 2 => Err(Unavailable), 3 => Err(Closed), 4 => Err(Limit),
+        0 => Ok({}), 1 => Err(InvalidRequest), 2 => Err(Unavailable), 3 => Err(TransactionClosed), 4 => Err(LimitExceeded),
         5 => Err(OutcomeUnknown), 6 => Err(Database(String.from_utf8(__pg_data(owner))!)), 7 => Err(ResultRead(UnsupportedType)), 8 => Err(ResultRead(ResultLimit)),
         9 => Err(Connect(String.from_utf8(__pg_data(owner))!)), 10 => Err(AcquireFailed), 11 => Err(AcquireTimeout), 12 => Err(ResultRead(MultipleRows)),
         13 => Err(ResultRead(ValueRange)),
@@ -417,7 +417,7 @@ fn word(out: &mut Array<UInt8>, n: UInt64, width: UInt64) {
 }
 fn blob(out: &mut Array<UInt8>, tag: UInt8, bytes: &Array<UInt8>) -> Result<Unit, DbError> {
     let size = bytes.len()
-    if size + out.len() + 5 > 1048576 { return Err(Limit) }
+    if size + out.len() + 5 > 1048576 { return Err(LimitExceeded) }
     out.push(tag)
     word(out, size, 4)
     array.extend_bytes(out, bytes.slice(0, size), 0, size)
@@ -425,29 +425,29 @@ fn blob(out: &mut Array<UInt8>, tag: UInt8, bytes: &Array<UInt8>) -> Result<Unit
 }
 fn text_blob(out: &mut Array<UInt8>, tag: UInt8, text: &String) -> Result<Unit, DbError> {
     let size = text.byte_length()
-    if size + out.len() + 5 > 1048576 { return Err(Limit) }
+    if size + out.len() + 5 > 1048576 { return Err(LimitExceeded) }
     out.push(tag)
     word(out, size, 4)
     array.extend_bytes(out, text.bytes(), 0, size)
     Ok({})
 }
 fn encode_text_array(data: &mut Array<UInt8>, values: &Array<Option<String>>) -> Result<Unit, DbError> {
-    if values.len() > 65536 || data.len() + 5 > 1048576 { return Err(Limit) }
+    if values.len() > 65536 || data.len() + 5 > 1048576 { return Err(LimitExceeded) }
     data.push(18)
     word(data, values.len(), 4)
     for i in 0 .. values.len() {
         match values.borrow_ref(i) { None => data.push(0), Some(text) => text_blob(data, 1, text)? }
-        if data.len() > 1048576 { return Err(Limit) }
+        if data.len() > 1048576 { return Err(LimitExceeded) }
     }
     Ok({})
 }
 fn encode_int_array(data: &mut Array<UInt8>, values: &Array<Option<Int64>>) -> Result<Unit, DbError> {
-    if values.len() > 65536 || data.len() + 5 > 1048576 { return Err(Limit) }
+    if values.len() > 65536 || data.len() + 5 > 1048576 { return Err(LimitExceeded) }
     data.push(19)
     word(data, values.len(), 4)
     for i in 0 .. values.len() {
         match values.borrow_ref(i) { None => data.push(0), Some(value) => { data.push(1); word(data, uint64(value), 8) } }
-        if data.len() > 1048576 { return Err(Limit) }
+        if data.len() > 1048576 { return Err(LimitExceeded) }
     }
     Ok({})
 }
@@ -459,7 +459,7 @@ fn encode_value(data: &mut Array<UInt8>, param: Value) -> Result<Unit, DbError> 
         Null(kind) => data.push(null_tag(kind)),
         BoolValue(value) => { data.push(4); data.push(if value { 1 } else { 0 }) },
         IntValue(value) => { data.push(5); word(data, uint64(value), 8) },
-        TextValue(value) => { if value.byte_length() > 1048576 { return Err(Limit) }; let bytes = value.into_bytes(); blob(data, 6, &bytes)? },
+        TextValue(value) => { if value.byte_length() > 1048576 { return Err(LimitExceeded) }; let bytes = value.into_bytes(); blob(data, 6, &bytes)? },
         BytesValue(bytes) => blob(data, 7, &bytes)?,
         TimestampValue(value) => {
             if value.subsec_nanos() % 1000 != 0 { return Err(TimestampPrecision) }
@@ -473,7 +473,7 @@ fn encode_value(data: &mut Array<UInt8>, param: Value) -> Result<Unit, DbError> 
             for i in uint64(0) .. 16 { data.push(bytes[i]) }
         },
         JsonValue(text) => {
-            if text.byte_length() > 1048576 { return Err(Limit) }
+            if text.byte_length() > 1048576 { return Err(LimitExceeded) }
             let bytes = text.into_bytes()
             blob(data, 13, &bytes)?
         },
@@ -481,11 +481,11 @@ fn encode_value(data: &mut Array<UInt8>, param: Value) -> Result<Unit, DbError> 
         TextArrayValue(values) => encode_text_array(data, &values)?,
         IntArrayValue(values) => encode_int_array(data, &values)?
     }
-    if data.len() > 1048576 { return Err(Limit) }
+    if data.len() > 1048576 { return Err(LimitExceeded) }
     Ok({})
 }
 fn encode(params: Array<Value>) -> Result<Array<UInt8>, DbError> {
-    if params.len() > 256 { return Err(Limit) }
+    if params.len() > 256 { return Err(LimitExceeded) }
     var data: Array<UInt8> = []
     for param in params { encode_value(&mut data, param)? }
     Ok(data)

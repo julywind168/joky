@@ -555,9 +555,13 @@ chat 的 ClientHandler 持有 Script 与 Client；账户目录仍留在连接外
 | 访问器 | `get`/`get_ref`/`borrow`/`borrow_ref`/`borrow_mut`/`borrow_mut_ref` | 见 §6.2 |
 | 释放 | `release()` 提前释放 | 可接受；若引入 `Drop` 用户实现，考虑统一叫 `drop(x)` |
 | 完成构建 | `StringBuilder.finish()` | 业界常见 `to_string()`/`build()`，`finish` 可接受，但应与 http 内部 `Wire.finish()`（关闭连接）区分语义 |
-| 错误枚举变体 | `DbError.Invalid`、`Limit`、`Closed` 很笼统 | 用具体名词：`InvalidRequest`、`LimitExceeded`、`TransactionClosed` |
+| 错误枚举变体 | 已改为 `InvalidRequest`、`LimitExceeded`、`TransactionClosed` | LimitExceeded 同时覆盖请求和服务资源上限；TransactionClosed 只表示事务失效，宿主状态码保持不变 |
 | HTTP 状态 | `Success` | `Ok`（见 §7） |
-| 参数传递 | 大量只读参数类型为 `String`（`process.env(name: String)`、`tcp.listen(host: String, ...)`、SQL 文本） | 只读输入接受 `&String`；字面量自动借用已可用，调用方少写 `clone()` |
+| 参数传递 | `process.env`、TCP/DNS 主机名、数据库 URL／SQL 等挂起 API 仍接收 String | 当前实参自动借用仅适用于同步调用；保留拥有型输入以支持字面量和临时值，待挂起调用的自动借用语义明确后再评估迁移 |
+
+字符串只读不等于可以直接改成借用接口。此次核对确认 process 只在调用线程读取键，DNS 和 PostgreSQL
+后台任务拥有输入副本；把 clone 移入一个借用包装函数不会消除这次复制。
+同步只读接口继续优先使用 &String；会返回、保存或转移字符串所有权的参数继续按值，例如 env_or 的 fallback。
 
 建议把上表的结论写入 CONTRIBUTING.md 的 API 命名约定，新增模块按此执行，旧接口在一次集中迁移中改名。
 
@@ -567,7 +571,7 @@ chat 的 ClientHandler 持有 Script 与 Client；账户目录仍留在连接外
 
 ```text
 pub fn place(pool: &pg.Pool, customer: Int64, key: String, qty: Int64) @suspends -> Result<Order, pg.DbError> {
-    if qty <= 0 || key.is_empty() { return Err(pg.DbError.Invalid) }
+    if qty <= 0 || key.is_empty() { return Err(pg.DbError.InvalidRequest) }
     pool.transaction(move |tx| @suspends {
         let inserted = tx.execute("INSERT ... ON CONFLICT (customer, request_id) DO NOTHING", [customer, key, qty])?
         let row = tx.query_one("SELECT id, qty FROM joky_demo_orders WHERE customer=$1 AND request_id=$2", [customer, key])?

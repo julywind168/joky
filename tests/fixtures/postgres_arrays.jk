@@ -89,7 +89,7 @@ fn array_boundaries(pool: &postgres.Pool) @suspends {
     let roundtrip = pool.query_scalar::<Array<Option<Int64>>>("SELECT $1", [postgres.param(&many)])!
     assert(roundtrip.len() == 65536 && roundtrip.borrow_ref(65535).is_none(), "maximum array length")
     many.push(None)
-    assert(match pool.query("SELECT $1", [postgres.param(&many)]) { Err(Limit) => true, _ => false }, "oversized parameter array is rejected")
+    assert(match pool.query("SELECT $1", [postgres.param(&many)]) { Err(LimitExceeded) => true, _ => false }, "oversized parameter array is rejected")
     assert(match pool.query("SELECT array_fill(NULL::text, ARRAY[65537])", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "oversized result array is rejected before allocation")
     assert(match pool.query("SELECT array_fill(repeat('x', 1024), ARRAY[1024])", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "array elements count toward result byte limit")
     var tx = pool.begin()!

@@ -2485,8 +2485,8 @@ VM 持有实例任务执行器；每个根另持实例访问环境，保活不�
 
 `__pg_connect(String, UInt64, UInt64)` 接收拥有的 URL、最大连接数和获取超时纳秒数，
 首次 poll 验证参数并把 URL 复制进数据库任务，挂起期间不保留 Joky 字符串借用。Connect 操作追加到现有操作编号，
-不复用旧 Open 编号；旧 `__pg_open(UInt64)` 返回 Invalid，避免把旧帧中的连接数当成字符串指针。
-运行时不读取 JOKY_POSTGRES_URL，配置来源由应用决定；无效 URL／配置返回 Invalid，
+不复用旧 Open 编号；旧 `__pg_open(UInt64)` 返回 InvalidRequest，避免把旧帧中的连接数当成字符串指针。
+运行时不读取 JOKY_POSTGRES_URL，配置来源由应用决定；无效 URL／配置返回 InvalidRequest，
 建连失败只返回 Connect 及可用 SQLSTATE。默认 TLS 策略不变，获取超时同时作用于初始连接和池 checkout。
 
 `__pg_run` 的查询模式 3 和 4 分别交付多行和至多一行的具名结果；对每个单元先编码

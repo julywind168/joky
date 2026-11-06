@@ -157,6 +157,10 @@ fn postgres_explicit_configuration_errors_are_redacted() {
     let scratch = scratch::ScratchDir::new("pg-config");
     let dir = scratch.path();
     fs::write(dir.join("app.jk"),r#"import joky/postgres fn main() @suspends {
+        let limit = postgres.DbError.LimitExceeded
+        assert("{limit}" == "database resource limit exceeded", "limits include request and service resources")
+        let closed = postgres.DbError.TransactionClosed
+        assert("{closed}" == "transaction closed", "closed identifies the transaction")
         for url in ["", "postgres://user:do-not-log@[invalid"] {
             match postgres.open(url, postgres.Options.default()) {
                 Err(error) => assert("{error}" == "invalid database request", "connection errors must not expose the URL"),

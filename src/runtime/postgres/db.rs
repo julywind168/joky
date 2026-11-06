@@ -65,10 +65,10 @@ impl Target {
 }
 #[derive(Debug)]
 pub(super) enum Fault {
-    Invalid,
+    InvalidRequest,
     Unavailable,
-    Closed,
-    Limit,
+    TransactionClosed,
+    LimitExceeded,
     Unknown,
     Database(String),
     ResultType,
@@ -83,10 +83,10 @@ pub(super) enum Fault {
 impl Fault {
     pub(super) fn code(&self) -> u64 {
         match self {
-            Self::Invalid => 1,
+            Self::InvalidRequest => 1,
             Self::Unavailable => 2,
-            Self::Closed => 3,
-            Self::Limit => 4,
+            Self::TransactionClosed => 3,
+            Self::LimitExceeded => 4,
             Self::Unknown => 5,
             Self::Database(_) => 6,
             Self::ResultType => 7,
@@ -118,13 +118,13 @@ pub(super) async fn open(
     max: u32,
     acquire_timeout: std::time::Duration,
 ) -> Result<Answer, Fault> {
-    let opts: PgConnectOptions = url.parse().map_err(|_| Fault::Invalid)?;
+    let opts: PgConnectOptions = url.parse().map_err(|_| Fault::InvalidRequest)?;
     // Plaintext requires an explicit choice in the caller's connection string.
     let plaintext = url
         .split_once('?')
         .is_some_and(|(_, q)| q.split('&').any(|p| p == "sslmode=disable"));
     if plaintext && !matches!(opts.get_ssl_mode(), PgSslMode::Disable) {
-        return Err(Fault::Invalid);
+        return Err(Fault::InvalidRequest);
     }
     let opts = opts
         .ssl_mode(if plaintext {
@@ -173,7 +173,7 @@ pub(super) async fn finish(mut loan: Loan, commit: bool) -> Result<Answer, Fault
     Ok(Answer::new(Value::Count(0)))
 }
 fn take<'a>(input: &mut &'a [u8], n: usize) -> Result<&'a [u8], Fault> {
-    let (a, b) = input.split_at_checked(n).ok_or(Fault::Invalid)?;
+    let (a, b) = input.split_at_checked(n).ok_or(Fault::InvalidRequest)?;
     *input = b;
     Ok(a)
 }
@@ -183,17 +183,17 @@ fn array_arguments<'a, T>(
 ) -> Result<Vec<Option<T>>, Fault> {
     let count = u32::from_le_bytes(take(input, 4)?.try_into().unwrap()) as usize;
     if count > MAX_ARRAY_ELEMENTS {
-        return Err(Fault::Limit);
+        return Err(Fault::LimitExceeded);
     }
     if count > input.len() {
-        return Err(Fault::Invalid);
+        return Err(Fault::InvalidRequest);
     }
     let mut values = Vec::with_capacity(count);
     for _ in 0..count {
         values.push(match take(input, 1)?[0] {
             0 => None,
             1 => Some(read(input)?),
-            _ => return Err(Fault::Invalid),
+            _ => return Err(Fault::InvalidRequest),
         });
     }
     Ok(values)
@@ -202,7 +202,7 @@ fn arguments(mut input: &[u8]) -> Result<PgArguments, Fault> {
     let mut args = PgArguments::default();
     while !input.is_empty() {
         if args.len() >= 256 {
-            return Err(Fault::Limit);
+            return Err(Fault::LimitExceeded);
         }
         let tag = take(&mut input, 1)?[0];
         match tag {
@@ -220,7 +220,7 @@ fn arguments(mut input: &[u8]) -> Result<PgArguments, Fault> {
             18 => args.add(array_arguments(&mut input, |input| {
                 let size = u32::from_le_bytes(take(input, 4)?.try_into().unwrap()) as usize;
                 Ok(std::str::from_utf8(take(input, size)?)
-                    .map_err(|_| Fault::Invalid)?
+                    .map_err(|_| Fault::InvalidRequest)?
                     .to_owned())
             })?),
             19 => args.add(array_arguments(&mut input, |input| {
@@ -229,7 +229,7 @@ fn arguments(mut input: &[u8]) -> Result<PgArguments, Fault> {
             11 => {
                 let micros = i64::from_le_bytes(take(&mut input, 8)?.try_into().unwrap());
                 if !TIMESTAMP_MICROS.contains(&micros) {
-                    return Err(Fault::Invalid);
+                    return Err(Fault::InvalidRequest);
                 }
                 args.add(WireValue::<1184>(
                     (micros - PG_EPOCH_MICROS).to_be_bytes().to_vec(),
@@ -238,32 +238,32 @@ fn arguments(mut input: &[u8]) -> Result<PgArguments, Fault> {
             4 => args.add(match take(&mut input, 1)?[0] {
                 0 => false,
                 1 => true,
-                _ => return Err(Fault::Invalid),
+                _ => return Err(Fault::InvalidRequest),
             }),
             5 => args.add(i64::from_le_bytes(take(&mut input, 8)?.try_into().unwrap())),
             6 | 7 | 12 | 13 => {
                 let n = u32::from_le_bytes(take(&mut input, 4)?.try_into().unwrap());
                 let bytes = take(&mut input, n as usize)?;
                 if tag == 6 {
-                    args.add(std::str::from_utf8(bytes).map_err(|_| Fault::Invalid)?)
+                    args.add(std::str::from_utf8(bytes).map_err(|_| Fault::InvalidRequest)?)
                 } else if tag == 7 {
                     args.add(bytes)
                 } else if tag == 12 {
                     if bytes.len() != 16 {
-                        return Err(Fault::Invalid);
+                        return Err(Fault::InvalidRequest);
                     }
                     args.add(WireValue::<2950>(bytes.to_vec()))
                 } else {
-                    std::str::from_utf8(bytes).map_err(|_| Fault::Invalid)?;
+                    std::str::from_utf8(bytes).map_err(|_| Fault::InvalidRequest)?;
                     let mut json = Vec::with_capacity(bytes.len() + 1);
                     json.push(1);
                     json.extend_from_slice(bytes);
                     args.add(WireValue::<3802>(json))
                 }
             }
-            _ => return Err(Fault::Invalid),
+            _ => return Err(Fault::InvalidRequest),
         }
-        .map_err(|_| Fault::Invalid)?;
+        .map_err(|_| Fault::InvalidRequest)?;
     }
     Ok(args)
 }
@@ -502,11 +502,11 @@ mod tests {
             vec![18, 1, 0, 0, 0, 1, 2, 0, 0, 0, b'x'], // Truncated text.
             vec![18, 1, 0, 0, 0, 1, 1, 0, 0, 0, 255],  // Invalid UTF-8.
         ] {
-            assert!(matches!(arguments(&packet), Err(Fault::Invalid)));
+            assert!(matches!(arguments(&packet), Err(Fault::InvalidRequest)));
         }
         let mut packet = vec![19];
         packet.extend(((MAX_ARRAY_ELEMENTS + 1) as u32).to_le_bytes());
-        assert!(matches!(arguments(&packet), Err(Fault::Limit)));
+        assert!(matches!(arguments(&packet), Err(Fault::LimitExceeded)));
     }
 
     #[test]

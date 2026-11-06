@@ -98,7 +98,7 @@ impl Driver {
             })
             .is_err()
         {
-            return Err(Fault::Limit);
+            return Err(Fault::LimitExceeded);
         }
         let result = (|| {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -266,7 +266,7 @@ unsafe fn step(arena: &mut Arena, f: &mut CpsFrame, op: Operation) -> Result<Opt
     if f.host_context.is_null() {
         // Reserve the old opcode: its first slot is a scalar, not a URL pointer.
         if op == Operation::Open {
-            return fail(arena, Fault::Invalid);
+            return fail(arena, Fault::InvalidRequest);
         }
         let request = if op == Operation::Connect {
             let timeout = std::time::Duration::from_nanos(s[2]);
@@ -274,13 +274,13 @@ unsafe fn step(arena: &mut Arena, f: &mut CpsFrame, op: Operation) -> Result<Opt
                 || timeout.is_zero()
                 || std::time::Instant::now().checked_add(timeout).is_none()
             {
-                return fail(arena, Fault::Invalid);
+                return fail(arena, Fault::InvalidRequest);
             }
             let url = super::owned_text::borrow(s[0] as *const Buffer)?;
             if url.len() > 8192
                 || !(url.starts_with("postgresql://") || url.starts_with("postgres://"))
             {
-                return fail(arena, Fault::Invalid);
+                return fail(arena, Fault::InvalidRequest);
             }
             let charge = OwnerCharge::new(arena, 3 * MAX)?;
             let driver = match Driver::start() {
@@ -337,13 +337,13 @@ unsafe fn step(arena: &mut Arena, f: &mut CpsFrame, op: Operation) -> Result<Opt
             let driver = o.driver.as_ref().ok_or_else(invalid)?.clone();
             let charge = OwnerCharge::new(arena, 3 * MAX)?;
             let Ok(permit) = driver.pending.clone().try_acquire_owned() else {
-                return fail(arena, Fault::Limit);
+                return fail(arena, Fault::LimitExceeded);
             };
             let (sql, params) = if op == Operation::Run {
                 let sql = super::owned_text::borrow(s[2] as *const Buffer)?;
                 let params = (&*(s[3] as *const Buffer)).bytes()?;
                 if sql.len() > 65536 || params.len() > MAX {
-                    return fail(arena, Fault::Limit);
+                    return fail(arena, Fault::LimitExceeded);
                 }
                 (sql.to_owned(), params.to_vec())
             } else {
@@ -353,7 +353,7 @@ unsafe fn step(arena: &mut Arena, f: &mut CpsFrame, op: Operation) -> Result<Opt
                 Value::Pool(p) => Target::Pool(p.clone()),
                 Value::Tx(tx) => match tx.lock().unwrap().take() {
                     Some(l) => Target::Tx(l),
-                    None => return fail(arena, Fault::Closed),
+                    None => return fail(arena, Fault::TransactionClosed),
                 },
                 _ => return Err(invalid()),
             };

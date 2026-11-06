@@ -22,16 +22,18 @@ fn decisions(pool: &postgres.Pool) @suspends {
 fn failures(pool: &postgres.Pool) @suspends {
     let invalid: Result<Unit, postgres.DbError> = pool.transaction(move |tx| @suspends {
         tx.execute("INSERT INTO joky_tx_helper VALUES (3)", [])?
-        Err(postgres.DbError.Invalid)
+        Err(postgres.DbError.InvalidRequest)
     })
-    assert(match invalid { Err(Invalid) => true, _ => false }, "callback error is preserved")
+    assert(match invalid { Err(InvalidRequest) => true, _ => false }, "callback error is preserved")
     assert(count(pool) == 1, "callback error rolls back successful statements")
     let duplicate: Result<Unit, postgres.DbError> = pool.transaction(move |tx| @suspends {
         tx.execute("INSERT INTO joky_tx_helper VALUES (4)", [])?
-        tx.execute("INSERT INTO joky_tx_helper VALUES (1)", [])?
+        let original = tx.execute("INSERT INTO joky_tx_helper VALUES (1)", [])
+        assert(match tx.execute("SELECT 1", []) { Err(TransactionClosed) => true, _ => false }, "failed SQL retires the transaction handle")
+        original?;
         Ok(postgres.TxOutcome.Commit({}))
     })
-    assert(match duplicate { Err(Database(code)) => code == "23505", _ => false }, "rollback Closed does not replace the original SQLSTATE")
+    assert(match duplicate { Err(Database(code)) => code == "23505", _ => false }, "rollback TransactionClosed does not replace the original SQLSTATE")
     assert(count(pool) == 1, "SQL failure does not commit earlier statements")
     let decode: Result<Unit, postgres.DbError> = pool.transaction(move |tx| @suspends {
         tx.execute("INSERT INTO joky_tx_helper VALUES (6)", [])?

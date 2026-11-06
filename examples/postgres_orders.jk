@@ -12,7 +12,7 @@ pub fn setup(pool: &postgres.Pool) @suspends {
     pool.execute("CREATE TABLE IF NOT EXISTS joky_demo_orders (id bigserial PRIMARY KEY, customer bigint NOT NULL, request_id text NOT NULL, qty bigint NOT NULL CHECK (qty > 0), UNIQUE(customer, request_id))", [])!;
 }
 pub fn place(pool: &postgres.Pool, customer: Int64, key: String, qty: Int64) @suspends -> Result<Order, postgres.DbError> {
-    if qty <= 0 || key.is_empty() { return Err(postgres.DbError.Invalid) }
+    if qty <= 0 || key.is_empty() { return Err(postgres.DbError.InvalidRequest) }
     pool.transaction(move |tx| @suspends {
         let inserted = tx.execute("INSERT INTO joky_demo_orders (customer, request_id, qty) VALUES ($1,$2,$3) ON CONFLICT (customer, request_id) DO NOTHING",
             [postgres.param(&customer), postgres.param(&key), postgres.param(&qty)])?

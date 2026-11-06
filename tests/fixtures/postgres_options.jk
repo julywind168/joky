@@ -8,10 +8,10 @@ fn invalid_options() @suspends {
     assert(defaults.max_connections == 4 && defaults.acquire_timeout == 5s, "pool option defaults")
     for max_connections in [uint64(0), 33] {
         let options = postgres.Options { max_connections, ..defaults }
-        assert(match postgres.open("postgres://user:secret@localhost/example", options) { Err(Invalid) => true, _ => false }, "connection count is checked before connecting")
+        assert(match postgres.open("postgres://user:secret@localhost/example", options) { Err(InvalidRequest) => true, _ => false }, "connection count is checked before connecting")
     }
     let zero = postgres.Options { acquire_timeout: 0ns, ..defaults }
-    assert(match postgres.open("postgres://user:secret@localhost/example", zero) { Err(Invalid) => true, _ => false }, "zero acquire timeout is rejected")
+    assert(match postgres.open("postgres://user:secret@localhost/example", zero) { Err(InvalidRequest) => true, _ => false }, "zero acquire timeout is rejected")
 }
 fn checkout(pool: &postgres.Pool) @suspends -> Bool {
     match pool.query_scalar::<Int64>("SELECT 1", []) { Err(AcquireTimeout) => true, _ => false }
