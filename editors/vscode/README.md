@@ -10,11 +10,11 @@
 ```sh
 npm ci
 npm run package
-code --install-extension joky-0.1.1.vsix
+code --install-extension joky-0.1.2.vsix
 ```
 
 也可以在 VS Code 扩展视图的 `…` 菜单中选择 **Install from VSIX…**，
-打开生成的 `joky-0.1.1.vsix`。安装后打开 `.jk` 文件，右下角语言模式应为 **Joky**。
+打开生成的 `joky-0.1.2.vsix`。安装后打开 `.jk` 文件，右下角语言模式应为 **Joky**。
 如文件之前被手动关联为其他语言，通过 **Change Language Mode** 改回 Joky。
 
 当前扩展使用本地标识 `joky-local.joky`，尚未发布到 Marketplace。

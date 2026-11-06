@@ -150,6 +150,31 @@ test('SQL templates distinguish parameter and identifier holes from ordinary int
   closed(ordinary);
 });
 
+test('themes color interpolation boundaries separately from string text', () => {
+  // Generic selectors used by Atom One Dark and VS Code's built-in themes.
+  registry.setTheme({ settings: [
+    { scope: 'string', settings: { foreground: '#98C379' } },
+    { scope: 'string.quoted.double punctuation', settings: { foreground: '#98C379' } },
+    { scope: 'punctuation.section.embedded', settings: { foreground: '#BE5046' } },
+  ] });
+  try {
+    for (const line of ['sql"SELECT ${value}, {column}"', '"text {value}"']) {
+      const { tokens } = grammar.tokenizeLine2(line, INITIAL);
+      const colorAt = (offset) => {
+        let metadata;
+        for (let i = 0; i < tokens.length && tokens[i] <= offset; i += 2) metadata = tokens[i + 1];
+        return registry.getColorMap()[(metadata >>> 15) & 0x1ff];
+      };
+      assert.equal(colorAt(line.indexOf('"') + 1), '#98C379');
+      for (let offset = 0; offset < line.length; offset++) {
+        if ('${}'.includes(line[offset])) assert.equal(colorAt(offset), '#BE5046', `${line}: ${offset}`);
+      }
+    }
+  } finally {
+    registry.setTheme({ settings: [] });
+  }
+});
+
 test('SQL multiline templates balance nested code and restore the containing language', () => {
   const result = tokenize([
     'let q = sql"""',

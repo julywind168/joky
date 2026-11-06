@@ -164,12 +164,12 @@
       ],
       "beginCaptures": {
         "0": {
-          "name": "punctuation.section.interpolation.begin.joky"
+          "name": "punctuation.section.interpolation.begin.joky punctuation.section.embedded.begin.joky"
         }
       },
       "endCaptures": {
         "0": {
-          "name": "punctuation.section.interpolation.end.joky"
+          "name": "punctuation.section.interpolation.end.joky punctuation.section.embedded.end.joky"
         }
       }
     },
@@ -401,12 +401,12 @@
       ],
       "beginCaptures": {
         "0": {
-          "name": "punctuation.section.interpolation.parameter.begin.joky"
+          "name": "punctuation.section.interpolation.parameter.begin.joky punctuation.section.embedded.begin.joky"
         }
       },
       "endCaptures": {
         "0": {
-          "name": "punctuation.section.interpolation.parameter.end.joky"
+          "name": "punctuation.section.interpolation.parameter.end.joky punctuation.section.embedded.end.joky"
         }
       }
     },
@@ -421,12 +421,12 @@
       ],
       "beginCaptures": {
         "0": {
-          "name": "punctuation.section.interpolation.identifier.begin.joky"
+          "name": "punctuation.section.interpolation.identifier.begin.joky punctuation.section.embedded.begin.joky"
         }
       },
       "endCaptures": {
         "0": {
-          "name": "punctuation.section.interpolation.identifier.end.joky"
+          "name": "punctuation.section.interpolation.identifier.end.joky punctuation.section.embedded.end.joky"
         }
       }
     }
