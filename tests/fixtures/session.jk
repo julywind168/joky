@@ -7,26 +7,34 @@ import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTc
 #state
 struct Counts { lines: UInt64, closed: UInt64 }
 fn make(_: Unit) -> Counts { Counts { lines: 0, closed: 0 } }
-struct Context { counts: domain.WriteHandle<Counts>, output: session.Output }
-fn line(ctx: &Context, _: &Unit, text: String) @suspends @noescape -> Bool {
-    let counts = ctx.counts
-    let output = ctx.output
-    let quit = text.equals("bye")
-    when "line" (mut counts) {
-        counts.lines += 1
-        if !quit { let bytes = "pong\n".into_bytes(); output.send(&bytes) }
-    }!
-    !quit
-}
-fn closed(ctx: &Context, _: &Unit) @suspends @noescape {
-    let counts = ctx.counts
-    let output = ctx.output
-    when "closed" (mut counts) {
-        counts.closed += 1
-        // Cleanup runs before the connection releases its queue owner.
-        let bytes = "".into_bytes()
-        output.send(&bytes)
-    }!
+struct Context { counts: domain.WriteHandle<Counts>, output: session.Output, reply: String, fail_close: Bool }
+impl session.Handler for Context {
+    fn on_line(&self, text: String) @suspends @noescape -> Bool {
+        let counts = self.counts
+        let output = self.output
+        let quit = text.equals("bye")
+        let fail = text.equals("fail")
+        let bytes = self.reply.clone().into_bytes()
+        task.yield_now()
+        when "line" (mut counts) {
+            counts.lines += 1
+            if !quit && !fail { output.send(&bytes) }
+        }!
+        check.assert(!fail, "intentional line handler failure")
+        !quit
+    }
+    fn on_close(&self) @suspends @noescape {
+        let counts = self.counts
+        let output = self.output
+        when "closed" (mut counts) {
+            counts.closed += 1
+            // Cleanup runs before the connection releases its queue owner.
+            let bytes = "".into_bytes()
+            output.send(&bytes)
+        }!
+        task.yield_now()
+        check.assert(!self.fail_close, "intentional close handler failure")
+    }
 }
 fn peer(stream: TcpStream, scenario: UInt64) @suspends {
     var stream = BufferedTcp.new(stream)
@@ -37,7 +45,13 @@ fn peer(stream: TcpStream, scenario: UInt64) @suspends {
         check.assert(text.equals("pong"), "session sends committed output")
         stream.write_all("bye\n".into_bytes())!
     } else if scenario == 1 { stream.write_all("oversized\n".into_bytes())! }
+    else if scenario == 4 { stream.write_all("fail\n".into_bytes())! }
+    else if scenario == 5 { stream.write_all("bye\n".into_bytes())! }
     check.assert(stream.read(1)!.is_empty(), "local stop closes the socket")
+}
+fn failing(connection: session.Connection, stream: TcpStream, handler: &Context) @suspends {
+    let result = isolate { session.run(connection, stream, handler) }
+    check.assert(result.is_err(), "handler failure propagates to the caller")
 }
 fn run(scenario: UInt64) @suspends {
     var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
@@ -49,19 +63,23 @@ fn run(scenario: UInt64) @suspends {
     let connection = session.create(options)
     let control = connection.stop_handle()
     let owner = domain.create(make, {})
-    let ctx = Context { counts: owner.handle(), output: connection.output() }
-    let local = {}
+    let ctx = Context { counts: owner.handle(), output: connection.output(), reply: "pong\n", fail_close: scenario == 5 }
     if scenario == 3 {
-        race { session.run(connection, stream, &ctx, &local, line, closed), task.sleep_ms(1) }
+        race { session.run(connection, stream, &ctx), task.sleep_ms(1) }
         peer(peer_stream, scenario)
         var batch = outbox.batch(1, 0)
         check.assert(match outbox.stage(&mut batch, control, "".into_bytes()) { Err(Closed) => true, _ => false }, "cancellation releases queue ownership")
+    } else if scenario >= 4 {
+        join { failing(connection, stream, &ctx), peer(peer_stream, scenario) }
+        var batch = outbox.batch(1, 0)
+        check.assert(match outbox.stage(&mut batch, control, "".into_bytes()) { Err(Closed) => true, _ => false }, "failure releases queue ownership")
     } else {
-        join { session.run(connection, stream, &ctx, &local, line, closed), peer(peer_stream, scenario) }
+        join { session.run(connection, stream, &ctx), peer(peer_stream, scenario) }
     }
+    check.assert(ctx.reply == "pong\n", "handler remains owned by the caller")
     let counts = owner.handle()
     let (lines, closed_count) = when (counts) { (counts.lines, counts.closed) }!
-    check.assert(closed_count == if scenario == 3 { 0 } else { 1 }, "normal cleanup runs once; parent cancellation is structural")
-    check.assert(lines == if scenario == 0 { 2 } else { 0 }, "oversize and idle expiry do not invoke commands")
+    check.assert(closed_count == if scenario == 3 || scenario == 4 { 0 } else { 1 }, "normal cleanup runs once; parent cancellation is structural")
+    check.assert(lines == if scenario == 0 { 2 } else if scenario >= 4 { 1 } else { 0 }, "oversize and idle expiry do not invoke commands")
 }
-fn main() @suspends { run(0); run(1); run(2); run(3) }
+fn main() @suspends { run(0); run(1); run(2); run(3); run(4); run(5) }

@@ -7016,10 +7016,18 @@ outbox.Handle 的源库别名，可以通过 Script 契约或状态保存。业�
 `output.send(&bytes)`，无需创建批次或比较目标身份；`output.close() @suspends` 关闭输出并停止会话。
 `stop_handle()` 仍提供控制信箱的弱 Handle，兼容显式停止需求。输出溢出在提交区间关闭控制信箱，
 使 `race` 即使在 TCP 写阻塞时也能取消写分支；发送方无需清理慢客户端并重放业务。
-`run<S,T>(connection, stream, shared: &S, ctx: &T, on_line, on_close) @suspends`
-消费 Connection 和 TcpStream，沿用创建时的 Options，借用服务共享上下文与连接上下文。两个回调分别是
-`fn(&S,&T,String) @suspends @noescape -> Bool` 和
-`fn(&S,&T) @suspends @noescape -> Unit`，可直接传具名函数。
+单连接处理器实现 `session.Handler`，把共享服务句柄和连接上下文放在一个对象中：
+
+| 方法 | 契约 |
+| --- | --- |
+| `on_line(&self, text: String) @suspends @noescape -> Bool` | 按顺序处理完整行；true 继续读取，false 结束接收 |
+| `on_close(&self) @suspends @noescape` | 正常会话结束后执行一次业务清理，返回 Unit |
+
+`run<H: Handler>(connection, stream, handler: &H) @suspends @noescape`
+消费 Connection 和 TcpStream，沿用创建时的 Options，仅借用处理器；处理器可持有 String、VM 等拥有值，
+调用结束后仍由调用者持有。两个方法使用共享借用，不把处理器引用保留到调用之外；业务状态变更可经 domain 句柄完成。
+原来的 shared、ctx 和两个函数指针合并为 handler，不再分别传入。
+完整用法见 [chat 的 ClientHandler](../examples/chat/main.jk) 和 [会话回归](../tests/fixtures/session.jk)。
 
 组件竞速接收、发送和控制等待。EOF、TCP／UTF-8／行长错误、超时、控制队列收到消息或关闭，
 以及 on_line 返回 false，都会结束竞速并调用一次 on_close；两个邮箱 Owner 保留到回调完成。
@@ -7027,8 +7035,8 @@ outbox.Handle 的源库别名，可以通过 Script 契约或状态保存。业�
 断开前排空输出队列。父任务取消会结构化停止子任务、释放 socket 和邮箱，不运行挂起清理回调；
 应用应让账户等资源由外层作用域持有。chat 的成员清理与空房回收策略在业务层显式实现。
 
-`run_draining<S,T>(connection, stream, shared, ctx, on_line, on_close, shutdown: &shutdown.Controller)`
-保持相同的参数与回调约定，增加显式停机通知。通知只与下一次读取竞速：完整行读出后再检查停机状态，
+`run_draining<H: Handler>(connection, stream, handler: &H, shutdown: &shutdown.Controller) @suspends @noescape`
+使用相同的 Handler，增加显式停机通知。通知只与下一次读取竞速：完整行读出后再检查停机状态，
 通过检查才准入 on_line。已准入回调执行完毕后封口出站队列，发送分支继续写完已取出的消息和剩余 FIFO。
 EOF、读取错误、空闲超时或 on_line 返回 false 也走这条排空路径。
 发送失败、输出溢出、显式 close 或 control 停止仍立即取消会话；回调异常沿用原有传播规则。
@@ -7037,7 +7045,9 @@ EOF、读取错误、空闲超时或 on_line 返回 false 也走这条排空路�
 封口的 Disconnect 输出会丢弃这些新消息。保证范围是每个连接封口前已提交的出站消息，
 其他连接回调在该封口之后产生的广播不保证投递。write_all 完成仅表示写入 TCP，不等于对端业务确认。
 组件没有隐含宽限期；应用在外层 race 组合截止时间，超时后取消剩余任务。
-父任务取消不执行挂起的 on_close，但仍释放队列、socket 和结构化子任务。
+父任务取消不启动 on_close；若取消发生在 on_close 执行期间，也会中断该回调，仍释放队列、socket 和结构化子任务。
+on_line 运行时失败直接传播且不调用 on_close；on_close 自身失败同样传播，不重试。调用者可在外层用 isolate 建立失败边界。
+处理器本身的拥有值由其外层作用域释放，异步业务清理不替代结构化资源释放。
 
 ## 结构化日志 joky/log
 

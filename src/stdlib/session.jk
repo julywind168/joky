@@ -19,6 +19,11 @@ impl Options {
 }
 // Copyable output endpoint; send stages bytes in when, close stops the session.
 pub type Output = outbox.Handle
+// One handler holds the shared service and per-connection context.
+pub trait Handler {
+    fn on_line(&self, text: String) @suspends @noescape -> Bool
+    fn on_close(&self) @suspends @noescape
+}
 pub struct Connection { outgoing: outbox.Mailbox, control: outbox.Mailbox, options: Options }
 pub fn create(options: Options) @suspends -> Connection {
     let control = outbox.create(1, 0)
@@ -33,12 +38,12 @@ fn read(reader: &mut BufferedTcpReader, limit: UInt64) @suspends -> Option<Strin
     match reader.read_line(limit) { Ok(line) => line, Err(_) => None }
 }
 fn timeout(duration: Duration) @suspends -> Option<String> { task.sleep(duration); None }
-fn receive<S, T>(shared: &S, ctx: &T, var reader: BufferedTcpReader, on_line: fn(&S, &T, String) @suspends @noescape -> Bool, options: Options) @suspends @noescape {
+fn receive<H: Handler>(handler: &H, var reader: BufferedTcpReader, options: Options) @suspends @noescape {
     while true {
         let next = if options.idle_timeout.is_zero() { read(&mut reader, options.max_line_bytes) }
         else { race { read(&mut reader, options.max_line_bytes), timeout(options.idle_timeout) } }
         let line = match next { Some(line) => line, None => return }
-        if !on_line(shared, ctx, line) { return }
+        if !handler.on_line(line) { return }
     }
 }
 fn send(queue: &mut outbox.Mailbox, var writer: TcpWriter) @suspends {
@@ -48,16 +53,16 @@ fn send(queue: &mut outbox.Mailbox, var writer: TcpWriter) @suspends {
     }
 }
 fn stop(queue: &mut outbox.Mailbox) @suspends { queue.receive(); }
-pub fn run<S, T>(connection: Connection, stream: TcpStream, shared: &S, ctx: &T, on_line: fn(&S, &T, String) @suspends @noescape -> Bool, on_close: fn(&S, &T) @suspends @noescape -> Unit) @suspends @noescape {
+pub fn run<H: Handler>(connection: Connection, stream: TcpStream, handler: &H) @suspends @noescape {
     var (outgoing, control, options) = split(connection)
     let (reader, writer) = BufferedTcp.new(stream).split()
     race {
-        receive(shared, ctx, reader, on_line, options)
+        receive(handler, reader, options)
         send(&mut outgoing, writer)
         stop(&mut control)
     }
     // Both mailbox owners remain alive until application cleanup finishes.
-    on_close(shared, ctx)
+    handler.on_close()
 }
 
 fn split(connection: Connection) -> (outbox.Mailbox, outbox.Mailbox, Options) {
@@ -67,7 +72,7 @@ fn split(connection: Connection) -> (outbox.Mailbox, outbox.Mailbox, Options) {
 
 // Shutdown only competes with reading, never with an admitted on_line callback.
 fn shutdown_read(stop: &shutdown.Controller) @suspends -> Option<String> { stop.wait(); None }
-fn receive_draining<S, T>(shared: &S, ctx: &T, var reader: BufferedTcpReader, on_line: fn(&S, &T, String) @suspends @noescape -> Bool, options: Options, stop: &shutdown.Controller, output: Output) @suspends @noescape {
+fn receive_draining<H: Handler>(handler: &H, var reader: BufferedTcpReader, options: Options, stop: &shutdown.Controller, output: Output) @suspends @noescape {
     while !stop.requested() {
         let next = if options.idle_timeout.is_zero() {
             race { shutdown_read(stop), read(&mut reader, options.max_line_bytes) }
@@ -76,7 +81,7 @@ fn receive_draining<S, T>(shared: &S, ctx: &T, var reader: BufferedTcpReader, on
         }
         let line = match next { Some(line) => line, None => break }
         if stop.requested() { break }
-        if !on_line(shared, ctx, line) { break }
+        if !handler.on_line(line) { break }
     }
     output.seal()
 }
@@ -86,21 +91,21 @@ fn send_draining(queue: &mut outbox.Mailbox, var writer: TcpWriter, control: out
         if writer.write_all(bytes).is_err() { control.close(); return }
     }
 }
-fn drain<S, T>(shared: &S, ctx: &T, reader: BufferedTcpReader, writer: TcpWriter, queue: &mut outbox.Mailbox, on_line: fn(&S, &T, String) @suspends @noescape -> Bool, options: Options, stop: &shutdown.Controller, output: Output, control: outbox.Handle) @suspends @noescape {
+fn drain<H: Handler>(handler: &H, reader: BufferedTcpReader, writer: TcpWriter, queue: &mut outbox.Mailbox, options: Options, stop: &shutdown.Controller, output: Output, control: outbox.Handle) @suspends @noescape {
     join {
-        receive_draining(shared, ctx, reader, on_line, options, stop, output)
+        receive_draining(handler, reader, options, stop, output)
         send_draining(queue, writer, control)
     }
 }
-pub fn run_draining<S, T>(connection: Connection, stream: TcpStream, shared: &S, ctx: &T, on_line: fn(&S, &T, String) @suspends @noescape -> Bool, on_close: fn(&S, &T) @suspends @noescape -> Unit, shutdown: &shutdown.Controller) @suspends @noescape {
+pub fn run_draining<H: Handler>(connection: Connection, stream: TcpStream, handler: &H, shutdown: &shutdown.Controller) @suspends @noescape {
     var (outgoing, control, options) = split(connection)
     let output = outgoing.handle()
     let abort = control.handle()
     let (reader, writer) = BufferedTcp.new(stream).split()
     race {
-        drain(shared, ctx, reader, writer, &mut outgoing, on_line, options, shutdown, output, abort)
+        drain(handler, reader, writer, &mut outgoing, options, shutdown, output, abort)
         stop(&mut control)
     }
     // The queue may be sealed: cleanup must not depend on sending more to it.
-    on_close(shared, ctx)
+    handler.on_close()
 }

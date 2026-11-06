@@ -15,13 +15,18 @@ struct Script { vm: vm.Vm, entries: Contract }
 
 fn script_path() -> String { "script/main.jk" }
 
-// Session callbacks forward to the current script version.
-fn line(script: &Script, client: &Client, text: String) @suspends @noescape -> Bool {
-    let call = Call { host: client.host, id: client.id, line: text }
-    script.entries.dispatch.try_call(&script.vm, call).unwrap_or(false)
-}
-fn closed(script: &Script, client: &Client) @suspends @noescape {
-    script.entries.forget.try_call(&script.vm, *client);
+// Each handler owns its script handle and client identity.
+struct ClientHandler { script: Script, client: Client }
+impl session.Handler for ClientHandler {
+    fn on_line(&self, text: String) @suspends @noescape -> Bool {
+        let script = &self.script
+        let call = Call { host: self.client.host, id: self.client.id, line: text }
+        script.entries.dispatch.try_call(&script.vm, call).unwrap_or(false)
+    }
+    fn on_close(&self) @suspends @noescape {
+        let script = &self.script
+        script.entries.forget.try_call(&script.vm, self.client);
+    }
 }
 
 // Normal exit runs membership cleanup; deadline cancellation releases outer owners.
@@ -30,10 +35,12 @@ fn connection(script: Script, host: Host, id: UInt64, stream: TcpStream, permit:
     let connection = session.create(host.config.connection)
     let client = Client { host, id }
     let account = AccountInit { host, owners: owners.handle(), id, output: connection.output() }
-    if script.entries.init_account.try_call(&script.vm, account).is_ok() {
-        session.run_draining(connection, stream, &script, &client, line, closed, &stop)
+    let initialized = script.entries.init_account.try_call(&script.vm, account).is_ok()
+    let handler = ClientHandler { script, client }
+    if initialized {
+        session.run_draining(connection, stream, &handler, &stop)
     } else {
-        closed(&script, &client)
+        handler.on_close()
     }
     permit.release()
 }

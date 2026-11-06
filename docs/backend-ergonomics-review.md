@@ -525,13 +525,19 @@ HTTP 内部循环、chat 主服务与管理端、TCP 排空示例已使用该方
 无需新增带绑定的 race 语法。通用 stop.until 暂缓：挂起闭包尚不能捕获借用，不能直接套用
 `|| listener.accept()` 来反复借用监听器。分支块可以捕获显式引用；None／Err 缺少推导上下文时标注结果类型。
 
-### 9.3 session 与连接框架
+### 9.3 session 与连接框架【Handler 已实现；serve 待做】
 
-`session.run_draining(connection, stream, &script, &client, line, closed, &stop)` 有 7 个位置参数，
-两个函数指针的签名 `fn(&S, &T, String) @suspends @noescape -> Bool` 用户很难一次写对。
-建议与 `http.Service` 对齐，定义 `session.Handler` trait（`on_line`、`on_close`），
-`session.serve(listener, &stop, options, handler)` 负责准入、隔离与失败报告；
-chat 主文件中的 `serve` 循环（准入、计数 ID、复制脚本、isolate、报告失败）基本都可下沉。
+已新增 `session.Handler`，统一提供 `on_line(&self, String) @suspends @noescape -> Bool` 与
+`on_close(&self) @suspends @noescape`。run 接收 connection、stream、&handler，run_draining 再传入 &stop，
+原有共享上下文、连接上下文与两个函数指针由处理器对象统一表达。
+chat 的 ClientHandler 持有 Script 与 Client；账户目录仍留在连接外层作用域，保持取消时的资源清理规则。
+
+正常结束调用一次 on_close；排空模式保留已准入 on_line 的完成与输出封口顺序。
+取消或 on_line 运行时失败不启动异步清理回调；on_close 自身失败传播，不重试。
+处理器只被借用，可持有拥有值；现有回归覆盖正常结束、超时、排空、取消和处理器失败。
+
+下一步再设计 `session.serve(listener, &stop, options, service)`，明确每连接初始化、准入、失败报告和宽限期，
+再下沉 chat 主文件中的 accept／isolate 循环，不把业务账户初始化与热重载策略写入通用组件。
 
 ### 9.4 域目录类型
 

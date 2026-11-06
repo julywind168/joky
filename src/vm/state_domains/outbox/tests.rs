@@ -496,22 +496,26 @@ fn session_blocked_writer(draining: bool) {
             .unwrap();
         }
         let run = if draining {
-            "let stop = shutdown.create(); session.run_draining(connection,stream,&member,&context,line,closed,&stop)"
+            "let stop = shutdown.create(); session.run_draining(connection,stream,&handler,&stop)"
         } else {
-            "session.run(connection,stream,&member,&context,line,closed)"
+            "session.run(connection,stream,&handler)"
         };
         let keep_reading = !draining;
-        vm.load_source(&format!(r#"
+        vm.load_source(&format!(
+            r#"
 import joky/session import joky/domain import joky/shutdown
 import joky/tcp.{{type TcpStream, type Address}}
 extern fn output_ready(token:UInt64)
 #state
 struct Membership {{ live:Bool, closed:Int32 }}
 fn make(_:Unit)->Membership {{ Membership{{live:true,closed:0}} }}
-fn line(_member: &domain.WriteHandle<Membership>, _context: &Unit, _text:String) @suspends @noescape ->Bool {{ {keep_reading} }}
-fn closed(handle: &domain.WriteHandle<Membership>, _: &Unit) @suspends @noescape {{
-    let member=*handle
-    when(mut member) {{ member.live=false; member.closed+=1 }}!
+struct MemberHandler {{ member:domain.WriteHandle<Membership> }}
+impl session.Handler for MemberHandler {{
+    fn on_line(&self, _text:String) @suspends @noescape ->Bool {{ {keep_reading} }}
+    fn on_close(&self) @suspends @noescape {{
+        let member=self.member
+        when(mut member) {{ member.live=false; member.closed+=1 }}!
+    }}
 }}
 fn main() @suspends ->Int32 {{
     let stream=TcpStream.connect(Address.ipv4(0x7f000001,{port}))!
@@ -523,11 +527,13 @@ fn main() @suspends ->Int32 {{
     output_ready(output.identity())
     let owner=domain.create(make,{{}})
     let member=owner.handle()
-    let context={{}}
+    let handler=MemberHandler{{member}}
     {run}
     when(member) {{ if !member.live && member.closed==1 {{42}} else {{0}} }}!
 }}
-"#)).unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+"#
+        ))
+        .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
         OUTPUT.with(|slot| slot.set(0));
         vm.executor
             .spawn(&TaskGroup::new(), vm.prepare_async("main", &[]).unwrap())
