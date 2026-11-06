@@ -32,6 +32,50 @@ fn static_traits_execute_borrowed_requirements_and_conditional_impls() {
 const FIXTURE: &str = include_str!("../../../../tests/fixtures/static_traits.jk");
 
 #[test]
+fn concrete_trait_impls_dispatch_and_derive_across_backends() {
+    let source = include_str!("../../../../tests/fixtures/concrete_trait_impls.jk");
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(vm.call_int32_0("check").unwrap(), 42);
+    }
+    crate::backends::aot::tests::assert_sync_int32(
+        &crate::parser::parse(source).unwrap(),
+        "check",
+        42,
+    );
+}
+
+#[test]
+fn concrete_trait_impls_reject_overlap_missing_capabilities_and_partial_targets() {
+    use crate::core::prepared::check_source;
+    let base = "trait Mark {} struct Cell<T> { value: T }";
+    for (body, message) in [
+        ("impl Mark for Cell<Int32> {} impl Mark for Cell<Int32> {}", "Overlapping"),
+        ("type Number = Int32 impl Mark for Cell<Int32> {} impl Mark for Cell<Number> {}", "Overlapping"),
+        ("impl<T> Mark for Cell<T> {} impl Mark for Cell<Int32> {}", "Overlapping"),
+        ("impl Mark for Cell<Int32> {} impl<T> Mark for Cell<T> {}", "Overlapping"),
+        ("impl Mark for Cell<Int32> {} fn need<T: Mark>() {} fn bad() { need::<Cell<Bool>>() }", "does not satisfy"),
+        ("impl Mark for Cell<Int32> {} fn need<T: Mark>() {} fn bad<T>() { need::<Cell<T>>() }", "does not satisfy"),
+        ("impl<T> Mark for Cell<Cell<T>> {}", "partially generic"),
+        ("struct Pair<T, U> {} impl<T> Mark for Pair<T, Int32> {}", "partially generic"),
+        ("type Alias = Cell<Int32> impl Mark for Alias {}", "aliases"),
+        ("import joky/postgres fn invalid(row: &postgres.Row) { row.get::<Array<Int32>>(\"bytes\")! }", "does not satisfy"),
+        ("import joky/drop.{type Drop} struct Owner<T> { text: String, value: T } impl Drop for Owner<Int32> { fn drop(&mut self) {} }", "all generic parameters"),
+    ] {
+        // Imports precede the shared declarations, including the Drop case.
+        let source = if body.starts_with("import") {
+            body.to_owned()
+        } else {
+            format!("{base} {body}")
+        };
+        let error = check_source(&source, &Default::default()).unwrap_err();
+        assert!(error.message().contains(message), "{source}: {error}");
+    }
+}
+
+#[test]
 fn static_traits_preserve_layouts_bounds_and_template_dispatch() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for prelude in [true, false] {

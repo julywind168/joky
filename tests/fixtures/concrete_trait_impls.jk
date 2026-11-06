@@ -1,0 +1,57 @@
+import joky/clone.{type Clone}
+
+trait Read {
+    type Item
+    fn read(&self) @noescape -> Self.Item
+    fn code(&self) @noescape -> Int32 { 5 }
+}
+struct Cell<T> { value: T }
+impl Read for Cell<Int32> {
+    type Item = Int32
+    fn read(&self) @noescape -> Int32 { self.value }
+}
+impl Read for Cell<Bool> {
+    type Item = Bool
+    fn read(&self) @noescape -> Bool { self.value }
+    fn code(&self) @noescape -> Int32 { 7 }
+}
+impl Clone for Cell<Int32> { fn clone(&self) @noescape -> Self { Cell { value: self.value } } }
+impl Clone for Cell<Bool> { fn clone(&self) @noescape -> Self { Cell { value: self.value } } }
+#derive(Clone)
+struct Wrapper<T> { cell: T }
+fn read<T: Read>(value: &T) -> T.Item { value.read() }
+fn erased(value: &dyn Read<Item = Int32>) -> Int32 { value.read() + value.code() }
+
+enum Choice<T> { Value(T), Empty }
+trait Label { fn label(&self) @noescape -> Int32 }
+impl Label for Choice<Int32> { fn label(&self) @noescape -> Int32 { 11 } }
+impl Label for Choice<Bool> { fn label(&self) @noescape -> Int32 { 13 } }
+struct Marker<const N: UInt64> {}
+impl Label for Marker<1> { fn label(&self) @noescape -> Int32 { 17 } }
+impl Label for Marker<2> { fn label(&self) @noescape -> Int32 { 19 } }
+impl Label for Cell<(Int32, Bool)> { fn label(&self) @noescape -> Int32 { 23 } }
+impl Label for Cell<Cell<Int32>> { fn label(&self) @noescape -> Int32 { 29 } }
+
+fn check() -> Int32 {
+    let number = Cell { value: 37 }
+    let flag = Cell { value: true }
+    let n: Cell<Int32>.Item = read(&number)
+    let b: Cell<Bool>.Item = read(&flag)
+    assert(n == 37 && b, "concrete associated types and generic calls")
+    assert(number.code() == 5 && flag.code() == 7, "default and explicit methods have distinct bodies")
+    assert(Read.read(&number) == 37 && Read.read(&flag), "explicit trait calls")
+    assert(erased(&number) == 42, "dynamic dispatch uses the concrete implementation")
+    let first = Wrapper { cell: number }.clone()
+    let second = Wrapper { cell: flag }.clone()
+    assert(first.cell.value == 37 && second.cell.value, "derive searches concrete field implementations")
+    let a: Choice<Int32> = Choice.Empty
+    let b: Choice<Bool> = Choice.Empty
+    assert(a.label() == 11 && b.label() == 13, "concrete enum arguments")
+    let one = Marker::<1> {}
+    let two = Marker::<2> {}
+    assert(one.label() == 17 && two.label() == 19, "concrete constant arguments")
+    let pair = Cell { value: (1, true) }
+    let nested = Cell { value: number }
+    assert(pair.label() == 23 && nested.label() == 29, "fully concrete nested arguments")
+    42
+}

@@ -391,14 +391,8 @@ impl Parser<'_> {
             Type::Applied(application) => application.name.clone(),
             _ => target.to_string(),
         };
-        if matches!(target, Type::Tuple(_))
-            || (trait_name.is_some()
-                && type_params.is_empty()
-                && matches!(target, Type::Applied(_)))
-        {
-            return Err(self.error(
-                "impl requires a named type; generic trait targets need impl parameters".into(),
-            ));
+        if matches!(target, Type::Tuple(_)) {
+            return Err(self.error("impl requires a named type".into()));
         }
         self.impl_target = Some(target.clone());
         self.impl_trait = trait_name.clone();

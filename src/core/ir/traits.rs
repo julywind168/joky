@@ -68,8 +68,9 @@ impl Traits {
     }
 
     fn applies(&self, implementation: &Implementation, ty: &Type) -> Result<bool, Error> {
-        if !matches!(implementation.target, Type::Parameter(_))
-            && !same_owner(&implementation.target, ty)
+        if implementation.parameters.is_empty() && implementation.target != *ty
+            || !matches!(implementation.target, Type::Parameter(_))
+                && !same_owner(&implementation.target, ty)
         {
             return Ok(false);
         }
@@ -242,7 +243,7 @@ pub(super) fn collect(
             }
         }
     }
-    for implementation in &module.implementations {
+    for (implementation_index, implementation) in module.implementations.iter().enumerate() {
         let Some(name) = &implementation.trait_name else {
             continue;
         };
@@ -272,6 +273,8 @@ pub(super) fn collect(
         if declaration.is_drop
             && (!matches!(implementation.target, Type::Record(_))
                 || !implementation.target.is_owner()
+                || matches!(&implementation.target, Type::Record(record)
+                    if !record.parameters.is_empty() && implementation.type_params.is_empty())
                 || implementation
                     .type_params
                     .iter()
@@ -280,7 +283,7 @@ pub(super) fn collect(
             return Err(type_error(
                 &implementation.span,
                 ErrorCode::TypeMismatch,
-                "Drop requires an owning record and cannot have conditional bounds",
+                "Drop requires an owning record, all generic parameters, and no conditional bounds",
             ));
         }
         let target_owner = implementation
@@ -300,6 +303,9 @@ pub(super) fn collect(
         if members.traits.implementations.iter().any(|i| {
             i.id == binding.id
                 && (same_owner(&i.target, &implementation.target)
+                    && (!i.parameters.is_empty()
+                        || !implementation.type_params.is_empty()
+                        || i.target == implementation.target)
                     || matches!(
                         (&i.target, &implementation.target),
                         (Type::Parameter(_), Type::Parameter(_))
@@ -423,8 +429,9 @@ pub(super) fn collect(
                 }
             }
             function.name = format!(
-                "joky/impl/{}/{}.{}",
+                "joky/impl/{}/{}/{}.{}",
                 binding.id,
+                implementation_index,
                 match &implementation.target {
                     Type::Parameter(p) => format!("blanket_{}", p.id),
                     ty => members::owner_name(ty),
@@ -459,8 +466,9 @@ pub(super) fn collect(
             let mut function = requirement.definition();
             function.scope = declaration.scope.clone();
             function.name = format!(
-                "joky/impl/{}/{}.{}",
+                "joky/impl/{}/{}/{}.{}",
                 binding.id,
+                implementation_index,
                 match &implementation.target {
                     Type::Parameter(p) => format!("blanket_{}", p.id),
                     ty => members::owner_name(ty),

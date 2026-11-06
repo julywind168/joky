@@ -145,6 +145,13 @@ impl FromSql for String {
         }
     }
 }
+impl FromSql for Array<UInt8> {
+    fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Array<UInt8>, DbError> {
+        match get_bytes(row, i) {
+            Ok(Some(value)) => Ok(array.clone(value)), Ok(None) => Err(Column(UnexpectedNull(i))), Err(reason) => Err(Column(reason))
+        }
+    }
+}
 impl<T: FromSql> FromSql for Option<T> {
     fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Option<T>, DbError> {
         match FromSql.from_sql::<T>(row, i) {

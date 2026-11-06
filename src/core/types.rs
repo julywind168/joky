@@ -423,9 +423,8 @@ impl TypeRegistry {
             resolve_type(&mut implementation.target, &canonical, &local)
                 .map_err(|e| e.with_span(implementation.span))?;
             let target = &implementation.target;
-            let concrete_inherent =
-                implementation.trait_name.is_none()
-                    && implementation.type_params.is_empty()
+            let concrete_target =
+                implementation.type_params.is_empty()
                     && !TypeWalk::new(target, TypeEdges::Arguments).any(|ty| match ty {
                         Type::Parameter(_) | Type::Projection(_) => true,
                         Type::FixedArray(a) | Type::FixedArrayInit(a) => {
@@ -513,7 +512,7 @@ impl TypeRegistry {
                                 .is_some_and(|b| b.name == *name && b.resolved.is_none())
                         })))
                     && arguments.len() == parameters.len()
-                    && (concrete_inherent
+                    && (concrete_target
                         || specialized_inherent
                         || (arguments.len() == implementation.type_params.len()
                             && arguments
@@ -532,7 +531,7 @@ impl TypeRegistry {
             };
             if !valid {
                 return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
-                    "impl requires a Copy primitive, a concrete record/enum, or each impl parameter in declaration order; aliases and specialized trait or partially generic implementations are not supported")
+                    "impl requires a Copy primitive, a concrete record/enum, or each impl parameter in declaration order; aliases and partially generic implementations are not supported")
                     .with_span(implementation.span));
             }
             // Only the embedded library can originate in the reserved Joky namespace.

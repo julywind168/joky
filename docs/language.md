@@ -2281,12 +2281,16 @@ fn example() -> Bool {
 - 函数、固有方法和 impl 类型参数支持 `T: Eq + Hash`，每次泛型调用必须满足全部约束。
   不同导入别名仍指向同一 trait；重复别名约束也报错。记录、枚举及透明别名声明暂不接受参数约束。
   泛型体只使用已声明的能力，包括未实例化的模板；不会因某次类型实参恰好拥有某个方法而放行。
-- 支持条件实现，如 `impl<T: Value> Value for Pair<T>`。目标仍限具体 Copy 基元，
-  或按声明顺序完整应用 impl 参数的记录 / 枚举；也支持单参数 blanket impl，如 `impl<T: A> B for T`。
+- 支持条件实现，如 `impl<T: Value> Value for Pair<T>`。目标支持具体基元、记录 / 枚举，
+  包括所有类型和常量实参均已确定的实例，如 `impl Read for Array<UInt8>`。
+  泛型实现须按声明顺序完整应用 impl 参数；也支持单参数 blanket impl，如 `impl<T: A> B for T`。
   blanket impl 只能在 trait 定义模块声明；每个 trait 最多一个 blanket impl。
   具体调用/约束证明时若 blanket 与名义实现同时满足条件则报错，没有特化优先级。
-  不支持别名目标、特化和部分具体化。
-  同一 trait / 名义类型只能有一个实现，即使条件不同也拒绝重叠；trait 或被实现的名义类型必须定义于实现模块。
+  同一 trait 可分别为 Array<UInt8> 和 Array<Int64> 实现；别名实参规范化后按完整目标类型判等。
+  同一名义类型的完整泛型实现与具体实例实现不能共存，重复具体目标也被拒绝。
+  同一名义类型的多个泛型实现即使条件不同仍拒绝重叠。
+  不支持别名目标、部分具体化或特化优先级；trait 或被实现的名义类型必须定义于实现模块。
+  Drop 要求覆盖记录的全部泛型参数，不能仅为某个具体实例实现。
   固有 impl 的条件同样约束其方法和关联常量；受约束常量需显式绑定目标，如 `Pair::<UserId>.SIZE`。
 - 具体类型的点调用优先选择可见的固有方法，否则在当前作用域可见的 trait 中查找。
   多个 trait 提供同名方法时报告歧义，用 `Eq.eq(left, right)` 指定 trait。
@@ -7260,7 +7264,7 @@ bytea 及这些类型的 SQL NULL；其他类型可在 SQL 中显式转换。查
 
 | API | 行为 |
 | --- | --- |
-| `row.get<T: FromSql>(name)` | 返回 `Result<T, DbError>`，按名称解码值；Int64、Bool、String 及 Option<T> 有内置实现，String 克隆为独立拥有值 |
+| `row.get<T: FromSql>(name)` | 返回 `Result<T, DbError>`，按名称解码值；Int64、Bool、String、Array<UInt8> 及 Option<T> 有内置实现，文本和字节数组克隆为独立拥有值 |
 | `row.get_opt<T: FromSql>(name)` | 等同于 `row.get::<Option<T>>(name)`；将 T 解码时的 UnexpectedNull 转为 None，其他错误原样返回 |
 | `row.require_int64(name)` | 返回 `Result<Int64, DbError>`，列错误包装为 `DbError.Column`。整数列为 NULL 时返回 `Column(UnexpectedNull(i))` |
 | `row.get_bool/get_int64/get_text/get_bytes(name)` | 返回 `Result<Option<T>, ColumnError>`。类型正确的 NULL 返回 None，类型不匹配（包括其他类型的 NULL）返回 TypeMismatch(i)。文本与字节借用行中的存储 |
@@ -7275,7 +7279,8 @@ bytea 及这些类型的 SQL NULL；其他类型可在 SQL 中显式转换。查
 可为业务类型手写实现。`get` 会先检查名称是否唯一，再调用协议。内置非 Option 实现遇到正确类型的
 NULL 时返回 `Column(UnexpectedNull(i))`；`Option<T>` 将该错误转换为 None，其他错误原样传播。
 `@noescape` 要求结果独立于 row 的借用；需要零拷贝文本和 bytea 时使用 `get_text` / `get_bytes`。
-当前语言不支持为 `Array<UInt8>` 单独实现泛型类型的 trait，因此 bytea 暂未提供内置 FromSql 实现。
+`row.get::<Array<UInt8>>(name)` 返回 bytea 的独立副本；可空字节列使用 `get_opt::<Array<UInt8>>`
+或 Option<Array<UInt8>> 字段。空 bytea 返回空数组，SQL NULL 按 Option 规则处理。
 
 `#derive(FromRow)` 支持 struct，按字段声明顺序以字段名调用 `row.get::<字段类型>`。
 SQL 可以通过 `AS` 指定匹配名称；额外列被忽略，缺列或重名仍报错，包括 Option 字段。

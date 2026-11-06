@@ -186,6 +186,9 @@ impl TypeRegistry {
             }
             let target =
                 self.resolve_scoped(&implementation.target, scope, &implementation.type_params)?;
+            if implementation.type_params.is_empty() && target != *ty {
+                continue;
+            }
             let same = match (&target, ty) {
                 (Type::Parameter(_), _) => true,
                 (Type::Record(a), Type::Record(b)) => a.id == b.id,

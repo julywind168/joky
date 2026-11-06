@@ -15,6 +15,26 @@ struct Identifier { id: Int64 }
 #derive(FromRow)
 struct EmptyRow {}
 
+#derive(FromRow)
+struct BinaryRow { bytes: Array<UInt8>, nullable: Option<Array<UInt8>> }
+#derive(FromRow)
+struct RequiredBinaryRow { bytes: Array<UInt8>, nullable: Array<UInt8> }
+
+fn binary_columns(row: postgres.Row) {
+    var bytes = row.get::<Array<UInt8>>("bytes")!
+    bytes[0] = 7
+    assert(row.get_bytes("bytes")!![0] == 0, "generic bytes own an independent copy")
+    assert(row.get::<Array<UInt8>>("empty")!.is_empty(), "empty binary value")
+    assert(row.get_opt::<Array<UInt8>>("nullable")!.is_none(), "binary NULL")
+    assert(match row.get::<Array<UInt8>>("nullable") { Err(Column(UnexpectedNull(2))) => true, _ => false }, "required binary NULL")
+    assert(match row.get_opt::<Array<UInt8>>("wrong") { Err(Column(TypeMismatch(3))) => true, _ => false }, "binary NULL type mismatch")
+    assert(match row.get::<Array<UInt8>>("missing") { Err(Column(MissingColumn)) => true, _ => false }, "missing binary column")
+    assert(match postgres.FromRow.from_row::<RequiredBinaryRow>(&row) { Err(Column(UnexpectedNull(2))) => true, _ => false }, "partial binary mapping")
+    let decoded = postgres.FromRow.from_row::<BinaryRow>(&row)!
+    mem.drop(row)
+    assert(decoded.bytes[1] == 255 && decoded.bytes[2] == 42 && decoded.nullable.is_none(), "derived binary values outlive the row")
+}
+
 struct OrderId { value: Int64 }
 impl postgres.FromSql for OrderId {
     fn from_sql(row: &postgres.Row, i: UInt64) @noescape -> Result<OrderId, postgres.DbError> {
@@ -118,6 +138,9 @@ fn main() @suspends {
     let observer = postgres.open(1)!
     types(&pool)
     cardinality(&pool)
+    binary_columns(pool.query_one("SELECT $1::bytea AS bytes, ''::bytea AS empty, NULL::bytea AS nullable, NULL::bigint AS wrong", [postgres.Value.BytesValue([0, 255, 42])])!)
+    let binary = pool.query_one_as::<BinaryRow>("SELECT $1::bytea AS bytes, NULL::bytea AS nullable", [postgres.Value.BytesValue([42])])!
+    assert(binary.bytes[0] == 42 && binary.nullable.is_none(), "mapped binary query returns independent owners across suspension")
     let wrapped = pool.query_one_as::<WrappedRow<OrderId>>("SELECT 42::bigint AS id", [])!
     assert(wrapped.id.value == 42, "custom FromSql with inferred derive bounds")
     let invalid = pool.query_one("SELECT -1::bigint AS id", [])!

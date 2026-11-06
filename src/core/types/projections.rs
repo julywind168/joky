@@ -931,6 +931,9 @@ impl TypeRegistry {
             .map_or(&self.trait_environment.root, |s| &s.imports);
         let target =
             self.resolve_scoped(&implementation.target, scope, &implementation.type_params)?;
+        if implementation.type_params.is_empty() && target != *actual {
+            return Ok(None);
+        }
         let same = match (&target, actual) {
             (Type::Parameter(_), _) => true,
             (Type::Record(a), Type::Record(b)) => a.id == b.id,

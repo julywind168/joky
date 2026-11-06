@@ -451,9 +451,9 @@ explain-parallel 确认直接域操作仍为 Local。仅核验现有能力，没
 ### 8.2 结果读取【泛型读取与 FromRow 已实现】
 
 Row 持有列名和值，四种现有 SQL 类型均可按名称读取。已提供 `row.get::<T>(name)`、
-`row.get_opt::<T>(name)` 和 FromSql 协议，内置支持 Int64、Bool、String、Option<T>。
-String 解码为独立拥有值；借用文本和 bytea 沿用 `get_text` / `get_bytes`。
-Array<UInt8> 的独立 trait 实现受当前泛型 impl 规则限制，bytea 的统一泛型入口暂缓。
+`row.get_opt::<T>(name)` 和 FromSql 协议，内置支持 Int64、Bool、String、Array<UInt8>、Option<T>。
+String 与 bytea 解码为独立拥有值；借用读取使用 `get_text` / `get_bytes`。
+具体泛型类型的 trait 实现已支持，FromRow 可映射 Array<UInt8> 与 Option<Array<UInt8>> 字段。
 
 `#derive(FromRow)` 按 struct 字段名映射，支持拥有字段、Option 字段和按字段推导的泛型约束。
 Pool 与 Transaction 提供 `query_one_as::<T>`；订单示例通过 StoredOrder 读取调换了列顺序的
@@ -466,7 +466,6 @@ Pool 与 Transaction 提供 `query_one_as::<T>`；订单示例通过 StoredOrder
 后续建议：
 
 - 标量便利 `query_scalar::<Int64>(sql, params)`。
-- bytea 的泛型读取待具体泛型类型 impl 规则完善后接入。
 - 命名 `get_i64` 与语言类型名 Int64 不一致，见 §10。
 
 ### 8.3 类型覆盖
