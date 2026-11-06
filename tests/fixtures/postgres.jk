@@ -18,7 +18,7 @@ fn types(pool: &postgres.Pool) @suspends {
     assert(match r.borrow_ref(5) { IntValue(n) => n == 7, _ => false }, "int2")
     assert(match r.borrow_ref(6) { IntValue(n) => n == 8, _ => false }, "int4")
     assert(match pool.query("SELECT 1.5::numeric", []) { Err(ResultRead(UnsupportedType)) => true, _ => false }, "unsupported column")
-    assert(match pool.query("SELECT repeat('x', 1048576)", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "byte bound")
+    assert(match pool.query("SELECT repeat('x', 1048567) AS payload", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "column metadata counts toward the byte bound")
     assert(match pool.query("SELECT generate_series(0,1024)", []) { Err(ResultRead(ResultLimit)) => true, _ => false }, "row bound")
 }
 fn cells(row: &postgres.Row) {
@@ -26,6 +26,17 @@ fn cells(row: &postgres.Row) {
     assert(postgres.get_text(row, 2)!! == "x" && postgres.get_bytes(row, 3)!![1] == 255, "borrow owning cells")
     assert(match postgres.get_bool(row, 0) { Err(TypeMismatch(0)) => true, _ => false }, "typed null mismatch")
     assert(match postgres.get_text(row, 4) { Err(OutOfBounds(4)) => true, _ => false }, "absent column")
+    assert(row.get_int64("n")!.is_none() && row.get_bool("flag")!!, "named typed NULL and boolean")
+    let text = { let label = "Text"; row.get_text(&label)!! }
+    assert(text == "x" && row.get_bytes("bytes")!![1] == 255, "named values borrow only the row")
+    assert(match row.require_int64("n") { Err(Column(UnexpectedNull(0))) => true, _ => false }, "required NULL")
+    assert(match row.get_bool("n") { Err(TypeMismatch(0)) => true, _ => false }, "wrong type for NULL")
+    assert(match row.get_text("text") { Err(MissingColumn) => true, _ => false }, "exact column name")
+}
+fn check_batch(batch: &Array<postgres.Row>) {
+    let second = batch.borrow_ref(1)
+    assert(second.get_int64("id")!! == 2 && second.get_int64("qty")!! == 12, "column labels on every row")
+    assert(second.column_names().borrow_ref(0) == "qty" && second.values().len() == 2, "ordered column metadata")
 }
 fn cardinality(pool: &postgres.Pool) @suspends {
     assert(pool.query_optional("SELECT 1 WHERE false", [])!.is_none(), "optional empty")
@@ -33,8 +44,13 @@ fn cardinality(pool: &postgres.Pool) @suspends {
     assert(match pool.query_optional("SELECT generate_series(1, 2)", []) { Err(ResultRead(MultipleRows)) => true, _ => false }, "optional multiple")
     var tx = pool.begin()!
     assert(match tx.query_one("SELECT generate_series(1, 2)", []) { Err(ResultRead(MultipleRows)) => true, _ => false }, "required multiple")
-    let row = tx.query_optional("SELECT NULL::bigint, true, 'x'::text, $1::bytea", [postgres.Value.BytesValue([0,255])])!!
+    let row = tx.query_optional("SELECT NULL::bigint AS n, true AS flag, 'x'::text AS \"Text\", $1::bytea AS bytes", [postgres.Value.BytesValue([0,255])])!!
     cells(&row)
+    let duplicate = tx.query_one("SELECT 9::bigint AS id, 11::bigint AS id", [])!
+    assert(match duplicate.get_int64("id") { Err(AmbiguousColumn) => true, _ => false }, "ambiguous label")
+    assert(postgres.get_i64(&duplicate, 1)!! == 11, "duplicate labels retain their positions")
+    let batch = tx.query("SELECT n+10 AS qty, n AS id FROM generate_series(1,2) AS series(n) ORDER BY n", [])!
+    check_batch(&batch)
     let single = tx.query_one("SELECT 42", [])!
     assert(postgres.get_i64(&single, 0)!! == 42, "transaction remains usable")
     tx.commit()!

@@ -7242,7 +7242,7 @@ verify-full 用来验证数据库服务器证书和主机名。订单示例中�
 | `postgres.open(max_connections)` | 建立 SQLx PgPool，返回 Result<Pool, DbError>。容量 1–32，获取连接期限 5s |
 | `pool.share()` | 同一池的独立拥有句柄，可交给其他任务。最后一个持有者释放服务 |
 | `pool.execute(sql, params)` | 执行一条参数化语句，返回受影响行数 UInt64 |
-| `pool.query(sql, params)` | 返回 Array<Row>，Row 是 Array<Value>，按 SELECT 列表顺序读取 |
+| `pool.query(sql, params)` | 返回 Array<Row>，每行按 SELECT 列表顺序持有列名和对应的值 |
 | `pool.query_optional(sql, params)` / `pool.query_one(sql, params)` | 前者无行时返回 None，后者返回 ResultRead(NoRows)；两者遇到多行均拒绝。Transaction 也提供这两个接口 |
 | `pool.begin()` | 借出一条物理连接，返回拥有型 Transaction。该连接在整个事务内独占 |
 | `tx.execute` / `tx.query` | 与池上方法相同的参数和结果，独占借用事务 |
@@ -7254,7 +7254,19 @@ bytea 及这些类型的 SQL NULL；其他类型可在 SQL 中显式转换。查
 编码后的结果至多 1 MiB。单条 SQL 至多 64 KiB，绑定参数至多 256 个、编码后至多 1 MiB。
 结果按行接收并逐行检查；此上限约束交付给 Joky 的结果，SQLx 读取单个 PostgreSQL 协议消息的暂存可能更大。
 
-Row 仍可按位置遍历。postgres.get_bool / get_i64 / get_text / get_bytes 接受共享行和从零开始的列号，返回 Result<Option<T>, ColumnError>。类型匹配的 NULL 返回 None，文本和字节借用行中存储；越界或类型不匹配（含错误类型的 NULL）返回带列号的 ColumnError。
+按名读取使用 PostgreSQL 返回的列名（包括 SQL 中的 `AS` 别名），区分大小写。
+例如查询 `SELECT qty, id FROM orders` 后，`row.require_int64("id")?` 取得订单号，与列的位置无关。
+每行的 UTF-8 列名及其长度前缀计入 1 MiB 结果上限。
+
+| API | 行为 |
+| --- | --- |
+| `row.require_int64(name)` | 返回 `Result<Int64, DbError>`，列错误包装为 `DbError.Column`。整数列为 NULL 时返回 `Column(UnexpectedNull(i))` |
+| `row.get_bool/get_int64/get_text/get_bytes(name)` | 返回 `Result<Option<T>, ColumnError>`。类型正确的 NULL 返回 None，类型不匹配（包括其他类型的 NULL）返回 TypeMismatch(i)。文本与字节借用行中的存储 |
+| `row.column_index(name)` | 从零开始的列号。所有按名读取接口遇到缺列时报 MissingColumn，遇到重名时报 AmbiguousColumn。重名列仍可按位置读取，也可在 SQL 中指定不同别名 |
+| `row.column_names()` / `row.values()` | 借用按位置对应的名称数组和值数组，包含重名列。使用 `for value in row.values()` 顺序读取 |
+
+按列号的 `postgres.get_bool/get_i64/get_text/get_bytes(row, i)` 保留原有签名，越界返回 OutOfBounds(i)。
+原先直接使用 Array 读取接口的代码可改用 `row.values()`；`row.len()`、`row.borrow_ref(i)` 和 `row.get_ref(i)` 可直接使用。
 单行查询共享查询上限；在上限内的多行结果返回 ResultRead(MultipleRows)，事务仍然可用。
 
 事务边界由 Transaction 管理。不要在普通语句中手动提交或回滚事务。池连接成功归还前执行 DISCARD ALL，

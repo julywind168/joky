@@ -73,7 +73,9 @@ P0 = 写任何后端服务都会反复撞到；P1 = 明显降低手感或易错�
 
 ### 4.1 `?` 的错误类型转换【已验证】
 
-`Result?` 要求调用结果与当前函数使用相同的错误类型。订单示例的 `number()` 先用 `map_err` 把 `ColumnError` 包进 `DbError.Column`，再用 `?` 提前返回错误。读列成功后得到 `Option<Int64>`，由 `number()` 将 SQL `NULL` 解释为该列的 `UnexpectedNull(i)`。错误转换使用无捕获闭包，可在 HTTP 服务的 worker 内直接调用。[订单示例](../examples/postgres_orders.jk#L10)
+`Result?` 要求调用结果与当前函数使用相同的错误类型。可空列的读取接口返回 `ColumnError`，
+非空整数读取 `row.require_int64` 在标准库内将列错误包装为 `DbError.Column`，因此订单服务可直接写
+`row.require_int64("id")?`。[订单示例](../examples/postgres_orders.jk)
 
 通用 `From<T>` 降为 P2。一个应用错误类型可能需要分别接受数据库错误和文件错误，而当前 trait 自身不能带类型参数，同一 trait 与目标类型只能有一个实现。等另一个协议也需要按来源类型区分实现时，再一起设计泛型 trait 的实现查找和重叠规则。[当前 trait 规则](language.md#L2182)
 
@@ -446,15 +448,14 @@ explain-parallel 确认直接域操作仍为 Local。仅核验现有能力，没
 - 变体名去掉冗余后缀：`Value.IntValue` → `Value.Int`，`TextValue` → `Text`。
 - 文本参数接受借用，避免 `key.clone()`。
 
-### 8.2 结果读取
+### 8.2 结果读取【按列名读取已实现】
 
-现状：Row 是 `Array<Value>`，只能按列号读取；`postgres.get_i64(row, i)` 返回
-`Result<Option<Int64>, ColumnError>`，非空列需要再写一个 `number()` 包装。
+Row 持有列名和值，四种现有 SQL 类型均可按名称读取。订单服务用 `row.require_int64("id")?` 和
+`row.require_int64("qty")?` 读取非空整数。列号、重名、缺列及 NULL 的规则见[语言参考](language.md#postgresql-数据库-jokypostgres)。
 
-建议：
+后续建议：
 
-- 方法形式与按列名读取：`row.get::<Int64>("id")?`、`row.get_opt::<String>("note")?`；
-  需要驱动返回列名元数据（Row 改为带列描述的记录，而非裸数组）。
+- 统一泛型入口 `row.get::<T>(name)`／`row.get_opt::<T>(name)`。本阶段采用具体方法；验证泛型版本时，HTTP 订单程序的导入组合超过了当前 256 个泛型枚举实例的编译预算。
 - `#derive(FromRow)`：`let order: Order = tx.query_one_as::<Order>(sql, params)?`，按字段名映射。
 - 标量便利：`query_scalar::<Int64>(sql, params)`。
 - 命名：`get_i64` 与语言类型名 `Int64` 不一致，见 §10。

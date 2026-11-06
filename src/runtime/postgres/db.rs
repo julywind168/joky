@@ -180,7 +180,7 @@ fn arguments(mut input: &[u8]) -> Result<PgArguments, Fault> {
     }
     Ok(args)
 }
-fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow) -> Result<(), Fault> {
+fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow, named: bool) -> Result<(), Fault> {
     if row.len() > 128 || out.len() + 4 > MAX {
         return Err(Fault::ResultLimit);
     }
@@ -193,6 +193,14 @@ fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow) -> Result<(), Fault> {
             "BYTEA" => 3,
             _ => return Err(Fault::ResultType),
         };
+        if named {
+            let name = col.name().as_bytes();
+            if 4 + name.len() > MAX - out.len() {
+                return Err(Fault::ResultLimit);
+            }
+            out.extend((name.len() as u32).to_le_bytes());
+            out.extend(name);
+        }
         let raw = row.try_get_raw(i).map_err(|_| Fault::ResultType)?;
         if out.len() + 1 > MAX {
             return Err(Fault::ResultLimit);
@@ -237,8 +245,7 @@ fn row(out: &mut Vec<u8>, row: sqlx::postgres::PgRow) -> Result<(), Fault> {
 }
 pub(super) enum Mode {
     Execute,
-    Query,
-    Optional,
+    Query { optional: bool, named: bool },
 }
 pub(super) async fn run(
     target: Target,
@@ -250,7 +257,7 @@ pub(super) async fn run(
     let args = arguments(&params)?;
     let mut loan = target.checkout().await?;
     let request = sqlx::query_with(AssertSqlSafe(sql), args).persistent(false);
-    let value = if !matches!(mode, Mode::Execute) {
+    let value = if let Mode::Query { optional, named } = mode {
         let mut rows = request.fetch(loan.conn());
         let mut out = Vec::new();
         let mut count = 0;
@@ -261,11 +268,11 @@ pub(super) async fn run(
             }
             // Consume the reply before returning this connection to the pool
             // or transaction; only the first row needs a snapshot in Optional mode.
-            if count == 1 || matches!(mode, Mode::Query) {
-                row(&mut out, r)?;
+            if count == 1 || !optional {
+                row(&mut out, r, named)?;
             }
         }
-        if count > 1 && matches!(mode, Mode::Optional) {
+        if count > 1 && optional {
             Value::Fault(Fault::MultipleRows)
         } else {
             Value::Bytes(out)

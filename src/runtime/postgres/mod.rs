@@ -353,8 +353,11 @@ unsafe fn step(arena: &mut Arena, f: &mut CpsFrame, op: Operation) -> Result<Opt
                 (Operation::Run, t) => {
                     let mode = match s[1] {
                         0 => db::Mode::Execute,
-                        1 => db::Mode::Query,
-                        2 => db::Mode::Optional,
+                        // Previously compiled callers use the positional row packet (1/2).
+                        1..=4 => db::Mode::Query {
+                            optional: matches!(s[1], 2 | 4),
+                            named: s[1] >= 3,
+                        },
                         _ => return Err(invalid()),
                     };
                     Request::start(driver, charge, permit, db::run(t, sql, params, mode))

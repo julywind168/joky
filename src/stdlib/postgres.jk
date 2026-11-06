@@ -40,14 +40,16 @@ impl Show for ReadFailure {
     }
 }
 
-pub enum ColumnError { OutOfBounds(UInt64), TypeMismatch(UInt64), UnexpectedNull(UInt64) }
+pub enum ColumnError { OutOfBounds(UInt64), TypeMismatch(UInt64), UnexpectedNull(UInt64), MissingColumn, AmbiguousColumn }
 pub enum DbError { Invalid, Unavailable, Closed, Limit, OutcomeUnknown, Database(String), ResultRead(ReadFailure), Connect(String), AcquireFailed, AcquireTimeout, Column(ColumnError) }
 impl Show for ColumnError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
             OutOfBounds(i) => { output.push_str("no column at index "); i.show(output) },
             TypeMismatch(i) => { output.push_str("unexpected type at column "); i.show(output) },
-            UnexpectedNull(i) => { output.push_str("unexpected NULL at column "); i.show(output) }
+            UnexpectedNull(i) => { output.push_str("unexpected NULL at column "); i.show(output) },
+            MissingColumn => output.push_str("column name not found"),
+            AmbiguousColumn => output.push_str("ambiguous column name")
         }
     }
 }
@@ -73,28 +75,65 @@ impl Show for DbError {
 }
 pub struct Pool { owner: postgres.Owner }
 pub struct Transaction { owner: postgres.Owner }
-pub type Row = Array<Value>
+pub struct Row { names: Array<String>, cells: Array<Value> }
+impl Row {
+    pub fn len(&self) -> UInt64 { self.cells.len() }
+    pub fn column_names(&self) -> &Array<String> { &self.names }
+    pub fn values(&self) -> &Array<Value> { &self.cells }
+    pub fn borrow_ref(&self, i: UInt64) -> &Value { self.cells.borrow_ref(i) }
+    pub fn get_ref(&self, i: UInt64) -> Option<&Value> { self.cells.get_ref(i) }
 
-fn checked_column(row: &Row, i: UInt64) -> Result<&Value, ColumnError> {
-    match row.get_ref(i) { Some(v) => Ok(v), None => Err(OutOfBounds(i)) }
+    pub fn column_index(&self, name: &String) -> Result<UInt64, ColumnError> {
+        var found: Option<UInt64> = None
+        for i in 0 .. self.names.len() {
+            if self.names.borrow_ref(i) == name {
+                if found.is_some() { return Err(AmbiguousColumn) }
+                found = Some(i)
+            }
+        }
+        match found { Some(i) => Ok(i), None => Err(MissingColumn) }
+    }
+    pub fn get_bool(&self, name: &String) -> Result<Option<Bool>, ColumnError> {
+        get_bool(self, self.column_index(name)?)
+    }
+    pub fn get_int64(&self, name: &String) -> Result<Option<Int64>, ColumnError> {
+        get_i64(self, self.column_index(name)?)
+    }
+    pub fn require_int64(&self, name: &String) -> Result<Int64, DbError> {
+        let i = match self.column_index(name) { Ok(i) => i, Err(reason) => return Err(Column(reason)) }
+        match get_i64(self, i) {
+            Ok(Some(n)) => Ok(n), Ok(None) => Err(Column(UnexpectedNull(i))), Err(reason) => Err(Column(reason))
+        }
+    }
+    pub fn get_text(&self, name: &String) @noescape(name) -> Result<Option<&String>, ColumnError> {
+        get_text(self, self.column_index(name)?)
+    }
+    pub fn get_bytes(&self, name: &String) @noescape(name) -> Result<Option<&Array<UInt8>>, ColumnError> {
+        get_bytes(self, self.column_index(name)?)
+    }
 }
+
 pub fn get_bool(row: &Row, i: UInt64) -> Result<Option<Bool>, ColumnError> {
-    match checked_column(row, i)? {
+    if i >= row.len() { return Err(OutOfBounds(i)) }
+    match row.borrow_ref(i) {
         BoolValue(v) => Ok(Some(v)), Null(Boolean) => Ok(None), _ => Err(TypeMismatch(i))
     }
 }
 pub fn get_i64(row: &Row, i: UInt64) -> Result<Option<Int64>, ColumnError> {
-    match checked_column(row, i)? {
+    if i >= row.len() { return Err(OutOfBounds(i)) }
+    match row.borrow_ref(i) {
         IntValue(v) => Ok(Some(v)), Null(Integer) => Ok(None), _ => Err(TypeMismatch(i))
     }
 }
 pub fn get_text(row: &Row, i: UInt64) -> Result<Option<&String>, ColumnError> {
-    match checked_column(row, i)? {
+    if i >= row.len() { return Err(OutOfBounds(i)) }
+    match row.borrow_ref(i) {
         TextValue(v) => Ok(Some(v)), Null(Text) => Ok(None), _ => Err(TypeMismatch(i))
     }
 }
 pub fn get_bytes(row: &Row, i: UInt64) -> Result<Option<&Array<UInt8>>, ColumnError> {
-    match checked_column(row, i)? {
+    if i >= row.len() { return Err(OutOfBounds(i)) }
+    match row.borrow_ref(i) {
         BytesValue(v) => Ok(Some(v)), Null(Bytes) => Ok(None), _ => Err(TypeMismatch(i))
     }
 }
@@ -143,15 +182,19 @@ fn take(data: &Array<UInt8>, offset: &mut UInt64, width: UInt64) -> UInt64 {
     *offset = *offset + width
     value
 }
+fn take_bytes(data: &Array<UInt8>, offset: &mut UInt64) -> Array<UInt8> {
+    let n = take(data, offset, 4)
+    var bytes: Array<UInt8> = []
+    array.extend_bytes(&mut bytes, data.slice(0, data.len()), *offset, *offset + n)
+    *offset = *offset + n
+    bytes
+}
 fn cell(data: &Array<UInt8>, offset: &mut UInt64) -> Value {
     let tag = take(data, offset, 1)
     if tag < 4 { return Null(match tag { 0 => Boolean, 1 => Integer, 2 => Text, _ => Bytes }) }
     if tag == 4 { return BoolValue(take(data, offset, 1) != 0) }
     if tag == 5 { return IntValue(int64(take(data, offset, 8))) }
-    let n = take(data, offset, 4)
-    var bytes: Array<UInt8> = []
-    array.extend_bytes(&mut bytes, data.slice(0, data.len()), *offset, *offset + n)
-    *offset = *offset + n
+    let bytes = take_bytes(data, offset)
     if tag == 6 { TextValue(String.from_utf8(bytes)!) } else { BytesValue(bytes) }
 }
 fn rows(data: Array<UInt8>) -> Array<Row> {
@@ -159,8 +202,11 @@ fn rows(data: Array<UInt8>) -> Array<Row> {
     var offset: UInt64 = 0
     while offset < data.len() {
         let count = take(&data, &mut offset, 4)
-        var row: Row = []
-        for i in 0 .. count { row.push(cell(&data, &mut offset)) }
+        var row = Row { names: [], cells: [] }
+        for i in 0 .. count {
+            row.names.push(String.from_utf8(take_bytes(&data, &mut offset))!)
+            row.cells.push(cell(&data, &mut offset))
+        }
         result.push(row)
     }
     result
@@ -175,11 +221,11 @@ fn exec(owner: &postgres.Owner, sql: String, params: Array<Value>) @suspends -> 
     Ok(__pg_count(&result))
 }
 fn fetch(owner: &postgres.Owner, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> {
-    let result = run(owner, 1, sql, params)?
+    let result = run(owner, 3, sql, params)?
     Ok(rows(__pg_data(&result)))
 }
 fn optional_row(owner: &postgres.Owner, sql: String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> {
-    let result = run(owner, 2, sql, params)?
+    let result = run(owner, 4, sql, params)?
     var found = rows(__pg_data(&result))
     Ok(found.pop())
 }

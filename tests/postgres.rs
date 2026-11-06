@@ -144,6 +144,14 @@ fn bounded(cmd: &mut Command, root: &Path) {
         thread::sleep(Duration::from_millis(10));
     }
 }
+// Keep the complete HTTP + database import graph within the compiler's type
+// budgets even on machines that cannot start the optional PostgreSQL cluster.
+#[test]
+fn postgres_http_order_example_type_checks() {
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    checked(joky(&examples).args(["check", "postgres_orders_http.jk"]));
+}
+
 #[test]
 fn postgres_requires_host_configuration() {
     let scratch = scratch::ScratchDir::new("pg-config");
