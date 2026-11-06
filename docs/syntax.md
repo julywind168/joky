@@ -197,7 +197,8 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 显示协议与插值已实现：`joky/show.Show` 以共享接收者写入 StringBuilder，
 `joky/io.print` / `println` 接受共享引用。插值是非原始字符串字面量的默认行为，写作 `"text={expr}"`，
 `{{` / `}}` 表示普通花括号；表达式顺序求值一次，不移动现有拥有值。
-已知同步函数中经推导或显式契约证明不逃逸的共享引用实参支持自动借用，包括 `println(value)`。
+已知函数中经推导或显式契约证明不逃逸的共享引用实参支持自动借用，包括 `println(value)`；
+同步与挂起调用均支持，临时值跨挂起保活到调用结束，失败或取消仍完成清理。
 格式规格、自动派生留待后续，实际语义见
 [Show 与插值](language.md#showprint--println-与字符串插值)。
 

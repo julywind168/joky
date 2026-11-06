@@ -2003,7 +2003,7 @@ fn borrowed_example() -> Int32 {
   方法本身可以在独占权限激活后挂起，并沿用现有恢复与取消清理。
   局部独立字段可分别调用借用方法；重叠字段、整体覆盖、移动及返回引用逃逸遵循既有检查。
 - 值接收者支持自动借用局部值、参数或内联字段；经引用解引用的内联字段暂不能直接取借用。
-  同步、不逃逸的 `&self` 方法也可用于临时值：接收者只求值一次，保存到调用期临时存储，调用结束后清理。
+  不逃逸的 `&self` 方法也可用于临时值（含挂起方法）：接收者只求值一次，保存到调用期临时存储，调用结束后清理。
   含共享引用的 Copy 值，以及无法直接借用的 Copy 字段，沿用这一路径对求值时的快照进行查询。
   临时值不支持 `&mut self`，也不能通过借用方法返回或保存其引用；显式 `&临时表达式` 仍被拒绝。
   `alloc(...).method()` 的接收者本身是引用，可以调用对应借用方法。按值方法不隐式读取引用，需要显式 *p。
@@ -2305,7 +2305,7 @@ fn example() -> Bool {
 借用、返回引用来源、参数求值顺序、挂起与取消继续沿用普通函数规则。
 未声明效果的抽象 trait 调用保守地视为可能分配、失败和保留普通引用。
 有函数体的语言函数按参数自动推导借用是否逃逸，包含挂起函数及结构化子任务；
-普通 helper 和实例方法无需标注。省略显式 `&` 的实参自动借用仍只用于同步调用。
+普通 helper 和实例方法无需标注。省略显式 `&` 的实参自动借用也适用于挂起调用；临时值保活到调用完成或取消清理结束。
 分析覆盖直接调用、递归、导入函数、泛型模板及具体实例，也检查按值聚合内携带的引用。
 返回借用和保存借用分别分析：仅返回视图的 helper 可在调用方继续使用该视图，
 不会因此被当成保存了输入。仅在证明参数既不被返回、也不被保存时，才获得完整不逃逸保证；
@@ -2594,10 +2594,10 @@ Joky 自身选项放在分隔符之前；项目自动发现时若要传参，显
 | API | 返回值与规则 |
 | --- | --- |
 | `process.args()` | `Result<Array<String>, IoError>`；按原顺序返回应用参数，不包含程序名或 Joky 自身参数 |
-| `process.env(name: String)` | `Result<Option<String>, IoError>`；未设置为 `None`，空值为 `Some("")` |
-| `process.env_or(name: String, fallback: String)` | `Result<String, IoError>`；仅未设置时返回 fallback，保留空值，读取错误原样返回；fallback 总会先求值 |
+| `process.env(name: &String)` | `Result<Option<String>, IoError>`；未设置为 `None`，空值为 `Some("")` |
+| `process.env_or(name: &String, fallback: String)` | `Result<String, IoError>`；仅未设置时返回 fallback，保留空值，读取错误原样返回；fallback 总会先求值 |
 | `process.current_dir()` | `Result<String, IoError>`；程序启动时调用者的绝对工作目录 |
-| `process.resolve_path(path: String)` | `Result<String, IoError>`；相对路径按启动目录拼接，绝对路径保持不变，不检查文件是否存在 |
+| `process.resolve_path(path: &String)` | `Result<String, IoError>`；相对路径按启动目录拼接，绝对路径保持不变，不检查文件是否存在 |
 
 参数、环境和目录在启动时拍快照，任务间只读共享；不提供修改环境或工作目录的 API。
 快照总文本上限为 4 MiB，参数与环境项合计最多 65536 项。环境名称不得为空或包含 `=`、NUL；
@@ -6838,20 +6838,23 @@ fn main() {
 }
 ```
 
-普通函数调用支持受限自动共享借用：已知同步函数的形参为 `&T`，且该参数具有
+普通函数调用支持受限自动共享借用：已知函数的形参为 `&T`，且该参数具有
 自动推导或显式契约提供的不逃逸保证时，可以省略 `&`。泛型推断从输入值推断 T，
 仍检查 trait 约束；已经是引用的输入沿用原有引用转换规则，不再包一层引用。
 `&mut T` 实参继续显式写 `&mut`；按值形参继续按 Copy 或移动规则处理。
-具有 `@noescape` 契约的同步函数值也支持此自动转换；挂起调用仍要求显式引用。
+同步与挂起调用均支持；具有 `@noescape` 契约的函数值也支持此自动转换，
+没有该契约的函数值仍需显式引用。`join`／`race` 的直接调用分支遵循同一规则。
 
 拥有型局部/拥有字段直接临时借用，打印不移动输入。Copy 输入在各自实参位置求值并复制到
 临时存储；拥有型表达式结果只求值一次，移动到临时绑定后借用。实参从左到右求值，
-临时绑定保活到整次调用结束，再按逆序清理；后续实参求值、被调用函数或 Drop 失败时仍清理。
+临时绑定跨挂起保活到整次调用结束，再按逆序清理；后续实参求值、被调用函数或 Drop 失败时仍清理。
+取消先停止借用它的子任务，再释放临时值。`join`／`race` 直接分支的实参在父任务求值，
+其临时值保活到整组完成或取消清理结束；块分支内的调用按自身调用边界清理。
 别名冲突、借用逃逸和引用存储契约仍由普通借用检查验证。
 
 挂起调用者可直接打印标量，并在每次同步调用结束后继续挂起；显式 `println(&count)` 同样支持。
 Copy 局部值及其内联字段可在恢复后再次借用。无引用拥有状态和 StringBuilder
-可在挂起函数内借用；自动借用仍要求被调用的同步函数具有不逃逸保证。
+可在挂起函数内借用；自动借用仍要求被调用函数的对应参数具有不逃逸保证。
 后续实参可以挂起，例如 `read(count, suspending_call())` 保留先前建立的局部借用，
 并继续检查后续实参是否冲突访问该位置；求值顺序仍从左到右。
 
@@ -7251,7 +7254,7 @@ HTTPS 使用 `http.serve_tls(listener, config, &stop, options, handler)`。它�
 
 ## PostgreSQL 数据库 joky/postgres
 
-`postgres.open(url: String, options: postgres.Options)` 消费调用方提供的连接字符串，返回独立拥有的连接池。
+`postgres.open(url: &String, options: postgres.Options)` 借用调用方提供的连接字符串，返回独立拥有的连接池。
 URL 可以来自 `process.env`、配置文件或应用自行构造；库不隐式读取 `JOKY_POSTGRES_URL`，不需要宿主注册名字，
 同一程序可以传入不同 URL 连接多个数据库。URL 最多 8192 字节，接受 `postgres://` 和 `postgresql://`。
 缺省要求 verify-full（验证 CA 和主机名），可在连接串中指定 `sslrootcert`；本地测试库可显式使用 `?sslmode=disable`。
@@ -7297,9 +7300,9 @@ fn main() @suspends {
 }
 ```
 
-URL 和 SQL 仍按拥有型 String 传入。当前省略 `&` 的实参自动借用只支持同步调用；
-直接改成 &String 会使挂起调用中的字面量与临时字符串失去现有写法。
-重复使用命名字符串时由调用方显式 clone；宿主在提交后台任务前仍建立独立输入副本，不把语言借用传给 Tokio。
+URL 和所有查询／执行方法的 SQL 参数均为 &String，支持自动共享借用：字面量、临时字符串、
+命名字符串都可以直接传入，调用后仍可重复使用命名字符串，无需 clone。
+宿主在提交后台任务前建立独立输入副本，不把语言借用传给 Tokio。
 
 原有 `postgres.open(n)` 调用需改为 `postgres.open(url, postgres.Options { max_connections: n, ..postgres.Options.default() })`。
 
@@ -7577,8 +7580,8 @@ CLI、独立 AOT 程序和 Godot 脚本使用同一模块，不需要逐脚本�
 
 | 操作 | 返回类型 |
 | --- | --- |
-| `tcp.listen(host: String, port: UInt16)` | `Result<TcpListener, EndpointError>` |
-| `tcp.connect(host: String, port: UInt16)` | `Result<TcpStream, EndpointError>` |
+| `tcp.listen(host: &String, port: UInt16)` | `Result<TcpListener, EndpointError>` |
+| `tcp.connect(host: &String, port: UInt16)` | `Result<TcpStream, EndpointError>` |
 
 两个入口均为 `@suspends`，支持 Local 和 Parallel。host 与 port 分开传入，格式约束与
 `dns.lookup` 相同；例如 `tcp.listen("127.0.0.1", 7777)` 和 `tcp.connect("localhost", 7777)`。
@@ -7902,7 +7905,7 @@ write 的 1 MiB 限制。遇到错误立即停止，不自动重试 Busy。`Writ
 `joky/tcp.{type Address}` 导入，数组与 Result 使用既有标准库类型。
 CLI、JIT、解释器、独立 AOT 与 Godot 共用系统解析实现。
 
-`dns.lookup(host: String, port: UInt16) @suspends -> Result<Array<Address>, ResolveError>`
+`dns.lookup(host: &String, port: UInt16) @suspends -> Result<Array<Address>, ResolveError>`
 消费 host，返回可供 `TcpStream.connect` 使用的地址列表。host 和 port 分开传入；
 host 限制为 1–1024 字节 ASCII，拒绝 NUL、控制字符、空白、URL、host:port、方括号和 `%zone`。
 调用方可传已转换的 punycode，库不执行 IDNA 转换或自行修剪输入；允许系统支持的其他名称，

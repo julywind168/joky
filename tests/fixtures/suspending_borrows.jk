@@ -151,6 +151,11 @@ fn locals() @suspends {
 }
 
 fn containers() @suspends {
+    assert(inspect(Packet { text: "ok", tag: 40 }) == 42, "temporary owner survives suspension")
+    let temporary_results = join { inspect(Packet { text: "ok", tag: 40 }), inspect(Packet { text: "yes", tag: 39 }) }
+    assert(temporary_results.0 == 42 && temporary_results.1 == 42, "branch temporaries survive join")
+    let winner = race { inspect(Packet { text: "ok", tag: 40 }), inspect(Packet { text: "yes", tag: 39 }) }
+    assert(winner == 42, "branch temporaries survive cancellation")
     var values = [41, 2]
     let view = values.borrow_mut_ref(0)
     add(view, 1)

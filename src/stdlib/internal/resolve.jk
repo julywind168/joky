@@ -27,7 +27,7 @@ impl Show for ResolveError {
 }
 
 // Private bounded wire packet: address triples on success, UTF-8 on failure.
-extern fn __dns_lookup(host: String, port: UInt16, error: &mut UInt64) @suspends -> Array<UInt8>
+extern fn __dns_lookup(host: &String, port: UInt16, error: &mut UInt64) @suspends -> Array<UInt8>
 
 fn word(bytes: &Array<UInt8>, offset: UInt64) -> UInt64 {
     var value: UInt64 = 0
@@ -38,7 +38,7 @@ fn word(bytes: &Array<UInt8>, offset: UInt64) -> UInt64 {
     }
     value
 }
-pub fn lookup<T>(host: String, port: UInt16, address: fn(UInt64, UInt64, UInt64) -> T) @suspends -> Result<Array<T>, ResolveError> {
+pub fn lookup<T>(host: &String, port: UInt16, address: fn(UInt64, UInt64, UInt64) -> T) @suspends -> Result<Array<T>, ResolveError> {
     var error: UInt64 = 0
     let bytes = __dns_lookup(host, port, &mut error)
     if error != 0 {

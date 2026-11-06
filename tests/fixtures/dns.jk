@@ -12,7 +12,9 @@ fn expect(result: Result<Array<Address>, ResolveError>) -> Array<Address> {
 }
 fn numeric() @suspends -> Int32 {
     let message = "DNS numeric endpoints"
-    let v4 = expect(dns.lookup("127.0.0.1", 65535))
+    let host = "127.0.0.1"
+    let v4 = expect(dns.lookup(host, 65535))
+    assert(host == "127.0.0.1", "lookup borrows host")
     let address = v4.get(0).unwrap_or(Address.ipv4(0, 0))
     assert(v4.len() == 1 && !address.is_ipv6() && address.low() == 0x7f000001 && address.port() == 65535, &message)
     let v6 = expect(dns.lookup("::1", 0))

@@ -106,7 +106,7 @@ impl Show for EndpointError {
 fn resolved_address(high: UInt64, low: UInt64, endpoint: UInt64) -> Address {
     Address { high, low, endpoint }
 }
-pub fn listen(host: String, port: UInt16) @suspends -> Result<TcpListener, EndpointError> {
+pub fn listen(host: &String, port: UInt16) @suspends -> Result<TcpListener, EndpointError> {
     let addresses = match resolve.lookup(host, port, resolved_address) {
         Ok(addresses) => addresses,
         Err(error) => return Err(EndpointError.Resolve(error))
@@ -120,7 +120,7 @@ pub fn listen(host: String, port: UInt16) @suspends -> Result<TcpListener, Endpo
     }
     Err(EndpointError.Io(last))
 }
-pub fn connect(host: String, port: UInt16) @suspends -> Result<TcpStream, EndpointError> {
+pub fn connect(host: &String, port: UInt16) @suspends -> Result<TcpStream, EndpointError> {
     let addresses = match resolve.lookup(host, port, resolved_address) {
         Ok(addresses) => addresses,
         Err(error) => return Err(EndpointError.Resolve(error))

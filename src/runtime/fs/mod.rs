@@ -159,7 +159,14 @@ impl Operation {
             | Self::RemoveFile
             | Self::ReadDir => (vec![Type::String], outcome),
             Self::Stdin => (vec![], outcome),
-            Self::Process => (vec![Type::UInt64, Type::UInt64, Type::String], outcome),
+            Self::Process => (
+                vec![
+                    Type::UInt64,
+                    Type::UInt64,
+                    Type::reference(Type::String, false),
+                ],
+                outcome,
+            ),
             Self::TestInput => (vec![Type::UInt64, Type::String, Type::String], outcome),
             Self::Read => (vec![file, Type::UInt64], outcome),
             Self::Write => (

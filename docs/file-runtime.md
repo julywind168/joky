@@ -669,7 +669,7 @@ Path 非 Copy，沿用普通记录的移动、借用与清理规则；显式 clo
 拟议 open 签名为 `open<P: IntoPath>(path: P, options: OpenOptions) @suspends -> Result<File, IoError>`。
 字符串字面量、String 变量和 Path 变量都可以直接传入；按值传参消费拥有者，保持现有
 open 的所有权习惯。调用后仍需使用原值时显式传入 clone 的结果。
-首版不承诺直接接收 `&String` 或 `&Path`；当前挂起函数也不提供同步调用的自动共享借用。
+首版路径接口不承诺直接接收 `&String` 或 `&Path`；挂起调用的自动共享借用规则见[语言参考](language.md#showprint--println-与字符串插值)。
 
 实现先通过 IntoPath 得到拥有型 Path，再将其文本移交现有内部 open 入口。
 后台继续只持有独立拥有的路径数据，不能保留语言借用。静态 trait 与泛型包装不改变

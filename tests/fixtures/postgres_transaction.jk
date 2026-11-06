@@ -76,8 +76,11 @@ fn cancellation_gate(observer: &postgres.Pool) @suspends {
 fn main() @suspends {
     let url = process.env("JOKY_POSTGRES_URL")!!
     let options = postgres.Options { max_connections: 1, ..postgres.Options.default() }
-    let pool = postgres.open(url.clone(), options)!
+    let pool = postgres.open(url, options)!
     let observer = postgres.open(url, options)!
+    let sql = "SELECT 42::bigint"
+    assert(pool.query_scalar::<Int64>(sql, [])! == 42, "query borrows SQL")
+    assert(observer.query_scalar::<Int64>(sql, [])! == 42 && !url.is_empty(), "URL and SQL remain reusable")
     pool.execute("CREATE TABLE IF NOT EXISTS joky_tx_helper (id bigint PRIMARY KEY)", [])!
     pool.execute("DELETE FROM joky_tx_helper", [])!
     decisions(&pool)

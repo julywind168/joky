@@ -6,7 +6,7 @@ import joky/option.{type Option, Some, None}
 import joky/string
 import joky/integer
 
-extern fn __process_read(kind: UInt64, index: UInt64, key: String) @suspends -> fs.OutcomeOwner
+extern fn __process_read(kind: UInt64, index: UInt64, key: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_code(result: &mut fs.OutcomeOwner) @suspends -> UInt64
 extern fn __fs_message(result: &mut fs.OutcomeOwner) @suspends -> String
 extern fn __fs_bytes(result: &mut fs.OutcomeOwner) @suspends -> Array<UInt8>
@@ -22,7 +22,7 @@ fn error(result: &mut fs.OutcomeOwner, code: UInt64) @suspends -> IoError {
     }
     IoError { kind, message: __fs_message(result) }
 }
-fn text(kind: UInt64, index: UInt64, key: String) @suspends -> Result<String, IoError> {
+fn text(kind: UInt64, index: UInt64, key: &String) @suspends -> Result<String, IoError> {
     var result = __process_read(kind, index, key)
     let code = __fs_code(&mut result)
     if code != 0 { return Err(error(&mut result, code)) }
@@ -44,13 +44,13 @@ pub fn args() @suspends -> Result<Array<String>, IoError> {
     }
     Ok(values)
 }
-pub fn env(name: String) @suspends -> Result<Option<String>, IoError> {
+pub fn env(name: &String) @suspends -> Result<Option<String>, IoError> {
     match text(2, 0, name) {
         Ok(value) => Ok(Some(value))
         Err(error) => if error.kind == ErrorKind.NotFound { Ok(None) } else { Err(error) }
     }
 }
-pub fn env_or(name: String, fallback: String) @suspends -> Result<String, IoError> {
+pub fn env_or(name: &String, fallback: String) @suspends -> Result<String, IoError> {
     match env(name) {
         Ok(Some(value)) => Ok(value)
         Ok(None) => Ok(fallback)
@@ -58,4 +58,4 @@ pub fn env_or(name: String, fallback: String) @suspends -> Result<String, IoErro
     }
 }
 pub fn current_dir() @suspends -> Result<String, IoError> { text(3, 0, "") }
-pub fn resolve_path(path: String) @suspends -> Result<String, IoError> { text(4, 0, path) }
+pub fn resolve_path(path: &String) @suspends -> Result<String, IoError> { text(4, 0, path) }

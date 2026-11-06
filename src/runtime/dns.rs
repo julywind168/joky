@@ -49,7 +49,7 @@ pub(crate) fn validate(signature: &FunctionSignature, suspends: bool) -> Result<
     if !suspends
         || signature.params
             != [
-                Type::String,
+                Type::reference(Type::String, false),
                 Type::UInt16,
                 Type::reference(Type::UInt64, true),
             ]

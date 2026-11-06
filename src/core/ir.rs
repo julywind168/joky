@@ -190,7 +190,7 @@ impl FunctionInfo {
     }
 
     fn can_borrow_argument(&self, index: usize) -> bool {
-        !self.suspends && (self.infer_noescape || self.parameter_noescape(index))
+        self.infer_noescape || self.parameter_noescape(index)
     }
 
     pub(crate) fn parameter_slots(&self) -> usize {

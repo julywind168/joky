@@ -2483,7 +2483,7 @@ VM 持有实例任务执行器；每个根另持实例访问环境，保活不�
 提交结果不明确时保留 OutcomeUnknown，数据库错误只交付 SQLSTATE，错误不回传连接串。
 独立拥有句柄可跨 worker 转移，私有释放回调和共享预算收费共同验证资源来源。
 
-`__pg_connect(String, UInt64, UInt64)` 接收拥有的 URL、最大连接数和获取超时纳秒数，
+`__pg_connect(&String, UInt64, UInt64)` 接收借用的 URL、最大连接数和获取超时纳秒数，
 首次 poll 验证参数并把 URL 复制进数据库任务，挂起期间不保留 Joky 字符串借用。Connect 操作追加到现有操作编号，
 不复用旧 Open 编号；旧 `__pg_open(UInt64)` 返回 InvalidRequest，避免把旧帧中的连接数当成字符串指针。
 运行时不读取 JOKY_POSTGRES_URL，配置来源由应用决定；无效 URL／配置返回 InvalidRequest，
@@ -2523,9 +2523,9 @@ Local 的存储预留使用 ExternalCharge，Parallel 使用可转移 Lease，�
 通过库内地址构造回调同时服务 `dns.lookup` 和 `tcp.listen` / `tcp.connect`，避免 TCP 与 DNS
 互相导入。`joky/dns` 重新导出 ResolveError／ErrorKind，地址仍保持 `joky/tcp.Address` 身份。
 TCP 便捷入口逐个尝试候选，复用原 bind/connect 的 socket 拥有与取消规则。
-私有受检原语 `__dns_lookup(String, UInt16, &mut UInt64) @suspends -> Array<UInt8>` 只接受精确签名，
-沿用局部借用的固定位置与同步 stop 规则。String 保持拥有 Buffer ABI，
-不走 TextView。解释器、JIT 与 AOT 都调用同一个 poll/stop 实现；沿用 CpsFrame 的 host_context
+私有受检原语 `__dns_lookup(&String, UInt16, &mut UInt64) @suspends -> Array<UInt8>` 只接受精确签名，
+沿用局部借用的固定位置与同步 stop 规则。&String 直接指向 Buffer 头，不增加指针间接层，
+不转移所有权，也不走 TextView。解释器、JIT 与 AOT 都调用同一个 poll/stop 实现；沿用 CpsFrame 的 host_context
 和 host_stop，不增加帧 ABI 字段。内部字节包每个地址占 24 字节，按大端存 high/low/endpoint；
 错误包携带受限 UTF-8，错误种类写入独占 UInt64 槽，库层复用 `joky/tcp.Address` 的类型身份。
 

@@ -14,6 +14,6 @@ fn address(high: UInt64, low: UInt64, endpoint: UInt64) -> tcp.Address {
     }
     address
 }
-pub fn lookup(host: String, port: UInt16) @suspends -> result.Result<array.Array<tcp.Address>, ResolveError> {
+pub fn lookup(host: &String, port: UInt16) @suspends -> result.Result<array.Array<tcp.Address>, ResolveError> {
     resolve.lookup(host, port, address)
 }

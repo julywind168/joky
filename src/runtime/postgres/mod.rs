@@ -66,14 +66,23 @@ impl Operation {
         let bytes = |ty: &Type| matches!(ty,Type::Record(t) if t.name=="joky/array.Array" && t.arguments==[Type::UInt8] && t.fields.len()==1 && matches!(&t.fields[0].ty,Type::Buffer(b) if **b==Type::UInt8));
         let (p, t) = match self {
             Self::Open => (vec![u], owner),
-            Self::Connect => (vec![Type::String, u.clone(), u], owner),
+            Self::Connect => (
+                vec![Type::reference(Type::String, false), u.clone(), u],
+                owner,
+            ),
             Self::Share | Self::Begin => (vec![r], owner),
             Self::Finish => (vec![r, u], owner),
             Self::Count | Self::Status => (vec![r], u),
             Self::Data if bytes(&s.ret) => (vec![r], s.ret.clone()),
-            Self::Run if s.params.get(3).is_some_and(bytes) => {
-                (vec![r, u, Type::String, s.params[3].clone()], owner)
-            }
+            Self::Run if s.params.get(3).is_some_and(bytes) => (
+                vec![
+                    r,
+                    u,
+                    Type::reference(Type::String, false),
+                    s.params[3].clone(),
+                ],
+                owner,
+            ),
             _ => return Err(invalid()),
         };
         if suspends && *s == FunctionSignature::new(p, t) {

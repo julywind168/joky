@@ -10,10 +10,10 @@ import joky/uuid
 import joky/json
 import joky/json/typed
 
-extern fn __pg_connect(url: String, max_connections: UInt64, acquire_timeout_nanos: UInt64) @suspends -> postgres.Owner
+extern fn __pg_connect(url: &String, max_connections: UInt64, acquire_timeout_nanos: UInt64) @suspends -> postgres.Owner
 extern fn __pg_share(owner: &postgres.Owner) @suspends -> postgres.Owner
 extern fn __pg_begin(owner: &postgres.Owner) @suspends -> postgres.Owner
-extern fn __pg_run(owner: &postgres.Owner, query: UInt64, sql: String, params: Array<UInt8>) @suspends -> postgres.Owner
+extern fn __pg_run(owner: &postgres.Owner, query: UInt64, sql: &String, params: Array<UInt8>) @suspends -> postgres.Owner
 extern fn __pg_finish(owner: &postgres.Owner, commit: UInt64) @suspends -> postgres.Owner
 extern fn __pg_status(owner: &postgres.Owner) @suspends -> UInt64
 extern fn __pg_count(owner: &postgres.Owner) @suspends -> UInt64
@@ -407,7 +407,7 @@ pub struct Options { pub max_connections: UInt64, pub acquire_timeout: time.Dura
 impl Options {
     pub fn default() -> Options { Options { max_connections: 4, acquire_timeout: 5s } }
 }
-pub fn open(url: String, options: Options) @suspends -> Result<Pool, DbError> {
+pub fn open(url: &String, options: Options) @suspends -> Result<Pool, DbError> {
     let owner = __pg_connect(url, options.max_connections, options.acquire_timeout.as_nanos())
     check_status(&owner)?
     Ok(Pool { owner })
@@ -553,20 +553,20 @@ fn rows(data: Array<UInt8>) -> Array<Row> {
     }
     result
 }
-fn run(owner: &postgres.Owner, mode: UInt64, sql: String, params: Array<Value>) @suspends -> Result<postgres.Owner, DbError> {
+fn run(owner: &postgres.Owner, mode: UInt64, sql: &String, params: Array<Value>) @suspends -> Result<postgres.Owner, DbError> {
     let result = __pg_run(owner, mode, sql, encode(params)?)
     check_status(&result)?
     Ok(result)
 }
-fn exec(owner: &postgres.Owner, sql: String, params: Array<Value>) @suspends -> Result<UInt64, DbError> {
+fn exec(owner: &postgres.Owner, sql: &String, params: Array<Value>) @suspends -> Result<UInt64, DbError> {
     let result = run(owner, 0, sql, params)?
     Ok(__pg_count(&result))
 }
-fn fetch(owner: &postgres.Owner, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> {
+fn fetch(owner: &postgres.Owner, sql: &String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> {
     let result = run(owner, 3, sql, params)?
     Ok(rows(__pg_data(&result)))
 }
-fn optional_row(owner: &postgres.Owner, sql: String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> {
+fn optional_row(owner: &postgres.Owner, sql: &String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> {
     let result = run(owner, 4, sql, params)?
     var found = rows(__pg_data(&result))
     Ok(found.pop())
@@ -593,14 +593,14 @@ impl Pool {
         }
     }
     pub fn share(&self) @suspends -> Self { Pool { owner: __pg_share(&self.owner) } }
-    pub fn execute(&self, sql: String, params: Array<Value>) @suspends -> Result<UInt64, DbError> { exec(&self.owner, sql, params) }
-    pub fn query(&self, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
-    pub fn query_optional(&self, sql: String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, sql, params) }
-    pub fn query_one(&self, sql: String, params: Array<Value>) @suspends -> Result<Row, DbError> { required_row(optional_row(&self.owner, sql, params)?) }
-    pub fn query_scalar<T: FromSql>(&self, sql: String, params: Array<Value>) @suspends -> Result<T, DbError> {
+    pub fn execute(&self, sql: &String, params: Array<Value>) @suspends -> Result<UInt64, DbError> { exec(&self.owner, sql, params) }
+    pub fn query(&self, sql: &String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
+    pub fn query_optional(&self, sql: &String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, sql, params) }
+    pub fn query_one(&self, sql: &String, params: Array<Value>) @suspends -> Result<Row, DbError> { required_row(optional_row(&self.owner, sql, params)?) }
+    pub fn query_scalar<T: FromSql>(&self, sql: &String, params: Array<Value>) @suspends -> Result<T, DbError> {
         scalar_value::<T>(self.query_one(sql, params)?)
     }
-    pub fn query_one_as<T: FromRow>(&self, sql: String, params: Array<Value>) @suspends -> Result<T, DbError> {
+    pub fn query_one_as<T: FromRow>(&self, sql: &String, params: Array<Value>) @suspends -> Result<T, DbError> {
         let row = self.query_one(sql, params)?
         FromRow.from_row::<T>(&row)
     }
@@ -611,14 +611,14 @@ impl Pool {
     }
 }
 impl Transaction {
-    pub fn execute(&mut self, sql: String, params: Array<Value>) @suspends -> Result<UInt64, DbError> { exec(&self.owner, sql, params) }
-    pub fn query(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
-    pub fn query_optional(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, sql, params) }
-    pub fn query_one(&mut self, sql: String, params: Array<Value>) @suspends -> Result<Row, DbError> { required_row(optional_row(&self.owner, sql, params)?) }
-    pub fn query_scalar<T: FromSql>(&mut self, sql: String, params: Array<Value>) @suspends -> Result<T, DbError> {
+    pub fn execute(&mut self, sql: &String, params: Array<Value>) @suspends -> Result<UInt64, DbError> { exec(&self.owner, sql, params) }
+    pub fn query(&mut self, sql: &String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, sql, params) }
+    pub fn query_optional(&mut self, sql: &String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, sql, params) }
+    pub fn query_one(&mut self, sql: &String, params: Array<Value>) @suspends -> Result<Row, DbError> { required_row(optional_row(&self.owner, sql, params)?) }
+    pub fn query_scalar<T: FromSql>(&mut self, sql: &String, params: Array<Value>) @suspends -> Result<T, DbError> {
         scalar_value::<T>(self.query_one(sql, params)?)
     }
-    pub fn query_one_as<T: FromRow>(&mut self, sql: String, params: Array<Value>) @suspends -> Result<T, DbError> {
+    pub fn query_one_as<T: FromRow>(&mut self, sql: &String, params: Array<Value>) @suspends -> Result<T, DbError> {
         let row = self.query_one(sql, params)?
         FromRow.from_row::<T>(&row)
     }

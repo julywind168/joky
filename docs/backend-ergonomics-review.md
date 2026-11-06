@@ -557,11 +557,11 @@ chat 的 ClientHandler 持有 Script 与 Client；账户目录仍留在连接外
 | 完成构建 | `StringBuilder.finish()` | 业界常见 `to_string()`/`build()`，`finish` 可接受，但应与 http 内部 `Wire.finish()`（关闭连接）区分语义 |
 | 错误枚举变体 | 已改为 `InvalidRequest`、`LimitExceeded`、`TransactionClosed` | LimitExceeded 同时覆盖请求和服务资源上限；TransactionClosed 只表示事务失效，宿主状态码保持不变 |
 | HTTP 状态 | `Success` | `Ok`（见 §7） |
-| 参数传递 | `process.env`、TCP/DNS 主机名、数据库 URL／SQL 等挂起 API 仍接收 String | 当前实参自动借用仅适用于同步调用；保留拥有型输入以支持字面量和临时值，待挂起调用的自动借用语义明确后再评估迁移 |
+| 参数传递 | `process.env`／`env_or` 的名称、`resolve_path` 的路径、TCP/DNS 主机名、数据库 URL／SQL 已改为 &String | 挂起调用支持不逃逸参数的自动共享借用；字面量和临时值保活到调用结束，命名字符串可重复使用 |
 
-字符串只读不等于可以直接改成借用接口。此次核对确认 process 只在调用线程读取键，DNS 和 PostgreSQL
-后台任务拥有输入副本；把 clone 移入一个借用包装函数不会消除这次复制。
-同步只读接口继续优先使用 &String；会返回、保存或转移字符串所有权的参数继续按值，例如 env_or 的 fallback。
+挂起自动借用沿用不逃逸检查，并覆盖失败、取消及 join/race 分支清理。process 只在调用线程读取键，
+DNS 和 PostgreSQL 后台任务仍拥有必要的输入副本；借用接口省去调用方为复用字符串而做的额外 clone。
+只读且不逃逸的参数优先使用 &String；会返回、保存或转移字符串所有权的参数继续按值，例如 env_or 的 fallback。
 
 建议把上表的结论写入 CONTRIBUTING.md 的 API 命名约定，新增模块按此执行，旧接口在一次集中迁移中改名。
 

@@ -13,6 +13,7 @@ fn send(port: UInt16) @suspends {
 }
 fn endpoint(host: String) @suspends {
     var listener = tcp.listen(host, 0)!
+    check.assert(!host.is_empty(), "listen borrows host")
     let port = listener.local_addr()!.port()
     check.assert(port != 0, "port zero allocates an endpoint")
     join { receive(&mut listener), send(port) }

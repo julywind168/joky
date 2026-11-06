@@ -1902,12 +1902,104 @@ fn automatic_shared_argument_temporaries_drop_at_the_call_boundary() {
 }
 
 #[test]
+#[cfg(unix)]
+fn suspending_shared_arguments_keep_owners_until_completion_or_cleanup() {
+    let work = Workspace::new();
+    let definitions = r#"
+        import joky/drop.{type Drop}
+        import joky/task
+        import joky/show.{type Show}
+        struct Resource { text: String }
+        impl Drop for Resource { fn drop(&mut self) { println("drop") } }
+        fn make() -> Resource { println("make"); Resource { text: "owned" } }
+        fn inspect(value: &Resource) @suspends -> String {
+            task.yield_now(); task.yield_now(); value.text.clone()
+        }
+        fn read<T: Show>(value: &T) @suspends -> String {
+            task.yield_now(); "{value}"
+        }
+        fn snapshot(value: &Int32, other: Int32) @suspends -> Int32 {
+            task.yield_now(); *value + other
+        }
+        impl Resource {
+            fn same(&self, other: &Resource) @suspends -> Bool {
+                task.yield_now(); self.text == other.text
+            }
+        }
+        fn explode(value: &Resource) @suspends { task.yield_now(); println(value.text); 1 / 0; }
+        fn pair(value: &Resource, ignored: Int32) @suspends { task.yield_now(); }
+        fn fail() @suspends -> Int32 { task.yield_now(); 1 / 0 }
+        fn hold(value: &Resource) @suspends {
+            while true { task.yield_now(); assert(value.text == "owned", "live owner") }
+        }
+        fn instant() @suspends {}
+    "#;
+    work.write(
+        "async_borrow.jk",
+        &format!(
+            r#"{definitions}
+        fn main() @suspends {{
+            let result = inspect(make())
+            println(result)
+            let local = make()
+            println(inspect(local))
+            println(local.text)
+            println(read(local.text))
+            println(local.same(local))
+            assert(make().same(local), "temporary receiver survives suspension")
+            let callback: fn(&Resource) @suspends @noescape -> String = inspect
+            assert(callback(local) == "owned", "indirect noescape call")
+            let (a, b) = join {{ callback(local), inspect(local) }}
+            assert(a == b && local.text == "owned", "concurrent shared local")
+            var n = 40
+            assert(snapshot(n, {{ task.yield_now(); n = 1; 2 }}) == 42, "argument snapshot")
+            race {{ hold(make()), instant() }}
+            println("cancelled")
+            race {{ {{ hold(make()) }}, instant() }}
+            println("block cancelled")
+        }}"#
+        ),
+    );
+    work.assert_all_backends(
+        "async_borrow.jk", &[],
+        b"make\ndrop\nowned\nmake\nowned\nowned\nowned\ntrue\nmake\ndrop\nmake\ndrop\ncancelled\nmake\ndrop\nblock cancelled\ndrop\n", 0,
+    );
+    for (entry, expected) in [
+        ("explode(make())", b"make\nowned\ndrop\n".as_slice()),
+        ("pair(make(), fail())", b"make\ndrop\n".as_slice()),
+    ] {
+        work.write(
+            "async_failure.jk",
+            &format!("{definitions} fn main() @suspends {{ {entry} }}"),
+        );
+        success(&work.cli(&["build", "async_failure.jk"]));
+        for output in [
+            work.cli(&["run", "async_failure.jk"]),
+            work.cli(&["run", "--interpreter", "async_failure.jk"]),
+            Command::new(work.path().join("async_failure"))
+                .output()
+                .unwrap(),
+        ] {
+            assert!(!output.status.success(), "{output:?}");
+            assert_eq!(output.stdout, expected);
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("zero"),
+                "{output:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn automatic_shared_arguments_preserve_borrowing_boundaries() {
     let work = Workspace::new();
     for source in [
         "fn read(value: &Int32) -> &Int32 { value } fn main() { read(42); }",
         "fn edit(value: &mut Int32) @noescape {} fn main() { var n = 42; edit(n) }",
-        "fn read(value: &Int32) @suspends {} fn main() @suspends { read(42) }",
+        "fn read(value: &Int32) @suspends -> &Int32 { value } fn main() @suspends { read(42); }",
+        "fn read(value: &Int32) @suspends {} fn main() @suspends { let f: fn(&Int32) @suspends -> Unit = read; f(42) }",
+        "fn edit(value: &mut Int32) @suspends @noescape {} fn main() @suspends { var n = 42; edit(n) }",
+        "fn both(value: &String, other: &mut String) @suspends @noescape {} fn main() @suspends { var text = \"owned\"; both(text, &mut text) }",
         "fn read(value: &Int32) @noescape {} fn main() { let f: fn(&Int32) -> Unit = read; f(42) }",
         "fn read(value: &Int32) @noescape -> &Int32 { value } fn main() { read(42); }",
         "fn consume(value: String) {} fn main() { let text = \"owned\"; consume(text); println(text) }",

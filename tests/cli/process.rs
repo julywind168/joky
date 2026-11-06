@@ -31,10 +31,12 @@ fn process_inputs_preserve_arguments_environment_and_caller_paths() {
         fn main() @suspends -> Int32 {
             let arguments = process.args()!
             for argument in &arguments { println(argument) }
-            println(process.env("JOKY_TEST_ENTRY")!)
+            let key = "JOKY_TEST_ENTRY"
+            println(process.env(key)!)
             println(process.env("JOKY_TEST_EMPTY")!)
             println(process.env("JOKY_TEST_MISSING")!)
-            println(process.env_or("JOKY_TEST_ENTRY", "fallback")!)
+            println(process.env_or(key, "fallback")!)
+            assert(key == "JOKY_TEST_ENTRY", "environment helpers borrow keys")
             println(process.env_or("JOKY_TEST_MISSING", "fallback")!)
             assert(process.env_or("JOKY_TEST_EMPTY", "fallback")! == "", "empty is present")
             assert(process.env_or("bad=name", "fallback").err()!.kind == fs.ErrorKind.InvalidInput, "errors are preserved")

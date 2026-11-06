@@ -172,6 +172,11 @@ impl FunctionPlan {
         self.local_scopes.push(Vec::new());
         self.argument_scopes.push(Default::default());
         let flow = self.call_expr_inner(expr, vars, functions, suspends, types, expected)?;
+        self.end_argument_scope();
+        Ok(flow)
+    }
+
+    fn end_argument_scope(&mut self) {
         let temporary = self.argument_scopes.pop().unwrap();
         let locals = self.local_scopes.pop().unwrap();
         // Ordinary bindings introduced by argument sequences belong to the
@@ -189,7 +194,6 @@ impl FunctionPlan {
         {
             self.emit(Op::EndLocal(local));
         }
-        Ok(flow)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -564,6 +568,24 @@ impl FunctionPlan {
         types: &TypeRegistry,
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
+        // Direct branch arguments are evaluated in the parent. Keep their
+        // temporary owners until every child has completed or stopped.
+        self.local_scopes.push(Vec::new());
+        self.argument_scopes.push(Default::default());
+        let flow = self.concurrent_expr_inner(expr, vars, functions, suspends, types, expected)?;
+        self.end_argument_scope();
+        Ok(flow)
+    }
+
+    fn concurrent_expr_inner(
+        &mut self,
+        expr: &Expr,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Result<Flow, Error> {
         let Expr::Concurrent {
             kind,
             branches,
@@ -620,6 +642,7 @@ impl FunctionPlan {
                 _ => local.as_ref(),
             };
             let mut captures = None;
+            let mut contract = None;
             let (name, params, ret, callee, args, branch_span, indirect) = match branch {
                 Expr::Block { span, .. } => {
                     let expected = if *kind == ConcurrentKind::Race {
@@ -717,6 +740,13 @@ impl FunctionPlan {
                             ));
                         }
                         let name = self.indirect_contract(signature);
+                        let mut info = FunctionInfo::indirect(
+                            signature.signature.clone(),
+                            signature.suspends,
+                            *span,
+                        );
+                        info.noescape = signature.noescape;
+                        contract = Some(info);
                         let params = signature.signature.params.clone();
                         let ret = signature.signature.ret.clone();
                         let target = self.snapshot(&Some(value))?.unwrap();
@@ -755,6 +785,7 @@ impl FunctionPlan {
                             format!("{keyword} branch {callee} must be an @suspends function"),
                         ));
                     }
+                    contract = Some(info.clone());
                     (
                         name,
                         info.signature.params,
@@ -800,7 +831,7 @@ impl FunctionPlan {
                     callee,
                     args,
                     &params,
-                    None,
+                    contract.as_ref().map(|info| (name.as_str(), info)),
                     *branch_span,
                     |index| {
                         args.get(index + 1)
