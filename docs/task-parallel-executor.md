@@ -781,7 +781,7 @@ C 桥的 Local 模式沿用旧阻塞驱动器及其限额，`max_tasks` 只配�
 | 结构化只读借用 | 按原有规则 | 支持受检 String、Array/Slice、含 String／Array 的记录与元组、有限嵌套 Array，以及普通数据（标量、struct、元组、FixedArray）与普通 enum／Option／Result、List／Map／Set；查询协议、来源、类型及调用图须获资格，公共引用包与可变借用不开放，详见[语言参考](language.md#任务执行模式) |
 | 非捕获语言函数值 | 按原有规则 | 冻结目标集合证明调用图；支持同树内部输入与聚合字段，不进入 TaskValue；join/race 结果限制不变 |
 | 分支内部已获资格的临时存储 | 支持 | 私有分片、共享根预算，生命周期见 TP2/TP3 |
-| task.yield_now / task.sleep_ms | 原有宿主时钟与 wake | 已审计内置绑定；真实单调时钟、定时唤醒实际等待的任务 |
+| task.yield_now / task.sleep | 原有宿主时钟与 wake | 已审计内置绑定；真实单调时钟、定时唤醒实际等待的任务 |
 | 显式 ParallelSafe 标量 CPS 宿主 | 支持 | 不安全契约，代码 Arc 保活；必须自行返回，不提供强制中断 |
 | 内置 stdout（R7a） | 已审计 TextViewV2 绑定与实际 Show 调用图 | 可在 worker 执行；调用间输出顺序未指定 |
 | 内置 TCP（R7b） | 原有宿主驱动 | 同树拥有交接、共享 reactor、不同 worker 的独立读写端；TaskValue 不导入／导出资源 |

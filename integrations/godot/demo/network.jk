@@ -57,7 +57,7 @@ fn task_timeout(port: Int32) @suspends {
         Ok(stream) => stream
         Err(error) => { checked(Result.Err(error)); return }
     }
-    race { unexpected_read(&mut stream), clock.sleep_ms(50) }
+    race { unexpected_read(&mut stream), clock.sleep(50ms) }
     let method = "timeout"
     task.call(&method)
     // A cancelled read releases its lease; reuse the same stream.

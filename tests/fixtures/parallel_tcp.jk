@@ -58,7 +58,7 @@ fn pending(reader: TcpReader) @suspends {
 fn cancel_read() @suspends {
     let (client, server) = connected()
     let (reader, writer) = server.split()
-    race { pending(reader), task.sleep_ms(5) }
+    race { pending(reader), task.sleep(5ms) }
     let (client_reader, client_writer) = client.split()
     client_writer.close();
     join { send(writer, 17), receive(client_reader, 17) }

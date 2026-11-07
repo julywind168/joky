@@ -51,7 +51,7 @@ impl Domains {
 mod tests {
     use super::*;
     use crate::vm::VmMode;
-    const SOURCE: &str = "import joky/task struct Room { n:Int32 } fn make(n:Int32)->Room {Room{n:n}} fn sum(a:&Room,b:&Room)->Int32 {a.n+b.n} fn wait() @suspends ->Int32 {task.sleep_ms(100000); 1}";
+    const SOURCE: &str = "import joky/task struct Room { n:Int32 } fn make(n:Int32)->Room {Room{n:n}} fn sum(a:&Room,b:&Room)->Int32 {a.n+b.n} fn wait() @suspends ->Int32 {task.sleep(100s); 1}";
 
     #[test]
     fn state_domain_module_diagnostics_distinguish_tasks_queues_and_unclaimed_results() {

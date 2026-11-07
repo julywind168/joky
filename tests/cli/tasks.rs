@@ -153,12 +153,12 @@ fn suspending_cli_entries_match_jit_interpreter_and_standalone() {
         ("fn callback() @suspends -> Int32 { 42 } fn apply(f: fn() @suspends -> Int32) @suspends -> Int32 { f() } fn main() @suspends -> Int32 { apply(callback) }", 42, ""),
         (include_str!("../../examples/async_main.jk"), 0, "42\n"),
         (r#"
-            import joky/task.{yield_now, sleep_ms}
+            import joky/task.{yield_now, sleep}
             fn main() @suspends -> Int32 {
                 let first = 100
                 let second = 150
                 yield_now()
-                sleep_ms(1)
+                sleep(1ms)
                 first + second + 49
             }
         "#, 43, ""),
@@ -176,12 +176,12 @@ fn suspending_cli_entries_match_jit_interpreter_and_standalone() {
             }
             fn worker(n: Int32) @suspends { n.worker() }
             fn winner() @suspends { task.yield_now(); report_int32(99) }
-            fn loser() @suspends { task.sleep_ms(1); report_int32(-1) }
+            fn loser() @suspends { task.sleep(1ms); report_int32(-1) }
             fn main() @suspends {
                 let f: fn(Int32) @suspends -> Unit = worker
                 join { f(1), f(2) }
                 race { winner(), loser() }
-                task.sleep_ms(1)
+                task.sleep(1ms)
                 report_int32(42)
             }
         "#, 0, "1\n2\n11\n12\n99\n42\n"),
@@ -353,9 +353,9 @@ fn task_pool_cli_explicit_mode_and_standalone_driver() {
         "parallel.jk",
         r#"
         import joky/task
-        fn leaf(n: Int32) @suspends -> Int32 { task.sleep_ms(2); n }
+        fn leaf(n: Int32) @suspends -> Int32 { task.sleep(2ms); n }
         fn main() @suspends -> Int32 {
-            scope { branch { task.yield_now() }; task.sleep_ms(1) }
+            scope { branch { task.yield_now() }; task.sleep(1ms) }
             let (a, b) = join { leaf(20), leaf(22) }
             let winner = race { leaf(0), leaf(0) }
             a + b + winner

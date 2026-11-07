@@ -22,7 +22,7 @@ fn failed(engine: &vm.Vm) @suspends -> Int32 {
 }
 fn main() @suspends -> Int32 {
     let engine = vm.Vm.interpreter()
-    engine.load_source("extern fn __joky_task_sleep_ms(milliseconds: UInt64) @suspends\nfn answer(value: Int32) @suspends -> Int32 {{ value + 1 }}\nfn slow(value: Int32) @suspends -> Int32 {{ __joky_task_sleep_ms(60000); value }}")!
+    engine.load_source("import joky/task\nfn answer(value: Int32) @suspends -> Int32 {{ value + 1 }}\nfn slow(value: Int32) @suspends -> Int32 {{ task.sleep(60s); value }}")!
     let source = Script { engine, name: "script" }
     let (a, b) = join { script(&source), script(&source) }
     if a + b != 42 { return 1 }
@@ -49,7 +49,7 @@ fn main() @suspends -> Int32 {
 }
 fn parked() @suspends -> Int32 {
     let engine = vm.Vm.interpreter()
-    engine.load_source("extern fn __joky_task_sleep_ms(milliseconds: UInt64) @suspends\nfn slow(value: Int32) @suspends -> Int32 {{ __joky_task_sleep_ms(60000); value }}")!
+    engine.load_source("import joky/task\nfn slow(value: Int32) @suspends -> Int32 {{ task.sleep(60s); value }}")!
     let (a, b) = join { slow(&engine), slow(&engine) }
     a + b
 }

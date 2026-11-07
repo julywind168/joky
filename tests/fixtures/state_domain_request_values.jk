@@ -30,7 +30,7 @@ fn forward<S,A>(h:domain.WriteHandle<S>,a:A) @suspends -> Result<A,domain.Reques
 fn broken(p:Packet) @suspends -> Packet {task.yield_now(); packet(1/p.n)}
 fn fail_write(s:&mut State,p:Packet)->Packet {s.n=99; packet(1/p.n)}
 fn poison(p:Packet) @suspends -> Packet {domain.write(fail_write,p).unwrap()}
-fn slow(p:Packet) @suspends -> Packet { task.sleep_ms(10000); domain.write(add,p).unwrap() }
+fn slow(p:Packet) @suspends -> Packet { task.sleep(10s); domain.write(add,p).unwrap() }
 fn waiting(h:domain.WriteHandle<State>) @suspends {domain.request(h,slow,packet(100));}
 fn ready() @suspends {task.yield_now()}
 fn closing(h:domain.WriteHandle<State>) @suspends {

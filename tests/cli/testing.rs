@@ -147,7 +147,7 @@ fn native_tests_preflight_bodies_and_exclude_test_entries_from_production() {
 #[test]
 fn native_tests_timeout_sync_loops_and_suspended_tasks_then_continue() {
     let work = Workspace::new();
-    work.write("timeout.jk", "import joky/task\n#test fn a_loop() { while true {} }\n#test fn b_sleep() @suspends { task.sleep_ms(60000) }\n#test fn c_pass() {}");
+    work.write("timeout.jk", "import joky/task\n#test fn a_loop() { while true {} }\n#test fn b_sleep() @suspends { task.sleep(60s) }\n#test fn c_pass() {}");
     for backend in [vec![], vec!["--interpreter"]] {
         let mut args = vec!["test", "timeout.jk", "--no-prelude", "--timeout-ms", "2000"];
         args.extend(backend);

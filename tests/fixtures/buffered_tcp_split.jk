@@ -99,7 +99,7 @@ fn pending() @suspends -> Int32 {
     prefix.push(0); prefix.push(0); prefix.push(0); prefix.push(3); prefix.push(42)
     ensure(peer.write_all(prefix).is_ok())
     var (reader, writer) = BufferedTcp.new(stream).split()
-    join { wait(&mut reader), task.sleep_ms(100000) }
+    join { wait(&mut reader), task.sleep(100s) }
     writer.peer_addr();
     peer.peer_addr();
     42
@@ -111,7 +111,7 @@ fn cancel() @suspends -> Int32 {
     prefix.push(0); prefix.push(0); prefix.push(0); prefix.push(3); prefix.push(42)
     ensure(peer.write_all(prefix).is_ok())
     var (reader, writer) = BufferedTcp.new(stream).split()
-    race { wait(&mut reader), task.sleep_ms(2) }
+    race { wait(&mut reader), task.sleep(2ms) }
     ensure(reader.buffered_len() <= reader.capacity())
     ensure(writer.write_message(payload(2), 2).is_ok())
     var peer = BufferedTcp.new(peer)
@@ -170,11 +170,11 @@ fn fragments(writer: &mut TcpWriter) @suspends {
     var first = Array.new::<UInt8>()
     first.push(0); first.push(0)
     ensure(writer.write_all(first).is_ok())
-    task.sleep_ms(2)
+    task.sleep(2ms)
     var next = Array.new::<UInt8>()
     next.push(0); next.push(3); next.push(11)
     ensure(writer.write_all(next).is_ok())
-    task.sleep_ms(2)
+    task.sleep(2ms)
     var last = Array.new::<UInt8>()
     last.push(22); last.push(33)
     ensure(writer.write_all(last).is_ok())

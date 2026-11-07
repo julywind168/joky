@@ -597,7 +597,7 @@ fn filesystem_shared_service_enforces_quota_across_vms() {
         fn hold() @suspends -> Int32 {
             var options=fs.OpenOptions.default(); options.write=true; options.create=true
             let file=match fs.open("held",options) {Ok(file)=>file,Err(e)=>{return 1}}
-            task.sleep_ms(60000)
+            task.sleep(60s)
             let ignored=file.close(); 42
         }
         fn busy() @suspends -> Int32 { match fs.open("held",fs.OpenOptions.default()) {

@@ -18,7 +18,7 @@ fn parallel_isolate_preserves_siblings_and_parent_cancellation() {
         ENTERED.fetch_add(1, Ordering::SeqCst);
         0
     }
-    let source = format!("{}\nextern fn entered() @suspends\nfn external_cancel() @suspends {{let result=isolate {{entered(); task.sleep_ms(100000)}}; check.panic(\"cancellation swallowed\")}}", include_str!("../../../tests/fixtures/isolate.jk"));
+    let source = format!("{}\nextern fn entered() @suspends\nfn external_cancel() @suspends {{let result=isolate {{entered(); task.sleep(100s)}}; check.panic(\"cancellation swallowed\")}}", include_str!("../../../tests/fixtures/isolate.jk"));
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         unsafe {

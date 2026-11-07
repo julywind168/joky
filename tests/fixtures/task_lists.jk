@@ -45,7 +45,7 @@ fn failed(value: List<Payload>) @suspends -> List<Payload> {
     let (a, b) = join { fail(value), texts() }
     a
 }
-fn parked(value: List<Payload>) @suspends -> List<Payload> { task.sleep_ms(60000); value }
+fn parked(value: List<Payload>) @suspends -> List<Payload> { task.sleep(60s); value }
 fn cancelled(value: List<Payload>) @suspends -> List<Payload> {
     scope { branch { consume(parked(List.from_array([Payload.Text("waiting capture")]))) }; parked(value) }
 }

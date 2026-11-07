@@ -299,7 +299,7 @@ API 与状态机见[语言参考](language.md#定时域调用-jokydomain)，所�
 
 `#every` 状态方法与自动周期调度已在 [T0–T3](state-domain-syntax.md#11-周期声明t0t3) 实现。
 状态内持久化定时事件、重启恢复、自动 dt、每个定时器独立时钟和长流程诊断仍待后续。
-普通 `@suspends` 流程可使用 `task.sleep_ms`，应限制生命周期以免长期持有旧模块。
+普通 `@suspends` 流程可使用 `task.sleep`，应限制生命周期以免长期持有旧模块。
 
 ## 6 AOT 与 Script 边界（HR2）
 

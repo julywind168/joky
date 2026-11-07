@@ -499,7 +499,7 @@ fn net6_dns_slow_lookup_keeps_timer_and_other_root_progressing() {
         let _injected = Injected::new(service.clone());
         let mut vm = vm(mode);
         vm.load_source(&format!(
-            "{SOURCE}\nfn timer() @suspends -> Int32 {{ task.sleep_ms(1); 7 }}"
+            "{SOURCE}\nfn timer() @suspends -> Int32 {{ task.sleep(1ms); 7 }}"
         ))
         .unwrap_or_else(|e| panic!("{e}"));
         let executor = HostExecutor::default();

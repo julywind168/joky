@@ -4,7 +4,7 @@ fn call(engine: vm.Vm, value: Int32) @suspends -> Int32 {
 }
 fn main() @suspends -> Int32 {
     let engine = vm.Vm.new()
-    engine.load_source("extern fn __joky_task_sleep_ms(milliseconds: UInt64) @suspends\nfn answer(value: Int32) @suspends -> Int32 {{ value + 1 }}\nfn slow(value: Int32) @suspends -> Int32 {{ __joky_task_sleep_ms(60000); value }}")!
+    engine.load_source("import joky/task\nfn answer(value: Int32) @suspends -> Int32 {{ value + 1 }}\nfn slow(value: Int32) @suspends -> Int32 {{ task.sleep(60s); value }}")!
     let first = engine.share()
     let second = engine.share()
     let (a, b) = join { call(first, 20), call(second, 20) }
@@ -20,7 +20,7 @@ fn main() @suspends -> Int32 {
 }
 fn parked() @suspends -> Int32 {
     let engine = vm.Vm.interpreter()
-    engine.load_source("extern fn __joky_task_sleep_ms(milliseconds: UInt64) @suspends\nfn pending(_: Int32) @suspends -> Int32 {{ __joky_task_sleep_ms(60000); 0 }}")!
+    engine.load_source("import joky/task\nfn pending(_: Int32) @suspends -> Int32 {{ task.sleep(60s); 0 }}")!
     engine.call::<Int32, Int32>("pending", 0)
 }
 

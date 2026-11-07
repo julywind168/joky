@@ -18,7 +18,7 @@ fn commands(reader: &mut BufferedTcpReader) @suspends {
 }
 fn pushes(writer: &mut TcpWriter) @suspends {
     for index in range(1, 4) {
-        task.sleep_ms(2)
+        task.sleep(2ms)
         ensure(writer.write_message(index.to_string().into_bytes(), 16).is_ok())
     }
     ensure(writer.shutdown().is_ok())

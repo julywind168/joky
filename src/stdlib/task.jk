@@ -6,10 +6,8 @@ import joky/result.{ type Result, Ok, Err }
 import joky/time.{ type Duration, type Instant }
 
 extern fn __joky_public_task_yield_now() @suspends
-extern fn __joky_public_task_sleep_ms(milliseconds: UInt64) @suspends
 extern fn __joky_public_task_sleep_ns(nanoseconds: UInt64) @suspends
 fn yield_now() @suspends { __joky_public_task_yield_now() }
-fn sleep_ms(milliseconds: UInt64) @suspends { __joky_public_task_sleep_ms(milliseconds) }
 
 // A timeout is distinct from the operation's own result or runtime failure.
 pub struct Timeout {}

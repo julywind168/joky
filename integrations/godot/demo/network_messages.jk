@@ -54,7 +54,7 @@ fn task_wait(port: Int32) @suspends {
 }
 fn task_timeout(port: Int32) @suspends {
     var connection = match connect(port) { Ok(connection) => connection, _ => { ensure(false); return } }
-    race { wait(&mut connection), clock.sleep_ms(50) }
+    race { wait(&mut connection), clock.sleep(50ms) }
     ensure(connection.close().is_ok())
     let method = "timeout"
     task.call(&method)

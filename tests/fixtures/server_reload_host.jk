@@ -13,7 +13,7 @@ fn checkpoint(phase:Int32) @suspends {task.yield_now()}
 fn wait_tick(h:&vm.Vm,ctx:Context,version:Int32) @suspends {
     var attempts=0
     while h.call::<Context,Int32>("tick_version",ctx)!=version {
-        attempts=attempts+1; assert(attempts<1000); task.sleep_ms(1)
+        attempts=attempts+1; assert(attempts<1000); task.sleep(1ms)
     }
 }
 fn stage(h:&vm.Vm) {
@@ -147,5 +147,5 @@ fn run() @suspends {
     assert(vm.close(h)==0)
     timer.close(); directory.close()
 }
-fn watchdog() @suspends {task.sleep_ms(30000); assert(false)}
+fn watchdog() @suspends {task.sleep(30s); assert(false)}
 fn main() @suspends ->Int32 {race { run(), watchdog() }; 0}

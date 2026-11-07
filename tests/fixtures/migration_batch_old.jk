@@ -28,7 +28,7 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
     check.assert(directory.insert(2,b.handle()).is_ok(),&message)
     check.assert(directory.insert(3,c.handle()).is_ok(),&message)
     check.assert(directory.insert(4,d.handle()).is_ok(),&message)
-    task.sleep_ms(100000)
+    task.sleep(100s)
 }
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
     let a=match domain.lookup::<Room>(directory,1) {Some(h)=>domain.read_from(h,read).unwrap(),None=>return -1}

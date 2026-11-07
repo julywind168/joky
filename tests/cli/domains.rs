@@ -174,7 +174,7 @@ fn state_domains_imported_entries_and_language_example_run_in_all_backends() {
         }
         pub fn read(state: &State) -> Int32 { state.count }
         pub fn work(delta: Int32) @suspends -> Int32 {
-            task.sleep_ms(1)
+            task.sleep(1ms)
             domain.write(add, delta).unwrap()
         }
         "#,

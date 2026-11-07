@@ -11,7 +11,7 @@ const OWNERS: &str = r#"
     fn consume(text: String) { }
     fn bad(text: String) @suspends -> String { consume(text); task.yield_now(); 1 / 0; "bad" }
     fn failed(text: String) @suspends -> String { let (a, b) = join { bad(text), pair("loser") }; a }
-    fn parked(text: String) @suspends -> String { task.sleep_ms(60000); text }
+    fn parked(text: String) @suspends -> String { task.sleep(60s); text }
     fn cancelled(text: String) @suspends -> String { scope { branch { consume(pair("child")) } }; parked(text) }
 "#;
 fn attempt(vm: &VmEngine, entry: &str, workers: usize, bytes: usize, cancel: bool) -> bool {

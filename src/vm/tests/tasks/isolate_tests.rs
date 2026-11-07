@@ -82,7 +82,7 @@ fn failing() @suspends {
 }
 fn survivor() @suspends {
     let owner=Owner{id:2,text:"cancelled sibling"}
-    task.sleep_ms(100000)
+    task.sleep(100s)
 }
 fn work() @suspends ->Int32 {
     let captured=Owner{id:3,text:"captured"}

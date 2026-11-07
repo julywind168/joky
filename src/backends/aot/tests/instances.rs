@@ -440,8 +440,8 @@ fn state_domains_aot_execute_checked_fifo_turns_and_isolate_failures() {
                 crate::stdlib::domain::write as *const u8,
             ),
             (
-                "joky_task_sleep_ms",
-                crate::stdlib::task::sleep_ms as *const u8,
+                "joky_task_sleep_ns",
+                crate::stdlib::task::sleep_ns as *const u8,
             ),
             (
                 "joky_task_yield_now",

@@ -152,11 +152,6 @@ fn build_registry() -> ModuleRegistry {
             task::yield_now as crate::runtime::cps::CpsEntry,
         ),
         (
-            "sleep_ms",
-            vec![Type::UInt64],
-            task::sleep_ms as crate::runtime::cps::CpsEntry,
-        ),
-        (
             "sleep_until",
             vec![Type::UInt64, Type::UInt64],
             task::sleep_until as crate::runtime::cps::CpsEntry,
@@ -242,19 +237,6 @@ fn build_registry() -> ModuleRegistry {
         )
     }
     .expect("Private task binding must be valid");
-    let mut spec = BindingSpec::with_symbol(
-        "__joky_task_sleep_ms",
-        FunctionSignature::new(vec![Type::UInt64], Type::Unit),
-        "__joky_task_sleep_ms",
-    );
-    spec.suspends = true;
-    unsafe {
-        registry.register_module(
-            "joky/internal/session",
-            [parallel_task_binding(spec, task::sleep_internal, 1)],
-        )
-    }
-    .expect("Private session timer binding must be valid");
     registry
 }
 

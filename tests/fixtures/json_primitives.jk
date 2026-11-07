@@ -108,7 +108,7 @@ fn unicode() {
     match String.from_utf8(invalid) { Err(error) => ensure(error.offset == 0), _ => ensure(false) }
 }
 fn hold(owner: &Tracked) @suspends {
-    task.sleep_ms(100000)
+    task.sleep(100s)
     ensure(owner.id == 42)
 }
 fn main() @suspends -> Int32 {

@@ -2269,8 +2269,8 @@ CLI 接受同步或挂起 main（无参数，Unit/Int32 结果）。JIT/解释�
 continuation 交给 `runtime::driver::block_on`；AOT 的 C 驱动按 `cps_frame_slots` 分配
 完整根帧，调用 `joky_cps_block_on`，检查状态及原生错误通道后才读取结果，最后释放帧。
 
-`task.sleep(Duration)` 经 `joky_task_sleep_ns` 传递 UInt64 纳秒；保留的 `sleep_ms` 与它共享
-帧状态和受检单调截止时间计算，恢复沿用首次记录的截止时间。`task.timeout` 是标准库的
+`task.sleep(Duration)` 经 `joky_task_sleep_ns` 传递 UInt64 纳秒；帧内保存状态并受检计算
+单调截止时间，恢复沿用首次记录的截止时间。`task.timeout` 是标准库的
 泛型挂起 FnOnce 包装，直接通过 race 承接获胜结果及取消清理屏障。
 
 `Instant` 和 `Timestamp` 使用普通私有字段 Copy 记录，不引入后端专用时间类型。
@@ -2333,7 +2333,7 @@ VM 的 TaskId → InstanceId 归属记录保留到整批终态消费结束，期
 State 仍须等待取消与 stop 完成后再清理。
 组绑定一个执行器；组关闭不可再启动任务。轮询及 stop 不持任务注册表的 RefCell 借用。
 
-可嵌套恢复的线程局部上下文提供时钟和唤醒令牌，`sleep` / `sleep_ms` 在该上下文读取时钟，手动/CLI
+可嵌套恢复的线程局部上下文提供时钟和唤醒令牌，`sleep` 在该上下文读取时钟，手动/CLI
 驱动继续使用系统单调时钟。截止时间随等待帧存在，执行器仅缓存各根的最早截止时间。
 根轮询额度不能限制单次 native 执行耗时，也不能限制根内部本轮遍历的子任务数量。
 

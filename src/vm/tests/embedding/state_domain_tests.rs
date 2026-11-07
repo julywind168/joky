@@ -26,7 +26,7 @@ fn pending() @suspends -> Int32 { 1 }
 fn request(delta: Int32) @suspends -> Int32 { domain.write(add, delta).unwrap() }
 fn query() @suspends -> Int32 { domain.read(read).unwrap() }
 fn broken(zero: Int32) @suspends -> Int32 { 1 / zero }
-fn idle() @suspends -> Int32 { task.sleep_ms(10000); 1 }
+fn idle() @suspends -> Int32 { task.sleep(10s); 1 }
 fn request_unit() @suspends { request(1000); }
 fn ready_unit() @suspends {}
 fn broken_unit() @suspends { broken(0); }
@@ -854,7 +854,7 @@ fn state_domains_cancelled_source_request_publishes_after_cleanup() {
     let source = format!(
         "{SOURCE}\n{}",
         r#"
-        fn delayed_input(input: UInt64) @suspends -> UInt64 { task.sleep_ms(10000); input }
+        fn delayed_input(input: UInt64) @suspends -> UInt64 { task.sleep(10s); input }
         fn controller() @suspends -> Int32 {
             let owner = domain.create(make, 1)
             match domain.request(owner.handle(), delayed_input, 18446744073709551615) {
@@ -1743,7 +1743,7 @@ fn owned_text_domain_cancellation_source() -> String {
             "domain.after(t,x,0ms,tick,\"repeated🙂\")",
         )
         .replace(
-            "while domain.read_from(x.read_only(),count).unwrap()<3 {task.sleep_ms(1)}",
+            "while domain.read_from(x.read_only(),count).unwrap()<3 {task.sleep(1ms)}",
             "while match t.status() {Active=>true,_=>false} {task.yield_now()}",
         )
 }
@@ -1849,7 +1849,7 @@ fn owned_array_domain_cancellation_source() -> String {
             "domain.after(t,h,0ms,tick,strings())",
         )
         .replace(
-            "while domain.read_from(h.read_only(),count)!<8 {task.sleep_ms(1)}",
+            "while domain.read_from(h.read_only(),count)!<8 {task.sleep(1ms)}",
             "while match t.status() {Active=>true,_=>false} {task.yield_now()}",
         )
 }

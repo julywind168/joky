@@ -4,7 +4,7 @@ import joky/array.{type Array}
 
 fn assert(ok: Bool) { check.assert(ok, "isolate") }
 fn fail() @suspends { task.yield_now(); check.panic("isolated failure") }
-fn wait() @suspends { task.sleep_ms(100000) }
+fn wait() @suspends { task.sleep(100s) }
 fn answer() @suspends -> Int32 { task.yield_now(); 42 }
 fn caught() @suspends {
     let result: Result<Unit, task.Failure> = isolate { scope { branch { wait() }; branch { fail() } } }

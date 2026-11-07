@@ -75,7 +75,7 @@ fn startup_failure() @suspends -> Int32 { receive(1); borrowed_host_io_event(99)
 fn pending_failure() @suspends -> Int32 { receive(2); borrowed_host_io_event(99); 0 }
 fn discard_read() @suspends { receive(0); }
 fn timeout() @suspends -> Int32 {
-    race { discard_read(), task.sleep_ms(10) }
+    race { discard_read(), task.sleep(10ms) }
     borrowed_host_io_event(11)
     42
 }
@@ -83,7 +83,7 @@ fn fail_now() {
     let message = "NET0 parent failure"
     assert(false, &message)
 }
-fn fail_later() @suspends { task.sleep_ms(10); fail_now() }
+fn fail_later() @suspends { task.sleep(10ms); fail_now() }
 fn sibling_failure() @suspends -> Int32 {
     join { discard_read(), fail_later() }
     borrowed_host_io_event(99); 0

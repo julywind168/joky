@@ -63,7 +63,7 @@ fn parked_source() -> String {
         .replace("fn control(", "extern fn prepared() @suspends\nfn control(")
         .replace(
             "    // The owning session moves",
-            "    prepared(); task.sleep_ms(60000)\n    // The owning session moves",
+            "    prepared(); task.sleep(60s)\n    // The owning session moves",
         )
         .replace("    run_case(0)\n", "")
         .replace("    run_case(2)\n", "")

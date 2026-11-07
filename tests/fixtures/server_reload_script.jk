@@ -29,7 +29,7 @@ fn hold(ctx:Context) @suspends {
     assert(ctx.directory.insert(1,a.handle()).is_ok())
     assert(ctx.directory.insert(2,b.handle()).is_ok())
     assert(ctx.directory.insert(3,c.handle()).is_ok())
-    task.sleep_ms(100000)
+    task.sleep(100s)
 }
 fn probe(ctx:Context) @suspends ->Int32 {
     let a=match domain.lookup::<Room>(ctx.directory,1) {Some(h)=>h,None=>return -1}

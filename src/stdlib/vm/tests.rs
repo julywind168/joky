@@ -49,7 +49,7 @@ fn registered_jit_function_outlives_its_vm_in_both_target_modes() {
                 let child = {constructor}()
                 {{ let vm_text = "add"; vm.register_int32_2(child, &vm_text, add) }}
                 {{ let vm_text = "extern fn add(a: Int32, b: Int32) -> Int32 fn answer() -> Int32 {{{{ add(20, 22) }}}}"; vm.load_source(child, &vm_text) }}
-                task.sleep_ms(60000)
+                task.sleep(60s)
             }}
         "#
         )).unwrap();
@@ -303,7 +303,7 @@ struct State { n: Int32 }
 fn make(n: Int32) -> State { State { n: n } }
 fn pending(n: Int32) @suspends -> Int32 {
     let owner = domain.create(make, n)
-    task.sleep_ms(60000)
+    task.sleep(60s)
     42
 }
 fn fail(n: Int32) @suspends -> Int32 { task.yield_now(); 1 / n }
@@ -495,7 +495,7 @@ fn script_scalar_bridge_uses_host_clock_without_polling_early() {
         for script_mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut host = VmEngine::with_mode(host_mode);
             host.load_source(&script_call_source(
-                "import joky/task fn work(n:Int32) @suspends ->Int32 { task.sleep_ms(50); 42 }",
+                "import joky/task fn work(n:Int32) @suspends ->Int32 { task.sleep(50ms); 42 }",
                 script_mode,
                 "work",
             ))

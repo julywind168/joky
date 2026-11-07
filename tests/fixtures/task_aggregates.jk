@@ -52,7 +52,7 @@ fn failed(value: Batch<Choice>) @suspends -> Batch<Choice> {
     let (a, b) = join { fail(value), echo(Batch { head: Choice.Empty, tail: (false, "loser") }) }
     a
 }
-fn parked(value: Batch<Choice>) @suspends -> Batch<Choice> { task.sleep_ms(60000); value }
+fn parked(value: Batch<Choice>) @suspends -> Batch<Choice> { task.sleep(60s); value }
 fn cancelled(value: Batch<Choice>) @suspends -> Batch<Choice> {
     scope { branch { consume(parked(Batch { head: Choice.Empty, tail: (true, "pending branch") })) }; parked(value) }
 }

@@ -17,7 +17,7 @@ fn files(_:Int32) @suspends ->Bool {
 fn hold(directory:domain.DirectoryHandle) @suspends {
     let room=domain.create(make,40)
     directory.insert(1,room.handle()).unwrap()
-    task.sleep_ms(100000)
+    task.sleep(100s)
 }
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
     match domain.lookup::<Room>(directory,1) {Some(h)=>when "read" (h) {h.value+answer()}.unwrap(),None=>-1}

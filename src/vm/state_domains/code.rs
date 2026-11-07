@@ -975,12 +975,12 @@ fn allowed(s: &Rules) -> Int32 { s.n + 10 }
 "#
                     };
                     let prepare = if stage == "snapshot" {
-                        prepare.replace("    let n =", "    task.sleep_ms(1000)\n    let n =")
+                        prepare.replace("    let n =", "    task.sleep(1s)\n    let n =")
                     } else {
                         prepare.to_owned()
                     };
                     let pause = if stage == "candidate" {
-                        "task.sleep_ms(1000)"
+                        "task.sleep(1s)"
                     } else {
                         ""
                     };
@@ -1081,7 +1081,7 @@ fn make(value: Int32) -> State { State { value: value } }
 fn project(state: &State, input: Input) -> Answer { Answer { value: state.value + input.delta } }
 fn probe(_: Int32) @suspends -> Int32 {
     let owner = domain.create(make, 9)
-    task.sleep_ms(1000)
+    task.sleep(1s)
     var access = domain.access_set(); access.include(owner.read_handle())
     let snapshot = domain.snapshot_set(access)
     let answer = domain.query_snapshot(&snapshot, owner.read_handle(), project, Input { delta: 5 })

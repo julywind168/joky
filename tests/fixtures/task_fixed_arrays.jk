@@ -14,7 +14,7 @@ fn root(value: Choice) @suspends -> Choice {
 }
 fn echo_choice(value: Choice) @suspends -> Choice { task.yield_now(); value }
 fn rows(value: Array<Row>) @suspends -> Array<Row> { task.yield_now(); value }
-fn slow_rows() @suspends -> Array<Row> { task.sleep_ms(60000); [] }
+fn slow_rows() @suspends -> Array<Row> { task.sleep(60s); [] }
 fn dynamic(value: Array<Row>) @suspends -> Array<Row> {
     race { rows(value), slow_rows() }
 }
@@ -46,4 +46,4 @@ fn checked(c: Row) @suspends -> Int32 {
     match values.get(0) { Some(r) => first(&r), None => 0 }
 }
 fn failed(value: Choice) @suspends -> Choice { task.yield_now(); 1 / 0; value }
-fn cancelled(value: Choice) @suspends -> Choice { task.sleep_ms(60000); value }
+fn cancelled(value: Choice) @suspends -> Choice { task.sleep(60s); value }

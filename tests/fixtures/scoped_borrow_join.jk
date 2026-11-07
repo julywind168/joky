@@ -127,7 +127,7 @@ fn produced(text: &String) @suspends -> FailedResult {
     FailedResult { text: string.clone(text) }
 }
 fn delayed_failure(text: &String) @suspends {
-    task.sleep_ms(2)
+    task.sleep(2ms)
     check.panic("reader failed")
 }
 fn isolated_results() @suspends -> Int32 {

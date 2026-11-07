@@ -83,7 +83,7 @@ fn main() @suspends {
         branch { round(plain_view) }
         branch { round(halves_view) }
     }
-    race { pending_accept(&plain), task.sleep_ms(5) };
+    race { pending_accept(&plain), task.sleep(5ms) };
     let settings = &halves
     let failure = isolate {
         join { pending_accept(settings), fail() };

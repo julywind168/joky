@@ -5483,7 +5483,7 @@ OutboxFull／OutboxClosed 后，Some(identity) 指出本次检查遇到的一个
 - `HostExecutor::new(clock, max_tasks)` 接受 `Rc<dyn Clock>`；`Clock::now()` 返回单调前进的 Instant；只有声明
   `allows_blocking_wait()` 的真实单调时钟能使用阻塞等待，SystemClock 已声明，虚拟时钟默认拒绝。
   执行器可 Clone，副本共享同一任务表、状态域和额度；最后一个副本释放时停止剩余任务。
-  默认执行器使用系统时钟、4096 个活根限额。自定义时钟可暂停；`sleep` / `sleep_ms` 使用当前执行器时钟。
+  默认执行器使用系统时钟、4096 个活根限额。自定义时钟可暂停；`sleep` 使用当前执行器时钟。
   用 `TaskGroup::new()` 建组，`spawn(&group, task)` 登记任务。组首次使用后绑定一个执行器。
 - `poll(max_polls)` 只推进本次就绪快照，每个根至多一次，按 FIFO 就绪顺序执行。
   返回 `PollReport`：实际轮询数、已释放任务资源的完成结果、是否仍有就绪工作、最近截止时间。
@@ -6112,7 +6112,7 @@ Map/Set 使用 `TaskValue::Map(TaskMap)` / `TaskValue::Set(TaskSet)`；快照仅
 必须来自对应冻结签名，字段、标量类型和标签精确匹配；新编译模块的同名类型不能冒充旧类型。
 这些入口独立于普通函数 ABI；CLI main 的 Unit/Int32 限制保持不变。
 
-显式不安全注册的标量 CPS 宿主及内置 task.yield_now/sleep/sleep_ms 可用；旧注册不会自动升级。
+显式不安全注册的标量 CPS 宿主及内置 task.yield_now/sleep 可用；旧注册不会自动升级。
 准入失败发生在根执行前，不自动回退 Local。
 
 两种模式都先按源码顺序准备全部静态输入，再发布分支。join 结果位置按源码顺序；
@@ -6625,7 +6625,6 @@ v7 使用 [RFC 9562 §5.7](https://www.rfc-editor.org/rfc/rfc9562.html#section-5
 | `yield_now() @suspends` | 主动返回一次 Pending；恢复后完成，让 join/race 继续轮询其他分支 |
 | `sleep(duration: Duration) @suspends` | 使用单调时钟等待指定时长；保留纳秒精度，零时长可以立即完成，无法表示的截止时间报告运行时错误 |
 | `sleep_until(deadline: Instant) @suspends` | 等待当前时钟中的绝对时刻；到期可立即完成，跨时钟报运行时错误 |
-| `sleep_ms(milliseconds: UInt64) @suspends` | 保留的整数毫秒接口，等待与清理规则同上 |
 
 ```joky
 import joky/io.{println}
@@ -7800,7 +7799,7 @@ Mio 的句柄析构没有可取回的 OS close 状态，当前正常 close 返�
 就绪登记另有 4096 上限，字节请求及任务存储预算继续独立生效。
 
 [组合示例](../tests/fixtures/tcp_composition.jk) 包含三个并发客户端、write_all、
-`race { pending(&mut listener), task.sleep_ms(2) }` 超时取消、监听器复用和发送取消前缀验证。
+`race { pending(&mut listener), task.sleep(2ms) }` 超时取消、监听器复用和发送取消前缀验证。
 该例使用 Unit 分支和真实单调时间取消操作；返回数据时可将请求与定时器包装成相同的 Result 类型，
 拥有式挂起闭包也可使用 `task.timeout(duration, operation)`；借用监听器的场景继续使用直接 race。
 [Godot 网络示例](../integrations/godot/demo/network.jk) 与 GDScript 对端收发并验证引擎生命周期。

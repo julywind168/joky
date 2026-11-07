@@ -389,7 +389,7 @@ NET3 阶段的实现使用同步 helper 按值接收并归还原数组；后续�
   对 EOF 单独断言，避免把 TCP 分段时序误判为运行时错误。
 
 [组合用例](../tests/fixtures/tcp_composition.jk) 在三个后端运行三个并发客户端，验证
-非整块长度、字节顺序、EOF、空 write_all 和写错误传播；真实 sleep_ms 与 accept 组成 race，
+非整块长度、字节顺序、EOF、空 write_all 和写错误传播；真实 sleep 与 accept 组成 race，
 超时后复用同一监听器。发送与 yield_now 的 race 还验证已发送的是严格前缀、取消后借用释放，
 并在同一连接写入终止标记，排除重复前缀、越界重发和永久占用。
 这些用例也是当前 Unit 分支约束下的并发/超时示例，不宣称已有带结果的通用 timeout。

@@ -560,13 +560,13 @@ fn task_pool_timer_submission_reload_and_shutdown() {
         vm.load_source(
             r#"
             import joky/task
-            fn leaf(n: Int32) @suspends -> Int32 { task.sleep_ms(2); n }
+            fn leaf(n: Int32) @suspends -> Int32 { task.sleep(2ms); n }
             fn root() @suspends -> Int32 {
-                scope { branch { task.sleep_ms(2) }; task.yield_now() }
+                scope { branch { task.sleep(2ms) }; task.yield_now() }
                 let (a, b) = join { leaf(20), leaf(22) }
                 a + b
             }
-            fn parked() @suspends { task.sleep_ms(60000) }
+            fn parked() @suspends { task.sleep(60s) }
         "#,
         )
         .unwrap();
@@ -647,7 +647,7 @@ fn parallel_stdout_frozen_evidence_survives_reload_and_vm_drop() {
         }
         fn hold(text: &String) @suspends {
             write(text);
-            task.sleep_ms(60000)
+            task.sleep(60s)
         }
         fn parked() @suspends {
             let text = ""

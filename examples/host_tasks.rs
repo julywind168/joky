@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         fn read(state: &State) @noescape -> Int32 { state.count }
         extern fn increment() -> Int32
-        fn work() @suspends -> Int32 { increment(); task.sleep_ms(16); increment() }
+        fn work() @suspends -> Int32 { increment(); task.sleep(16ms); increment() }
     "#,
     )?;
     let owner = vm.create_instance("create", &[])?;

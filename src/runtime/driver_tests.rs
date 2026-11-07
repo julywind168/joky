@@ -53,7 +53,7 @@ fn blocking_driver_handles_completed_tasks_and_interpreter_slices() {
                 var i = 0
                 while i < 100 { i = i + 1 }
                 task.yield_now()
-                task.sleep_ms(1)
+                task.sleep(1ms)
                 i
             }
         "#,
@@ -101,8 +101,8 @@ fn driver_failure_stops_borrowing_hosts_before_releasing_arena() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for body in [
             "wait(value)",
-            "race { task.yield_now(), task.sleep_ms(60000) }; wait(value)",
-            "join { wait(value), task.sleep_ms(1) }",
+            "race { task.yield_now(), task.sleep(60s) }; wait(value)",
+            "join { wait(value), task.sleep(1ms) }",
             "join { wait(value), fail() }",
         ] {
             STOPS.with(|count| count.set(0));
@@ -167,7 +167,7 @@ fn driver_cancels_unknown_race_loser_after_supported_wake() {
             extern fn wait(value: &mut Int32) @suspends
             fn main() @suspends -> Int32 {
                 let value = alloc(42)
-                race { wait(value), task.sleep_ms(1) }
+                race { wait(value), task.sleep(1ms) }
                 42
             }
         "#,
@@ -182,19 +182,19 @@ fn driver_cancels_unknown_race_loser_after_supported_wake() {
 #[test]
 fn timer_deadline_survives_early_manual_polls_and_waits_until_ready() {
     let mut frame = CpsFrame::new(1);
-    frame.slots[0] = 10000;
+    frame.slots[0] = 10_000_000_000; // Ten seconds in the nanosecond ABI.
     unsafe {
-        assert_eq!(crate::stdlib::task::sleep_ms(&mut frame), 1);
+        assert_eq!(crate::stdlib::task::sleep_ns(&mut frame), 1);
         let Some(Wake::Deadline(deadline)) = frame.wake else {
             panic!("missing timer");
         };
-        assert_eq!(crate::stdlib::task::sleep_ms(&mut frame), 1);
+        assert_eq!(crate::stdlib::task::sleep_ns(&mut frame), 1);
         assert!(matches!(frame.wake, Some(Wake::Deadline(value)) if value == deadline));
         let deadline = Instant::now() + Duration::from_millis(2);
         frame.wake = Some(Wake::Deadline(deadline));
         frame.wait_plan().wait().unwrap();
         assert!(Instant::now() >= deadline);
-        assert_eq!(crate::stdlib::task::sleep_ms(&mut frame), 0);
+        assert_eq!(crate::stdlib::task::sleep_ns(&mut frame), 0);
         assert_eq!(frame.state, DONE);
         assert!(frame.wake.is_none());
     }
@@ -283,7 +283,7 @@ fn native_driver_checks_completion_errors_and_releases_every_terminal_path() {
 fn timer_range_checks_do_not_panic_or_require_a_driver() {
     let mut frame = CpsFrame::new(1);
     frame.slots[0] = u64::MAX;
-    match error::checked(|| unsafe { crate::stdlib::task::sleep_ms(&mut frame) }) {
+    match error::checked(|| unsafe { crate::stdlib::task::sleep_ns(&mut frame) }) {
         Ok(status) => {
             // Some operating systems represent this entire UInt64 duration.
             assert_eq!(status, 1);
@@ -297,7 +297,7 @@ fn timer_range_checks_do_not_panic_or_require_a_driver() {
     drop(frame);
     let mut zero = CpsFrame::new(1);
     assert_eq!(
-        unsafe { joky_cps_block_on(crate::stdlib::task::sleep_ms, &mut zero) },
+        unsafe { joky_cps_block_on(crate::stdlib::task::sleep_ns, &mut zero) },
         0
     );
     assert_eq!(zero.state, DONE);
@@ -413,7 +413,7 @@ fn wake_vm(mode: VmMode) -> VmEngine {
         )
         .unwrap();
     }
-    vm.load_source("import joky/task extern fn wait(value:&mut Int32) @suspends fn main() @suspends -> Int32 {let value=alloc(42); wait(value); 42} fn timer_race() @suspends -> Int32 {let value=alloc(42); race { wait(value), task.sleep_ms(10000) }; 42}").unwrap();
+    vm.load_source("import joky/task extern fn wait(value:&mut Int32) @suspends fn main() @suspends -> Int32 {let value=alloc(42); wait(value); 42} fn timer_race() @suspends -> Int32 {let value=alloc(42); race { wait(value), task.sleep(10s) }; 42}").unwrap();
     vm
 }
 fn reset_wake(mode: u8) {

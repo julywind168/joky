@@ -67,7 +67,7 @@ Import joky/io.{print, println}; Show values are borrowed automatically, e.g. pr
 String literals interpolate by default, e.g. \"value={value}\"; double braces escape literal braces.
 Import joky/vm to create and call an embedded VM.
 Use vm.register_int32 to expose a synchronous local Int32 function to it.
-Use @suspends on main for cooperative tasks; import joky/task for yield_now and sleep_ms.";
+Use @suspends on main for cooperative tasks; import joky/task for yield_now and sleep(Duration).";
 
 enum Command {
     Help,

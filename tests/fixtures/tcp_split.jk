@@ -121,7 +121,7 @@ fn handoff() @suspends -> Int32 {
 fn pending() @suspends {
     var (client, server) = connected()
     var (reader, writer) = client.split()
-    join { pending_read(&mut reader), task.sleep_ms(100000) }
+    join { pending_read(&mut reader), task.sleep(100s) }
     writer.peer_addr();
     server.peer_addr();
 }

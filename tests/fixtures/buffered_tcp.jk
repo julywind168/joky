@@ -95,7 +95,7 @@ fn cancel() @suspends {
     ensure(peer.write_all(bytes).is_ok())
     let first = match buffered.read(1) { Ok(bytes) => bytes, Err(error) => { ensure(false); return } }
     ensure(first.get(0).unwrap_or(0) == 42 && buffered.buffered_len() == 0)
-    race { wait(&mut buffered), task.sleep_ms(1) }
+    race { wait(&mut buffered), task.sleep(1ms) }
     // Cancellation releases the loan; end this protocol connection explicitly.
     ensure(buffered.buffered_len() <= buffered.capacity())
     ensure(buffered.close().is_ok())

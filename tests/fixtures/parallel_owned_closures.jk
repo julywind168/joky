@@ -27,7 +27,7 @@ fn saved<F: FnOnce() -> String>(callback: Callback<F>) @suspends -> String {
 fn discard<F>(value: F) {}
 fn parked_call<F: FnOnce() -> String>(operation: F) @suspends -> String {
     observe(99)
-    task.sleep_ms(60000)
+    task.sleep(60s)
     operation()
 }
 fn delayed(value: Int32) @suspends -> Int32 { task.yield_now(); value }
@@ -88,7 +88,7 @@ fn main() @suspends -> Int32 {
     }
     check.assert(left.equals("suspending owned") && right.equals("suspending peer"), "suspending captures cross workers")
     let losing = "cancelled inside closure"
-    let operation = move || @suspends { task.sleep_ms(60000); losing }
+    let operation = move || @suspends { task.sleep(60s); losing }
     let winner = race { invoke_suspending(operation), fast("winner") }
     check.assert(winner.equals("winner"), "race cancels active suspending environment")
     0

@@ -119,11 +119,11 @@ fn produce(peer: &mut TcpStream) @suspends {
     var first = header(3)
     first.truncate(2)
     ensure(peer.write_all(first).is_ok())
-    task.sleep_ms(2)
+    task.sleep(2ms)
     var next = Array.new::<UInt8>()
     next.push(0); next.push(3); next.push(11)
     ensure(peer.write_all(next).is_ok())
-    task.sleep_ms(2)
+    task.sleep(2ms)
     var last = Array.new::<UInt8>()
     last.push(22); last.push(33)
     last.push(0); last.push(0); last.push(0); last.push(0)
@@ -208,7 +208,7 @@ fn cancel() @suspends -> Int32 {
         if mode == 0 { prefix.truncate(2) } else { prefix.push(42) }
         ensure(peer.write_all(prefix).is_ok())
         var buffered = BufferedTcp.new(stream)
-        race { wait(&mut buffered), task.sleep_ms(1) }
+        race { wait(&mut buffered), task.sleep(1ms) }
         ensure(buffered.buffered_len() <= buffered.capacity())
         ensure(buffered.close().is_ok())
         ensure(peer.close().is_ok())

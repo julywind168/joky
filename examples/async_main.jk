@@ -2,7 +2,7 @@ import joky/io.{println}
 import joky/task
 
 fn increment(value: Int32) @suspends -> Int32 {
-    task.sleep_ms(1)
+    task.sleep(1ms)
     value + 1
 }
 

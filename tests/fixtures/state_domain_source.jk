@@ -35,7 +35,7 @@ fn wrong_request(input: Int32) @suspends -> Int32 { domain.read(wrong_read).unwr
 fn broken(zero: Int32) @suspends -> Int32 { 1 / zero }
 fn poison(zero: Int32) @suspends -> Int32 { domain.write(fail_write, zero).unwrap() }
 fn echo(value: Int32) @suspends -> Int32 { value }
-fn delayed(delta: Int32) @suspends -> Int32 { task.sleep_ms(10000); domain.write(add, delta).unwrap() }
+fn delayed(delta: Int32) @suspends -> Int32 { task.sleep(10s); domain.write(add, delta).unwrap() }
 fn launch(handle: domain.WriteHandle<State>, delta: Int32) @suspends {
     assert(domain.request(handle, work, delta).is_ok(), "request completed")
 }

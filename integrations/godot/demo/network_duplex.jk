@@ -1,3 +1,4 @@
+import joky/time.{type Duration}
 import joky/tcp.{type Address, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
 import joky/check.{assert}
 import joky/string
@@ -57,7 +58,7 @@ fn session(reader: &mut BufferedTcpReader, writer: &mut TcpWriter) @suspends {
 fn task_session(port: Int32, deadline_ms: Int32) @suspends {
     let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { Ok(stream) => stream, _ => { ensure(false); return } }
     var (reader, writer) = BufferedTcp.new(stream).split()
-    race { session(&mut reader, &mut writer), clock.sleep_ms(deadline_ms.to_u64().unwrap_or(0)) }
+    race { session(&mut reader, &mut writer), clock.sleep(Duration.from_millis(deadline_ms.to_u64().unwrap_or(0))!) }
     let completed = "completed"
     if task.read_int32(&completed) == 0 { let method = "timeout"; task.call(&method) }
     // A timeout may interrupt framing: end both directions rather than retry.

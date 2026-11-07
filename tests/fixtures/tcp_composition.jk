@@ -55,7 +55,7 @@ fn main() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
     let address = match listener.local_addr() { Ok(address) => address, Err(error) => { return 2 } }
     // A real monotonic timeout stops accept; the same listener is reusable.
-    race { pending(&mut listener), task.sleep_ms(2) }
+    race { pending(&mut listener), task.sleep(2ms) }
     join { server(&mut listener), send(address), send(address), send(address) }
     checked(listener.close())
     cancel_prefix()

@@ -27,7 +27,7 @@ fn request(p:Input) @suspends ->Result<String,Failure> {
     domain.write(update,p).unwrap()
 }
 fn echo(text:String) @suspends ->String {task.yield_now(); text}
-fn slow(text:String) @suspends ->String {task.sleep_ms(10000); text}
+fn slow(text:String) @suspends ->String {task.sleep(10s); text}
 fn pending(h:domain.WriteHandle<State>) @suspends {domain.request(h,slow,"cancel me");}
 fn ready() @suspends {task.yield_now()}
 impl State {
@@ -83,7 +83,7 @@ fn verify_snapshots(x:domain.WriteHandle<State>,y:domain.WriteHandle<State>) @su
 fn verify_timer(x:domain.WriteHandle<State>) @suspends {
     let timer=domain.timer(); let t=timer.handle()
     domain.every(t,x,1ms,tick,"repeated🙂").unwrap()
-    while domain.read_from(x.read_only(),count).unwrap()<3 {task.sleep_ms(1)}
+    while domain.read_from(x.read_only(),count).unwrap()<3 {task.sleep(1ms)}
     t.cancel(); timer.close()
     assert(x.value().unwrap().equals("repeated🙂"))
 }

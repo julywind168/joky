@@ -75,7 +75,7 @@ fn nested(value: Array<List<Map<Key, Payload>>>) @suspends -> Array<List<Map<Key
     task.yield_now()
     value
 }
-fn parked(value: Bundle) @suspends -> Bundle { task.sleep_ms(60000); value }
+fn parked(value: Bundle) @suspends -> Bundle { task.sleep(60s); value }
 fn cancelled(value: Bundle) @suspends -> Bundle {
     scope { branch { consume(parked((make(), make_set()))) }; parked(value) }
 }

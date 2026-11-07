@@ -76,13 +76,14 @@ fn main() @suspends {
 
 ```joky
 import joky/task
+import joky/time
 import joky/drop.{type Drop}
 import joky/array.{type Array}
 struct R { id: Int32, d: Array<Int32> }
 impl Drop for R { fn drop(&mut self) { println("drop {self.id}") } }
-fn hold(r: R, ms: UInt64) @suspends -> Int32 { task.sleep_ms(ms); r.id }
+fn hold(r: R, duration: time.Duration) @suspends -> Int32 { task.sleep(duration); r.id }
 fn main() @suspends {
-    let w = race { hold(R { id: 1, d: [] }, 1), hold(R { id: 2, d: [] }, 50), hold(R { id: 3, d: [] }, 50) }
+    let w = race { hold(R { id: 1, d: [] }, 1ms), hold(R { id: 2, d: [] }, 50ms), hold(R { id: 3, d: [] }, 50ms) }
     println("winner {w}")
 }
 ```

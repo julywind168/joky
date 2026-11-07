@@ -42,25 +42,11 @@ pub unsafe extern "C" fn yield_now(frame: *mut CpsFrame) -> i32 {
     }
 }
 
-/// Wait for UInt64 milliseconds in slot zero, using a monotonic deadline.
+/// Wait for UInt64 nanoseconds in slot zero, using the executor's monotonic clock.
 /// # Safety
 /// The frame must be live, exclusively borrowed on its owning thread and contain
 /// at least one initialized slot. Start at state zero, resume only while pending,
 /// and keep the same frame alive between polls. No frame pointer is retained.
-#[export_name = "joky_task_sleep_ms"]
-pub unsafe extern "C" fn sleep_ms(frame: *mut CpsFrame) -> i32 {
-    let frame = &mut *frame;
-    sleep(
-        frame,
-        Duration::from_millis(frame.slots[0]),
-        "sleep_ms duration exceeds the monotonic clock range",
-    )
-}
-
-/// Wait for UInt64 nanoseconds in slot zero, using the executor's monotonic clock.
-/// # Safety
-/// The frame must satisfy the same initialization, exclusive access and polling
-/// contract as `sleep_ms`. It must contain one initialized parameter slot.
 #[export_name = "joky_task_sleep_ns"]
 pub unsafe extern "C" fn sleep_ns(frame: *mut CpsFrame) -> i32 {
     let frame = &mut *frame;
@@ -120,10 +106,4 @@ fn poll_sleep(frame: &mut CpsFrame) -> i32 {
 #[export_name = "__joky_task_yield_now"]
 pub(crate) unsafe extern "C" fn yield_internal(frame: *mut CpsFrame) -> i32 {
     yield_now(frame)
-}
-
-// Source modules use a private name for the same frame-owned timer.
-#[export_name = "__joky_task_sleep_ms"]
-pub(crate) unsafe extern "C" fn sleep_internal(frame: *mut CpsFrame) -> i32 {
-    sleep_ms(frame)
 }

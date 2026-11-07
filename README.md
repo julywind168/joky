@@ -47,7 +47,7 @@ fn main() {
   `#every(1s)`、域定时器/提交截止时间及 session 的 `idle_timeout` 统一使用时长。
   `joky/time.Instant` 提供单调耗时和受检截止运算，`Timestamp` 提供 Unix 换算与纳秒 UTC 文本（系统读取为微秒）；
   `task.sleep_until(Instant)` 使用绝对截止时间，支持宿主虚拟时钟。
-  `import joky/task` 提供 `task.sleep(Duration)`、`task.timeout(Duration, operation)`、`task.yield_now()`，并保留 `sleep_ms(UInt64)`；
+  `import joky/task` 提供 `task.sleep(Duration)`、`task.timeout(Duration, operation)`、`task.yield_now()`；
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。
 - `joky/random` 提供操作系统安全随机字节，以及显式设种子的非密码学 `Rng`、无偏整数范围采样和原地洗牌；
   同一种子与调用顺序在三个后端上可复现。示例：[random.jk](examples/random.jk)。

@@ -411,7 +411,7 @@ fn run_pair() @suspends {
 ```
 
 此形式当前已经支持；上例的自定义 `wait_tick` 需要嵌入方注册并驱动。
-纯 Joky 程序可导入 `joky/task`，使用 `yield_now()` / `sleep(Duration)` / `timeout(Duration, operation)`（保留 `sleep_ms(UInt64)`），
+纯 Joky 程序可导入 `joky/task`，使用 `yield_now()` / `sleep(Duration)` / `timeout(Duration, operation)`，
 再从 `fn main() @suspends` 调用 worker；CLI 的 JIT、解释器及独立 AOT 均能驱动。
 
 - 普通函数只能调用同步函数；`@suspends` 函数可调用两者，挂起约束沿调用链传播。

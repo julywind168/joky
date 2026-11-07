@@ -21,9 +21,7 @@ int64_t joky_time_unix_micros(void);
  * Freeing the frame cancels its wake source. All return Unit (result bits zero).
  */
 int32_t joky_task_yield_now(JokyCpsFrame *frame); /* No parameter slots. */
-/* Slot 0: UInt64 milliseconds. Deadline uses a monotonic clock. */
-int32_t joky_task_sleep_ms(JokyCpsFrame *frame);
-/* Slot 0: UInt64 nanoseconds. Uses the same clock and cancellation contract. */
+/* Slot 0: UInt64 nanoseconds. Deadline uses the current monotonic clock. */
 int32_t joky_task_sleep_ns(JokyCpsFrame *frame);
 /* Slots 0/1: clock identity and absolute nanosecond ticks from joky/time.Instant.
  * Requires the same clock domain at every poll. */

@@ -29,7 +29,7 @@ fn hold(directory:domain.DirectoryHandle) @suspends {
     let room=domain.create(make,42)
     let message="register owning migration room"
     check.assert(directory.insert(7,room.handle()).is_ok(),&message)
-    task.sleep_ms(100000)
+    task.sleep(100s)
 }
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
     match domain.lookup::<Room>(directory,7) {Some(room)=>domain.read_from(room,read).unwrap(),None=>-1}

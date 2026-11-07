@@ -206,3 +206,16 @@ fn duration_entry_points_reject_untyped_and_negative_delays() {
         frontend_error(&source, &crate::ModuleSources::new());
     }
 }
+
+#[test]
+fn retired_millisecond_sleep_is_not_exported_or_registered() {
+    let registry = crate::stdlib::module_registry();
+    for name in ["__joky_public_task_sleep_ms", "__joky_task_sleep_ms"] {
+        assert!(registry.binding(name).is_none(), "retired binding {name}");
+    }
+    let mut vm = crate::vm::VmEngine::new();
+    let error = vm
+        .load_source("import joky/task fn main() @suspends { task.sleep_ms(1) }")
+        .unwrap_err();
+    assert!(error.message().contains("sleep_ms"), "{error}");
+}

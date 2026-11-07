@@ -1,3 +1,5 @@
+import joky/task
+
 struct Callback { call: fn(Int32) -> Int32 }
 fn apply_once<F: FnOnce(Int32) -> Int32>(value: Int32, f: F) -> Int32 { f(value) }
 fn plus(value: Int32) -> Int32 { apply_once(value, |x| { x + 1 }) }
@@ -13,8 +15,7 @@ fn main() @suspends -> Int32 {
     if result == 84 { 0 } else { 1 }
 }
 
-extern fn __joky_task_sleep_ms(milliseconds: UInt64) @suspends
-fn slow(text: String) @suspends -> String { __joky_task_sleep_ms(60000); text }
+fn slow(text: String) @suspends -> String { task.sleep(60s); text }
 fn fast(text: String) @suspends -> String { text }
 fn cancelled() @suspends -> String {
     let target = slow

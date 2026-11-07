@@ -5,10 +5,10 @@ fn work() @suspends -> Int32 {
     event(1)
     wait()
     event(2)
-    task.sleep_ms(10)
+    task.sleep(10ms)
     event(3)
     task.yield_now()
     42
 }
 fn fair(n: Int32) @suspends { event(n); task.yield_now(); event(n) }
-fn branches() @suspends { scope { branch { work(); }; branch { task.sleep_ms(5); event(5) } } }
+fn branches() @suspends { scope { branch { work(); }; branch { task.sleep(5ms); event(5) } } }
