@@ -7141,11 +7141,11 @@ EOF、读取器返回错误、空闲超时或 on_message 返回 false 也走这�
 
 ## 结构化日志 joky/log
 
-`log.emit(level, event, fields) -> Bool` 将一个事件编码成单行 JSON，同步写入 stderr。
+`log.emit(level, event, fields) -> Result<Unit, LogError>` 将一个事件编码成单行 JSON，同步写入 stderr。
 每条记录包含 UTC 时间戳 `timestamp`、小写 `level` 和事件名 `event`。
 等级包括 `Debug`、`Info`、`Warn`、`Error`。模块函数保留所有等级。
 `log.Logger.new(minimum)` 创建独立配置，`logger.enabled(level)` 可在构造昂贵字段前判断。
-`logger.try_emit` 返回 Result<Emission, LogError>，Written 表示写入成功，Filtered 表示低于阈值，直接跳过校验、编码和输出。
+`logger.emit` 返回 Result<Emission, LogError>，Written 表示写入成功，Filtered 表示低于阈值，直接跳过校验、编码和输出。
 
 字段推荐通过 `log.field<T: log.ToField>(name: String, value: T) -> log.Field` 构造。
 标准实现覆盖八种整数、Bool、String 和 Uuid；整数和布尔值保留 JSON 类型，String 由 JSON 编码器转义，
@@ -7156,11 +7156,11 @@ Duration 显式选择单位，例如 `log.field("duration_ms", duration.as_milli
 
 模块、Logger 和 HTTP RequestLog 均提供 `debug/info/warn/error(event: String, fields: Array<log.Field>) -> Unit`。
 例如 `log.info("job.finished", [log.field("rows", 12)])`。
-快捷方法忽略日志校验或写入错误，需要检查结果时使用 `try_emit`；Logger 快捷方法遵循最低等级。
+快捷方法忽略日志校验或写入错误，需要检查结果时使用 `emit`；Logger 快捷方法遵循最低等级。
 实参始终先求值，过滤不会跳过字段构造；昂贵字段仍应先用 `enabled` 判断。
 
 每条记录最多 32 个业务字段。事件名限 1–128 字节，字段名限 1–64 字节，文本值最多 4096 字节。
-同一条记录内的字段名须唯一，且不能使用上述三个保留名。`try_emit(level, event, fields) -> Result<Unit, LogError>` 区分字段校验、Encoding 和 WriteFailed。断管返回 WriteFailed，调用方可以继续执行；底层写入中途失败时可能已经写出部分字节。`emit` 保留 Bool 接口，失败返回 false。
+同一条记录内的字段名须唯一，且不能使用上述三个保留名。`emit(level, event, fields) -> Result<Unit, LogError>` 区分字段校验、Encoding 和 WriteFailed。断管返回 WriteFailed，调用方可以继续执行；底层写入中途失败时可能已经写出部分字节。需要 Bool 时可调用 `.is_ok()`。
 应用自行选择业务字段，应避免写入凭据、原始请求或幂等键。
 
 ## URL 组件与查询串 joky/url
@@ -7194,7 +7194,7 @@ Method 是 Copy 值，派生 Eq 并支持 `==`／`!=`，Show 输出对应的大�
 服务端在开始读取请求时创建 UUID v4，handler 通过 `request.request_id` 访问，
 同一次响应的 `X-Request-Id` 标头返回这个 ID。客户端传来的同名标头不参与生成，重试会获得新 ID。
 `request.log` 的类型为 `http.RequestLog`，可显式传递并跨挂起使用。它的 `emit(level, event, fields)`
-会补上 `request_id` 后使用 Options.logger 的最低等级，默认 Debug。request.log.try_emit 区分 Written、Filtered 和错误，request.log.emit 在过滤时返回 true。`request.log.debug/info/warn/error` 同样补上 request_id 并遵循等级过滤，返回 Unit。这个字段占用 32 个字段中的一个名额，重复传入时拒绝整条事件。
+会补上 `request_id` 后使用 Options.logger 的最低等级，默认 Debug。`request.log.emit` 返回 `Result<Emission, LogError>`，区分 Written、Filtered 和错误。`request.log.debug/info/warn/error` 同样补上 request_id 并遵循等级过滤，返回 Unit。这个字段占用 32 个字段中的一个名额，重复传入时拒绝整条事件。
 
 `request.path() -> String` 返回第一个 `?` 之前的路径副本；无查询串时返回整个 target 的副本。
 保留百分号编码、重复斜线和点段，不做解码或规范化，`%2F` 不会成为路径分隔符。

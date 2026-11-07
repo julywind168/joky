@@ -51,15 +51,15 @@ fn rank(level: Level) -> UInt8 {
 impl Logger {
     pub fn new(minimum: Level) -> Logger { Logger { minimum } }
     pub fn enabled(&self, level: Level) -> Bool { rank(level) >= rank(self.minimum) }
-    pub fn try_emit(&self, level: Level, event: String, fields: Array<Field>) -> Result<Emission, LogError> {
+    pub fn emit(&self, level: Level, event: String, fields: Array<Field>) -> Result<Emission, LogError> {
         if !self.enabled(level) { return Ok(Filtered) }
-        try_emit(level, event, fields)?
+        emit(level, event, fields)?
         Ok(Written)
     }
-    pub fn debug(&self, event: String, fields: Array<Field>) { self.try_emit(Level.Debug, event, fields); }
-    pub fn info(&self, event: String, fields: Array<Field>) { self.try_emit(Level.Info, event, fields); }
-    pub fn warn(&self, event: String, fields: Array<Field>) { self.try_emit(Level.Warn, event, fields); }
-    pub fn error(&self, event: String, fields: Array<Field>) { self.try_emit(Level.Error, event, fields); }
+    pub fn debug(&self, event: String, fields: Array<Field>) { self.emit(Level.Debug, event, fields); }
+    pub fn info(&self, event: String, fields: Array<Field>) { self.emit(Level.Info, event, fields); }
+    pub fn warn(&self, event: String, fields: Array<Field>) { self.emit(Level.Warn, event, fields); }
+    pub fn error(&self, event: String, fields: Array<Field>) { self.emit(Level.Error, event, fields); }
 }
 pub struct Field { name: String, value: json.Value }
 pub fn text(name: String, value: String) -> Field { Field { name, value: json.Value.Text(value) } }
@@ -93,7 +93,7 @@ fn add(record: &mut Map<String, json.Value>, field: Field) -> Result<Unit, LogEr
     Ok({})
 }
 
-pub fn try_emit(level: Level, event: String, fields: Array<Field>) -> Result<Unit, LogError> {
+pub fn emit(level: Level, event: String, fields: Array<Field>) -> Result<Unit, LogError> {
     if event.is_empty() || event.byte_length() > 128 { return Err(InvalidEvent) }
     if fields.len() > 32 { return Err(TooManyFields) }
     var record = Map.new::<String, json.Value>()
@@ -109,11 +109,8 @@ pub fn try_emit(level: Level, event: String, fields: Array<Field>) -> Result<Uni
     let message = output.finish()
     if __joky_try_write_stderr(&message) == 0 { Ok({}) } else { Err(WriteFailed) }
 }
-pub fn emit(level: Level, event: String, fields: Array<Field>) -> Bool {
-    try_emit(level, event, fields).is_ok()
-}
 
-pub fn debug(event: String, fields: Array<Field>) { try_emit(Level.Debug, event, fields); }
-pub fn info(event: String, fields: Array<Field>) { try_emit(Level.Info, event, fields); }
-pub fn warn(event: String, fields: Array<Field>) { try_emit(Level.Warn, event, fields); }
-pub fn error(event: String, fields: Array<Field>) { try_emit(Level.Error, event, fields); }
+pub fn debug(event: String, fields: Array<Field>) { emit(Level.Debug, event, fields); }
+pub fn info(event: String, fields: Array<Field>) { emit(Level.Info, event, fields); }
+pub fn warn(event: String, fields: Array<Field>) { emit(Level.Warn, event, fields); }
+pub fn error(event: String, fields: Array<Field>) { emit(Level.Error, event, fields); }

@@ -830,16 +830,16 @@ fn main() {
     check.assert(log.emit(log.Level.Debug, "event\nname", [
         log.field("detail", "quote\"\\\nline"), log.field("count", 9),
         log.field("delta", -2), log.field("ready", true)
-    ]), "valid")
-    check.assert(log.emit(log.Level.Info, "job.finished", [log.text("request_id", "queue-42")]), "application field")
-    check.assert(!log.emit(log.Level.Info, "invalid", [log.uint("n", 1), log.uint("n", 2)]), "duplicate")
-    check.assert(match log.try_emit(log.Level.Info, "invalid", [log.text("timestamp", "override")]) {
+    ]).is_ok(), "valid")
+    check.assert(log.emit(log.Level.Info, "job.finished", [log.text("request_id", "queue-42")]).is_ok(), "application field")
+    check.assert(log.emit(log.Level.Info, "invalid", [log.uint("n", 1), log.uint("n", 2)]).is_err(), "duplicate")
+    check.assert(match log.emit(log.Level.Info, "invalid", [log.text("timestamp", "override")]) {
         Err(DuplicateField) => true, _ => false }, "reserved")
     let logger = log.Logger.new(log.Level.Warn)
     check.assert(!logger.enabled(log.Level.Info) && logger.enabled(log.Level.Warn), "threshold boundary")
-    check.assert(match logger.try_emit(log.Level.Info, "", []) { Ok(Filtered) => true, _ => false }, "skip before validation")
-    check.assert(match logger.try_emit(log.Level.Warn, "alert", []) { Ok(Written) => true, _ => false }, "at threshold")
-    check.assert(match log.try_emit(log.Level.Info, "", []) { Err(InvalidEvent) => true, _ => false }, "empty event")
+    check.assert(match logger.emit(log.Level.Info, "", []) { Ok(Filtered) => true, _ => false }, "skip before validation")
+    check.assert(match logger.emit(log.Level.Warn, "alert", []) { Ok(Written) => true, _ => false }, "at threshold")
+    check.assert(match log.emit(log.Level.Info, "", []) { Err(InvalidEvent) => true, _ => false }, "empty event")
     let id = uuid.Uuid.parse("00112233-4455-6677-8899-aabbccddeeff")!
     log.info("typed", [
         log.field("i8", Int8.MIN), log.field("i16", Int16.MIN),
@@ -855,9 +855,11 @@ fn main() {
     logger.warn("logger.warn", [])
     logger.error("logger.error", [])
     let context = http.RequestLog { request_id: id, logger }
+    check.assert(match context.emit(log.Level.Info, "", []) { Ok(Filtered) => true, _ => false }, "context skips before validation")
+    check.assert(match context.emit(log.Level.Warn, "invalid", [log.field("request_id", "duplicate")]) { Err(DuplicateField) => true, _ => false }, "context rejects duplicate request id")
     context.debug("filtered", [])
     context.info("filtered", [])
-    context.warn("context.warn", [])
+    check.assert(match context.emit(log.Level.Warn, "context.warn", []) { Ok(Written) => true, _ => false }, "context writes at threshold")
     context.error("context.error", [])
     context.warn("invalid", [log.field("request_id", "duplicate")])
 }
@@ -932,8 +934,7 @@ fn structured_log_reports_closed_pipe_without_stopping_the_task() {
     let work = Workspace::new();
     work.write("pipe.jk", r#"import joky/log
         fn main() @suspends {
-            assert(match log.try_emit(log.Level.Info, "event", []) { Err(WriteFailed) => true, _ => false }, "broken pipe")
-            assert(!log.emit(log.Level.Info, "event", []), "compatibility call reports failure")
+            assert(match log.emit(log.Level.Info, "event", []) { Err(WriteFailed) => true, _ => false }, "broken pipe")
             log.error("ignored write failure", [])
             println("continued")
         }"#);

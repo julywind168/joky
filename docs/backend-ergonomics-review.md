@@ -276,7 +276,7 @@ SharedPipeline 提供同名终结方法；支持拥有型累积值，按顺序�
 
 模块、Logger、RequestContext 均提供返回 Unit 的 `debug/info/warn/error`；
 Logger 保留等级过滤，Context 自动附加 request_id。HTTP 请求完成日志和订单示例已迁移。
-`emit` 保留 Bool，`try_emit` 保留具体错误和 Logger/Context 的 Written、Filtered 区分。
+`emit` 统一返回 Result，保留具体错误和 Logger/Context 的 Written、Filtered 区分。
 快捷方法忽略日志错误；共享失败计数的归属和并发规则另行设计。
 
 ### 6.6 后端常用但缺失的模块

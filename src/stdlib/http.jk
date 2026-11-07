@@ -27,18 +27,15 @@ impl Show for DuplicateHeader {
 }
 pub struct RequestLog { pub request_id: uuid.Uuid, pub logger: log.Logger }
 impl RequestLog {
-    pub fn try_emit(&self, level: log.Level, event: String, var fields: Array<log.Field>) -> Result<log.Emission, log.LogError> {
+    pub fn emit(&self, level: log.Level, event: String, var fields: Array<log.Field>) -> Result<log.Emission, log.LogError> {
         if !self.logger.enabled(level) { return result.Ok(log.Emission.Filtered) }
         fields.push(log.field("request_id", self.request_id))
-        self.logger.try_emit(level, event, fields)
+        self.logger.emit(level, event, fields)
     }
-    pub fn emit(&self, level: log.Level, event: String, fields: Array<log.Field>) -> Bool {
-        self.try_emit(level, event, fields).is_ok()
-    }
-    pub fn debug(&self, event: String, fields: Array<log.Field>) { self.try_emit(log.Level.Debug, event, fields); }
-    pub fn info(&self, event: String, fields: Array<log.Field>) { self.try_emit(log.Level.Info, event, fields); }
-    pub fn warn(&self, event: String, fields: Array<log.Field>) { self.try_emit(log.Level.Warn, event, fields); }
-    pub fn error(&self, event: String, fields: Array<log.Field>) { self.try_emit(log.Level.Error, event, fields); }
+    pub fn debug(&self, event: String, fields: Array<log.Field>) { self.emit(log.Level.Debug, event, fields); }
+    pub fn info(&self, event: String, fields: Array<log.Field>) { self.emit(log.Level.Info, event, fields); }
+    pub fn warn(&self, event: String, fields: Array<log.Field>) { self.emit(log.Level.Warn, event, fields); }
+    pub fn error(&self, event: String, fields: Array<log.Field>) { self.emit(log.Level.Error, event, fields); }
 }
 pub struct Request<C> {
     pub ctx: C,
