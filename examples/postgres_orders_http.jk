@@ -31,17 +31,23 @@ fn error_reply(status: http.Status, error: String) -> http.Response {
         Err(_) => http.empty(http.Status.InternalServerError)
     }
 }
+fn order_key(request: &http.Request<Orders>) -> Result<String, http.Response> {
+    let key = match request.header_unique("Idempotency-Key") {
+        Ok(Some(key)) => key
+        Ok(None) => return Err(error_reply(http.Status.BadRequest, "missing Idempotency-Key"))
+        Err(_) => return Err(error_reply(http.Status.BadRequest, "invalid Idempotency-Key"))
+    }
+    if key.is_empty() || key.byte_length() > 128 { return Err(error_reply(http.Status.BadRequest, "invalid Idempotency-Key")) }
+    Ok(key.clone())
+}
 fn create_order(request: http.Request<Orders>) @suspends -> http.Response {
-    var keys = request.header_all("Idempotency-Key")
-    if keys.is_empty() { return error_reply(http.Status.BadRequest, "missing Idempotency-Key") }
-    if keys.len() != 1 { return error_reply(http.Status.BadRequest, "invalid Idempotency-Key") }
-    let key = keys.take_last()
-    if key.is_empty() || key.byte_length() > 128 { return error_reply(http.Status.BadRequest, "invalid Idempotency-Key") }
+    let key = match order_key(&request) { Ok(key) => key, Err(response) => return response }
     let input = match request.json::<Purchase>() {
         Ok(input) => input, Err(_) => return error_reply(http.Status.BadRequest, "expected a positive integer qty")
     }
     if input.qty <= 0 { return error_reply(http.Status.BadRequest, "expected a positive integer qty") }
-    order_reply(request.log, orders.place(&request.ctx.pool, 1, key, input.qty))
+    let outcome = orders.place(&request.ctx.pool, 1, key, input.qty)
+    order_reply(request.log, outcome)
 }
 fn order_reply(context: http.RequestLog, result: Result<orders.Order, postgres.DbError>) -> http.Response {
     match result {

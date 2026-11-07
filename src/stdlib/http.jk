@@ -17,6 +17,12 @@ import joky/string
 import joky/json/typed.{type ToJson, type FromJson}
 
 pub struct Header { pub name: String, pub value: String }
+pub struct DuplicateHeader {}
+impl Show for DuplicateHeader {
+    fn show(&self, output: &mut string.StringBuilder) @noescape {
+        output.push_str("duplicate HTTP header")
+    }
+}
 pub struct RequestLog { pub request_id: uuid.Uuid, pub logger: log.Logger }
 impl RequestLog {
     pub fn try_emit(&self, level: log.Level, event: String, var fields: Array<log.Field>) -> Result<log.Emission, log.LogError> {
@@ -50,6 +56,16 @@ impl<C> Request<C> {
             if field.name.eq_ignore_ascii_case(name) { return Some(&field.value) }
         }
         None
+    }
+    pub fn header_unique(&self, name: &String) @noescape(name) -> Result<Option<&String>, DuplicateHeader> {
+        var found: Option<&String> = None
+        for field in &self.headers {
+            if field.name.eq_ignore_ascii_case(name) {
+                if found.is_some() { return Err(DuplicateHeader {}) }
+                found = Some(&field.value)
+            }
+        }
+        result.Ok(found)
     }
     pub fn header_all(&self, name: &String) @noescape -> Array<String> {
         var values = Array.new::<String>()

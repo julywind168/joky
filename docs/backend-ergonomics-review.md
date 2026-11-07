@@ -653,12 +653,12 @@ postgres_orders_http.jk 在完成 1–3 后应缩短到约当前一半，且不�
 
 | 问题 | 当前依据 | 建议与待定边界 |
 | --- | --- | --- |
-| 读取“至多一个标头”需要先收集、复制再检查数量 | [订单 HTTP 示例](../examples/postgres_orders_http.jk) 的 Idempotency-Key 使用 header_all；[Request.header_all](../src/stdlib/http.jk) 返回 Array<String>，header 则只取第一个 | 考虑增加 `header_unique(name) -> Result<Option<&String>, DuplicateHeader>`：区分缺失与重复，避免为单值校验收集数组。不能将所有标头都改成唯一，也不能默认用逗号合并；返回借用的生命周期和诊断类型需确定。 |
+| 唯一标头查询【已实现】 | Request.header_unique 返回 Result<Option<&String>, DuplicateHeader>，订单示例已迁移 | 区分缺失、唯一值与重复，不复制标头值；名称按 ASCII 忽略大小写，相同值重复也报错，单个值不按逗号拆分。header/header_all 保留原语义；嵌套文本借用结果目前需在同步助手中处理，订单的 order_key 校验后只 clone 唯一值，再交给挂起 handler。 |
 | session 无法向应用报告正常 EOF、协议错误或写失败的区别 | [session.read](../src/stdlib/session.jk) 将 Reader 的 Err 转成 None；发送失败直接退出；Handler.on_close 无参数，run 返回 Unit | 考虑让 run 返回结束原因，或增加错误／带原因关闭回调。需先决定 Reader.Error 如何传给 Handler、race 多分支同时结束的优先规则，以及取消时回调能否运行；不能简单吞掉错误后补一个日志。 |
 | 只读字符串输入的所有权约定仍不一致 | [fs.open](../src/stdlib/fs.jk) 消费 path，[TLS ClientConfig.connect](../src/stdlib/tls.jk) 消费 server_name；DNS、process、postgres URL 已借用。vm.file_text 和 HTTP TLS 连接因此仍有显式 clone | 可按 §10 的规则评估改为 &String，让宿主在移交异步任务前建立所需副本。但这是公开签名及宿主边界调整，需验证借用跨挂起的存活、取消清理和三后端行为，不能直接删掉这些 clone。 |
 
-优先级建议：先补唯一标头查询，再设计 session 结束原因，最后集中统一只读字符串参数。
-这些是便利性及可观察性问题，不因本轮 chat 性能结果而推断其为性能瓶颈；本轮未更改上述接口。
+唯一标头查询已补齐；后续先设计 session 结束原因，再集中统一只读字符串参数。
+这些是便利性及可观察性问题，不因本轮 chat 性能结果而推断其为性能瓶颈；其余接口暂未更改。
 
 本轮验证：JSON 数值／codec、process、DNS、TCP duplex 及 chat 启停共 7 项针对性测试通过，
 相关 CLI 用例覆盖三后端；另外实际运行 time_points 的 JIT、解释器和 AOT，核对输出结构与固定时间解析结果。

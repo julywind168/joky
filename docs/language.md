@@ -7154,7 +7154,13 @@ Method 是 Copy 值，派生 Eq 并支持 `==`／`!=`，Show 输出对应的大�
 标头查询按 ASCII 忽略名称大小写：`request.header(name: &String) -> Option<&String>` 借用第一个匹配值，
 缺失为 None，空值仍为 Some；结果依赖 Request 的存活，不依赖 name。
 `request.header_all(name: &String) -> Array<String>` 返回全部匹配值的独立副本，保留顺序及重复项，缺失为空数组。
-它不会按逗号拆分单个值。对于 Idempotency-Key 等要求唯一的标头，使用 header_all 检查数量，不能仅取第一个值。
+它不会按逗号拆分单个值。
+`request.header_unique(name: &String) -> Result<Option<&String>, http.DuplicateHeader>` 用于 Idempotency-Key 等要求唯一的标头：
+缺失返回 Ok(None)，恰好一个返回 Ok(Some(value))，两个及以上返回 Err(DuplicateHeader {})，即使值相同也拒绝。
+名称按 ASCII 忽略大小写；空值仍是 Some，单个值中的逗号不拆分。返回值借用 request、不复制文本，
+查询名称不逃逸，可传入临时字符串。DuplicateHeader 支持 Show，输出 `duplicate HTTP header`。
+当前包含文本借用的返回聚合需要在同步函数内处理；挂起 handler 可调用同步校验助手，
+在其中校验唯一值并 clone 为拥有型 String。订单示例的 order_key 使用这一写法，只复制校验通过的一项。
 
 `request.json<T: FromJson>(&self) -> Result<T, typed.CodecError>` 共享借用 body，
 按 `typed.decode_bytes` 的默认选项直接解析字节，不复制整份正文。成功或失败均保留 Request 的正文及元数据，
