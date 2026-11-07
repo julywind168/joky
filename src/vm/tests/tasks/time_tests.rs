@@ -84,6 +84,7 @@ fn time_points_absolute_wait_uses_virtual_clock_and_cleans_cancelled_values() {
 #[test]
 fn time_points_private_coordinates_and_distinct_types_are_checked() {
     for source in [
+        "import joky/time fn f() @suspends { time.sleep_until(time.Instant.now()); }",
         "import joky/time fn f(){ time.Instant { clock_id: 0, ticks: 0 }; }",
         "import joky/time fn f(){ time.Timestamp { seconds: 0, nanos: 0 }; }",
         "import joky/time import joky/task fn f() @suspends { task.sleep_until(time.Timestamp.now()); }",

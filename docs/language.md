@@ -6359,7 +6359,7 @@ Duration 实现 Show，支持打印、插值和 `to_text()`。输出使用精确
 `duration_since(earlier)` / `elapsed()` 返回 `Option<Duration>`，逆序或跨时钟返回 None；
 `compare(other)` 返回 `Option<Int32>`（-1、0、1），跨时钟返回 None，不提供大小运算符。
 
-`task.sleep_until(deadline) @suspends` 等待绝对截止时间（也可通过 `time.sleep_until` 调用）；
+`task.sleep_until(deadline) @suspends` 等待绝对截止时间；
 已经到期时可以立即完成，恢复时不重新计算相对延迟。跨时钟或宿主不能表示的截止时间报运行时错误。
 Instant 的受检加法验证数值坐标范围，宿主时钟的可表示范围在等待时进一步验证。
 每个独立 HostExecutor 有自己的时钟身份，克隆共享身份；即使注入同一个 Clock 对象，两个独立执行器仍不能交换 Instant。

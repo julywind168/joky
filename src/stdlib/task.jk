@@ -17,7 +17,7 @@ impl Show for Timeout {
     }
 }
 
-pub fn sleep_until(deadline: Instant) @suspends { time.sleep_until(deadline) }
+pub fn sleep_until(deadline: Instant) @suspends { time.__sleep_until(deadline) }
 pub fn sleep(duration: Duration) @suspends { __joky_public_task_sleep_ns(duration.as_nanos()) }
 pub fn timeout<T, F: FnOnce() @suspends -> T>(duration: Duration, operation: F) @suspends -> Result<T, Timeout> {
     race {

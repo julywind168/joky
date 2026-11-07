@@ -1,4 +1,4 @@
-//! Durations, clocks and delays.
+//! Durations and clocks.
 
 import joky/ops.{type Add}
 import joky/check.{panic}
@@ -298,4 +298,5 @@ fn parse_timestamp(text: &String) -> Option<Timestamp> {
     Timestamp.from_unix_parts(if suffix == 43 { seconds - offset } else { seconds + offset }, nanos)
 }
 
-pub fn sleep_until(deadline: Instant) @suspends { __joky_public_task_sleep_until(deadline.clock_id, deadline.ticks) }
+// Internal task bridge keeps clock coordinates inside their defining module.
+fn __sleep_until(deadline: Instant) @suspends { __joky_public_task_sleep_until(deadline.clock_id, deadline.ticks) }
