@@ -1,28 +1,28 @@
 import joky/slice as slices.{type Slice}
 
 // Only these embedded definitions receive compiler-owned value/token identities.
-type FixedArray<T, const N: UInt64> = T
-type Init<T, const N: UInt64> = T
+pub type FixedArray<T, const N: UInt64> = T
+pub type Init<T, const N: UInt64> = T
 
 #intrinsic("fixed_array.begin")
-fn begin<T, const N: UInt64>() -> Init<T, N>
+pub fn begin<T, const N: UInt64>() -> Init<T, N>
 #intrinsic("fixed_array.write_next")
-fn write_next<T, const N: UInt64>(token: &mut Init<T, N>, value: T)
+pub fn write_next<T, const N: UInt64>(token: &mut Init<T, N>, value: T)
 #intrinsic("fixed_array.finish")
-fn finish<T, const N: UInt64>(token: Init<T, N>) -> FixedArray<T, N>
+pub fn finish<T, const N: UInt64>(token: Init<T, N>) -> FixedArray<T, N>
 #intrinsic("fixed_array.load")
-fn load<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> T
+pub fn load<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> T
 #intrinsic("fixed_array.store")
-fn store<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, value: T)
+pub fn store<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, value: T)
 
 #intrinsic("fixed_array.borrow_ref")
-fn borrow_ref<T, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> &T
+pub fn borrow_ref<T, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> &T
 
 #intrinsic("fixed_array.borrow_mut_ref")
-fn borrow_mut_ref<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64) -> &mut T
+pub fn borrow_mut_ref<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64) -> &mut T
 
 #intrinsic("fixed_array.slice")
-fn slice<T, const N: UInt64>(values: &FixedArray<T, N>, start: UInt64, end: UInt64) -> &Slice<T>
+pub fn slice<T, const N: UInt64>(values: &FixedArray<T, N>, start: UInt64, end: UInt64) -> &Slice<T>
 
 #intrinsic("fixed_array.slice_mut")
-fn slice_mut<T, const N: UInt64>(values: &mut FixedArray<T, N>, start: UInt64, end: UInt64) -> &mut Slice<T>
+pub fn slice_mut<T, const N: UInt64>(values: &mut FixedArray<T, N>, start: UInt64, end: UInt64) -> &mut Slice<T>

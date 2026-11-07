@@ -7,6 +7,8 @@ mod intrinsics;
 mod qualification_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod visibility_tests;
 
 #[derive(joky_image_derive::Image, Clone, Debug)]
 pub(crate) struct DefinitionScope {
@@ -30,8 +32,11 @@ pub(super) enum ImplicitImports {
 pub(super) enum SourceKind {
     Decimal,
     User,
+    /// Source library without private-module imports or intrinsic privileges.
     Embedded,
-    /// Ordinary trusted source modules use explicit public declarations.
+    /// Supplies the compiler-only bindings used to lower SQL templates.
+    Postgres,
+    /// Source library allowed to import compiler-owned implementation modules.
     Library,
     /// Shared implementation modules cannot be imported by user code.
     InternalLibrary,
@@ -47,32 +52,12 @@ pub(super) enum SourceKind {
     Integer,
     Float,
     Text,
+    InternalText,
     Json,
     Mem,
     Arena,
     Domain,
     Vm,
-}
-
-impl SourceKind {
-    /// Legacy embedded modules export declarations without an explicit `pub`.
-    pub(super) fn exports_unmarked(self) -> bool {
-        !matches!(
-            self,
-            SourceKind::User
-                | SourceKind::Library
-                | SourceKind::InternalLibrary
-                | SourceKind::FixedArrayLibrary
-                | SourceKind::BufferLibrary
-                | SourceKind::Equality
-                | SourceKind::Integer
-                | SourceKind::Decimal
-                | SourceKind::Text
-                | SourceKind::Json
-                | SourceKind::Domain
-                | SourceKind::Vm
-        )
-    }
 }
 
 pub(super) struct SourceDefinition {
@@ -85,7 +70,7 @@ pub(super) struct SourceDefinition {
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
     SourceDefinition {
-        kind: SourceKind::Embedded,
+        kind: SourceKind::Postgres,
         path: "joky/postgres",
         source: include_str!("../../stdlib/postgres.jk"),
         reexport_imports: false,
@@ -197,14 +182,14 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
-        kind: SourceKind::Text,
+        kind: SourceKind::InternalText,
         path: "joky/internal/text",
         source: include_str!("../../stdlib/internal/text.jk"),
         reexport_imports: false,
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
-        kind: SourceKind::Embedded,
+        kind: SourceKind::Library,
         path: "joky/clone",
         source: include_str!("../../stdlib/clone.jk"),
         reexport_imports: false,
@@ -309,7 +294,7 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
-        kind: SourceKind::BufferLibrary,
+        kind: SourceKind::InternalLibrary,
         path: "joky/internal/resolve",
         source: include_str!("../../stdlib/internal/resolve.jk"),
         reexport_imports: false,
@@ -505,6 +490,8 @@ pub(super) struct SourceModule {
     pub lazy_hosts: BTreeSet<String>,
     module: Module,
     pub exports: ImportScope,
+    /// Unspellable compiler aliases may access these checked implementation entries.
+    pub compiler_exports: ImportScope,
     dependencies: Vec<String>,
     pub implicit: ImplicitImports,
 }
@@ -676,7 +663,6 @@ impl StandardLibrary {
                 record.set = path == "joky/set" && record.name == "Set";
             }
         }
-        let embedded = kind.exports_unmarked();
         let (mut scope, required) = bind(
             &module,
             registry,
@@ -691,6 +677,8 @@ impl StandardLibrary {
                     | SourceKind::Float
                     | SourceKind::Decimal
                     | SourceKind::Text
+                    | SourceKind::InternalText
+                    | SourceKind::Equality
                     | SourceKind::Json
                     | SourceKind::Domain
                     | SourceKind::Vm
@@ -729,7 +717,7 @@ impl StandardLibrary {
             };
             scope.types.insert(name.clone(), binding.clone());
             scope.types.insert(binding.name.clone(), binding.clone());
-            if embedded || declaration.public {
+            if declaration.public {
                 exports.types.insert(name, binding.clone());
             }
             for variant in &declaration.variants {
@@ -737,7 +725,7 @@ impl StandardLibrary {
                     enumeration: binding.clone(),
                     variant: variant.name.clone(),
                 };
-                if embedded || declaration.public {
+                if declaration.public {
                     exports
                         .constructors
                         .entry(variant.name.clone())
@@ -761,7 +749,7 @@ impl StandardLibrary {
             };
             scope.types.insert(name.clone(), binding.clone());
             scope.types.insert(binding.name.clone(), binding.clone());
-            if embedded || declaration.public {
+            if declaration.public {
                 exports.types.insert(name, binding);
             }
         }
@@ -776,7 +764,7 @@ impl StandardLibrary {
                 id: declaration.self_parameter.id,
             };
             scope.traits.insert(name.clone(), binding.clone());
-            if embedded || declaration.public {
+            if declaration.public {
                 exports.traits.insert(name, binding);
             }
         }
@@ -803,7 +791,7 @@ impl StandardLibrary {
                     format!("Duplicate exported value '{name}'"),
                 ));
             }
-            if (embedded || function.public)
+            if function.public
                 && !matches!(
                     function.compiler_intrinsic,
                     Some(crate::parser::ast::CompilerIntrinsic::RuneFromValidU32)
@@ -835,7 +823,6 @@ impl StandardLibrary {
         // Constants must be visible to the defining module's own bodies, so
         // they join the scope before it is frozen into `DefinitionScope`.
         for constant in &mut module.constants {
-            constant.public |= embedded;
             constant.path = Some(path.into());
             let canonical = format!("{path}.{}", constant.name);
             scope
@@ -844,6 +831,23 @@ impl StandardLibrary {
             scope.constants.insert(canonical.clone(), canonical.clone());
             if constant.public {
                 exports.constants.insert(constant.name.clone(), canonical);
+            }
+        }
+        let mut compiler_exports = ImportScope::default();
+        if kind == SourceKind::Postgres {
+            // SQL syntax needs a private builder, not an additional public API.
+            compiler_exports
+                .types
+                .insert("SqlBuilder".into(), scope.types["SqlBuilder"].clone());
+            for name in ["__sql_text", "__sql_identifier", "__sql_parameter"] {
+                compiler_exports
+                    .functions
+                    .insert(name.into(), scope.functions[name].clone());
+            }
+            for name in ["new", "finish"] {
+                compiler_exports
+                    .members
+                    .insert(format!("{path}.SqlBuilder.{name}"));
             }
         }
         module.scope = Some(Arc::new(scope));
@@ -864,7 +868,7 @@ impl StandardLibrary {
             Arc::make_mut(module.scope.as_mut().unwrap())
                 .types
                 .insert(alias.name.clone(), binding.clone());
-            if embedded || alias.public {
+            if alias.public {
                 exports.types.insert(alias.name.clone(), binding);
             }
         }
@@ -916,14 +920,14 @@ impl StandardLibrary {
                 continue;
             }
             for method in &implementation.methods {
-                if embedded || method.public {
+                if method.public {
                     exports
                         .members
                         .insert(format!("{}.{}", implementation.target_name, method.name));
                 }
             }
             for constant in &implementation.constants {
-                if embedded || constant.public {
+                if constant.public {
                     exports
                         .members
                         .insert(format!("{}.{}", implementation.target_name, constant.name));
@@ -932,7 +936,6 @@ impl StandardLibrary {
         }
         for item in &mut module.items {
             if let Item::FnDef(function) = item {
-                function.public |= embedded;
                 function.scope = Some(definition_scope.clone());
             }
         }
@@ -944,11 +947,9 @@ impl StandardLibrary {
             }
             implementation.scope = Some(scope.clone());
             for function in &mut implementation.methods {
-                function.public |= embedded && implementation.trait_name.is_none();
                 function.scope = Some(scope.clone());
             }
             for constant in &mut implementation.constants {
-                constant.public |= embedded;
                 constant.scope = Some(definition_scope.clone());
             }
         }
@@ -973,6 +974,7 @@ impl StandardLibrary {
                 private: matches!(
                     kind,
                     SourceKind::InternalLibrary
+                        | SourceKind::InternalText
                         | SourceKind::FixedArrayStorage
                         | SourceKind::BufferStorage
                         | SourceKind::TypeCheck
@@ -980,6 +982,7 @@ impl StandardLibrary {
                 ),
                 module,
                 exports,
+                compiler_exports,
                 dependencies: required.into_iter().collect(),
                 implicit,
             }),

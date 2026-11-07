@@ -25,7 +25,7 @@ fn module_documentation(
     source: &SourceDefinition,
     sources: &[SourceDefinition],
 ) -> Result<Documentation, Error> {
-    let mut docs = extract(source.source, source.kind.exports_unmarked())?;
+    let mut docs = extract(source.source)?;
     if !source.reexport_imports {
         return Ok(docs);
     }
@@ -47,7 +47,7 @@ fn module_documentation(
                     .map(|alias| (m.name.as_str(), alias.as_str()))
             })
             .collect();
-        let exported = extract(dependency.source, dependency.kind.exports_unmarked())?;
+        let exported = extract(dependency.source)?;
         for mut entry in exported.entries {
             if !import.members.iter().any(|member| {
                 member.name == entry.name

@@ -21,9 +21,8 @@ pub struct Documentation {
     pub imports: Vec<String>,
 }
 
-/// Parse documentation with the same syntax as compilation. Embedded source
-/// modules expose unmarked declarations too, unlike ordinary user modules.
-pub fn extract(source: &str, embedded: bool) -> Result<Documentation, Diagnostic> {
+/// Parse public documentation with the same visibility rules as compilation.
+pub fn extract(source: &str) -> Result<Documentation, Diagnostic> {
     let module = super::parse(source)?;
     let tokens = Lexer::tokenize(source)?;
     let comments = comments(source, &tokens);
@@ -37,7 +36,7 @@ pub fn extract(source: &str, embedded: bool) -> Result<Documentation, Diagnostic
             children: vec![],
         }
     };
-    let visible = |name: &str, public: bool| !name.starts_with('_') && (embedded || public);
+    let visible = |name: &str, public: bool| !name.starts_with('_') && public;
     let mut entries = Vec::new();
     for f in &module.items {
         if let Item::FnDef(f) = f {

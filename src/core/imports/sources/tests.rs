@@ -202,7 +202,8 @@ fn embedded_runtime_diagnostics_survive_reload_without_production_traps() {
         }
     }
 
-    const LIBRARY: &str = "// Test-only embedded source.\nfn boom<T>(value: T) -> Int32 { 1 / 0 }";
+    const LIBRARY: &str =
+        "// Test-only embedded source.\npub fn boom<T>(value: T) -> Int32 { 1 / 0 }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
             let types = registry(&[definition("joky/integer", LIBRARY)]);
@@ -287,9 +288,9 @@ fn intrinsic_annotations_bind_renamed_definitions_and_keep_error_locations() {
     const TEXT: &str = r#"#intrinsic("text.clone")
         pub fn duplicate(input: &String) @noescape -> String"#;
     const CHECK: &str = r#"#intrinsic("check.assert")
-        fn verify(ok: Bool, message: &String) @noescape
+        pub fn verify(ok: Bool, message: &String) @noescape
         #intrinsic("check.panic")
-        fn stop(message: &String) @noescape;"#;
+        pub fn stop(message: &String) @noescape;"#;
     let types = registry(&[
         SourceDefinition {
             kind: SourceKind::Text,
@@ -666,19 +667,19 @@ fn source_functions_aliases_and_methods_keep_their_definition_namespace() {
             "joky/integer",
             r#"
             import joky/option as opt.{type Choice as Answer, Value as Present, identity as copy}
-            fn helper(n: Int32) -> Answer { Present(copy(n)) }
-            fn shadow(Present: Int32) -> Int32 { Present }
+            pub fn helper(n: Int32) -> Answer { Present(copy(n)) }
+            pub fn shadow(Present: Int32) -> Int32 { Present }
             impl Int32 {
-                const BASE: Int32 = 42
-                fn checked(self) -> Answer { helper(self) }
+                pub const BASE: Int32 = 42
+                pub fn checked(self) -> Answer { helper(self) }
             }
         "#,
         ),
         definition(
             "joky/option",
             r#"
-            enum Choice { Empty, Value(Int32) }
-            fn identity<T>(value: T) -> T { value }
+            pub enum Choice { Empty, Value(Int32) }
+            pub fn identity<T>(value: T) -> T { value }
         "#,
         ),
     ]);
@@ -730,10 +731,10 @@ fn source_functions_aliases_and_methods_keep_their_definition_namespace() {
 #[test]
 fn importing_modules_cannot_supply_missing_library_functions_or_members() {
     for library in [
-        "fn value() -> Int32 { caller_only() }",
-        "fn value() -> Int32 { (1).caller_only() }",
-        "fn value() -> Int32 { Limits.CALLER }",
-        "impl Int32 { const LIBRARY: Int32 = Limits.CALLER } fn value() -> Int32 { Int32.LIBRARY }",
+        "pub fn value() -> Int32 { caller_only() }",
+        "pub fn value() -> Int32 { (1).caller_only() }",
+        "pub fn value() -> Int32 { Limits.CALLER }",
+        "impl Int32 { const LIBRARY: Int32 = Limits.CALLER } pub fn value() -> Int32 { Int32.LIBRARY }",
     ] {
         let types = registry(&[definition("joky/integer", library)]);
         let source = r#"

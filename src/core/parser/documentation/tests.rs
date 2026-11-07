@@ -42,7 +42,7 @@ fn private() {}
 fn test_case() {}
 //! Not a module header.
 "#;
-    let docs = extract(source, false).unwrap();
+    let docs = extract(source).unwrap();
     assert_eq!(docs.docs, "Module overview.\nUnicode 文档.");
     let get = |name: &str| docs.entries.iter().find(|e| e.name == name).unwrap();
     assert_eq!(
@@ -88,25 +88,21 @@ fn test_case() {}
 #[test]
 fn documentation_uses_visibility_and_ignores_synthetic_imports() {
     let source = "import joky/option\nimport joky/internal/buffer\nfn helper() {}\nextern fn __host()\nstruct Hidden {}\nimpl Hidden { pub fn new() -> Self { Hidden {} } }\npub fn values() { let a = [1, 2] }";
-    let ordinary = extract(source, false).unwrap();
+    let ordinary = extract(source).unwrap();
     assert_eq!(ordinary.entries.len(), 1);
     assert_eq!(ordinary.imports, ["import joky/option"]);
-    let embedded = extract(source, true).unwrap();
-    assert!(embedded.entries.iter().any(|e| e.name == "helper"));
-    assert!(!embedded.entries.iter().any(|e| e.name == "__host"));
-    assert!(extract("pub fn broken(", false).is_err());
-    let empty = extract("//! Only documentation.\r\n", false).unwrap();
+    assert!(!ordinary.entries.iter().any(|e| e.name == "helper"));
+    assert!(extract("pub fn broken(").is_err());
+    let empty = extract("//! Only documentation.\r\n").unwrap();
     assert_eq!(empty.docs, "Only documentation.");
     assert!(empty.entries.is_empty());
 }
 
 #[test]
 fn documentation_merges_repeated_impl_blocks() {
-    let docs = extract(
-        "pub struct Value {}\nimpl Value { pub fn a() {} }\nimpl Value { pub fn b() {} }",
-        false,
-    )
-    .unwrap();
+    let docs =
+        extract("pub struct Value {}\nimpl Value { pub fn a() {} }\nimpl Value { pub fn b() {} }")
+            .unwrap();
     let implementations: Vec<_> = docs.entries.iter().filter(|e| e.kind == "impl").collect();
     assert_eq!(implementations.len(), 1);
     assert_eq!(

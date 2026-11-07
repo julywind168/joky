@@ -332,8 +332,8 @@ mod tests {
             markdown("first\nsecond\n\n- one\n- two"),
             "<p>first\nsecond</p><ul><li>one</li><li>two</li></ul>"
         );
-        let docs = joky::parser::documentation::extract("pub fn 中文() {} pub fn 字符() {}", false)
-            .unwrap();
+        let docs =
+            joky::parser::documentation::extract("pub fn 中文() {} pub fn 字符() {}").unwrap();
         assert_ne!(anchor(&docs.entries[0]), anchor(&docs.entries[1]));
     }
 }

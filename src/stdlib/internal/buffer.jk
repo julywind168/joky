@@ -1,138 +1,138 @@
 // Compiler-owned signatures. Only the embedded storage definition receives
 // the internal Buffer identity and primitive bodies; this text grants neither.
-type Buffer<T> = T
-type Element<T> = T
-type Slice<T> = T
+pub type Buffer<T> = T
+pub type Element<T> = T
+pub type Slice<T> = T
 
 #intrinsic("buffer.transfer")
-fn transfer<T>(source: &mut Buffer<T>, destination: &mut Buffer<T>)
+pub fn transfer<T>(source: &mut Buffer<T>, destination: &mut Buffer<T>)
 #intrinsic("buffer.append_bytes")
-fn append_bytes(destination: &mut Buffer<UInt8>, source: &Slice<UInt8>, start: UInt64, end: UInt64)
+pub fn append_bytes(destination: &mut Buffer<UInt8>, source: &Slice<UInt8>, start: UInt64, end: UInt64)
 #intrinsic("buffer.find_byte")
-fn find_byte(source: &Slice<UInt8>, byte: UInt8, start: UInt64, end: UInt64) -> UInt64
+pub fn find_byte(source: &Slice<UInt8>, byte: UInt8, start: UInt64, end: UInt64) -> UInt64
 #intrinsic("buffer.sha256")
-fn sha256(destination: &mut Slice<UInt8>, input: &Slice<UInt8>)
+pub fn sha256(destination: &mut Slice<UInt8>, input: &Slice<UInt8>)
 #intrinsic("buffer.hmac_sha256")
-fn hmac_sha256(destination: &mut Slice<UInt8>, key: &Slice<UInt8>, input: &Slice<UInt8>)
+pub fn hmac_sha256(destination: &mut Slice<UInt8>, key: &Slice<UInt8>, input: &Slice<UInt8>)
 #intrinsic("buffer.verify_hmac_sha256")
-fn verify_hmac_sha256(key: &Slice<UInt8>, input: &Slice<UInt8>, tag: &Slice<UInt8>) -> Bool
+pub fn verify_hmac_sha256(key: &Slice<UInt8>, input: &Slice<UInt8>, tag: &Slice<UInt8>) -> Bool
 #intrinsic("buffer.random_fill")
-fn random_fill(destination: &mut Slice<UInt8>) -> Bool
+pub fn random_fill(destination: &mut Slice<UInt8>) -> Bool
 #intrinsic("buffer.utf8_prefix")
-fn utf8_prefix(source: &Slice<UInt8>) -> UInt64
+pub fn utf8_prefix(source: &Slice<UInt8>) -> UInt64
 #intrinsic("buffer.take_last")
-fn take_last<T>(source: &mut Buffer<T>) -> T
+pub fn take_last<T>(source: &mut Buffer<T>) -> T
 #intrinsic("buffer.allocate")
-fn allocate<T>(capacity: UInt64) -> Buffer<T>
+pub fn allocate<T>(capacity: UInt64) -> Buffer<T>
 #intrinsic("buffer.len")
-fn len<T>(buffer: &Buffer<T>) -> UInt64
+pub fn len<T>(buffer: &Buffer<T>) -> UInt64
 #intrinsic("buffer.capacity")
-fn capacity<T>(buffer: &Buffer<T>) -> UInt64
+pub fn capacity<T>(buffer: &Buffer<T>) -> UInt64
 #intrinsic("buffer.capacity_limit")
-fn capacity_limit<T>() -> UInt64
+pub fn capacity_limit<T>() -> UInt64
 #intrinsic("buffer.load")
-fn load<T: Copy>(buffer: &Buffer<T>, index: UInt64) -> T
+pub fn load<T: Copy>(buffer: &Buffer<T>, index: UInt64) -> T
 #intrinsic("buffer.store")
-fn store<T>(buffer: &mut Buffer<T>, index: UInt64, value: T)
+pub fn store<T>(buffer: &mut Buffer<T>, index: UInt64, value: T)
 #intrinsic("buffer.initialize_next")
-fn initialize_next<T>(buffer: &mut Buffer<T>, value: T)
+pub fn initialize_next<T>(buffer: &mut Buffer<T>, value: T)
 #intrinsic("buffer.truncate")
-fn truncate<T>(buffer: &mut Buffer<T>, new_len: UInt64)
+pub fn truncate<T>(buffer: &mut Buffer<T>, new_len: UInt64)
 #intrinsic("buffer.replace")
-fn replace<T>(destination: &mut Buffer<T>, source: Buffer<T>)
+pub fn replace<T>(destination: &mut Buffer<T>, source: Buffer<T>)
 #intrinsic("buffer.release")
-fn release<T>(buffer: Buffer<T>)
+pub fn release<T>(buffer: Buffer<T>)
 
 #intrinsic("buffer.borrow")
-fn borrow<T: Copy>(buffer: &Buffer<T>, index: UInt64) -> &Element<T>
+pub fn borrow<T: Copy>(buffer: &Buffer<T>, index: UInt64) -> &Element<T>
 #intrinsic("buffer.borrow_ref")
-fn borrow_ref<T>(buffer: &Buffer<T>, index: UInt64) -> &T
+pub fn borrow_ref<T>(buffer: &Buffer<T>, index: UInt64) -> &T
 #intrinsic("buffer.borrow_mut_ref")
-fn borrow_mut_ref<T>(buffer: &mut Buffer<T>, index: UInt64) -> &mut T
+pub fn borrow_mut_ref<T>(buffer: &mut Buffer<T>, index: UInt64) -> &mut T
 #intrinsic("buffer.borrow_mut")
-fn borrow_mut<T: Copy>(buffer: &mut Buffer<T>, index: UInt64) -> &mut Element<T>
+pub fn borrow_mut<T: Copy>(buffer: &mut Buffer<T>, index: UInt64) -> &mut Element<T>
 #intrinsic("buffer.slice")
-fn slice<T>(buffer: &Buffer<T>, start: UInt64, end: UInt64) -> &Slice<T>
+pub fn slice<T>(buffer: &Buffer<T>, start: UInt64, end: UInt64) -> &Slice<T>
 #intrinsic("buffer.slice_mut")
-fn slice_mut<T>(buffer: &mut Buffer<T>, start: UInt64, end: UInt64) -> &mut Slice<T>
+pub fn slice_mut<T>(buffer: &mut Buffer<T>, start: UInt64, end: UInt64) -> &mut Slice<T>
 #intrinsic("buffer.element_load")
-fn element_load<T: Copy>(value: &Element<T>) -> T
+pub fn element_load<T: Copy>(value: &Element<T>) -> T
 #intrinsic("buffer.element_store")
-fn element_store<T: Copy>(value: &mut Element<T>, next: T)
+pub fn element_store<T: Copy>(value: &mut Element<T>, next: T)
 #intrinsic("buffer.slice_len")
-fn slice_len<T>(values: &Slice<T>) -> UInt64
+pub fn slice_len<T>(values: &Slice<T>) -> UInt64
 #intrinsic("buffer.slice_load")
-fn slice_load<T: Copy>(values: &Slice<T>, index: UInt64) -> T
+pub fn slice_load<T: Copy>(values: &Slice<T>, index: UInt64) -> T
 #intrinsic("buffer.slice_store")
-fn slice_store<T: Copy>(values: &mut Slice<T>, index: UInt64, next: T)
+pub fn slice_store<T: Copy>(values: &mut Slice<T>, index: UInt64, next: T)
 #intrinsic("buffer.slice_borrow")
-fn slice_borrow<T: Copy>(values: &Slice<T>, index: UInt64) -> &Element<T>
+pub fn slice_borrow<T: Copy>(values: &Slice<T>, index: UInt64) -> &Element<T>
 #intrinsic("buffer.slice_borrow_mut")
-fn slice_borrow_mut<T: Copy>(values: &mut Slice<T>, index: UInt64) -> &mut Element<T>
+pub fn slice_borrow_mut<T: Copy>(values: &mut Slice<T>, index: UInt64) -> &mut Element<T>
 #intrinsic("buffer.subslice")
-fn subslice<T>(values: &Slice<T>, start: UInt64, end: UInt64) -> &Slice<T>
+pub fn subslice<T>(values: &Slice<T>, start: UInt64, end: UInt64) -> &Slice<T>
 #intrinsic("buffer.subslice_mut")
-fn subslice_mut<T>(values: &mut Slice<T>, start: UInt64, end: UInt64) -> &mut Slice<T>
+pub fn subslice_mut<T>(values: &mut Slice<T>, start: UInt64, end: UInt64) -> &mut Slice<T>
 
 #intrinsic("buffer.slice_borrow_ref")
-fn slice_borrow_ref<T>(values: &Slice<T>, index: UInt64) -> &T
+pub fn slice_borrow_ref<T>(values: &Slice<T>, index: UInt64) -> &T
 #intrinsic("buffer.slice_borrow_mut_ref")
-fn slice_borrow_mut_ref<T>(values: &mut Slice<T>, index: UInt64) -> &mut T
+pub fn slice_borrow_mut_ref<T>(values: &mut Slice<T>, index: UInt64) -> &mut T
 
 #intrinsic("buffer.swap_elements")
-fn swap_elements<T>(buffer: &mut Buffer<T>, first: UInt64, second: UInt64)
+pub fn swap_elements<T>(buffer: &mut Buffer<T>, first: UInt64, second: UInt64)
 
 // A task-local borrowed cursor, never an owning or aggregate value.
-type Iter<T> = T
+pub type Iter<T> = T
 #intrinsic("buffer.iter")
-fn iter<T>(values: &Buffer<T>) -> &Iter<T>
+pub fn iter<T>(values: &Buffer<T>) -> &Iter<T>
 #intrinsic("buffer.iter_mut")
-fn iter_mut<T>(values: &mut Buffer<T>) -> &mut Iter<T>
+pub fn iter_mut<T>(values: &mut Buffer<T>) -> &mut Iter<T>
 #intrinsic("buffer.iter_advance")
-fn iter_advance<T>(iterator: &Iter<T>) -> Bool
+pub fn iter_advance<T>(iterator: &Iter<T>) -> Bool
 #intrinsic("buffer.iter_current")
-fn iter_current<T>(iterator: &Iter<T>) -> &T
+pub fn iter_current<T>(iterator: &Iter<T>) -> &T
 #intrinsic("buffer.iter_current_mut")
-fn iter_current_mut<T>(iterator: &mut Iter<T>) -> &mut T
+pub fn iter_current_mut<T>(iterator: &mut Iter<T>) -> &mut T
 
 #intrinsic("buffer.slice_iter")
-fn slice_iter<T>(values: &Slice<T>) -> &Iter<T>
+pub fn slice_iter<T>(values: &Slice<T>) -> &Iter<T>
 #intrinsic("buffer.slice_iter_mut")
-fn slice_iter_mut<T>(values: &mut Slice<T>) -> &mut Iter<T>
+pub fn slice_iter_mut<T>(values: &mut Slice<T>) -> &mut Iter<T>
 
-type PairIter<T> = T
-type Entry<T> = T
+pub type PairIter<T> = T
+pub type Entry<T> = T
 #intrinsic("buffer.pair_iter")
-fn pair_iter<K, V, T>(owner: &T) -> &PairIter<(K, V)>
+pub fn pair_iter<K, V, T>(owner: &T) -> &PairIter<(K, V)>
 #intrinsic("buffer.pair_iter_mut")
-fn pair_iter_mut<K, V, T>(owner: &mut T) -> &mut PairIter<(K, V)>
+pub fn pair_iter_mut<K, V, T>(owner: &mut T) -> &mut PairIter<(K, V)>
 #intrinsic("buffer.pair_advance")
-fn pair_advance<K, V>(cursor: &PairIter<(K, V)>) -> Bool
+pub fn pair_advance<K, V>(cursor: &PairIter<(K, V)>) -> Bool
 #intrinsic("buffer.pair_current")
-fn pair_current<K, V>(cursor: &PairIter<(K, V)>) -> &Entry<(K, V)>
+pub fn pair_current<K, V>(cursor: &PairIter<(K, V)>) -> &Entry<(K, V)>
 #intrinsic("buffer.pair_current_mut")
-fn pair_current_mut<K, V>(cursor: &mut PairIter<(K, V)>) -> &mut Entry<(K, V)>
+pub fn pair_current_mut<K, V>(cursor: &mut PairIter<(K, V)>) -> &mut Entry<(K, V)>
 #intrinsic("buffer.entry_key")
-fn entry_key<K, V>(entry: &Entry<(K, V)>) -> &K
+pub fn entry_key<K, V>(entry: &Entry<(K, V)>) -> &K
 #intrinsic("buffer.entry_value")
-fn entry_value<K, V>(entry: &Entry<(K, V)>) -> &V
+pub fn entry_value<K, V>(entry: &Entry<(K, V)>) -> &V
 #intrinsic("buffer.entry_value_mut")
-fn entry_value_mut<K, V>(entry: &mut Entry<(K, V)>) -> &mut V
+pub fn entry_value_mut<K, V>(entry: &mut Entry<(K, V)>) -> &mut V
 
 #intrinsic("buffer.sha256_new")
-fn sha256_new() -> crypto.Sha256Owner
+pub fn sha256_new() -> crypto.Sha256Owner
 #intrinsic("buffer.hmac_sha256_new")
-fn hmac_sha256_new(key: &Slice<UInt8>) -> crypto.HmacSha256Owner
+pub fn hmac_sha256_new(key: &Slice<UInt8>) -> crypto.HmacSha256Owner
 #intrinsic("buffer.sha256_update")
-fn sha256_update(state: &mut crypto.Sha256Owner, input: &Slice<UInt8>)
+pub fn sha256_update(state: &mut crypto.Sha256Owner, input: &Slice<UInt8>)
 #intrinsic("buffer.hmac_sha256_update")
-fn hmac_sha256_update(state: &mut crypto.HmacSha256Owner, input: &Slice<UInt8>)
+pub fn hmac_sha256_update(state: &mut crypto.HmacSha256Owner, input: &Slice<UInt8>)
 #intrinsic("buffer.sha256_finish")
-fn sha256_finish(state: &mut crypto.Sha256Owner, destination: &mut Slice<UInt8>)
+pub fn sha256_finish(state: &mut crypto.Sha256Owner, destination: &mut Slice<UInt8>)
 #intrinsic("buffer.hmac_sha256_finish")
-fn hmac_sha256_finish(state: &mut crypto.HmacSha256Owner, destination: &mut Slice<UInt8>)
+pub fn hmac_sha256_finish(state: &mut crypto.HmacSha256Owner, destination: &mut Slice<UInt8>)
 #intrinsic("buffer.hmac_sha256_verify")
-fn hmac_sha256_verify(state: &mut crypto.HmacSha256Owner, tag: &Slice<UInt8>) -> Bool
+pub fn hmac_sha256_verify(state: &mut crypto.HmacSha256Owner, tag: &Slice<UInt8>) -> Bool
 
 #intrinsic("buffer.password_needs_rehash")
-fn password_needs_rehash(encoded: &Slice<UInt8>) -> UInt64
+pub fn password_needs_rehash(encoded: &Slice<UInt8>) -> UInt64

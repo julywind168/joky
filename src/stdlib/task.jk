@@ -43,8 +43,8 @@ impl Show for Failure {
     }
 }
 
-pub fn __isolate_success<T>(value: T) -> Result<T, Failure> { Ok(value) }
-pub fn __isolate_failure<T>(code: UInt64) -> Result<T, Failure> {
+fn __isolate_success<T>(value: T) -> Result<T, Failure> { Ok(value) }
+fn __isolate_failure<T>(code: UInt64) -> Result<T, Failure> {
     Err(match code {
         1 => Failure.Runtime
         2 => Failure.ResourceLimit

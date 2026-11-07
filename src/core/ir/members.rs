@@ -354,12 +354,15 @@ impl FunctionPlan {
     pub(super) fn member_visible(&self, ty: &Type, name: &str) -> bool {
         self.definition_scope.as_ref().map_or_else(
             || {
-                !self
-                    .generics
-                    .borrow()
-                    .members
-                    .private
-                    .contains(&member_key(ty, name))
+                // Root scopes can also carry compiler-only members, such as
+                // the private builder used by SQL template expansion.
+                self.scope.members.contains(&member_key(ty, name))
+                    || !self
+                        .generics
+                        .borrow()
+                        .members
+                        .private
+                        .contains(&member_key(ty, name))
             },
             |scope| scope.members.contains(&member_key(ty, name)),
         )

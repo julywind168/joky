@@ -1183,6 +1183,9 @@ Result 的 ok / err 返回标准 Option，依赖关系仅为 `result → option`
 受信任标准模块的 extern 依赖也按实际使用保留；仅提供 IO prelude 不要求嵌入宿主注册 stdout，
 调用 `print`/`println` 时仍必须提供匹配的宿主绑定。用户源码中的 extern 继续按声明校验。
 内嵌模块描述表规定是否重导出选中成员，以及无别名整模块导入的兼容简写。
+所有源码模块仅导出显式 `pub` 的声明和固有成员；标准库不再把未标记声明自动提升为公开。
+trait 实现的方法仍按 trait 契约参与分派。所有 `joky/internal/*` 定义使用编译器指定的私有模块身份，
+用户代码不能直接导入；名字相同的普通源码定义不会获得标准库权限。
 `joky/internal/time` 定义 Duration、Instant、Timestamp 和读取私有时钟坐标的等待桥接；
 该模块仅能由受信任标准库导入。`joky/time` 只再导出三个共享名义类型，`joky/task`
 提供公开等待入口。三者均使用显式 `pub` 导出，未标记的计算和解析辅助函数不会泄漏；
@@ -2908,7 +2911,9 @@ R7a 为该入口附加受审计的同步 TextViewV2 并行宿主证据：精确�
 Lexer 为 `sql"..."` 保留文本、标识符孔和参数孔三类片段。Parser 在解码及去缩进后的文本中检查
 PostgreSQL 引号、美元引用、嵌套块注释与行注释，拒绝其中的孔、模板内手写 `$N` 及参数 token 拼接。
 之后展开为普通 `postgres.SqlBuilder` 调用，复用字符串插值的拥有位置／引用／临时值借用与逐段清理。
-编译器私有导入别名固定绑定标准 postgres，内部 builder 与追加函数不向用户源码开放。
+编译器私有导入别名固定绑定标准 postgres。模块缓存将 SQL 的 builder 类型、构造／完成方法和
+三个追加函数单独存入 `compiler_exports`；绑定时仅赋给用户无法书写的 `$joky_postgres` 别名，
+普通模块导入、选择性导入和公开文档均不可见。权限来自 Postgres 源码定义身份，不来自模块路径。
 `{expr}` 的追加参数固定为 Identifier，`${expr}` 通过 BindParam 单态化；不经过 Show 或动态类型判断。
 Query 是普通拥有型记录，包含 String 和 Array<Value>。执行消费记录，继续使用既有 PostgreSQL 编码及
 后台驱动，不改变 ABI、字节码或 CPS 协议；三个后端共享构造、挂起、取消和分配失败的清理路径。

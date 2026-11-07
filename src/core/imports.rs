@@ -448,6 +448,22 @@ fn bind(
             "joky/postgres" => Some("$joky_postgres"),
             _ => None,
         };
+        if let (Some(alias), Some(source)) = (compiler_alias, source) {
+            for (name, binding) in &source.compiler_exports.types {
+                scope
+                    .types
+                    .insert(format!("{alias}.{name}"), binding.clone());
+            }
+            for (name, binding) in &source.compiler_exports.functions {
+                scope
+                    .functions
+                    .insert(format!("{alias}.{name}"), binding.clone());
+                scope.imported_functions.insert(binding.clone());
+            }
+            scope
+                .members
+                .extend(source.compiler_exports.members.iter().cloned());
+        }
         if let Some(alias) = compiler_alias {
             for (name, binding) in &exports.types {
                 scope

@@ -110,6 +110,31 @@ fn doc_cli_generates_linked_offline_reference_and_regenerates() {
             assert!(text.contains("-&gt; Result&lt;Emission, LogError&gt;"));
         }
     }
+    for (module, hidden) in [
+        ("assertions", vec!["fn quoted", "fn hex_digit"]),
+        (
+            "http",
+            vec![
+                "enum Wire",
+                "enum ReadFailure",
+                "fn read_request",
+                "fn open(",
+            ],
+        ),
+        ("tls", vec!["fn failure", "fn flush(", "const RECORD"]),
+        (
+            "postgres",
+            vec!["struct SqlBuilder", "fn encode(", "fn rows("],
+        ),
+        ("float", vec!["fn float64_sqrt", "fn i8_from_valid_f64"]),
+        ("fs", vec!["const IO_CHUNK_SIZE", "fn read_remaining"]),
+    ] {
+        let text =
+            text_without_tags(&fs::read_to_string(root.join(module).join("index.html")).unwrap());
+        for name in hidden {
+            assert!(!text.contains(name), "{module}: {name}");
+        }
+    }
     let integer = fs::read_to_string(root.join("integer/index.html")).unwrap();
     assert!(!integer.contains("rune_from_valid_u32"));
     assert!(!integer.contains("parse_decimal"));
