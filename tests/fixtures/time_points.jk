@@ -1,4 +1,4 @@
-import joky/time.{type Duration, type Instant, type Timestamp}
+import joky/time as clock.{type Duration, type Instant, type Timestamp}
 import joky/task
 import joky/option.{Some, None}
 import joky/array.{type Array}
@@ -15,6 +15,14 @@ fn canonical(text: &String, expected: &String) {
     assert(stamp(&formatted).compare(value) == 0, "timestamp round trip")
 }
 fn timestamp_values() -> Int32 {
+    let delay: clock.Duration = 1ns + Duration.from_nanos(41)
+    assert(delay == clock.Duration.from_nanos(42), "re-exported duration identity")
+    let instant: clock.Instant = Instant.now()
+    let same: clock.Instant = instant
+    assert(instant.compare(same).unwrap_or(1) == 0, "re-exported instant identity")
+    let stamp: clock.Timestamp = Timestamp.from_unix_secs(0).unwrap_or_else(move || { panic("epoch") })
+    let same: clock.Timestamp = stamp
+    assert(same == stamp, "re-exported timestamp identity")
     let epoch = Timestamp.from_unix_secs(0).unwrap_or_else(move || { panic("epoch") })
     assert(epoch.to_text() == "1970-01-01T00:00:00Z", "epoch")
     let before = Timestamp.from_unix_millis(-1).unwrap_or(epoch)

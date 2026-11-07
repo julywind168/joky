@@ -31,6 +31,10 @@ pub(super) enum SourceKind {
     Decimal,
     User,
     Embedded,
+    /// Ordinary trusted source modules use explicit public declarations.
+    Library,
+    /// Shared implementation modules cannot be imported by user code.
+    InternalLibrary,
     FixedArrayStorage,
     FixedArrayLibrary,
     BufferStorage,
@@ -56,6 +60,8 @@ impl SourceKind {
         !matches!(
             self,
             SourceKind::User
+                | SourceKind::Library
+                | SourceKind::InternalLibrary
                 | SourceKind::FixedArrayLibrary
                 | SourceKind::BufferLibrary
                 | SourceKind::Equality
@@ -156,9 +162,16 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
-        kind: SourceKind::Embedded,
+        kind: SourceKind::Library,
         path: "joky/time",
         source: include_str!("../../stdlib/time.jk"),
+        reexport_imports: true,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::InternalLibrary,
+        path: "joky/internal/time",
+        source: include_str!("../../stdlib/internal/time.jk"),
         reexport_imports: false,
         implicit: ImplicitImports::None,
     },
@@ -177,7 +190,7 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
-        kind: SourceKind::Embedded,
+        kind: SourceKind::Library,
         path: "joky/task",
         source: include_str!("../../stdlib/task.jk"),
         reexport_imports: false,
@@ -670,7 +683,9 @@ impl StandardLibrary {
             &self.modules,
             matches!(
                 kind,
-                SourceKind::FixedArrayLibrary
+                SourceKind::Library
+                    | SourceKind::InternalLibrary
+                    | SourceKind::FixedArrayLibrary
                     | SourceKind::BufferLibrary
                     | SourceKind::Integer
                     | SourceKind::Float
@@ -957,7 +972,8 @@ impl StandardLibrary {
                 },
                 private: matches!(
                     kind,
-                    SourceKind::FixedArrayStorage
+                    SourceKind::InternalLibrary
+                        | SourceKind::FixedArrayStorage
                         | SourceKind::BufferStorage
                         | SourceKind::TypeCheck
                         | SourceKind::Decimal

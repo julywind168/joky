@@ -6,6 +6,39 @@ use crate::{
 };
 
 #[test]
+fn time_facade_exports_only_shared_nominal_types() {
+    let library = StandardLibrary::new();
+    let time = &library.modules["joky/time"];
+    let internal = &library.modules["joky/internal/time"];
+    assert!(internal.private);
+    assert!(!time.private);
+    assert_eq!(
+        time.exports
+            .types
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["Duration", "Instant", "Timestamp"]
+    );
+    assert!(time.exports.functions.is_empty());
+    for name in ["Duration", "Instant", "Timestamp"] {
+        assert_eq!(
+            time.exports.types[name].declaration,
+            internal.exports.types[name].declaration
+        );
+    }
+    assert_eq!(
+        internal
+            .exports
+            .functions
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["sleep_until"]
+    );
+}
+
+#[test]
 fn array_exports_and_storage_privileges_follow_compiler_definitions() {
     let library = StandardLibrary::new();
     let array = &library.modules["joky/array"];

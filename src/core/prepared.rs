@@ -143,7 +143,7 @@ mod tests {
             ("const A:Bool=1 fn main(){}", TypeMismatch, "Type mismatch for constant `A`: expected Bool, got Int32", ""),
             ("const A:Int32=B\nconst B:Int32=A\nfn main(){}", InvalidState, "Cyclic module constant dependency involving `A`", ""),
             ("import joky/array.{type Array}\nfn f(a:&Array<Int32>) { a.borrow_ref(0).unwrap() } fn main(){}", UnknownName, "Type '&Int32' has no method 'unwrap'", ""),
-            ("fn main(){let x=1s + 1}", TypeMismatch, "Argument type mismatch for `+`: expected joky/time.Duration, got Int32", "1"),
+            ("fn main(){let x=1s + 1}", TypeMismatch, "Argument type mismatch for `+`: expected joky/internal/time.Duration, got Int32", "1"),
             ("fn grow<T>(x:T,n:Int32) { if n > 0 { grow((x,x),n-1) } } fn main(){grow(1,1)}", ResourceLimit, "Tuple layout exceeds 65536 scalar slots", "(x,x)"),
             ("fn tag<T>(x:Option<Int32>)->Int32{1} fn main(){println(tag(None))}", TypeMismatch, "Cannot infer type parameter `T` for `tag`; use explicit generic arguments", "tag(None)"),
             ("fn id<T>(t:T)->T{t} trait Get{fn get(&self) @noescape -> Int32} fn f(s:&dyn Get){let v=id((s,s))} fn main(){}", TypeMismatch, "Dyn views cannot be stored in tuples", "(s,s)"),

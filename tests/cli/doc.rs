@@ -95,6 +95,14 @@ fn doc_cli_generates_linked_offline_reference_and_regenerates() {
         assert!(!text.contains("__sleep_until"), "{module}");
         if module == "time" {
             assert!(!text.contains("fn sleep_until("));
+            for name in ["Duration", "Instant", "Timestamp"] {
+                assert!(text.contains(&format!("pub struct {name}")), "{name}");
+            }
+            assert!(text.contains("pub fn from_nanos(value: UInt64) -&gt; Duration"));
+            assert!(text.contains("pub fn now() -&gt; Instant"));
+            assert!(text.contains("pub fn parse(text: &amp;String) -&gt; Option&lt;Timestamp&gt;"));
+            assert!(!text.contains("fn scaled("));
+            assert!(!text.contains("fn valid("));
         } else if module == "task" {
             assert!(text.contains("pub fn sleep_until(deadline: Instant) @suspends"));
         } else if module == "log" {

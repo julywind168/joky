@@ -396,8 +396,11 @@ fn bind(
         }
         let source = libraries.get(&import.path);
         if source.is_some_and(|source| source.private) && !buffer_access {
-            return Err(error(import.span, ErrorCode::InvalidImport,
-                "Buffer storage primitives are private to compiler-bound standard library definitions"));
+            return Err(error(
+                import.span,
+                ErrorCode::InvalidImport,
+                "This module is private to compiler-bound standard library definitions",
+            ));
         }
         let exports = source
             .map(|source| source.exports.clone())

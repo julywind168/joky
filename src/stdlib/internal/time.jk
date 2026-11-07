@@ -1,0 +1,302 @@
+//! Shared time values and clock operations for the public time and task modules.
+
+import joky/ops.{type Add}
+import joky/check.{panic}
+import joky/option.{ type Option, Some, None }
+import joky/eq.{ type Eq }
+import joky/show.{ type Show }
+import joky/string.{ type StringBuilder }
+import joky/slice.{type Slice}
+import joky/integer
+
+extern fn __joky_public_task_sleep_until(clock: UInt64, ticks: UInt64) @suspends
+extern fn __joky_time_clock() -> UInt64
+extern fn __joky_time_ticks(clock: UInt64) -> UInt64
+extern fn __joky_time_unix_micros() -> Int64
+
+// A distinct Copy value; every UInt64 nanosecond count is valid.
+pub struct Duration { nanos: UInt64 }
+
+fn scaled(value: UInt64, scale: UInt64) -> Option<Duration> {
+    if value > 18446744073709551615 / scale { None }
+    else { Some(Duration { nanos: value * scale }) }
+}
+impl Duration {
+    pub fn from_nanos(value: UInt64) -> Duration { Duration { nanos: value } }
+    pub fn from_micros(value: UInt64) -> Option<Duration> { scaled(value, 1000) }
+    pub fn from_millis(value: UInt64) -> Option<Duration> { scaled(value, 1000000) }
+    pub fn from_secs(value: UInt64) -> Option<Duration> { scaled(value, 1000000000) }
+    pub fn from_mins(value: UInt64) -> Option<Duration> { scaled(value, 60000000000) }
+    pub fn from_hours(value: UInt64) -> Option<Duration> { scaled(value, 3600000000000) }
+    pub fn as_nanos(self) -> UInt64 { self.nanos }
+    pub fn as_micros(self) -> UInt64 { self.nanos / 1000 }
+    pub fn as_millis(self) -> UInt64 { self.nanos / 1000000 }
+    pub fn as_secs(self) -> UInt64 { self.nanos / 1000000000 }
+    pub fn as_mins(self) -> UInt64 { self.nanos / 60000000000 }
+    pub fn as_hours(self) -> UInt64 { self.nanos / 3600000000000 }
+    pub fn is_zero(self) -> Bool { self.nanos == 0 }
+    pub fn compare(self, other: Duration) -> Int32 {
+        if self.nanos < other.nanos { -1 } else if self.nanos > other.nanos { 1 } else { 0 }
+    }
+    pub fn checked_add(self, other: Duration) -> Option<Duration> {
+        if other.nanos > 18446744073709551615 - self.nanos { None }
+        else { Some(Duration { nanos: self.nanos + other.nanos }) }
+    }
+    pub fn checked_sub(self, other: Duration) -> Option<Duration> {
+        if self.nanos < other.nanos { None }
+        else { Some(Duration { nanos: self.nanos - other.nanos }) }
+    }
+    pub fn to_text(self) -> String {
+        var output = StringBuilder.new()
+        self.show(&mut output)
+        output.finish()
+    }
+}
+impl Eq for Duration { fn eq(&self, other: &Duration) -> Bool { self.nanos == other.nanos } }
+impl Show for Duration {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        let n = self.nanos
+        let(scale, suffix): (UInt64, String) = if n != 0 && n % 3600000000000 == 0 {(3600000000000, "h") }
+        else if n != 0 && n % 60000000000 == 0 {(60000000000, "min") }
+        else if n >= 1000000000 {(1000000000, "s") }
+        else if n >= 1000000 {(1000000, "ms") }
+        else if n >= 1000 {(1000, "us") }
+        else {(1, "ns") }
+        output.push_str((n / scale).to_string())
+        var remainder = n % scale
+        if remainder != 0 {
+            output.push('.')
+            while remainder != 0 {
+                remainder = remainder * 10
+                output.push_str((remainder / scale).to_string())
+                remainder = remainder % scale
+            }
+        }
+        output.push_str(&suffix)
+    }
+}
+
+impl Add for Duration {
+    fn add(self, other: Duration) -> Duration {
+        match self.checked_add(other) {
+            Some(value) => value
+            None => panic("Duration addition overflow")
+        }
+    }
+}
+
+// Process-local coordinates; only values from the same clock can be compared.
+pub struct Instant { clock_id: UInt64, ticks: UInt64 }
+impl Instant {
+    pub fn now() -> Instant {
+        let clock = __joky_time_clock()
+        Instant { clock_id: clock, ticks: __joky_time_ticks(clock) }
+    }
+    pub fn checked_add(self, duration: Duration) -> Option<Instant> {
+        if duration.nanos > 18446744073709551615 - self.ticks { None }
+        else { Some(Instant { clock_id: self.clock_id, ticks: self.ticks + duration.nanos }) }
+    }
+    pub fn checked_sub(self, duration: Duration) -> Option<Instant> {
+        if duration.nanos > self.ticks { None }
+        else { Some(Instant { clock_id: self.clock_id, ticks: self.ticks - duration.nanos }) }
+    }
+    pub fn duration_since(self, earlier: Instant) -> Option<Duration> {
+        if self.clock_id != earlier.clock_id || self.ticks < earlier.ticks { None }
+        else { Some(Duration.from_nanos(self.ticks - earlier.ticks)) }
+    }
+    pub fn elapsed(self) -> Option<Duration> { Instant.now().duration_since(self) }
+    pub fn compare(self, other: Instant) -> Option<Int32> {
+        if self.clock_id != other.clock_id { None }
+        else { Some(if self.ticks < other.ticks { -1 } else if self.ticks > other.ticks { 1 } else { 0 }) }
+    }
+}
+
+// Gregorian UTC years 0001..9999, normalized to floor seconds and a positive fraction.
+pub struct Timestamp { seconds: Int64, nanos: UInt32 }
+fn valid(value: Timestamp) -> Bool {
+    value.seconds >= -62135596800 && value.seconds <= 253402300799 && value.nanos < 1000000000
+}
+fn require_valid(value: Timestamp) {
+    if !valid(value) { panic("Invalid timestamp") }
+}
+impl Timestamp {
+    pub fn from_unix_parts(seconds: Int64, nanos: UInt32) -> Option<Timestamp> {
+        let value = Timestamp { seconds: seconds, nanos: nanos }
+        if valid(value) { Some(value) } else { None }
+    }
+    pub fn from_unix_secs(value: Int64) -> Option<Timestamp> { Timestamp.from_unix_parts(value, 0) }
+    pub fn from_unix_millis(value: Int64) -> Option<Timestamp> { from_units(value, 1000) }
+    pub fn from_unix_micros(value: Int64) -> Option<Timestamp> { from_units(value, 1000000) }
+    pub fn from_unix_nanos(value: Int64) -> Option<Timestamp> { from_units(value, 1000000000) }
+    // One atomic wall-clock reading, rounded down to microseconds.
+    pub fn now() -> Timestamp {
+        match Timestamp.from_unix_micros(__joky_time_unix_micros()) {
+            Some(value) => value
+            None => panic("Wall clock exceeds the timestamp range")
+        }
+    }
+    pub fn as_unix_secs(self) -> Int64 { require_valid(self); self.seconds }
+    pub fn subsec_nanos(self) -> UInt32 { require_valid(self); self.nanos }
+    pub fn as_unix_millis(self) -> Int64 { require_valid(self); self.seconds * 1000 + int64(self.nanos / 1000000) }
+    pub fn as_unix_micros(self) -> Int64 { require_valid(self); self.seconds * 1000000 + int64(self.nanos / 1000) }
+    pub fn as_unix_nanos(self) -> Option<Int64> {
+        if !valid(self) { return None }
+        let n = int64(self.nanos)
+        if self.seconds >= 0 {
+            if self.seconds > 9223372036 || (self.seconds == 9223372036 && n > 854775807) { None }
+            else { Some(self.seconds * 1000000000 + n) }
+        } else {
+            if self.seconds < -9223372037 || (self.seconds == -9223372037 && n < 145224192) { None }
+            else { Some((self.seconds + 1) * 1000000000 - (1000000000 - n)) }
+        }
+    }
+    pub fn compare(self, other: Timestamp) -> Int32 {
+        require_valid(self); require_valid(other)
+        if self.seconds < other.seconds { -1 } else if self.seconds > other.seconds { 1 }
+        else if self.nanos < other.nanos { -1 } else if self.nanos > other.nanos { 1 } else { 0 }
+    }
+    pub fn checked_add(self, duration: Duration) -> Option<Timestamp> {
+        if !valid(self) { return None }
+        let nanos = uint64(self.nanos) + duration.nanos % 1000000000
+        Timestamp.from_unix_parts(self.seconds + int64(duration.nanos / 1000000000) + int64(nanos / 1000000000), uint32(nanos % 1000000000))
+    }
+    pub fn checked_sub(self, duration: Duration) -> Option<Timestamp> {
+        if !valid(self) { return None }
+        let nanos = int64(self.nanos) - int64(duration.nanos % 1000000000)
+        let seconds = self.seconds - int64(duration.nanos / 1000000000)
+        if nanos < 0 { Timestamp.from_unix_parts(seconds - 1, uint32(nanos + 1000000000)) }
+        else { Timestamp.from_unix_parts(seconds, uint32(nanos)) }
+    }
+    pub fn duration_since(self, earlier: Timestamp) -> Option<Duration> {
+        if !valid(self) || !valid(earlier) || self.compare(earlier) < 0 { return None }
+        var seconds = self.seconds - earlier.seconds
+        var nanos = int64(self.nanos) - int64(earlier.nanos)
+        if nanos < 0 { seconds -= 1; nanos += 1000000000 }
+        match Duration.from_secs(uint64(seconds)) {
+            Some(value) => value.checked_add(Duration.from_nanos(uint64(nanos)))
+            None => None
+        }
+    }
+    pub fn to_text(self) -> String {
+        var output = StringBuilder.new()
+        self.show(&mut output)
+        output.finish()
+    }
+    pub fn parse(text: &String) -> Option<Timestamp> { parse_timestamp(text) }
+}
+fn from_units(value: Int64, scale: Int64) -> Option<Timestamp> {
+    var seconds = value / scale
+    var remainder = value % scale
+    if remainder < 0 { seconds -= 1; remainder += scale }
+    Timestamp.from_unix_parts(seconds, uint32(remainder * (1000000000 / scale)))
+}
+impl Eq for Timestamp { fn eq(&self, other: &Timestamp) -> Bool { self.seconds == other.seconds && self.nanos == other.nanos } }
+fn leap(year: Int64) -> Bool { year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) }
+fn month_days(year: Int64, month: Int64) -> Int64 {
+    if month == 2 { if leap(year) { 29 } else { 28 } }
+    else if month == 4 || month == 6 || month == 9 || month == 11 { 30 } else { 31 }
+}
+fn year_days(year: Int64) -> Int64 {
+    let y = year - 1
+    y * 365 + y / 4 - y / 100 + y / 400 - 719162
+}
+fn padded(output: &mut StringBuilder, value: Int64, width: UInt64) @noescape {
+    let text = value.to_string()
+    var n = text.byte_length()
+    while n < width { output.push('0'); n += 1 }
+    output.push_str(&text)
+}
+impl Show for Timestamp {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        require_valid(*self)
+        var days = self.seconds / 86400
+        var second = self.seconds % 86400
+        if second < 0 { days -= 1; second += 86400 }
+        var low: Int64 = 1
+        var high: Int64 = 10000
+        while low + 1 < high {
+            let middle = (low + high) / 2
+            if year_days(middle) <= days { low = middle } else { high = middle }
+        }
+        days -= year_days(low)
+        var month: Int64 = 1
+        while days >= month_days(low, month) { days -= month_days(low, month); month += 1 }
+        padded(output, low, 4); output.push('-'); padded(output, month, 2); output.push('-'); padded(output, days + 1, 2)
+        output.push('T'); padded(output, second / 3600, 2); output.push(':'); padded(output, second / 60 % 60, 2)
+        output.push(':'); padded(output, second % 60, 2)
+        if self.nanos != 0 {
+            var fraction = self.nanos
+            var width: UInt64 = 9
+            while fraction % 10 == 0 { fraction = fraction / 10; width -= 1 }
+            output.push('.'); padded(output, int64(fraction), width)
+        }
+        output.push('Z')
+    }
+}
+// Bounded ASCII input: seconds are mandatory, fractions have 1..9 digits,
+// offsets are explicit, and leap seconds are not represented.
+fn byte(bytes: &Slice<UInt8>, index: UInt64) -> UInt8 { *slice.borrow_ref(bytes, index) }
+fn digits(bytes: &Slice<UInt8>, start: UInt64, count: UInt64) -> Int64 {
+    var result: Int64 = 0
+    var i: UInt64 = 0
+    while i < count {
+        let byte = byte(bytes, start + i)
+        if byte < 48 || byte > 57 { return -1 }
+        result = result * 10 + int64(byte - 48)
+        i += 1
+    }
+    result
+}
+fn date_seconds(bytes: &Slice<UInt8>) -> Option<Int64> {
+    let year = digits(bytes, 0, 4)
+    let month = digits(bytes, 5, 2)
+    let day = digits(bytes, 8, 2)
+    let hour = digits(bytes, 11, 2)
+    let minute = digits(bytes, 14, 2)
+    let second = digits(bytes, 17, 2)
+    if year < 1 || month < 1 || month > 12 || day < 1 || day > month_days(year, month) { return None }
+    if hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 { return None }
+    var days = year_days(year) + day - 1
+    var m: Int64 = 1
+    while m < month { days += month_days(year, m); m += 1 }
+    Some(days * 86400 + hour * 3600 + minute * 60 + second)
+}
+fn parse_timestamp(text: &String) -> Option<Timestamp> {
+    let bytes = text.bytes()
+    let length = slice.len(bytes)
+    if length < 20 || length > 35 { return None }
+    if byte(bytes, 4) != 45 || byte(bytes, 7) != 45 || byte(bytes, 13) != 58 || byte(bytes, 16) != 58 { return None }
+    let separator = byte(bytes, 10)
+    if separator != 84 && separator != 116 { return None }
+    let seconds = match date_seconds(bytes) { Some(value) => value, None => return None }
+    var index: UInt64 = 19
+    var nanos: UInt32 = 0
+    if byte(bytes, index) == 46 {
+        index += 1
+        let start = index
+        var scale: UInt32 = 100000000
+        while index < length {
+            let byte = byte(bytes, index)
+            if byte < 48 || byte > 57 { break }
+            if scale == 0 { return None }
+            nanos += uint32(byte - 48) * scale
+            scale = scale / 10
+            index += 1
+        }
+        if index == start || index == length { return None }
+    }
+    let suffix = byte(bytes, index)
+    if (suffix == 90 || suffix == 122) && index + 1 == length { return Timestamp.from_unix_parts(seconds, nanos) }
+    if (suffix != 43 && suffix != 45) || index + 6 != length { return None }
+    if byte(bytes, index + 3) != 58 { return None }
+    let hours = digits(bytes, index + 1, 2)
+    let minutes = digits(bytes, index + 4, 2)
+    if hours < 0 || hours > 23 || minutes < 0 || minutes > 59 { return None }
+    // Reject unknown-local-offset metadata that this UTC-only type cannot preserve.
+    if suffix == 45 && hours == 0 && minutes == 0 { return None }
+    let offset = (hours * 60 + minutes) * 60
+    Timestamp.from_unix_parts(if suffix == 43 { seconds - offset } else { seconds + offset }, nanos)
+}
+
+// Only trusted library modules can import this clock-coordinate bridge.
+pub fn sleep_until(deadline: Instant) @suspends { __joky_public_task_sleep_until(deadline.clock_id, deadline.ticks) }

@@ -178,6 +178,33 @@ pub fn extract(source: &str, embedded: bool) -> Result<Documentation, Diagnostic
             .collect(),
     })
 }
+// Render imported declarations with the public facade's selected names.
+pub(crate) fn rename_entry(
+    entry: &mut Entry,
+    renames: &std::collections::BTreeMap<&str, &str>,
+) -> Result<(), Diagnostic> {
+    if renames.is_empty() {
+        return Ok(());
+    }
+    if let Some(name) = renames.get(entry.name.as_str()) {
+        entry.name = (*name).into();
+    }
+    // Token boundaries avoid changing longer identifiers or string constants.
+    for token in Lexer::tokenize(&entry.signature)?.into_iter().rev() {
+        if let TokenKind::Ident(name) = token.kind {
+            if let Some(alias) = renames.get(name.as_str()) {
+                entry
+                    .signature
+                    .replace_range(token.span.start()..token.span.end(), alias);
+            }
+        }
+    }
+    for child in &mut entry.children {
+        rename_entry(child, renames)?;
+    }
+    Ok(())
+}
+
 fn with_prefix(tokens: &[Token], span: Span) -> Span {
     let start = tokens
         .iter()
