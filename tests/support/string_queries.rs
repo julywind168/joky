@@ -71,7 +71,7 @@ pub fn cases() -> Cases {
                      if value.find(\"!\").unwrap_or(0) != {} {{ return 2 }}; \
                      if value.find(\"z\").is_some() {{ return 3 }}; \
                      let tail = value.substring({padding}, value.byte_length()).unwrap_or(\"\"); \
-                     if !tail.equals({expected}) {{ return 4 }}; \
+                     if tail != {expected} {{ return 4 }}; \
                      var copy = Array.new::<UInt8>(); copy.push(0); \
                      array.extend_bytes(&mut copy, value.bytes(), 1, value.byte_length()); \
                      array.extend_bytes(&mut copy, value.bytes(), 0, 0); \
@@ -155,7 +155,7 @@ pub fn cases() -> Cases {
         cases.source.push_str("match string.from_utf8(data) { ");
         match std::str::from_utf8(bytes) {
             Ok(value) => {
-                cases.source.push_str(&format!("Err(_) => 1, Ok(value) => {{ let expected = {}; if !value.equals(&expected) {{ return 2 }}; if value.rune_count() != {} {{ return 3 }}; ", literal(value), value.chars().count()));
+                cases.source.push_str(&format!("Err(_) => 1, Ok(value) => {{ let expected = {}; if value != expected {{ return 2 }}; if value.rune_count() != {} {{ return 3 }}; ", literal(value), value.chars().count()));
                 for (offset, scalar) in value.char_indices() {
                     let next = offset + scalar.len_utf8();
                     cases.source.push_str(&format!("match value.next_rune({offset}) {{ Some((rune, next)) => {{ if rune.to_u32() != {} || next != {next} {{ return 4 }} }}, None => {{ return 5 }} }}; ", u32::from(scalar)));
@@ -189,7 +189,7 @@ pub fn cases() -> Cases {
                 let name = format!("substring_{text_index}_{start}_{end}");
                 cases.source.push_str(&format!("fn {name}() -> Int32 {{ let original = {}; let result = original.substring({start}, {end}); original.release(); match result {{ ", literal(value)));
                 if let Some(expected) = value.get(start..end) {
-                    cases.source.push_str(&format!("None => 1, Some(value) => {{ let expected = {}; if value.equals(&expected) {{ 42 }} else {{ 2 }} }}", literal(expected)));
+                    cases.source.push_str(&format!("None => 1, Some(value) => {{ let expected = {}; if value == expected {{ 42 }} else {{ 2 }} }}", literal(expected)));
                 } else {
                     cases.source.push_str("None => 42, Some(_) => 3");
                 }
@@ -303,7 +303,7 @@ fn text_helpers(cases: &mut Cases) {
         ] {
             let check = expected.map_or("None => {}, Some(_) => return 2".into(), |value| {
                 format!(
-                    "Some(value) => {{ if !value.equals({}) {{ return 3 }} }}, None => return 4",
+                    "Some(value) => {{ if value != {} {{ return 3 }} }}, None => return 4",
                     literal(value)
                 )
             });
@@ -313,7 +313,7 @@ fn text_helpers(cases: &mut Cases) {
         }
         cases.source.push_str("let result = input.split_once(&needle); input.release(); needle.release(); match result { ");
         if let Some((left, right)) = input.split_once(needle) {
-            cases.source.push_str(&format!("Some((left, right)) => {{ if left.equals({}) && right.equals({}) {{ 42 }} else {{ 5 }} }}, None => 6", literal(left), literal(right)));
+            cases.source.push_str(&format!("Some((left, right)) => {{ if left == {} && right == {} {{ 42 }} else {{ 5 }} }}, None => 6", literal(left), literal(right)));
         } else {
             cases.source.push_str("None => 42, Some(_) => 7");
         }

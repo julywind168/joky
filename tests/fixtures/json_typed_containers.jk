@@ -30,7 +30,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer() == path) }
         _ => { ensure(false) }
     }
 }
@@ -44,9 +44,9 @@ fn containers() {
     let values = decoded::<Array<String>>("[\"first\",\"你🙂\",\"last\"]")
     ensure(values.len() == 3)
     let first = "first"; let last = "last"
-    ensure(values.borrow_ref(0).equals(&first)); ensure(values.borrow_ref(2).equals(&last))
+    ensure(values.borrow_ref(0) == first); ensure(values.borrow_ref(2) == last)
     let recovered = decoded::<Array<String>>(encoded(&values))
-    ensure(recovered.borrow_ref(0).equals(&first)); ensure(recovered.borrow_ref(2).equals(&last))
+    ensure(recovered.borrow_ref(0) == first); ensure(recovered.borrow_ref(2) == last)
     let absent = decoded::<Option<Array<String>>>("null"); ensure(absent.is_none())
     let empty = decoded::<Array<String>>("[]"); ensure(empty.is_empty())
 }

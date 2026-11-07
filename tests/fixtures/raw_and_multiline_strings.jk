@@ -1,7 +1,7 @@
 import joky/task.{yield_now}
 
 fn expect(actual: String, expected: String) {
-    assert(actual.equals(&expected), "Raw and multiline string mismatch")
+    assert(actual == expected, "Raw and multiline string mismatch")
 }
 fn next(value: &mut Int32) @noescape -> Int32 { (*(value) = (*value) + 1); (*value) }
 

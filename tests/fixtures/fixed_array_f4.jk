@@ -54,7 +54,7 @@ fn checked_text(bytes:&FixedArray<UInt8,8>, valid:UInt64)->Int32 {
     var i:UInt64=0
     while i<valid {prefix.push((*bytes.borrow_ref(i))); i=i+1}
     let expected="é中"
-    match string.from_utf8(prefix) {Ok(text)=>if string.equals(&text,&expected) {42}else{0},Err(_)=>-2}
+    match string.from_utf8(prefix) {Ok(text)=>if text == expected {42}else{0},Err(_)=>-2}
 }
 fn ffi_array_bytes()->Int32 {
     // Capacity is eight bytes; C reports five valid bytes encoded as UTF-8.

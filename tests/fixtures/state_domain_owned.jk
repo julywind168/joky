@@ -20,7 +20,7 @@ fn read(state: &State) -> Int32 { state.value }
 fn inspect(state: &State) -> Bool {
     let expected = if state.value == 7 { "old房间" } else { "new房间" }
     let temporary = alloc(state.value)
-    state.title.equals(&expected) && state.players.len() == 2 && state.players.get(0).unwrap_or(-1) == *temporary && state.flags.get(0).unwrap_or(false)
+    state.title == expected && state.players.len() == 2 && state.players.get(0).unwrap_or(-1) == *temporary && state.flags.get(0).unwrap_or(false)
 }
 fn change(state: &mut State, value: Int32) -> Int32 {
     var players = Array.new::<Int32>()
@@ -34,7 +34,7 @@ fn change(state: &mut State, value: Int32) -> Int32 {
 }
 struct TextOnly { title: String }
 fn text(value: Int32) -> TextOnly { TextOnly { title: if value == 1 { "first" } else { "second" } } }
-fn text_ok(state: &TextOnly) -> Bool { let value = "second"; state.title.equals(&value) }
+fn text_ok(state: &TextOnly) -> Bool { let value = "second"; state.title == value }
 fn lifecycle() @suspends -> Int32 {
     let owner = domain.create(make, 7)
     let handle = owner.handle()

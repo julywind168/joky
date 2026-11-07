@@ -291,8 +291,8 @@ fn owning_string_basic_queries_and_root_copy() {
             let repeated = "ababa"
             let first = "aba"
             let missing = "absent"
-            if copy.equals(&copy) && copy.starts_with(&empty) && copy.ends_with(&end) &&
-                copy.ends_with(&empty) && !copy.equals(&empty) && empty.is_empty() &&
+            if copy == copy && copy.starts_with(&empty) && copy.ends_with(&end) &&
+                copy.ends_with(&empty) && copy != empty && empty.is_empty() &&
                 repeated.find(&first).unwrap_or(999) == 0 &&
                 repeated.find(&empty).unwrap_or(999) == 0 &&
                 repeated.find(&missing).is_none() && empty.find(&first).is_none() &&
@@ -381,6 +381,8 @@ fn owning_string_rejects_moves_conflicting_loans_and_private_bridges() {
         "fn f() { var a = \"text\"; let view = &a; a = \"next\"; view.byte_length(); }",
         "fn f() -> &String { let a = \"text\" &a }",
         "fn f(a: &String) @suspends -> &String { a }",
+        "fn f(a: &String, b: &String) -> Bool { a.equals(b) }",
+        "import joky/string fn f(a: &String, b: &String) -> Bool { string.equals(a, b) }",
         "import joky/string.{freeze_utf8} fn f() {}",
         "import joky/string fn f() { let text = \"text\"; string.copy_text(&text); }",
         "unsafe extern \"C\" fn f(a: String)",

@@ -115,10 +115,10 @@ pub fn bulk_group() -> Group {
         let name = format!("bulk_{index}");
         group.source.push_str(&format!("\nfn {name}() -> Int32 {{ let input = {}; let separator = {}; let parts = input.split(&separator); input.release(); if parts.len() != {} {{ return 1 }}; ", literal(text), literal(separator), parts.len()));
         for (index, part) in parts.iter().enumerate() {
-            group.source.push_str(&format!("{{ let expected = {}; if !parts.borrow_ref({index}).equals(&expected) {{ return 2 }} }}; ", literal(part)));
+            group.source.push_str(&format!("{{ let expected = {}; if parts.borrow_ref({index}) != expected {{ return 2 }} }}; ", literal(part)));
         }
         let joined = parts.join(separator);
-        group.source.push_str(&format!("let joined = string.join(&parts, &separator); parts.release(); separator.release(); let expected = {}; if !joined.equals(&expected) {{ return 3 }}; 42 }}", literal(&joined)));
+        group.source.push_str(&format!("let joined = string.join(&parts, &separator); parts.release(); separator.release(); let expected = {}; if joined != expected {{ return 3 }}; 42 }}", literal(&joined)));
         group.entries.push(Entry {
             name,
             text: None,
@@ -156,7 +156,7 @@ pub fn bulk_group() -> Group {
             };
             group.source.push_str(&format!("\nfn {name}() -> Int32 {{ let input = {}; let parts = {call}; input.release(); if parts.len() != {} {{ return 1 }}; ", literal(text), parts.len()));
             for (index, part) in parts.iter().enumerate() {
-                group.source.push_str(&format!("{{ let expected = {}; if !parts.borrow_ref({index}).equals(&expected) {{ return 2 }} }}; ", literal(part)));
+                group.source.push_str(&format!("{{ let expected = {}; if parts.borrow_ref({index}) != expected {{ return 2 }} }}; ", literal(part)));
             }
             group.source.push_str("42 }");
             group.entries.push(Entry {

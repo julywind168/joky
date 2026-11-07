@@ -23,7 +23,7 @@ fn reader(data: Array<UInt8>, capacity: UInt64) @suspends -> Result<BufferedTcp,
 }
 fn expect_line(buffered: &mut BufferedTcp, limit: UInt64, expected: String) @suspends {
     let line = match buffered.read_line(limit) { Ok(Some(line)) => line, _ => { ensure(false); return } }
-    ensure(line.equals(&expected))
+    ensure(line == expected)
 }
 fn exact() @suspends -> Int32 {
     var buffered = match reader(bytes("12345"), 2) { Ok(b) => b, _ => { return 1 } }

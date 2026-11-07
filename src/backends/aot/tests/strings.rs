@@ -299,7 +299,7 @@ fn string_queries_link_and_run_in_aot_objects() {
                 int32(string.find(&text, &needle).unwrap_or(999)) * 1000 +
                 (if string.starts_with(&text, &prefix) { 100 } else { 0 }) +
                 (if string.ends_with(&text, &suffix) { 10 } else { 0 }) +
-                (if string.equals(&text, &other) { 1 } else { 0 })
+                (if text == other { 1 } else { 0 })
         }
     "#;
     let fixture = ScratchDir::new("string-queries");

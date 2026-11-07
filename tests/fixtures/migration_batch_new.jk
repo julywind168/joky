@@ -20,7 +20,7 @@ fn read(room:&Room)->Int32 {
     var i:UInt64=0
     while i<room.players.len() {
         let player=room.players.borrow_ref(i)
-        if !player.name.equals(&name) || player.score!=42+int64(i) {return -101}
+        if player.name != name || player.score!=42+int64(i) {return -101}
         i=i+1
     }
     int32(room.score)+room.level
@@ -29,7 +29,7 @@ fn version()->Int32 {2}
 struct Ledger { text:String, total:Int64, generation:Int32 }
 struct Rules { limit:Int32 }
 fn upgrade_ledger(old:&PreviousLedger)->Ledger {Ledger{text:old.text.clone(),total:int64(old.total),generation:1}}
-fn ledger_read(s:&Ledger)->Int32 {let text="ledger"; if s.text.equals(&text) {int32(s.total)+s.generation} else {-100}}
+fn ledger_read(s:&Ledger)->Int32 {let text="ledger"; if s.text == text {int32(s.total)+s.generation} else {-100}}
 fn rules_read(s:&Rules)->Int32 {s.limit}
 fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
     let a=match domain.lookup::<Room>(directory,1) {Some(h)=>domain.read_from(h,read).unwrap(),None=>return -1}

@@ -20,11 +20,11 @@ fn decoded(input: &String) -> Value {
 fn exact(input: String, expected: String) {
     let value = decoded(&input)
     let output = encoded(&value)
-    ensure(output.equals(&expected))
+    ensure(output == expected)
     let again = encoded(&value)
-    ensure(again.equals(&output))
+    ensure(again == output)
     let recovered = decoded(&output)
-    ensure(encoded(&recovered).equals(&expected))
+    ensure(encoded(&recovered) == expected)
 }
 fn limited(input: String, limits: Limits, expected: Int32) {
     let value = decoded(&input)
@@ -35,7 +35,7 @@ fn limited(input: String, limits: Limits, expected: Int32) {
     }
     // Success and failure both preserve the original owning tree.
     let after = encoded(&value)
-    ensure(before.equals(&after))
+    ensure(before == after)
 }
 fn positive() {
     ensure(error_code(EncodeError.NumberLimit) == 6)
@@ -58,7 +58,7 @@ fn positive() {
     let output = encoded(&value)
     match json.decode(&output) {
         Ok(Value.Text(text)) => {
-            match &value { Text(original) => { ensure(text.equals(original)) }, _ => { ensure(false) } }
+            match &value { Text(original) => { ensure(text == original) }, _ => { ensure(false) } }
         }
         _ => { ensure(false) }
     }
@@ -154,14 +154,14 @@ fn inspect(value: &Value) {
         Object(fields) => {
             ensure(fields.len() == 2)
             let key = "text"
-            match fields.borrow_ref(&key) { Text(text) => { let expected = "你\0\n🙂"; ensure(text.equals(&expected)) }, _ => { ensure(false) } }
+            match fields.borrow_ref(&key) { Text(text) => { let expected = "你\0\n🙂"; ensure(text == expected) }, _ => { ensure(false) } }
             let key = "items"
             match fields.borrow_ref(&key) {
                 Array(items) => {
                     ensure(items.len() == 2)
                     match items.borrow_ref(0) { Null => {}, _ => { ensure(false) } }
                     match items.borrow_ref(1) {
-                        Number(number) => { let expected = "18446744073709551616"; ensure(number.as_text().equals(&expected)) }
+                        Number(number) => { let expected = "18446744073709551616"; ensure(number.as_text() == expected) }
                         _ => { ensure(false) }
                     }
                 }
@@ -205,7 +205,7 @@ fn json2b_cancel_work() @suspends -> Int32 {
     var limits = Limits.default(); limits.max_output_bytes = 3
     match json.encode_with_limits(&value, limits) { Err(OutputLimit) => {}, _ => { ensure(false) } }
     task.yield_now()
-    ensure(encoded(&value).equals(&output))
+    ensure(encoded(&value) == output)
     42
 }
 fn mutable_input() {
@@ -224,7 +224,7 @@ fn mutable_input() {
         _ => { ensure(false) }
     }
     inspect(&value)
-    ensure(encoded(&value).equals(&output))
+    ensure(encoded(&value) == output)
     mem.replace(&mut value, Value.Null);
     let recovered_after_release = decoded(&output)
     inspect(&recovered_after_release)

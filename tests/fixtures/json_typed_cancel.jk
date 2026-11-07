@@ -63,7 +63,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer() == path) }
         _ => { ensure(false) }
     }
 }
@@ -78,7 +78,7 @@ fn json_typed_cancel_work() @suspends -> Int32 {
     let text = encoded(&value)
     task.yield_now()
     let recovered = decoded::<TextRecord>(text)
-    let expected = "owned"; ensure(recovered.value.equals(&expected))
+    let expected = "owned"; ensure(recovered.value == expected)
     bad::<SmallRecord>("{{\"value\":256}}", 5, "/value")
     42
 }

@@ -9,7 +9,7 @@ fn publish(engine: &vm.Vm, target: outbox.Handle) @suspends {
 fn receive(queue: &mut outbox.Mailbox) @suspends -> Int32 {
     let bytes = match queue.receive() { Some(value) => value, None => return 0 }
     let text = String.from_utf8(bytes)!
-    if text.equals("中\0🙂") { 21 } else { -1 }
+    if text == "中\0🙂" { 21 } else { -1 }
 }
 fn nested(queue: &mut outbox.Mailbox) @suspends -> Int32 {
     // Reborrowing a received exclusive loan remains within this worker.

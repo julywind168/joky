@@ -127,7 +127,7 @@ fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
                 let actual = relay("\u{{{scalar:X}}}")
                 let expected = "{ch}"
                 let message = "Unicode content mismatch"
-                check.assert(actual.equals(&expected), &message)
+                check.assert(actual == expected, &message)
                 let padded = "\u{{{scalar:06x}}}"
                 let message = "Unicode length mismatch"
                 check.assert(padded.byte_length() == {}, &message)
@@ -140,13 +140,13 @@ fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
         r#"
         let nul = "\u{0}Z"; let expected = "\0Z"
         let message = "NUL must preserve following bytes"
-        check.assert(nul.equals(&expected), &message)
+        check.assert(nul == expected, &message)
         let slash = "\u{5c}u{41}"; let expected = "\\u{41}"
         let message = "Escape must decode once"
-        check.assert(slash.equals(&expected), &message)
+        check.assert(slash == expected, &message)
         let newline = "\u{a}"; let expected = "\n"
         let message = "Encoded newline is allowed"
-        check.assert(newline.equals(&expected), &message)
+        check.assert(newline == expected, &message)
         report_int32(42)
     }"#,
     );
@@ -734,7 +734,7 @@ fn intrinsic_declarations_and_assert_prelude_match_all_backends() {
             assert(true, "Literal assertion")
             let original = "copy={42}"
             let copied = original.clone()
-            assert(copied.equals(original), "Text clone")
+            assert(copied == original, "Text clone")
             assert(original.byte_length() == 7, "Borrowed source stays live")
             assert((4.0).sqrt() == 2.0, "Float primitive")
             assert(Rune.from_u32(65).unwrap_or('Z') == 'A', "Rune primitive")

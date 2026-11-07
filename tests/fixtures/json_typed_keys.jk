@@ -32,7 +32,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer() == path) }
         _ => { ensure(false) }
     }
 }
@@ -59,7 +59,7 @@ fn main() {
         Err(Mapping(error)) => {
             ensure(code(error.kind) == 12)
             let path = error.pointer(); let a = "/a"; let b = "/b"
-            ensure(path.equals(&a) || path.equals(&b))
+            ensure(path == a || path == b)
         }
         _ => { ensure(false) }
     }

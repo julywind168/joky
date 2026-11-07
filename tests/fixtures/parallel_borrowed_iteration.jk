@@ -66,12 +66,12 @@ fn map_values() @suspends {
 fn exercise(id: Int32) @suspends { array_values(id); shared_cursor(id); map_values(); observe(id) }
 fn park_array() @suspends {
     var values = ["array owner"]
-    for value in &mut values { observe(99); task.sleep(60s); check.assert(value.equals("array owner"), "array borrow") }
+    for value in &mut values { observe(99); task.sleep(60s); check.assert(value == "array owner", "array borrow") }
 }
 fn park_map() @suspends {
     var table = Map.new::<Int32, String>()
     table.insert(1, "map owner")
-    for entry in &table { observe(100); task.sleep(60s); check.assert(map.entry_value(entry).equals("map owner"), "map borrow") }
+    for entry in &table { observe(100); task.sleep(60s); check.assert(map.entry_value(entry) == "map owner", "map borrow") }
 }
 fn parked() @suspends { join { park_array(), park_map() } }
 fn invalid_cursor() @suspends {

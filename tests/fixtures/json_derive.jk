@@ -60,7 +60,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer() == path) }
         _ => { ensure(false) }
     }
 }
@@ -75,8 +75,8 @@ fn structs() {
     let original = user()
     let output = encoded(&original)
     let recovered = decoded::<User>(output)
-    ensure(original.name.equals(&recovered.name)); ensure(recovered.age == 37)
-    match &recovered.nickname { Some(text) => { let expected = "Ada"; ensure(text.equals(&expected)) }, None => { ensure(false) } }
+    ensure(original.name == recovered.name); ensure(recovered.age == 37)
+    match &recovered.nickname { Some(text) => { let expected = "Ada"; ensure(text == expected) }, None => { ensure(false) } }
     let missing = decoded::<User>("{{\"name\":\"Ada\",\"age\":37}}")
     ensure(missing.nickname.is_none())
     let null = decoded::<User>("{{\"name\":\"Ada\",\"age\":37,\"nickname\":null}}")
@@ -136,9 +136,9 @@ fn derived_composition() {
     let manual = ManualUser { name: "你🙂\0", age: 37, nickname: Option.Some("Ada") }
     let value = user()
     let expected = encoded(&manual)
-    ensure(encoded(&value).equals(&expected))
+    ensure(encoded(&value) == expected)
     let recovered = decoded::<ManualUser>(encoded(&value))
-    ensure(recovered.age == 37); ensure(recovered.name.equals(&value.name))
+    ensure(recovered.age == 37); ensure(recovered.name == value.name)
     let batch = decoded::<Batch>("{{\"value\":[{{\"name\":\"a\",\"age\":1}},{{\"name\":\"b\",\"age\":2}}]}}")
     let roundtrip = decoded::<Batch>(encoded(&batch))
     ensure(roundtrip.value.len() == 2)
@@ -147,14 +147,14 @@ fn derived_composition() {
     ensure(decoded::<Wrapped<Int32>>(encoded(&copied)).value == 42)
     let owned = Outer { inner: Wrapped { value: "payload", label: "owner" } }
     let roundtrip = decoded::<Outer<String>>(encoded(&owned))
-    ensure(roundtrip.inner.value.equals(&owned.inner.value))
+    ensure(roundtrip.inner.value == owned.inner.value)
     let bag = decoded::<Bag<String, UInt64>>("{{\"values\":{{\"items\":[null,18446744073709551615]}}}}")
     let again = decoded::<Bag<String, UInt64>>(encoded(&bag))
     let key = "items"
     ensure(again.values.borrow_ref(&key).get(1).unwrap_or(Option.None).unwrap_or(0) == 18446744073709551615)
     let empty = Empty::<Unmapped> {}
     let empty_text = "{{}}"
-    ensure(encoded(&empty).equals(&empty_text))
+    ensure(encoded(&empty) == empty_text)
     decoded::<Empty<Unmapped>>(encoded(&empty));
     let plain = Plain { value: 42 }
     ensure(decoded::<Plain>(encoded(&plain)).value == 42)
@@ -163,7 +163,7 @@ fn derived_composition() {
     let leaf = "leaf"
     let child = tree_again.children.borrow_ref(0)
     let name = &child.name
-    ensure(name.equals(&leaf))
+    ensure(name == leaf)
     var limits = Options.default(); limits.limits.max_nodes = 1
     limited(&value, limits, 8, "/name")
 }
@@ -194,7 +194,7 @@ impl ObjectKey for Key {
     fn from_key(value: String) -> Self { Key { text: value } }
 }
 impl Eq for Key {
-    fn eq(&self, other: &Self) @noescape -> Bool { self.text.equals(&other.text) }
+    fn eq(&self, other: &Self) @noescape -> Bool { self.text == other.text }
 }
 impl Hash for Key { fn hash(&self) @noescape -> UInt64 { 0 } }
 fn derived_directions_and_keys() {
@@ -231,10 +231,10 @@ fn derived_names_and_associated_bounds() {
     let value = Names { unit: {}, self: 42, fields: 7, value: "value", context: 8, unicode_name: "Unicode" }
     let recovered = decoded::<Names<Int32>>(encoded(&value))
     ensure(recovered.self == 42 && recovered.fields == 7 && recovered.context == 8)
-    ensure(recovered.unicode_name.equals(&value.unicode_name))
+    ensure(recovered.unicode_name == value.unicode_name)
     let source = SourceEnvelope { source: SourceWrapper { value: SourceValue { value: 42 } } }
     let expected = "{{\"source\":42}}"
-    ensure(encoded(&source).equals(&expected))
+    ensure(encoded(&source) == expected)
     let scalar = "42"
-    ensure(source_encode(&source.source).equals(&scalar))
+    ensure(source_encode(&source.source) == scalar)
 }

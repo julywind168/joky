@@ -609,7 +609,7 @@ fn tcp_host_endpoints_try_candidates_and_preserve_last_error() {
                 _ => false
             }, "all failed candidates return the last socket error")
             check.assert(match tcp.connect("failed.test", 80) {
-                Err(Resolve(error)) => error.message.equals("controlled resolution failure"),
+                Err(Resolve(error)) => error.message == "controlled resolution failure",
                 _ => false
             }, "DNS failure preserves its diagnostic")
             join { receive(&mut listener), send(address.port()) }

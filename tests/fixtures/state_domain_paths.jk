@@ -15,7 +15,7 @@ fn lifecycle() @suspends ->Int32 {
     routes.insert(2,b.handle()).unwrap()
     let text="captured"
     let value=when "dependent" (mut first:State=routes[1],second?:State=routes[first.key]) {
-        assert(text.equals("captured"))
+        assert(text == "captured")
         first.n+=second.n
         first.n
     } else {first.n}
@@ -40,7 +40,7 @@ fn lifecycle() @suspends ->Int32 {
     let denied=when(mut first,mut second:State=routes[first.key]) {
         first.n=99; second.n=99
         let result:Result<String,Int32>=Err(7)
-        assert(text.equals("rollback"))
+        assert(text == "rollback")
         result
     }
     assert(match denied { Rejected(7) => true, _ => false })

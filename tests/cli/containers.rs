@@ -912,7 +912,7 @@ fn json_derive_dependencies_keep_private_fields_and_generic_definition_scope() {
         pub fn valid(value: &Packet<String>) -> Bool {
             let expected = "payload"
             let label = "private"
-            value.data.equals(&expected) && value.label.equals(&label)
+            value.data == expected && value.label == label
         }
     "#,
     );

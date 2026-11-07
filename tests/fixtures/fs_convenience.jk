@@ -62,14 +62,14 @@ fn read_valid_text(bounded: Bool) @suspends {
     var short = readable("short_read")
     let text = text_case(&mut short, bounded, 100).unwrap()
     let expected = "你好🙂\0\r\n"
-    expect(text.equals(&expected))
+    expect(text == expected)
     short.close().unwrap()
     var cross = readable("cross_block")
     let text = text_case(&mut cross, bounded, 65541).unwrap()
     expect(text.byte_length() == 65541)
     let suffix = text.substring(65535, 65541).unwrap_or("")
     let expected = "你好"
-    expect(suffix.equals(&expected))
+    expect(suffix == expected)
     cross.close().unwrap()
 
 }

@@ -20,7 +20,7 @@ fn read(room:&Room)->Int32 {
     var i:UInt64=0
     while i<room.players.len() {
         let player=room.players.borrow_ref(i)
-        if !player.name.equals(&name) || player.score!=42+int64(i) {return -101}
+        if player.name != name || player.score!=42+int64(i) {return -101}
         i=i+1
     }
     int32(room.score)+room.level

@@ -1778,7 +1778,7 @@ fn probe() @suspends ->Int32 {
     let saved=domain.snapshot_from(owner.read_handle(),read)
     let text=saved.value()
     let reply=domain.request(owner.handle(),echo,text).unwrap()
-    if reply.equals("initial🙂") {24} else {0}
+    if reply == "initial🙂" {24} else {0}
 }
 "#,
     );

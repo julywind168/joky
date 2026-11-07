@@ -22,7 +22,7 @@ fn main() @suspends {
     assert(isolate { answer() }.unwrap() == 42)
     let byte: Result<UInt8, task.Failure> = isolate { 42 }
     assert(byte.unwrap() == 42)
-    assert(isolate { "owned result" }.unwrap().equals("owned result"))
+    assert(isolate { "owned result" }.unwrap() == "owned result")
     let values = isolate { var a = Array.new::<String>(); a.push("owned element"); task.yield_now(); a }.unwrap()
     assert(values.len() == 1)
     let rejected: Result<Result<Int32, Int32>, task.Failure> = isolate { Err(7) }
@@ -37,7 +37,7 @@ fn main() @suspends {
     let failed: Result<String, task.Failure> = isolate { task.yield_now(); fail(); text }
     assert(failed.is_err())
     let pair = isolate { ("tuple owner", 42) }.unwrap()
-    assert(pair.0.equals("tuple owner") && pair.1 == 42)
+    assert(pair.0 == "tuple owner" && pair.1 == 42)
     scope { branch { caught() }; branch { survivor() } }
     let winner = race { cancelled(), answer() }
     assert(winner == 42)

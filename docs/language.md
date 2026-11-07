@@ -6710,7 +6710,7 @@ fn sample() -> UInt64 {
 | `text.release()` / `string.release(text)` | 消费并提前清理 |
 | `text.byte_length()` / `string.byte_length(&text)` | UInt64，UTF-8 字节长度 |
 | `text.is_empty()` / `string.is_empty(&text)` | Bool |
-| `text.equals(&other)` / `string.equals(&text, &other)` | Bool，按字节内容相等 |
+| `text == other` / `text != other` | Bool，通过 Eq 按字节内容比较，自动借用两侧，不移动 String |
 | `text.eq_ignore_ascii_case(&other)` / `string.eq_ignore_ascii_case(&text, &other)` | Bool，仅忽略 ASCII 字母大小写，非 ASCII 字节必须相同；不分配转换后的文本 |
 | `text.to_ascii_lowercase()` / `string.to_ascii_lowercase(&text)` | 独立 String，仅将 ASCII A–Z 转成 a–z，其他字节保持原样 |
 | `text.to_ascii_uppercase()` / `string.to_ascii_uppercase(&text)` | 独立 String，仅将 ASCII a–z 转成 A–Z，其他字节保持原样 |

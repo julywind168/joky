@@ -62,7 +62,7 @@ fn main() @suspends -> Int32 {
     let text = "owned"
     let operation = move || { text }
     let (left, right) = join { invoke(operation, 1), invoke(move || { "empty" }, 2) }
-    check.assert(left.equals("owned") && right.equals("empty"), "FnOnce and empty environment")
+    check.assert(left == "owned" && right == "empty", "FnOnce and empty environment")
     var count = 20
     let counter = move || { count += 1; count }
     let (total, zero) = join { repeat(counter), repeat(move || { 0 }) }
@@ -70,15 +70,15 @@ fn main() @suspends -> Int32 {
     let values = ["a", "bc"]
     let callback = store(move || { "length={values.len()}" })
     let (description, other) = join { saved(callback), invoke(move || { "other" }, 3) }
-    check.assert(description.equals("length=2") && other.equals("other"), "wrapper and owned array capture")
+    check.assert(description == "length=2" && other == "other", "wrapper and owned array capture")
     let nested_text = "nested"
     let inner = move || { nested_text }
     let outer = move || { inner() }
-    scope { branch { check.assert(invoke(outer, 4).equals("nested"), "nested environment") } }
+    scope { branch { check.assert(invoke(outer, 4) == "nested", "nested environment") } }
     let never_called = "dropped on receiver"
     let unused = move || { never_called }
     scope { branch { discard(unused) } }
-    check.assert(cancelled().equals("winner"), "race releases losing environment")
+    check.assert(cancelled() == "winner", "race releases losing environment")
     let first = "suspending owned"
     let operation = move || @suspends { observe(5); task.yield_now(); first }
     let second = "suspending peer"
@@ -86,10 +86,10 @@ fn main() @suspends -> Int32 {
         invoke_suspending(operation)
         invoke_suspending(move || @suspends { observe(6); task.yield_now(); second })
     }
-    check.assert(left.equals("suspending owned") && right.equals("suspending peer"), "suspending captures cross workers")
+    check.assert(left == "suspending owned" && right == "suspending peer", "suspending captures cross workers")
     let losing = "cancelled inside closure"
     let operation = move || @suspends { task.sleep(60s); losing }
     let winner = race { invoke_suspending(operation), fast("winner") }
-    check.assert(winner.equals("winner"), "race cancels active suspending environment")
+    check.assert(winner == "winner", "race cancels active suspending environment")
     0
 }

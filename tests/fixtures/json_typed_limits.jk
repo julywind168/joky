@@ -68,7 +68,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer() == path) }
         _ => { ensure(false) }
     }
 }

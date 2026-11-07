@@ -13,8 +13,8 @@ impl session.Handler for Context {
     fn on_message(&self, text: String) @suspends @noescape -> Bool {
         let counts = self.counts
         let output = self.output
-        let quit = text.equals("bye")
-        let fail = text.equals("fail")
+        let quit = text == "bye"
+        let fail = text == "fail"
         let bytes = self.reply.clone().into_bytes()
         task.yield_now()
         when "line" (mut counts) {
@@ -43,7 +43,7 @@ fn peer(stream: TcpStream, scenario: UInt64) @suspends {
         stream.write_all("ping\n".into_bytes())!
         let reply = stream.read_line(16)!
         let text = reply!
-        check.assert(text.equals("pong"), "session sends committed output")
+        check.assert(text == "pong", "session sends committed output")
         stream.write_all("bye\n".into_bytes())!
     } else if scenario == 1 { stream.write_all("oversized\n".into_bytes())! }
     else if scenario == 4 { stream.write_all("fail\n".into_bytes())! }

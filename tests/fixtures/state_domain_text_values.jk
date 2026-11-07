@@ -35,57 +35,57 @@ impl State {
     fn replace(&mut self,text:String)->String {mem.replace(&mut self.text,text)}
 }
 fn verify_values(x:domain.WriteHandle<State>,y:domain.WriteHandle<State>) @suspends {
-    assert(x.value().unwrap().equals("初始🙂"))
+    assert(x.value().unwrap() == "初始🙂")
     let input="跨域\0文本🙂"
-    assert(x.replace(input.clone()).unwrap().equals("初始🙂"))
-    assert(input.equals("跨域\0文本🙂"))
+    assert(x.replace(input.clone()).unwrap() == "初始🙂")
+    assert(input == "跨域\0文本🙂")
     let large="大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂大🙂"
-    assert(x.replace(large.clone()).unwrap().equals(input))
-    assert(x.replace(input.clone()).unwrap().equals(large))
+    assert(x.replace(large.clone()).unwrap() == input)
+    assert(x.replace(input.clone()).unwrap() == large)
     let captured="captured"
     let extra="extra"
     var captured_count=0
     let result=when "owned capture" (mut x,mut y) {
         captured_count+=1
-        assert(captured_count==1 && extra.equals("extra"))
+        assert(captured_count==1 && extra == "extra")
         edit(y,captured)
         (x.text.clone(),y.text.clone())
     }.unwrap()
     let (first,second)=result
-    assert(first.equals(input) && second.equals("captured"))
+    assert(first == input && second == "captured")
     let absent:Option<String>=Option.None
     assert(when(x){absent}.unwrap().is_none())
     match domain.write_to(x,update,Input{text:"unused",optional:Option.Some("business error")}).unwrap() {
-        Err(Rejected(reason))=>assert(reason.equals("business error")),_=>assert(false)
+        Err(Rejected(reason))=>assert(reason == "business error"),_=>assert(false)
     }
     let p=Input{text:"async",optional:Option.None}
-    assert(domain.request(x,request,p).unwrap().unwrap().equals(input))
-    assert(domain.request(x,echo,"request result🙂").unwrap().equals("request result🙂"))
+    assert(domain.request(x,request,p).unwrap().unwrap() == input)
+    assert(domain.request(x,echo,"request result🙂").unwrap() == "request result🙂")
 }
 fn verify_snapshots(x:domain.WriteHandle<State>,y:domain.WriteHandle<State>) @suspends {
     let saved=domain.snapshot_from(x.read_only(),read)
     let one=saved.value(); let two=saved.value()
-    assert(one.equals("async") && two.equals("async"))
+    assert(one == "async" && two == "async")
     let candidate=domain.candidate_from(saved,x,make,"candidate")
     var receipt=domain.commit_to(x,candidate)
     assert(receipt.wait().is_ok())
     let both=domain.snapshot_pair(x.read_only(),y.read_only(),pair)
     let (left,right)=both.value()
-    assert(left.equals("candidate") && right.equals("captured"))
+    assert(left == "candidate" && right == "captured")
     var set=domain.access_set(); set.include(x.read_only()); set.include(y.read_only())
     let snap=domain.snapshot_set(set)
-    assert(domain.read_snapshot(&snap,x.read_only(),read).equals("candidate"))
+    assert(domain.read_snapshot(&snap,x.read_only(),read) == "candidate")
     let candidate=domain.edit_snapshot(snap,x,edit,"edited")
     let candidate=domain.edit_candidate(candidate,y,edit,"")
     var receipt=domain.commit_set(candidate); assert(receipt.wait().is_ok())
-    assert(x.value().unwrap().equals("edited") && y.value().unwrap().equals(""))
+    assert(x.value().unwrap() == "edited" && y.value().unwrap() == "")
 }
 fn verify_timer(x:domain.WriteHandle<State>) @suspends {
     let timer=domain.timer(); let t=timer.handle()
     domain.every(t,x,1ms,tick,"repeated🙂").unwrap()
     while domain.read_from(x.read_only(),count).unwrap()<3 {task.sleep(1ms)}
     t.cancel(); timer.close()
-    assert(x.value().unwrap().equals("repeated🙂"))
+    assert(x.value().unwrap() == "repeated🙂")
 }
 fn lifecycle() @suspends ->Int32 {
     let a=domain.create(make,"初始🙂"); let b=domain.create(make,"")

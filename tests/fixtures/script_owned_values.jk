@@ -7,7 +7,7 @@ __TYPES__
 fn assert(ok: Bool) { check.assert(ok, "owned Script values") }
 fn first_item(values: &Array<Item>) -> Bool {
     let item = values.borrow_ref(0)
-    match &item.text { Some(text) => text.equals("first"), None => false }
+    match &item.text { Some(text) => text == "first", None => false }
 }
 fn main() @suspends -> Int32 {
     let engine = vm.Vm.__CREATE__()
@@ -15,7 +15,7 @@ fn main() @suspends -> Int32 {
     let input = __TEXT__
     let expected = input.clone()
     let output = engine.call::<String,String>("text", input)
-    assert(output.equals(&expected))
+    assert(output == expected)
     assert(engine.call::<String,UInt64>("length", output) == expected.byte_length())
     var values = Array.with_capacity::<Item>(8)
     values.push(Item { text: Option.Some("first"), number: -7 })
@@ -29,14 +29,14 @@ fn main() @suspends -> Int32 {
     var nested = Array.new::<Array<String>>()
     var inner = Array.new::<String>(); inner.push("nested"); inner.push(""); nested.push(inner)
     let nested = engine.call::<Array<Array<String>>,Array<Array<String>>>("nested", nested)
-    assert(nested.borrow_ref(0).borrow_ref(0).equals("nested"))
+    assert(nested.borrow_ref(0).borrow_ref(0) == "nested")
     assert(nested.borrow_ref(0).borrow_ref(1).is_empty())
     let empty = engine.call::<Unit,Array<String>>("empty", {})
     assert(empty.is_empty())
     let absent = engine.call::<Option<String>,Option<String>>("absent", Option.None)
     assert(absent.is_none())
     let reply = engine.call::<Result<String,String>,Result<String,String>>("reply", Result.Err("denied"))
-    match reply { Err(text) => assert(text.equals("denied")), _ => assert(false) }
+    match reply { Err(text) => assert(text == "denied"), _ => assert(false) }
     assert(engine.close() == 0)
     // Results survive the engine and the loaded module that constructed them.
     assert(values.borrow_ref(0).number == -7 && nested.len() == 1)

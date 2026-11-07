@@ -30,7 +30,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer() == path) }
         _ => { ensure(false) }
     }
 }
@@ -42,27 +42,27 @@ fn limited<T: ToJson>(value: &T, options: Options, expected: Int32, path: String
 }
 fn numeric() {
     let value = decoded::<UInt8>("0"); ensure(value == 0)
-    let text = "0"; ensure(encoded(&value).equals(&text))
+    let text = "0"; ensure(encoded(&value) == text)
     let value = decoded::<UInt8>("255"); ensure(value == 255)
-    let text = "255"; ensure(encoded(&value).equals(&text))
+    let text = "255"; ensure(encoded(&value) == text)
     bad::<UInt8>("-1", 5, ""); bad::<UInt8>("256", 5, "")
     bad::<UInt8>("1.0", 4, ""); bad::<UInt8>("1e0", 4, "")
     let value = decoded::<UInt16>("0"); ensure(value == 0)
-    let text = "0"; ensure(encoded(&value).equals(&text))
+    let text = "0"; ensure(encoded(&value) == text)
     let value = decoded::<UInt16>("65535"); ensure(value == 65535)
-    let text = "65535"; ensure(encoded(&value).equals(&text))
+    let text = "65535"; ensure(encoded(&value) == text)
     bad::<UInt16>("-1", 5, ""); bad::<UInt16>("65536", 5, "")
     bad::<UInt16>("1.0", 4, ""); bad::<UInt16>("1e0", 4, "")
     let value = decoded::<UInt32>("0"); ensure(value == 0)
-    let text = "0"; ensure(encoded(&value).equals(&text))
+    let text = "0"; ensure(encoded(&value) == text)
     let value = decoded::<UInt32>("4294967295"); ensure(value == 4294967295)
-    let text = "4294967295"; ensure(encoded(&value).equals(&text))
+    let text = "4294967295"; ensure(encoded(&value) == text)
     bad::<UInt32>("-1", 5, ""); bad::<UInt32>("4294967296", 5, "")
     bad::<UInt32>("1.0", 4, ""); bad::<UInt32>("1e0", 4, "")
     let value = decoded::<UInt64>("0"); ensure(value == 0)
-    let text = "0"; ensure(encoded(&value).equals(&text))
+    let text = "0"; ensure(encoded(&value) == text)
     let value = decoded::<UInt64>("18446744073709551615"); ensure(value == 18446744073709551615)
-    let text = "18446744073709551615"; ensure(encoded(&value).equals(&text))
+    let text = "18446744073709551615"; ensure(encoded(&value) == text)
     bad::<UInt64>("-0", 5, ""); bad::<UInt64>("-1", 5, ""); bad::<UInt64>("18446744073709551616", 5, "")
     bad::<UInt64>("1.0", 4, ""); bad::<UInt64>("1e0", 4, "")
 }

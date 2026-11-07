@@ -66,7 +66,7 @@ fn lifecycle() @suspends ->Int32 {
     assert(!when (mut x) {x.n=11; false}.unwrap())
     assert(same.value().unwrap()==11)
     let rejected=same.value().unwrap()
-    match x.reject() {domain.Outcome.Rejected(message)=>{assert(message.equals("denied"))},_=>{assert(false)}}
+    match x.reject() {domain.Outcome.Rejected(message)=>{assert(message == "denied")},_=>{assert(false)}}
     assert(same.value().unwrap()==rejected)
     let rollback=when "reject transfer" (mut x,mut y,z) {
         mem.swap(&mut x.values,&mut y.values)
@@ -78,7 +78,7 @@ fn lifecycle() @suspends ->Int32 {
         result
     }
     match rollback {domain.Outcome.Rejected(n)=>{assert(n==42)},_=>{assert(false)}}
-    assert(when(x,y){x.n==11 && y.n==6 && x.values.len()==1 && y.values.len()==1 && x.values.get(0)! ==2 && y.values.get(0)! ==1 && x.text.equals("state")}.unwrap())
+    assert(when(x,y){x.n==11 && y.n==6 && x.values.len()==1 && y.values.len()==1 && x.values.get(0)! ==2 && y.values.get(0)! ==1 && x.text == "state"}.unwrap())
     let success=when(mut x) {x.n=12; let result:Result<Bool,Int32>=Ok(false); result}
     assert(!success.unwrap())
     assert(same.value().unwrap()==12)
@@ -151,6 +151,6 @@ fn readonly_views() @suspends {
     assert(when(read,same){read.n+same.n}! ==6)
     a.close()
     b.close()
-    assert(single.equals("state") && text.equals("state"))
+    assert(single == "state" && text == "state")
 }
 fn main() @suspends { assert(lifecycle()==24); messages() }

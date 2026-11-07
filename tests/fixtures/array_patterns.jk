@@ -46,7 +46,7 @@ fn literal_checks() {
     let rows = [[1, 2], [3]]
     match &rows { [[1, 2], [3]] => {}, _ => panic("nested arrays") }
     let text = "literal {[1, 2]}"
-    check(text.equals("literal [1, 2]"))
+    check(text == "literal [1, 2]")
 }
 fn shared(values: &Array<Int32>) -> Int32 {
     match values {
@@ -86,12 +86,12 @@ fn mutable_patterns() {
 }
 fn owned_patterns() {
     let names = ["a", "b", "c", "d"]
-    match &names { [head, ..rest, last] => { check(head.equals("a")); check(slice.len(rest) == 2); check(last.equals("d")); }, _ => {} }
+    match &names { [head, ..rest, last] => { check(head == "a"); check(slice.len(rest) == 2); check(last == "d"); }, _ => {} }
     match names {
         [head, ..rest, last] => {
-            check(head.equals("a"))
-            check(last.equals("d"))
-            match rest { [a, b] => { check(a.equals("b")); check(b.equals("c")); }, _ => panic("rest order") }
+            check(head == "a")
+            check(last == "d")
+            match rest { [a, b] => { check(a == "b"); check(b == "c"); }, _ => panic("rest order") }
         }
         _ => panic("owned sequence")
     }
@@ -122,7 +122,7 @@ fn async_checks() @suspends {
     check(sum == 42)
     let names = ["first", "middle", "last"]
     match names {
-        [head, ..tail] => { task.yield_now(); check(head.equals("first")); check(tail.len() == 2); }
+        [head, ..tail] => { task.yield_now(); check(head == "first"); check(tail.len() == 2); }
         [] => panic("empty async sequence")
     }
 }

@@ -8,7 +8,7 @@ fn call(engine: &vm.Vm, value: Int32) @suspends -> Int32 {
 }
 fn script(value: &Script) @suspends -> Int32 {
     let (a, b) = join { call(&value.engine, 10), call(&value.engine, 9) }
-    if !value.name.equals("script") { return -100 }
+    if value.name != "script" { return -100 }
     a + b
 }
 fn collection(values: &Array<Script>) @suspends -> Int32 { script(values.borrow_ref(0)) }

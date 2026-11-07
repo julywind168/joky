@@ -30,7 +30,7 @@ fn valid(player: &Player, value: Int32) -> Bool {
     let name = "玩家"
     let item = "shield"
     let detail = "active"
-    player.profile.details.0.equals(&detail) && player.profile.details.1 == value && (match player.profile.status { Ready(score) => score == value, _ => false }) && player.profile.name.equals(&name) && player.profile.score == value && player.inventory.len() == 2 && player.inventory.borrow_ref(1).equals(&item)
+    player.profile.details.0 == detail && player.profile.details.1 == value && (match player.profile.status { Ready(score) => score == value, _ => false }) && player.profile.name == name && player.profile.score == value && player.inventory.len() == 2 && player.inventory.borrow_ref(1) == item
 }
 fn inspect(state: &State) -> Bool {
     let temporary = player(0)

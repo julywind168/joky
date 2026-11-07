@@ -57,7 +57,7 @@ fn numbers() {
     invalid("１", 0); invalid("1.2.3", 3); invalid("0x1", 1)
     let spelling = "-0.1200E+004"
     let value = number(spelling.clone())
-    ensure(value.as_text().equals(&spelling))
+    ensure(value.as_text() == spelling)
     signed("0", 0); signed("-0", 0)
     signed("9223372036854775807", 9223372036854775807)
     signed("-9223372036854775808", -9223372036854775808)
@@ -84,7 +84,7 @@ fn numbers() {
     match zero.to_f64() { Ok(value) => { ensure(value.to_bits() == 0x8000000000000000) }, Err(_) => { ensure(false) } }
     let large = "18446744073709551616"
     let value = number(large.clone())
-    ensure(value.as_text().equals(&large))
+    ensure(value.as_text() == large)
     let min = Number.from_i64(-9223372036854775808)
     match min.to_i64() { Ok(value) => { ensure(value == -9223372036854775808) }, Err(_) => { ensure(false) } }
     let max = Number.from_u64(18446744073709551615)
@@ -153,7 +153,7 @@ fn mutate(value: &mut Value) {
                     match children.remove(2) {
                         Some(Value.Number(value)) => {
                             let expected = "18446744073709551616"
-                            ensure(value.as_text().equals(&expected))
+                            ensure(value.as_text() == expected)
                         }
                         _ => { ensure(false) }
                     }

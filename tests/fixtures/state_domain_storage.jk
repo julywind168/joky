@@ -30,7 +30,7 @@ fn valid(player: &Player, value: Int32) -> Bool {
     let name = "玩家"
     let item = "shield"
     let detail = "active"
-    player.profile.details.0.equals(&detail) && player.profile.details.1 == value && (match &player.profile.status { Ready(details) => details.0 == value && details.1.equals("ready"), _ => false }) && player.profile.name.equals(&name) && player.profile.score == value && player.inventory.len() == 2 && player.inventory.borrow_ref(1).equals(&item)
+    player.profile.details.0 == detail && player.profile.details.1 == value && (match &player.profile.status { Ready(details) => details.0 == value && details.1 == "ready", _ => false }) && player.profile.name == name && player.profile.score == value && player.inventory.len() == 2 && player.inventory.borrow_ref(1) == item
 }
 fn inspect(state: &State) -> Bool {
     let temporary = player(0)
@@ -67,7 +67,7 @@ fn narrow(handle:domain.WriteHandle<State>)->domain.ReadHandle<State> {handle.re
 struct TextOnly {text:String}
 fn text(n:Int32)->TextOnly {TextOnly{text:if n==1 {"first"} else {"single"}}}
 fn text_swap(a:&mut TextOnly,b:&mut TextOnly,input:Unit) {mem.swap(a,b)}
-fn text_valid(state:&TextOnly)->Bool {let expected="single"; state.text.equals(&expected)}
+fn text_valid(state:&TextOnly)->Bool {let expected="single"; state.text == expected}
 fn text_pair(a:&TextOnly,b:&TextOnly)->Bool {text_valid(a) && text_valid(b)}
 fn lifecycle() @suspends ->Int32 {
     let a=domain.create(make,1); let b=domain.create(make,2); let c=domain.create(make,3)

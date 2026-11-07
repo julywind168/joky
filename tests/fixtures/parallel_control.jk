@@ -12,7 +12,7 @@ fn main() @suspends -> Int32 {
     let winner = race { borrowed(&engine, "slow"), borrowed(&engine, "answer") }
     if winner != 42 { return 5 }
     engine.load_source("fn echo(value: String) @suspends -> String {{ value }}")!
-    if !engine.call::<String, String>("echo", "worker → control → worker").equals("worker → control → worker") { return 2 }
+    if engine.call::<String, String>("echo", "worker → control → worker") != "worker → control → worker" { return 2 }
     let alias = engine.share()
     if alias.close() != 0 { return 3 }
     if engine.try_call::<String, String>("echo", "closed").is_ok() { return 4 }

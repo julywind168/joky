@@ -28,7 +28,7 @@ fn main() @suspends {
     let values = [..source, pause()]
     check(values[0] + values[1] == values[2])
     let names = [..["first", "second"], { task.yield_now(); "third" }]
-    check(names[0].equals("first") && names[2].equals("third"))
+    check(names[0] == "first" && names[2] == "third")
     println("array spread ok")
 }
 fn sync_checks() {
@@ -86,7 +86,7 @@ fn storage_checks() {
     check(copied_rows[0][0] + moved_rows[1][1] == 42)
     let nested = [..[[1], [2]], [3]]
     check(nested[0][0] + nested[1][0] + nested[2][0] == 6)
-    check(move_all(["a", "b"])[1].equals("b"))
+    check(move_all(["a", "b"])[1] == "b")
     let unit = [{}, {}]
     check([{}, ..&unit, ..unit].len() == 5)
 }

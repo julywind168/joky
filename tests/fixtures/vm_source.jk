@@ -9,7 +9,7 @@ fn failure(h:&vm.Vm,path:String,kind:Int32) @suspends {
     match h.publish_file(path.clone()) {
         Ok(_) => expect(false)
         Err(error) => {
-            expect(error.path.equals(&path))
+            expect(error.path == path)
             expect(match error.kind {
                 vm.LoadErrorKind.Io(_) => kind==1
                 vm.LoadErrorKind.Utf8(_) => kind==2
@@ -56,7 +56,7 @@ fn run(interpreted:Bool) @suspends ->Int32 {
     match h.load_source("fn broken(") {
         Err(error)=>{
             let path="<source>"
-            expect(error.path.equals(&path))
+            expect(error.path == path)
             expect(match error.kind{vm.LoadErrorKind.Compile(d)=>d.has_span,_=>false})
         }
         Ok(_)=>expect(false)

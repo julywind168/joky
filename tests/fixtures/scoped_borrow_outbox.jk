@@ -23,7 +23,7 @@ fn exercise(settings: &Settings) @suspends -> Int32 {
     publish(&engine, target)
     let message = queue.receive()!
     let text = String.from_utf8(message)!
-    if !text.equals("中\0🙂") { return -1 }
+    if text != "中\0🙂" { return -1 }
     if !queue.receive()!.is_empty() { return -5 }
     let (_, end) = join { closed(target), queue.receive() }
     if end.is_some() { return -2 }

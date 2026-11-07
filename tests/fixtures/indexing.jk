@@ -27,7 +27,7 @@ fn main() @suspends {
     var names = ["old"]
     names[0] = "new"
     task.yield_now()
-    check(names[0].equals("new"))
+    check(names[0] == "new")
     println("indexing ok")
 }
 fn sync_checks() {
@@ -83,7 +83,7 @@ fn sync_checks() {
     resources[0].values[0] = 42
     check(resources[0].id == resources[0].values[0])
     resources[0] = Resource { name: "new", values: [42], id: 42 }
-    check(resources[0].name.equals("new"))
+    check(resources[0].name == "new")
     var units = [{}, {}]
     units[0] = {}
     let u = units[1]
@@ -108,7 +108,7 @@ fn sync_checks() {
     check(order == 123)
     check(values[0] == 42)
     check([42][0] == 42)
-    check("index {[42][0]}".equals("index 42"))
+    check("index {[42][0]}" == "index 42")
     { let copy = || { values[0] }; check(copy() == 42); }
     { var change = || { values[0] += 1 }; change(); }
     check(values[0] == 43)

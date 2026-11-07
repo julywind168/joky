@@ -47,14 +47,14 @@ fn lifecycle() @suspends -> Int32 {
         result
     }
     assert(match rejected { Rejected(7) => true, _ => false })
-    assert(when(first) { first.name.is_some() && match &first.payload { Text(value) => value.equals("owned"), _ => false } }.unwrap())
+    assert(when(first) { first.name.is_some() && match &first.payload { Text(value) => value == "owned", _ => false } }.unwrap())
     when(mut first) {
         var values = Array.new::<String>(); values.push("nested")
         mem.replace(&mut first.payload, Payload.Nested(("header", Option.Some(values))))
         mem.replace(&mut first.name, Option.Some("self"));
     }.unwrap()
     assert(when(mut first, mut second?: State = routes[first.name]) { 0 } else { 0 } aliased { first.n += 1; first.n }.unwrap() == 2)
-    assert(when(first) { match &first.payload { Nested(pair) => pair.0.equals("header"), _ => false } }.unwrap())
+    assert(when(first) { match &first.payload { Nested(pair) => pair.0 == "header", _ => false } }.unwrap())
     when(mut first) { mem.replace(&mut first.name, Option.None); first.index = Option.None; mem.replace(&mut first.payload, Payload.Empty); }.unwrap()
     assert(snapshot.value() == 1)
     directory.close()

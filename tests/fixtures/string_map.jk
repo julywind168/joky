@@ -52,7 +52,7 @@ impl Eq for Key {
     fn eq(&self, other: &Self) -> Bool {
         let message = "String key Eq failure"
         assert(self.fail != 2 && other.fail != 2, &message)
-        self.text.equals(&other.text)
+        self.text == other.text
     }
 }
 impl Hash for Key {

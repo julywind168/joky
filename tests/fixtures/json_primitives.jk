@@ -14,7 +14,7 @@ struct Tracked { id: Int32, groups: Array<Group> }
 impl Drop for Tracked { fn drop(&mut self) { println(self.id) } }
 fn ensure(ok: Bool) { let message = "JSON0 existing primitive capability"; assert(ok, &message) }
 fn equals(atom: &Atom, expected: &String) -> Bool {
-    match atom { Text(text) => text.equals(expected), Numeric(text) => text.equals(expected), _ => false }
+    match atom { Text(text) => text == expected, Numeric(text) => text == expected, _ => false }
 }
 fn groups() -> Array<Group> {
     var values = Array.new::<Atom>()
@@ -76,14 +76,14 @@ fn mutate(groups: &mut Array<Group>) {
 fn numbers() {
     let maximum: UInt64 = 18446744073709551615
     let expected = "18446744073709551615"
-    ensure(maximum.to_string().equals(&expected))
+    ensure(maximum.to_string() == expected)
     let minimum: Int64 = -9223372036854775808
     let expected = "-9223372036854775808"
-    ensure(minimum.to_string().equals(&expected))
+    ensure(minimum.to_string() == expected)
     let large: UInt64 = 9007199254740993
     ensure(float64(large).to_bits() == float64(large - 1).to_bits())
     let expected = "-0"
-    ensure((-0.0).to_text().equals(&expected))
+    ensure((-0.0).to_text() == expected)
     ensure(!Float64.NAN.is_finite() && !Float64.INFINITY.is_finite())
     // Existing fixed decimal formatting can exceed a 256-byte token limit.
     let smallest = Float64.from_bits(1).to_text()
@@ -93,7 +93,7 @@ fn numbers() {
     // Preserve numeric spelling without assuming a machine-number conversion.
     let source = "-0.00e+400"
     let copy = source.clone()
-    ensure(copy.equals(&source))
+    ensure(copy == source)
 }
 fn unicode() {
     ensure(Rune.from_u32(0xd800).is_none() && Rune.from_u32(0xdfff).is_none())
@@ -102,7 +102,7 @@ fn unicode() {
     builder.push(Rune.from_u32(0x1f642).unwrap_or('\0'))
     let text = builder.finish()
     let expected = "\0🙂"
-    ensure(text.equals(&expected) && text.byte_length() == 5)
+    ensure(text == expected && text.byte_length() == 5)
     var invalid = Array.new::<UInt8>()
     invalid.push(0xed); invalid.push(0xa0); invalid.push(0x80)
     match String.from_utf8(invalid) { Err(error) => ensure(error.offset == 0), _ => ensure(false) }

@@ -32,7 +32,7 @@ fn task_messages(port: Int32) @suspends {
     ensure(empty.is_empty())
     let line = match connection.read_line(9) { Ok(Some(line)) => line, _ => { ensure(false); return } }
     let expected = "你\0好"
-    ensure(line.equals(&expected))
+    ensure(line == expected)
     let blank = match connection.read_line(1) { Ok(Some(line)) => line, _ => { ensure(false); return } }
     ensure(blank.is_empty())
     ensure(connection.write_message(message, 3).is_ok())

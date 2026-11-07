@@ -12,7 +12,7 @@ fn send(target: outbox.Handle, text: String) {
 }
 fn expect(queue: &mut outbox.Mailbox, expected: String) @suspends {
     let text = String.from_utf8(queue.receive()!)!
-    check.assert(text.equals(&expected), "target FIFO preserves the complete batch")
+    check.assert(text == expected, "target FIFO preserves the complete batch")
 }
 fn mixed(reverse: Bool, closed: Bool) @suspends {
     let owner = domain.create(make, 0)

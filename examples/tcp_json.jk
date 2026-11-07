@@ -25,7 +25,7 @@ fn message_id(value: &Value, kind: &String) -> Option<UInt64> {
     match value {
         Array(items) => {
             if items.len() != 3 { return None }
-            match items.borrow_ref(0) { Text(text) => { if !text.equals(kind) { return None } }, _ => { return None } }
+            match items.borrow_ref(0) { Text(text) => { if text != kind { return None } }, _ => { return None } }
             match items.borrow_ref(1) { Number(number) => number.to_u64().ok(), _ => None }
         }
         _ => None

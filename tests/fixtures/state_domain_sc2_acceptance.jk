@@ -12,7 +12,7 @@ fn make(total: Int32) -> Room {
 fn total(room: &Room) -> Int32 { room.total }
 fn valid(room: &Room) -> Bool {
     let title = "room"
-    room.title.equals(&title) && room.scores.len() == 1 && room.scores.get(0).unwrap_or(-1) == room.total
+    room.title == title && room.scores.len() == 1 && room.scores.get(0).unwrap_or(-1) == room.total
 }
 fn prepare(writer: domain.WriteHandle<Room>, delta: Int32) @suspends -> domain.Candidate<Room> {
     let snapshot = domain.snapshot_from(writer.read_only(), total)

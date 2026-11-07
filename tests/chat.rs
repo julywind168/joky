@@ -495,7 +495,7 @@ fn chat_matrix(parallel: bool) {
         assert_eq!(logic.matches("    let command = parse(line)\n").count(), 1);
         let logic = logic.replace(
             "    let command = parse(line)\n",
-            "    if line.equals(\"crash\") { let bad = 1 / 0; }\n    let command = parse(line)\n    pause_send(host, &command)\n",
+            "    if line == \"crash\" { let bad = 1 / 0; }\n    let command = parse(line)\n    pause_send(host, &command)\n",
         );
         std::fs::write(app.join("script/main.jk"), &logic).unwrap();
         let next = logic

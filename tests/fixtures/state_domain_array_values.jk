@@ -36,7 +36,7 @@ fn values_test(h:domain.WriteHandle<State>) @suspends {
     assert(first.text.is_some())
     var outer=Array.new::<Array<String>>(); outer.push(strings()); outer.push(Array.new::<String>())
     let outer=domain.query_from(h.read_only(),nested,outer)!
-    assert(outer.len()==2 && outer.borrow_ref(0).borrow_ref(0).equals("数组🙂\0") && outer.borrow_ref(1).is_empty())
+    assert(outer.len()==2 && outer.borrow_ref(0).borrow_ref(0) == "数组🙂\0" && outer.borrow_ref(1).is_empty())
     var units=Array.new::<Unit>(); units.push({}); units.push({})
     let units=domain.query_from(h.read_only(),empty,units)!
     assert(units.len()==2)
@@ -49,7 +49,7 @@ fn snapshots_test(h:domain.WriteHandle<State>) @suspends {
     let snap=domain.snapshot_set(access)
     domain.write_to(h,tick,strings())!
     let a=domain.query_snapshot(&snap,h.read_only(),query_packet,Query{values:strings(),suffix:"tail"})
-    assert(a.len()==4 && a.borrow_ref(0).equals("数组🙂\0") && a.borrow_ref(2).equals("tail") && a.borrow_ref(3).equals("2"))
+    assert(a.len()==4 && a.borrow_ref(0) == "数组🙂\0" && a.borrow_ref(2) == "tail" && a.borrow_ref(3) == "2")
     let candidate=domain.edit_snapshot(snap,h,tick,strings())
     var receipt=domain.commit_set(candidate); assert(match receipt.wait() {Err(Conflict)=>true,_=>false})
     var access=domain.access_set(); access.include(h.read_only())
@@ -96,7 +96,7 @@ fn roots_test() @suspends {
     let a=domain.create(make_owned,strings())
     let b=domain.create(make_owned,Array.new::<String>())
     let previous=domain.write_pair(a.handle(),b.handle(),rotate,strings())!
-    assert(previous.len()==2 && previous.borrow_ref(0).equals("数组🙂\0"))
+    assert(previous.len()==2 && previous.borrow_ref(0) == "数组🙂\0")
     var set=domain.access_set(); set.include(a.read_handle()); set.include(b.read_handle())
     let snapshot=domain.snapshot_set(set)
     assert(domain.read_snapshot(&snapshot,a.read_handle(),owned_count)==0)

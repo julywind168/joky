@@ -61,7 +61,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer() == path) }
         _ => { ensure(false) }
     }
 }
@@ -76,8 +76,8 @@ fn structs() {
     let original = user()
     let output = encoded(&original)
     let recovered = decoded::<User>(output)
-    ensure(original.name.equals(&recovered.name)); ensure(recovered.age == 37)
-    match &recovered.nickname { Some(text) => { let expected = "Ada"; ensure(text.equals(&expected)) }, None => { ensure(false) } }
+    ensure(original.name == recovered.name); ensure(recovered.age == 37)
+    match &recovered.nickname { Some(text) => { let expected = "Ada"; ensure(text == expected) }, None => { ensure(false) } }
     let missing = decoded::<User>("{{\"name\":\"Ada\",\"age\":37}}")
     ensure(missing.nickname.is_none())
     let null = decoded::<User>("{{\"name\":\"Ada\",\"age\":37,\"nickname\":null}}")

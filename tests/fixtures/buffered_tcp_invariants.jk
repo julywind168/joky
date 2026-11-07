@@ -55,12 +55,12 @@ pub fn buffered_frames_probe(stream: TcpStream) @suspends -> Int32 {
     if second.get(0).unwrap_or(0) != 59 || buffered.buffered_len() != 6 { return 17 }
     let line = match buffered.read_line(2) { Ok(Some(line)) => line, _ => { return 18 } }
     let expected = "1"
-    if !line.equals(&expected) || buffered.buffered_len() != 4 { return 19 }
+    if line != expected || buffered.buffered_len() != 4 { return 19 }
     match buffered.read_line(2) { Err(InvalidUtf8(error)) => { if error.offset != 0 { return 20 } }, _ => { return 21 } }
     if buffered.buffered_len() != 2 { return 22 }
     let next = match buffered.read_line(2) { Ok(Some(line)) => line, _ => { return 23 } }
     let expected_next = "="
-    if !next.equals(&expected_next) || buffered.buffered_len() != 0 { return 24 }
+    if next != expected_next || buffered.buffered_len() != 0 { return 24 }
     match buffered.read_line(1) { Ok(None) => {}, _ => { return 25 } }
     42
 }
@@ -130,7 +130,7 @@ pub fn buffered_split_eof_probe(stream: TcpStream) @suspends -> Int32 {
     buffered.buffer.state = ReadState.Eof
     var (reader, writer) = buffered.split()
     if !reader.is_eof() || reader.buffered_len() != 2 || reader.capacity() != 16384 { return 1 }
-    match reader.read_line(2) { Ok(Some(line)) => { let expected = "x"; if !line.equals(&expected) { return 2 } }, _ => { return 3 } }
+    match reader.read_line(2) { Ok(Some(line)) => { let expected = "x"; if line != expected { return 2 } }, _ => { return 3 } }
     match reader.read_exact(1) { Ok(None) => {}, _ => { return 4 } }
     match reader.read_message(1) { Ok(None) => {}, _ => { return 5 } }
     if !writer.write_message(message_header(0), 4).is_ok() { return 6 }
@@ -142,7 +142,7 @@ pub fn buffered_split_shutdown_probe(stream: TcpStream) @suspends -> Int32 {
     buffered.buffer.offset = 1
     var (reader, writer) = buffered.split()
     if !reader.shutdown().is_ok() || reader.is_eof() || reader.buffered_len() != 2 { return 1 }
-    match reader.read_line(2) { Ok(Some(line)) => { let expected = "x"; if !line.equals(&expected) { return 2 } }, _ => { return 3 } }
+    match reader.read_line(2) { Ok(Some(line)) => { let expected = "x"; if line != expected { return 2 } }, _ => { return 3 } }
     match reader.read_exact(1) { Ok(None) => {}, _ => { return 4 } }
     if !reader.is_eof() || !writer.write_message(message_header(0), 4).is_ok() { return 5 }
     42

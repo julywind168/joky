@@ -56,7 +56,7 @@ fn compute() -> Int32 {
     expect(value == 41)
     expect(apply(increment) == 42)
     let text = replace("old", "new")
-    expect(text.equals("new"))
+    expect(text == "new")
     expect(owners(["first"], true) == 2)
     expect(owners(["first"], false) == 1)
     let counter = Counter { value: 39 }

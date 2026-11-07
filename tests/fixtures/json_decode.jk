@@ -27,13 +27,13 @@ fn limited(input: String, limits: Limits, expected: Int32, offset: UInt64) {
 }
 fn text(input: String, expected: String) {
     match json.decode(&input) {
-        Ok(Value.Text(actual)) => { ensure(actual.equals(&expected)) }
+        Ok(Value.Text(actual)) => { ensure(actual == expected) }
         _ => { ensure(false) }
     }
 }
 fn numeric(input: String, expected: String) {
     match json.decode(&input) {
-        Ok(Value.Number(actual)) => { ensure(actual.as_text().equals(&expected)) }
+        Ok(Value.Number(actual)) => { ensure(actual.as_text() == expected) }
         _ => { ensure(false) }
     }
 }
@@ -68,7 +68,7 @@ fn positive() {
                     match items.borrow_ref(4) { Object(empty) => { ensure(empty.is_empty()) }, _ => { ensure(false) } }
                     match items.borrow_ref(5) { Array(empty) => { ensure(empty.is_empty()) }, _ => { ensure(false) } }
                     match items.borrow_ref(6) {
-                        Number(value) => { let expected = "18446744073709551616"; ensure(value.as_text().equals(&expected)) }
+                        Number(value) => { let expected = "18446744073709551616"; ensure(value.as_text() == expected) }
                         _ => { ensure(false) }
                     }
                 }
@@ -158,7 +158,7 @@ fn bytes() {
     ensure(json.decode_bytes(&source).is_ok())
     source.clear()
     match decoded {
-        Value.Text(text) => { let expected = "🙂"; ensure(text.equals(&expected)) }
+        Value.Text(text) => { let expected = "🙂"; ensure(text == expected) }
         _ => { ensure(false) }
     }
     var source = Array.new::<UInt8>()
@@ -200,7 +200,7 @@ fn inspect(value: &Value) {
                             match nested.borrow_ref(&key) {
                                 Number(number) => {
                                     let spelling = "18446744073709551616"
-                                    ensure(number.as_text().equals(&spelling))
+                                    ensure(number.as_text() == spelling)
                                 }
                                 _ => { ensure(false) }
                             }
@@ -208,7 +208,7 @@ fn inspect(value: &Value) {
                         _ => { ensure(false) }
                     }
                     match items.borrow_ref(2) {
-                        Text(text) => { let expected = "🙂\0"; ensure(text.equals(&expected)) }
+                        Text(text) => { let expected = "🙂\0"; ensure(text == expected) }
                         _ => { ensure(false) }
                     }
                 }

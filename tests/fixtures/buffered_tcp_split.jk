@@ -79,7 +79,7 @@ fn sweep() @suspends -> Int32 {
     ensure(separator.get(0).unwrap_or(0) == 59)
     let line = match reader.read_line(3) { Ok(Some(line)) => line, _ => { return 5 } }
     let expected = "ok"
-    ensure(line.equals(&expected))
+    ensure(line == expected)
     let message = match reader.read_message(2) { Ok(Some(bytes)) => bytes, _ => { return 6 } }
     ensure(message.len() == 2 && message.get(0).unwrap_or(1) == 0 && message.get(1).unwrap_or(0) == 255)
     match reader.read_line(2) { Err(InvalidUtf8(error)) => ensure(error.offset == 0), _ => { return 7 } }

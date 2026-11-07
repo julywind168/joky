@@ -81,7 +81,7 @@ fn compute() -> Int32 {
     expect((1.5, 2.0).0 == 1.5)
     let formatted = "{pair.0}"
     let expected = "42"
-    expect(formatted.equals(&expected))
+    expect(formatted == expected)
     expect(pair
         .0 == 42)
     owners()

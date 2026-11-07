@@ -17,7 +17,7 @@ fn reject(state: domain.WriteHandle<State>) @suspends -> domain.Outcome<String, 
 }
 fn forward(value: domain.Outcome<String, String>) -> domain.Outcome<Int32, String> {
     let text = value?
-    assert(text.equals("committed"))
+    assert(text == "committed")
     domain.Outcome.Committed(24)
 }
 fn failed() -> domain.Outcome<String, String> { domain.Outcome.Failed(domain.DomainAccessError.Closed)? }
@@ -36,26 +36,26 @@ fn lifecycle() @suspends -> Int32 {
     let owner = domain.create(make, {})
     let state = owner.handle()
     assert(forward(accept(state))! == 24)
-    assert(state.accept()!.equals("committed"))
-    match forward(reject(state)) { Rejected(error) => assert(error.equals("rejected")), _ => assert(false) }
+    assert(state.accept()! == "committed")
+    match forward(reject(state)) { Rejected(error) => assert(error == "rejected"), _ => assert(false) }
     assert(when (state) { state.n }! == 2)
     match forward(failed()) { Failed(Closed) => {}, _ => assert(false) }
     let access: domain.Outcome<String, String> = domain.Outcome.Failed(domain.DomainAccessError.OutboxFull(7))
     match forward(access) { Failed(OutboxFull(id)) => assert(id == 7), _ => assert(false) }
-    match denied() { Rejected(error) => assert(error.equals("denied")), _ => assert(false) }
+    match denied() { Rejected(error) => assert(error == "denied"), _ => assert(false) }
     let no_room: Result<Option<String>, domain.DomainAccessError> = when (state) { None }
     assert(no_room!.is_none())
     let nested: domain.Outcome<Result<Int32, String>, String> = when (state) { Ok(Err("inner")) }
-    assert(nested!.err()!.equals("inner"))
+    assert(nested!.err()! == "inner")
     let success = accept(state)
     assert(success.is_committed())
-    assert(success.committed()!.equals("committed"))
+    assert(success.committed()! == "committed")
     assert(reject(state).committed().is_none())
-    assert(accept(state).unwrap().equals("committed"))
-    assert(mapped(reject(state), 1).err()!.equals("rejected"))
-    assert(mapped(accept(state), 0)!.equals("committed"))
+    assert(accept(state).unwrap() == "committed")
+    assert(mapped(reject(state), 1).err()! == "rejected")
+    assert(mapped(accept(state), 0)! == "committed")
     owner.close()
-    assert(mapped(accept(state), 2).err()!.equals("access"))
+    assert(mapped(accept(state), 2).err()! == "access")
     assert(accept(state).committed().is_none())
     let broken = isolate { let value: domain.Outcome<String, String> = domain.Outcome.Rejected("owned"); value! }
     assert(broken.is_err())

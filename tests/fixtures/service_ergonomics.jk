@@ -39,11 +39,11 @@ impl Clone for Different { fn clone(&self) -> Self { Different { value: self.val
 fn clone_values() {
     let imported = model.Secret.make("private")
     let imported_copy = imported.clone()
-    expect(imported_copy.text().equals("private"))
-    expect(imported.text().equals("private"))
+    expect(imported_copy.text() == "private")
+    expect(imported.text() == "private")
     let wrapped = model.Secret.make(model.Secret.make("nested"))
     let wrapped_copy = wrapped.clone()
-    expect(wrapped_copy.text().text().equals("nested"))
+    expect(wrapped_copy.text().text() == "nested")
     let source = Parcel { value: Different { value: 42 }, number: 0 }
     expect(source.clone().value.value == 42)
     var differing = Array.new::<Different>()
@@ -57,7 +57,7 @@ fn clone_values() {
     let original = Item { name: "one", count: 1 }
     var copy = original.clone()
     copy.name = "changed"
-    expect(original.name.equals("one"))
+    expect(original.name == "one")
     let empty = Empty::<fn() -> Unit> {}.clone()
     var values = Array.new::<String>()
     values.push("first")
@@ -74,8 +74,8 @@ fn clone_values() {
     expect(match number { Value(n) => n == 42, _ => false })
     let command = Command.Value("payload")
     let copied = command.clone()
-    expect(match copied { Value(text) => text.equals("payload"), _ => false })
-    expect(match command { Value(text) => text.equals("payload"), _ => false })
+    expect(match copied { Value(text) => text == "payload", _ => false })
+    expect(match command { Value(text) => text == "payload", _ => false })
     let empty_command = Command.Empty::<String>
     expect(match empty_command.clone() { Empty => true, _ => false })
     expect(Status.Pending == Status.Pending && Status.Pending != Status.Ready)
@@ -85,12 +85,12 @@ fn entries(engine: vm.Vm) @suspends {
     let entry = engine.require::<String, String>("echo")!
     expect(entry.try_call(&engine, "before load").is_err())
     engine.load_source("fn echo(input: String) @suspends -> String {{ input }}")!
-    expect(entry.call(&engine, "old").equals("old"))
+    expect(entry.call(&engine, "old") == "old")
     engine.publish_source("fn echo(input: String) @suspends -> String {{ \"new\" }}")!
-    expect(entry.try_call(&engine, "ignored")!.equals("new"))
+    expect(entry.try_call(&engine, "ignored")! == "new")
     let error = match engine.publish_source("fn echo(input: Int32) @suspends -> Int32 {{ input }}") { Err(error) => error, Ok(_) => { expect(false); return } }
     expect(!error.message().is_empty())
-    expect(entry.call(&engine, "still current").equals("new"))
+    expect(entry.call(&engine, "still current") == "new")
     let foreign = vm.Vm.interpreter()
     foreign.load_source("fn echo(input: Int32) @suspends -> Int32 {{ input }}")!
     expect(entry.try_call(&foreign, "wrong signature").is_err())
@@ -100,9 +100,9 @@ fn entries(engine: vm.Vm) @suspends {
 }
 fn diagnostics() {
     let error = vm.LoadError { path: "file", kind: vm.LoadErrorKind.Utf8(Utf8Error { code: Utf8ErrorCode.InvalidSequence, offset: 0 }) }
-    expect(error.message().equals("Script is not UTF-8"))
+    expect(error.message() == "Script is not UTF-8")
     let error = vm.LoadError { path: "file", kind: vm.LoadErrorKind.Io(fs.IoError { kind: fs.ErrorKind.NotFound, message: "missing" }) }
-    expect(error.message().equals("missing"))
+    expect(error.message() == "missing")
 }
 fn main() @suspends {
     clone_values()
@@ -110,10 +110,10 @@ fn main() @suspends {
     let y = x.clone()
     let Parcel { value, number } = y
     task.yield_now()
-    expect(value.equals("hello") && number == 2 && x.value.equals("hello"))
+    expect(value == "hello" && number == 2 && x.value == "hello")
     let owner = domain.create(make, {})
     expect(update(owner.handle())! == 2)
-    expect(match rejected(owner.handle()) { Rejected(message) => message.equals("rejected"), _ => false })
+    expect(match rejected(owner.handle()) { Rejected(message) => message == "rejected", _ => false })
     let counter = owner.handle()
     let value: Result<Int32, domain.DomainAccessError> = when (counter) { counter.value }
     expect(value! == 2)

@@ -15,7 +15,7 @@ fn exercise(settings: &Settings) @suspends -> Int32 {
     file.write_text(settings.text.clone())!
     if file.seek(fs.SeekFrom.Start(0))! != 0 { return -1 }
     let text = file.read_text()!
-    if !text.equals(&settings.text) { return -2 }
+    if text != settings.text { return -2 }
     let eof = file.read(1)!
     if eof.len() != 0 { return -3 }
     if file.read(0).is_ok() { return -4 }

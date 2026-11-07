@@ -14,7 +14,7 @@ fn make(p:Init)->State {
     State{initial:p,title:"constructed",values:values}
 }
 fn inspect(s:&State)->Init {s.initial}
-fn owned_ok(s:&State)->Bool {let expected="constructed"; s.title.equals(&expected) && s.values.get(0).unwrap_or(0)==s.initial.bits.high}
+fn owned_ok(s:&State)->Bool {let expected="constructed"; s.title == expected && s.values.get(0).unwrap_or(0)==s.initial.bits.high}
 fn make_empty(p:Empty)->Empty {Empty{}}
 fn read_empty(s:&Empty)->Empty {Empty{}}
 struct Scalar { n:Int32 }

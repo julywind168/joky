@@ -147,7 +147,7 @@ fn types(pool: &postgres.Pool) @suspends {
     let r = rows.borrow_ref(0)
     assert(match r.borrow_ref(0) { BoolValue(b) => b, _ => false }, "boolean")
     assert(match r.borrow_ref(1) { IntValue(n) => n == -42, _ => false }, "negative bigint")
-    assert(match r.borrow_ref(2) { TextValue(s) => s.equals("a';--好"), _ => false }, "bound UTF-8")
+    assert(match r.borrow_ref(2) { TextValue(s) => s == "a';--好", _ => false }, "bound UTF-8")
     assert(match r.borrow_ref(3) { BytesValue(b) => b.len() == 2 && b[1] == 255, _ => false }, "binary data")
     assert(match r.borrow_ref(4) { Null(Integer) => true, _ => false }, "typed null")
     assert(match r.borrow_ref(5) { IntValue(n) => n == 7, _ => false }, "int2")

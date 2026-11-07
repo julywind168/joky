@@ -30,7 +30,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer() == path) }
         _ => { ensure(false) }
     }
 }
@@ -49,6 +49,6 @@ fn main() {
     let unit = decoded::<Unit>("null"); ensure(encoded(&unit).byte_length() == 4)
     ensure(decoded::<Bool>("true")); ensure(!decoded::<Bool>("false"))
     let number = decoded::<Number>("-0.1200E+004")
-    let text = "-0.1200E+004"; ensure(encoded(&number).equals(&text))
+    let text = "-0.1200E+004"; ensure(encoded(&number) == text)
 
 }

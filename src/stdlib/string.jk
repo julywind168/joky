@@ -325,7 +325,6 @@ impl String {
     pub fn release(self) { release(self) }
     pub fn byte_length(&self) -> UInt64 { byte_length(self) }
     pub fn is_empty(&self) -> Bool { is_empty(self) }
-    pub fn equals(&self, other: &String) -> Bool { equals(self, other) }
     pub fn find(&self, needle: &String) -> Option<UInt64> { find(self, needle) }
     pub fn starts_with(&self, prefix: &String) -> Bool { starts_with(self, prefix) }
     pub fn ends_with(&self, suffix: &String) -> Bool { ends_with(self, suffix) }
@@ -355,9 +354,6 @@ fn matches_at(text: &Slice<UInt8>, other: &Slice<UInt8>, offset: UInt64) -> Bool
         index = index + 1
     }
     true
-}
-pub fn equals(text: &String, other: &String) -> Bool {
-    text_storage.equals(text, other)
 }
 pub fn starts_with(text: &String, prefix: &String) -> Bool {
     let text = bytes(text)

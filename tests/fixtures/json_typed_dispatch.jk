@@ -30,7 +30,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer() == path) }
         _ => { ensure(false) }
     }
 }
@@ -74,7 +74,7 @@ fn dispatch() {
     var options = Options.default(); options.limits.max_depth = 2
     let value = Recover {}
     let output = match typed.encode_with_options(&value, options) { Ok(output) => output, Err(_) => { ensure(false); "" } }
-    let expected = "{{\"good\":[]}}"; ensure(output.equals(&expected))
+    let expected = "{{\"good\":[]}}"; ensure(output == expected)
     options.limits.max_nodes = 3; limited(&value, options, 8, "/good")
     let duplicate = Duplicate {}; limited(&duplicate, Options.default(), 12, "/same")
     let looping = Loop {}; limited(&looping, Options.default(), 16, "")

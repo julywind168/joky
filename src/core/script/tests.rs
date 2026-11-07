@@ -243,7 +243,7 @@ fn script_requests_keep_imported_functions_private() {
     let source = r#"import helpers
 fn root(_:Unit) @suspends ->Int32 {
     let result=helpers.echo("owned")
-    if result.equals("owned") {42} else {0}
+    if result == "owned" {42} else {0}
 }"#;
     let ast = crate::TypeRegistry::default()
         .resolve_with_modules(&crate::parser::parse(source).unwrap(), &modules)

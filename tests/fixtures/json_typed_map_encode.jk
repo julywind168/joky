@@ -30,7 +30,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer().equals(&path)) }
+        Mapping(error) => { ensure(code(error.kind) == expected); ensure(error.pointer() == path) }
         _ => { ensure(false) }
     }
 }
@@ -47,7 +47,7 @@ fn main() {
     fields.insert("items", values);
     let text = encoded(&fields)
     let expected = "{{\"items\":[null,18446744073709551615,0]}}"
-    ensure(text.equals(&expected))
+    ensure(text == expected)
     ensure(fields.len() == 1)
     var options = Options.default(); options.limits.max_string_bytes = 4
     match typed.encode_with_options(&fields, options) { Err(error) => mapping(error, 9, "/items"), Ok(_) => { ensure(false) } }

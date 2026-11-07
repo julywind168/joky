@@ -48,7 +48,7 @@ fn test_account(ctx: Host, id: UInt64, key: UInt64, output: session.Output) @sus
 fn expect_message(queue: &mut outbox.Mailbox, expected: String) @suspends {
     let bytes = queue.receive()!
     let text = String.from_utf8(bytes)!
-    check.assert(text.equals(&expected), "mailbox message and ordering")
+    check.assert(text == expected, "mailbox message and ordering")
 }
 fn balance(owner: &domain.Owner<Account>) @suspends -> UInt64 { domain.read_from(owner.read_handle(), balance_view)! }
 fn unchanged(state: &mut Account, _: Unit) { state.balance_cents += 0 }
@@ -335,7 +335,7 @@ fn verify_move_rollback() @suspends {
     match join(f.ctx, alice.handle(), name) {
         Rejected(Stale) => {}, _ => { check.assert(false, "retired destination rejects after preparing departure") }
     }
-    check.assert(domain.read_from(alice.read_handle(), room_name_view)!!.equals("r"), "failed moves preserve account room")
+    check.assert(domain.read_from(alice.read_handle(), room_name_view)!! == "r", "failed moves preserve account room")
     check.assert(domain.query_from(f.room.read_handle(), member_value, 1)!, "failed moves preserve old membership")
     check.assert(!domain.query_from(f.other.read_handle(), member_value, 1)!, "failed moves never add destination membership")
     check.assert(balance(&alice) == 500 && balance(&bob) == 500, "failed moves do not charge")

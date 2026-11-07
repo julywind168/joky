@@ -87,6 +87,21 @@ fn doc_cli_generates_linked_offline_reference_and_regenerates() {
     assert!(testing.contains("class=\"syntax-annotation\">suspends</span>"));
     assert!(!text_without_tags(&testing).contains("fn configure"));
     assert!(!text_without_tags(&testing).contains("fn error"));
+    for module in ["log", "http", "time", "task", "string"] {
+        let html = fs::read_to_string(root.join(module).join("index.html")).unwrap();
+        let text = text_without_tags(&html);
+        assert!(!text.contains("try_emit"), "{module}");
+        assert!(!text.contains("fn equals("), "{module}");
+        assert!(!text.contains("__sleep_until"), "{module}");
+        if module == "time" {
+            assert!(!text.contains("fn sleep_until("));
+        } else if module == "task" {
+            assert!(text.contains("pub fn sleep_until(deadline: Instant) @suspends"));
+        } else if module == "log" {
+            assert!(text.contains("-&gt; Result&lt;Unit, LogError&gt;"));
+            assert!(text.contains("-&gt; Result&lt;Emission, LogError&gt;"));
+        }
+    }
     let integer = fs::read_to_string(root.join("integer/index.html")).unwrap();
     assert!(!integer.contains("rune_from_valid_u32"));
     assert!(!integer.contains("parse_decimal"));

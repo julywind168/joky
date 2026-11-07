@@ -71,7 +71,7 @@ fn topology() @suspends -> Int32 {
         var da = d.into_array()
         let expected = "second"
         match (ca.pop(), da.pop()) {
-            (Some(a), Some(b)) => if string.equals(&a, &expected) && string.equals(&b, &expected) { 42 } else { 0 }
+            (Some(a), Some(b)) => if a == expected && b == expected { 42 } else { 0 }
             _ => 0
         }
     } else { 0 }

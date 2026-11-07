@@ -680,7 +680,7 @@ fn owned_script_pending_results_keep_the_starting_contract() {
         "enum Reply{Done(String),Empty}",
         "Reply",
         "Reply.Done(\"old text\")",
-        "match result {Done(text)=>assert(text.equals(\"old text\")),_=>assert(false)}",
+        "match result {Done(text)=>assert(text == \"old text\"),_=>assert(false)}",
     );
 }
 

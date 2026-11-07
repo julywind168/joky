@@ -30,7 +30,7 @@ fn message_id(value: &Value, kind: &String) -> Option<UInt64> {
     match value {
         Array(items) => {
             if items.len() != 3 { return Option.None }
-            match items.borrow_ref(0) { Text(text) => { if !text.equals(kind) { return Option.None } }, _ => { return Option.None } }
+            match items.borrow_ref(0) { Text(text) => { if text != kind { return Option.None } }, _ => { return Option.None } }
             match items.borrow_ref(1) { Number(number) => number.to_u64().ok(), _ => Option.None }
         }
         _ => Option.None
@@ -143,6 +143,6 @@ fn task_pressure(port: Int32) @suspends {
     let wire = header.concat(&text)
     join { flood(&mut writer, &wire), pushes(&mut reader) }
     let after = match json.encode_with_limits(&value, limits()) { Ok(text) => text, _ => { ensure(false); return } }
-    ensure(after.equals(&text))
+    ensure(after == text)
     reader.close(); writer.close(); notify("finish")
 }
