@@ -65,7 +65,8 @@ fn run(scenario: UInt64) @suspends {
     let owner = domain.create(make, {})
     let ctx = Context { counts: owner.handle(), output: connection.output(), reply: "pong\n", fail_close: scenario == 5 }
     if scenario == 3 {
-        race { session.run(connection, stream, session.Lines { max_bytes: 5 }, &ctx), task.sleep_ms(1) }
+        let handler = &ctx
+        race { { session.run(connection, stream, session.Lines { max_bytes: 5 }, handler); }, task.sleep_ms(1) }
         peer(peer_stream, scenario)
         var batch = outbox.batch(1, 0)
         check.assert(match outbox.stage(&mut batch, control, "".into_bytes()) { Err(Closed) => true, _ => false }, "cancellation releases queue ownership")
@@ -74,7 +75,13 @@ fn run(scenario: UInt64) @suspends {
         var batch = outbox.batch(1, 0)
         check.assert(match outbox.stage(&mut batch, control, "".into_bytes()) { Err(Closed) => true, _ => false }, "failure releases queue ownership")
     } else {
-        join { session.run(connection, stream, session.Lines { max_bytes: 5 }, &ctx), peer(peer_stream, scenario) }
+        let (outcome, _) = join { session.run(connection, stream, session.Lines { max_bytes: 5 }, &ctx), peer(peer_stream, scenario) }
+        check.assert(match outcome {
+            Ok(HandlerStopped) => scenario == 0,
+            Err(Read(LimitExceeded)) => scenario == 1,
+            Ok(IdleTimeout) => scenario == 2,
+            _ => false
+        }, "session preserves the termination cause")
     }
     check.assert(ctx.reply == "pong\n", "handler remains owned by the caller")
     let counts = owner.handle()

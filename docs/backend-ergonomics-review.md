@@ -654,12 +654,16 @@ postgres_orders_http.jk 在完成 1–3 后应缩短到约当前一半，且不�
 | 问题 | 当前依据 | 建议与待定边界 |
 | --- | --- | --- |
 | 唯一标头查询【已实现】 | Request.header_unique 返回 Result<Option<&String>, DuplicateHeader>，订单示例已迁移 | 区分缺失、唯一值与重复，不复制标头值；名称按 ASCII 忽略大小写，相同值重复也报错，单个值不按逗号拆分。header/header_all 保留原语义；嵌套文本借用结果目前需在同步助手中处理，订单的 order_key 校验后只 clone 唯一值，再交给挂起 handler。 |
-| session 无法向应用报告正常 EOF、协议错误或写失败的区别 | [session.read](../src/stdlib/session.jk) 将 Reader 的 Err 转成 None；发送失败直接退出；Handler.on_close 无参数，run 返回 Unit | 考虑让 run 返回结束原因，或增加错误／带原因关闭回调。需先决定 Reader.Error 如何传给 Handler、race 多分支同时结束的优先规则，以及取消时回调能否运行；不能简单吞掉错误后补一个日志。 |
+| session 结束原因【已实现】 | [session](../src/stdlib/session.jk) 的 run/run_draining 清理后返回 Result<End, Error<R.Error>>；Handler.on_close 保持无参数 | 区分 EOF、处理器停止、空闲超时、停机、控制停止与输出关闭；保留原始读写错误，排空失败可同时返回 ReadAndWrite。沿用 race 获胜规则；结构化取消不返回结果、不启动 on_close；chat 显式报告读写错误。 |
 | 只读字符串输入的所有权约定仍不一致 | [fs.open](../src/stdlib/fs.jk) 消费 path，[TLS ClientConfig.connect](../src/stdlib/tls.jk) 消费 server_name；DNS、process、postgres URL 已借用。vm.file_text 和 HTTP TLS 连接因此仍有显式 clone | 可按 §10 的规则评估改为 &String，让宿主在移交异步任务前建立所需副本。但这是公开签名及宿主边界调整，需验证借用跨挂起的存活、取消清理和三后端行为，不能直接删掉这些 clone。 |
 
-唯一标头查询已补齐；后续先设计 session 结束原因，再集中统一只读字符串参数。
+唯一标头查询与 session 结束原因已补齐；后续可集中统一只读字符串参数。
 这些是便利性及可观察性问题，不因本轮 chat 性能结果而推断其为性能瓶颈；其余接口暂未更改。
 
 本轮验证：JSON 数值／codec、process、DNS、TCP duplex 及 chat 启停共 7 项针对性测试通过，
 相关 CLI 用例覆盖三后端；另外实际运行 time_points 的 JIT、解释器和 AOT，核对输出结构与固定时间解析结果。
 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 和文档链接／diff 检查通过；未跑全量检查或 benchmark。
+
+后续 session 落地复用现有行协议、消息协议与排空 fixture，断言结束原因、原始读取错误、写失败与
+ReadAndWrite，以及清理和取消行为。相关 JIT、解释器、AOT 用例、阻塞写入的排空／溢出取消与
+chat 三后端启停检查通过；未运行全量检查或 benchmark。

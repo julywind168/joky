@@ -7030,8 +7030,8 @@ SIGKILL 不可接入，不能期待强制杀进程时执行清理。
 读取器实现 `session.Reader`，声明关联类型 `Message`、`Error`，以及
 `read(&mut self, input: &mut tcp.BufferedTcpReader) @suspends @noescape -> Result<Option<Self.Message>, Self.Error>`。
 每次调用返回一条完整消息：`Ok(Some(message))` 交给处理器，`Ok(None)` 表示正常结束，`Err(error)` 表示读取或解码错误。
-当前会话把读取器返回的错误视为结束接收，释放错误值并执行正常关闭／排空流程，不向调用者返回错误原因。
-需要记录错误时可在自定义读取器内显式处理；运行时失败仍直接传播。
+读取错误结束接收，经关闭／排空后以 `session.Error.Read(error)` 返回原始错误值；若排空又写入失败，
+返回下文的 `ReadAndWrite`。运行时失败仍直接传播。
 
 内置两种可选读取器，均使用 `tcp.ReadError`：
 
@@ -7058,9 +7058,9 @@ outbox.Handle 的源库别名，可以通过 Script 契约或状态保存。业�
 | 方法 | 契约 |
 | --- | --- |
 | `on_message(&self, message: Self.Message) @suspends @noescape -> Bool` | 按顺序处理完整消息；true 继续读取，false 结束接收 |
-| `on_close(&self) @suspends @noescape` | 正常会话结束后执行一次业务清理，返回 Unit |
+| `on_close(&self) @suspends @noescape` | 普通结束或类型化读写错误后执行一次业务清理，完成后才向调用者返回结果；回调返回 Unit |
 
-`run<R: Reader, H: Handler<Message = R.Message>>(connection, stream, protocol: R, handler: &H) @suspends @noescape`
+`run<R: Reader, H: Handler<Message = R.Message>>(connection, stream, protocol: R, handler: &H) @suspends @noescape -> Result<End, Error<R.Error>>`
 消费 Connection、TcpStream 和读取器，沿用创建时的 Options，仅借用处理器；消息类型不匹配会在编译期拒绝。
 例如行协议传入 `session.Lines.default()`，处理器声明 `type Message = String`。
 处理器可持有 String、VM 等拥有值，调用结束后仍由调用者持有。两个方法使用共享借用，
@@ -7069,23 +7069,40 @@ outbox.Handle 的源库别名，可以通过 Script 契约或状态保存。业�
 和 [二进制及自定义 struct 消息回归](../tests/fixtures/session_messages.jk)。chat 的协议配置放在 `Config.input`，
 会话队列与超时配置放在 `Config.connection`；原 `Options.max_line_bytes` 由 `Lines.max_bytes` 替代。
 
-组件竞速接收、发送和控制等待。EOF、读取器返回错误、超时、控制队列收到消息或关闭，
-以及 on_message 返回 false，都会结束竞速并调用一次 on_close；两个邮箱 Owner 保留到回调完成。
+`run` 与 `run_draining` 都在 `on_close` 完成后返回 `Result<session.End, session.Error<R.Error>>`。
+Handler 不依赖 Reader 的错误类型；组件不要求错误实现 Show，也不自动记录日志。调用者可匹配：
+
+| 返回值 | 含义 |
+| --- | --- |
+| `Ok(End.Eof)` | 读取器正常 EOF |
+| `Ok(End.HandlerStopped)` | on_message 返回 false |
+| `Ok(End.IdleTimeout)` | 等待下一条完整消息超时 |
+| `Ok(End.Shutdown)` | run_draining 响应停机通知 |
+| `Ok(End.Stopped)` | 控制信箱收到消息或关闭，包含显式 stop 与队列溢出；当前不区分这两者 |
+| `Ok(End.OutputClosed)` | 输出信箱先结束，发送分支没有写入错误 |
+| `Err(Error.Read(error))` | 原始 Reader.Error |
+| `Err(Error.Write(error))` | TCP 写入错误 tcp.IoError |
+| `Err(Error.ReadAndWrite((read, write)))` | 已结束的读取返回错误，随后排空输出又失败；保留两个错误 |
+
+组件竞速接收、发送和控制等待。上述普通结束或类型化读写错误都会调用一次 on_close；
+两个邮箱 Owner 保留到回调完成。并发结束沿用 race 的获胜规则，不保证收集所有同时发生的事件；
+`run` 不会返回 ReadAndWrite，只有排空流程保留先前完成的读取错误。
 业务可用 `Vm.try_call` 在 on_message 中处理脚本失败。组件不会隐式捕获任意回调异常，也不保证
 断开前排空输出队列。父任务取消会结构化停止子任务、释放 socket、读取器和邮箱，不运行挂起清理回调；
 应用应让账户等资源由外层作用域持有。chat 的成员清理与空房回收策略在业务层显式实现。
 
-`run_draining<R: Reader, H: Handler<Message = R.Message>>(connection, stream, protocol: R, handler: &H, shutdown: &shutdown.Controller) @suspends @noescape`
+`run_draining<R: Reader, H: Handler<Message = R.Message>>(connection, stream, protocol: R, handler: &H, shutdown: &shutdown.Controller) @suspends @noescape -> Result<End, Error<R.Error>>`
 使用相同的读取器与处理器约束，增加显式停机通知。通知只与下一次读取竞速：完整消息读出后再检查停机状态，
 通过检查才准入 on_message。已准入回调执行完毕后封口出站队列，发送分支继续写完已取出的消息和剩余 FIFO。
 EOF、读取器返回错误、空闲超时或 on_message 返回 false 也走这条排空路径。
-发送失败、输出溢出、显式 close 或 control 停止仍立即取消会话；回调异常沿用原有传播规则。
+发送失败或输出信箱先结束会中断仍在进行的读取／业务回调；写失败以 Write 或 ReadAndWrite 返回，
+不会伪装成 Stopped。输出溢出或 control 停止仍立即取消收发；回调异常沿用原有传播规则。
 
 发送结束后调用一次 on_close；回调可以清理业务状态，但不能依赖向本连接继续发送消息：
 封口的 Disconnect 输出会丢弃这些新消息。保证范围是每个连接封口前已提交的出站消息，
 其他连接回调在该封口之后产生的广播不保证投递。write_all 完成仅表示写入 TCP，不等于对端业务确认。
 组件没有隐含宽限期；应用在外层 race 组合截止时间，超时后取消剩余任务。
-父任务取消不启动 on_close；若取消发生在 on_close 执行期间，也会中断该回调，仍释放队列、socket 和结构化子任务。
+父任务取消不返回上述 Result，也不启动 on_close；若取消发生在 on_close 执行期间，也会中断该回调，仍释放队列、socket 和结构化子任务。
 读取器或 on_message 的运行时失败直接传播且不调用 on_close；on_close 自身失败同样传播，不重试。
 调用者可在外层用 isolate 建立失败边界。处理器本身的拥有值由其外层作用域释放，异步业务清理不替代结构化资源释放。
 

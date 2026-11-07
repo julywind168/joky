@@ -61,10 +61,18 @@ fn binary(scenario: UInt64) @suspends {
     let owner = domain.create(make, {})
     let handler = BinaryHandler { counts: owner.handle(), output: connection.output(), draining: scenario == 1 }
     let protocol = session.LengthPrefixed { max_bytes: 4 }
-    if scenario == 1 {
+    let (outcome, _) = if scenario == 1 {
         let stop = shutdown.create()
         join { session.run_draining(connection, stream, protocol, &handler, &stop), binary_peer(peer, scenario) }
     } else { join { session.run(connection, stream, protocol, &handler), binary_peer(peer, scenario) } }
+    check.assert(match outcome {
+        Ok(HandlerStopped) => scenario <= 1,
+        Err(Read(LimitExceeded)) => scenario == 2,
+        Err(Read(UnexpectedEof(bytes))) => scenario == 3 && bytes == 5,
+        Ok(IdleTimeout) => scenario == 4,
+        Ok(Eof) => scenario == 5,
+        _ => false
+    }, "binary session returns the protocol outcome")
     let counts = owner.handle()
     when (counts) {
         check.assert(counts.messages == if scenario <= 1 { 2 } else { 0 }, "only complete valid frames reach the handler")
@@ -139,7 +147,15 @@ fn packets(invalid: Bool) @suspends {
     let owner = domain.create(make, {})
     let handler = PacketHandler { counts: owner.handle(), output: connection.output() }
     let protocol = Packets { sequence: 0, label: "packet", pause: false, counts: owner.handle() }
-    join { session.run(connection, stream, protocol, &handler), packet_peer(peer, invalid) }
+    let stop = shutdown.create()
+    let (outcome, _) = if invalid {
+        join { session.run_draining(connection, stream, protocol, &handler, &stop), packet_peer(peer, invalid) }
+    } else { join { session.run(connection, stream, protocol, &handler), packet_peer(peer, invalid) } }
+    check.assert(match outcome {
+        Ok(Eof) => !invalid,
+        Err(Read(error)) => invalid && error == "custom decoding error",
+        _ => false
+    }, "custom owning errors reach the caller unchanged")
     let counts = owner.handle()
     when (counts) { check.assert(counts.messages == 2 && counts.closed == 1, "custom EOF and errors preserve cleanup") }!
 }
@@ -156,12 +172,56 @@ fn cancel_pending_packet() @suspends {
     let handler = PacketHandler { counts: owner.handle(), output: connection.output() }
     let protocol = Packets { sequence: 0, label: "packet", pause: true, counts: owner.handle() }
     // Cancel only after the reader has constructed its owning message.
-    race { session.run(connection, stream, protocol, &handler), wait_reading(owner.handle()) }
+    let handler_ref = &handler
+    race { { session.run(connection, stream, protocol, handler_ref); }, wait_reading(owner.handle()) }
     check.assert(peer.read(1)!.is_empty(), "cancelling a custom reader releases the socket")
     let counts = owner.handle()
     when (counts) { check.assert(counts.messages == 0 && counts.closed == 0, "parent cancellation skips callbacks") }!
 }
+// A locally shut down write half fails deterministically, without peer-reset timing.
+struct FailedRead { immediate: Bool }
+impl session.Reader for FailedRead {
+    type Message = String
+    type Error = String
+    fn read(&mut self, _input: &mut BufferedTcpReader) @suspends @noescape -> Result<Option<String>, String> {
+        if !self.immediate { task.sleep(60s) }
+        Err("decode failed")
+    }
+}
+struct FailedWriteHandler { counts: domain.WriteHandle<Counts> }
+impl session.Handler for FailedWriteHandler {
+    type Message = String
+    fn on_message(&self, _message: String) @suspends @noescape -> Bool { true }
+    fn on_close(&self) @suspends @noescape {
+        let counts = self.counts
+        when (mut counts) { counts.closed += 1 }!
+    }
+}
+fn write_failure(draining: Bool, read_failed: Bool) @suspends {
+    var listener = TcpListener.bind(Address.ipv4(0x7f000001, 0))!
+    let peer = TcpStream.connect(listener.local_addr()!)!
+    var stream = listener.accept()!
+    stream.shutdown(tcp.Shutdown.Write)!
+    let connection = session.create(session.Options.default())
+    let output = connection.output()
+    let owner = domain.create(make, {})
+    let counts = owner.handle()
+    when (counts) { let bytes = "reply".into_bytes(); output.send(&bytes) }!
+    let handler = FailedWriteHandler { counts }
+    let protocol = FailedRead { immediate: read_failed }
+    let outcome = if draining {
+        let stop = shutdown.create()
+        session.run_draining(connection, stream, protocol, &handler, &stop)
+    } else { session.run(connection, stream, protocol, &handler) }
+    check.assert(match outcome {
+        Err(Write(_)) => !read_failed,
+        Err(ReadAndWrite((read, _))) => read_failed && read == "decode failed",
+        _ => false
+    }, "write failure interrupts reading and preserves an earlier read error")
+    when (counts) { check.assert(counts.closed == 1, "write failure still cleans up once") }!
+}
 fn main() @suspends {
     binary(0); binary(1); binary(2); binary(3); binary(4); binary(5)
     packets(false); packets(true); cancel_pending_packet()
+    write_failure(false, false); write_failure(true, false); write_failure(true, true)
 }

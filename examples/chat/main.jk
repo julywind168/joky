@@ -39,7 +39,13 @@ fn connection(script: Script, host: Host, id: UInt64, stream: TcpStream, permit:
     let initialized = script.entries.init_account.try_call(&script.vm, account).is_ok()
     let handler = ClientHandler { script, client }
     if initialized {
-        session.run_draining(connection, stream, host.config.input, &handler, &stop)
+        if let Err(error) = session.run_draining(connection, stream, host.config.input, &handler, &stop) {
+            match error {
+                Read(error) => eprintln("connection {id}: read: {error}"),
+                Write(error) => eprintln("connection {id}: write: {error}"),
+                ReadAndWrite((read, write)) => eprintln("connection {id}: read: {read}; write: {write}")
+            }
+        }
     } else {
         handler.on_close()
     }
