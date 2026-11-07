@@ -1,3 +1,5 @@
+//! Element access for container storage.
+
 // A borrow-only view of one initialized element, never an owning value.
 import joky/internal/buffer
 

@@ -1,3 +1,5 @@
+//! Key-value storage with hashing and equality.
+
 import joky/iter as iteration
 import joky/array.{type Array}
 import joky/element.{type Element}

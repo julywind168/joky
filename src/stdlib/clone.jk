@@ -1,3 +1,5 @@
+//! The `Clone` trait for explicit duplication.
+
 import joky/internal/text
 // Explicit independent copies; implementations retain no input borrow.
 

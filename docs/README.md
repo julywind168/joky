@@ -7,6 +7,7 @@
 ## 使用参考
 
 - [语言与内置模块](language.md)
+- [生成离线标准库文档](language.md#标准库文档)
 - [用 Joky 编写与运行测试](language.md#原生测试)
 - [架构与嵌入约束](architecture.md)
 - [Joky Interpreter](interpreter.md)

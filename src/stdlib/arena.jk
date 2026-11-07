@@ -1,3 +1,5 @@
+//! Explicit synchronous allocation regions.
+
 // Explicit, synchronous regions. Their capabilities cannot enter stored values.
 pub type Arena = arena.Arena
 

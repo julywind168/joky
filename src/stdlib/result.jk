@@ -1,3 +1,5 @@
+//! Success and error values with propagation and transformation methods.
+
 // The standard fallible value. Either payload may own resources.
 import joky/option.{type Option, Some, None}
 import joky/check

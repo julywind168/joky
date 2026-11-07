@@ -1,3 +1,5 @@
+//! Queued messages for asynchronous delivery.
+
 import joky/string.{type StringBuilder}
 import joky/show.{type Show}
 import joky/array.{type Array}

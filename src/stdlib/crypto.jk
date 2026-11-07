@@ -1,3 +1,5 @@
+//! Cryptographic hashes and authentication.
+
 import joky/array.{ type Array }
 import joky/slice.{ type Slice }
 import joky/internal/buffer

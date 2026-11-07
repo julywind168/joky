@@ -50,6 +50,25 @@ pub(super) enum SourceKind {
     Vm,
 }
 
+impl SourceKind {
+    /// Legacy embedded modules export declarations without an explicit `pub`.
+    pub(super) fn exports_unmarked(self) -> bool {
+        !matches!(
+            self,
+            SourceKind::User
+                | SourceKind::FixedArrayLibrary
+                | SourceKind::BufferLibrary
+                | SourceKind::Equality
+                | SourceKind::Integer
+                | SourceKind::Decimal
+                | SourceKind::Text
+                | SourceKind::Json
+                | SourceKind::Domain
+                | SourceKind::Vm
+        )
+    }
+}
+
 pub(super) struct SourceDefinition {
     pub kind: SourceKind,
     pub path: &'static str,
@@ -644,19 +663,7 @@ impl StandardLibrary {
                 record.set = path == "joky/set" && record.name == "Set";
             }
         }
-        let embedded = !matches!(
-            kind,
-            SourceKind::User
-                | SourceKind::FixedArrayLibrary
-                | SourceKind::BufferLibrary
-                | SourceKind::Equality
-                | SourceKind::Integer
-                | SourceKind::Decimal
-                | SourceKind::Text
-                | SourceKind::Json
-                | SourceKind::Domain
-                | SourceKind::Vm
-        );
+        let embedded = kind.exports_unmarked();
         let (mut scope, required) = bind(
             &module,
             registry,

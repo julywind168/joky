@@ -1,3 +1,5 @@
+//! Types and functions imported automatically unless `--no-prelude` is used.
+
 // The default source imports. Dependencies declare their own imports.
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}

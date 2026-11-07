@@ -1,3 +1,5 @@
+//! Equality comparison traits.
+
 import joky/internal/text
 
 // Equality borrows both values. Map/Set keys additionally require an equivalence relation.

@@ -1,3 +1,5 @@
+//! Durations, clocks and delays.
+
 import joky/ops.{type Add}
 import joky/check.{panic}
 import joky/option.{ type Option, Some, None }

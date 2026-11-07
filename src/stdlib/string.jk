@@ -1,3 +1,5 @@
+//! UTF-8 strings, Unicode scalar iteration and string building.
+
 // Immutable UTF-8 owners. Only these trusted bridges can transfer validated bytes.
 import joky/internal/text as text_storage
 import joky/array.{type Array}

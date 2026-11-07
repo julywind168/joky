@@ -1,3 +1,5 @@
+//! Owning doubly linked sequences with logical-position indexing.
+
 // Owning doubly linked sequence. Node identity stays private; public indices
 // are logical positions, while payloads remain dense and independently owned.
 import joky/array.{type Array}

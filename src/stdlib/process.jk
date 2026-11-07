@@ -1,3 +1,5 @@
+//! Program arguments, environment variables and the working directory.
+
 // Startup snapshots supplied by the CLI or an explicit embedding capability.
 import joky/array.{type Array}
 import joky/fs.{type IoError, type ErrorKind}

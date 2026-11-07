@@ -1,3 +1,5 @@
+//! Growable owning arrays and their borrowed views.
+
 // Array is a nominal, single-owner wrapper. Its storage field remains private;
 // all container policies live in Joky and use checked storage/move primitives.
 import joky/internal/buffer.{type Buffer}

@@ -1,3 +1,5 @@
+//! State domains and guarded access.
+
 import joky/string.{type StringBuilder}
 import joky/show.{type Show}
 import joky/internal/buffer.{type Buffer}

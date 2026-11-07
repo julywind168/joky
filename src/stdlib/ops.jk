@@ -1,3 +1,5 @@
+//! Operator traits.
+
 // Homogeneous, consuming addition. Operator dispatch is static.
 pub trait Add { fn add(self, other: Self) -> Self }
 impl Add for Int8 { fn add(self, other: Self) -> Self { self + other } }

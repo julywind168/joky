@@ -1,3 +1,5 @@
+//! Standard input, standard output and standard error streams.
+
 import joky/fs
 import joky/internal/buffer
 import joky/array.{type Array}
@@ -9,10 +11,12 @@ import joky/string.{type StringBuilder, type Utf8Error}
 
 extern fn __joky_write_stdout(text: &String) -> Int32
 
+/// Writes a `Show` value to standard output and flushes it.
 pub fn print<T: Show>(value: &T) @noescape {
     let text = Show.to_text(value)
     __joky_write_stdout(&text);
 }
+/// Writes a `Show` value followed by a newline to standard output.
 pub fn println<T: Show>(value: &T) @noescape {
     var output = StringBuilder.new()
     value.show(&mut output)
@@ -23,10 +27,12 @@ pub fn println<T: Show>(value: &T) @noescape {
 
 extern fn __joky_write_stderr(text: &String) -> Int32
 
+/// Writes a `Show` value to standard error and flushes it.
 pub fn eprint<T: Show>(value: &T) @noescape {
     let text = Show.to_text(value)
     __joky_write_stderr(&text);
 }
+/// Writes a `Show` value followed by a newline to standard error.
 pub fn eprintln<T: Show>(value: &T) @noescape {
     var output = StringBuilder.new()
     value.show(&mut output)
@@ -35,7 +41,9 @@ pub fn eprintln<T: Show>(value: &T) @noescape {
     __joky_write_stderr(&text);
 }
 
+/// Flushes standard output.
 pub fn flush_stdout() { print("") }
+/// Flushes standard error.
 pub fn flush_stderr() { eprint("") }
 
 

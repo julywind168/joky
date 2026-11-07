@@ -6,6 +6,7 @@ mod atoms;
 mod attributes;
 mod control_flow;
 mod declarations;
+pub mod documentation;
 mod expressions;
 mod format;
 pub use format::format;

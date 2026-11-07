@@ -1,3 +1,5 @@
+//! Coordinated application shutdown.
+
 import joky/string.{type StringBuilder}
 import joky/show.{type Show}
 import joky/option.{type Option, Some, None}

@@ -1,3 +1,5 @@
+//! Hexadecimal encoding and decoding.
+
 import joky/show.{type Show}
 import joky/array.{ type Array }
 import joky/slice.{ type Slice }

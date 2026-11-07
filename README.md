@@ -29,9 +29,11 @@ fn main() {
 - `check` 静态检查文件或项目，不执行、不生成产物，也不需要 `cc`；
   单文件和库包允许没有 `main`；应用检查配置入口及其导入依赖，库包检查自身全部源码模块。成功静默返回 0，错误返回 1。
 - `test` 运行 `#test` 函数，支持 JIT / 解释器、筛选、输出捕获与逐测试超时；不要求 `main`。
+- `doc --std` 从内嵌标准库生成离线 HTML，入口为 `target/doc/std/index.html`；
+  `-o <目录>` 可指定文档目录，详见[标准库文档](docs/language.md#标准库文档)。
 - `build` 使用 AOT 与系统 `cc`，生成可独立执行的程序。默认输出位于源码旁，去掉 `.jk`；
   Windows 的文件名后缀为 `.exe`，但其原生链接尚未验证。
-- `-o` / `--output` 可指定产物，父目录须已存在。失败构建保留已有产物，不能覆盖源码。
+- `build` 的 `-o` / `--output` 可指定产物，父目录须已存在。失败构建保留已有产物，不能覆盖源码。
 - 默认 prelude 提供容器类型名 `Array` / `Map` / `Set`、`Option` / `Result`、`Some` / `None` / `Ok` / `Err`、借用式状态判断 / 默认值 / 组合方法、整数方法与边界常量，以及 `print` / `println` / `assert` / `assert_eq` / `assert_ne` / `panic`。
   支持后缀 `!` 强制解包与 `?` 失败提前返回（[语义](docs/language.md#optionresult-与-outcome-后缀解包)）。
   [Option / Result 示例](examples/option_result.jk)展示 `?` / `!`、`map`、默认值、`and` / `or` 和 `ok` / `err` 转换；普通默认值急切求值，`unwrap_or_else` 可按需执行同步回调。

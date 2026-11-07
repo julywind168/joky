@@ -1,3 +1,5 @@
+//! JSON values, parsing and serialization.
+
 // Owned JSON values and strict bounded codecs.
 import joky/show.{type Show}
 import joky/array

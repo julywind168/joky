@@ -1,3 +1,5 @@
+//! Iteration, ranges and callback-based iterator adapters.
+
 import joky/internal/buffer
 import joky/internal/types
 import joky/option.{type Option, Some, None}

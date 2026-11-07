@@ -10,6 +10,7 @@ use std::{
     sync::Arc,
 };
 
+pub mod documentation;
 mod files;
 pub mod packages;
 mod sources;

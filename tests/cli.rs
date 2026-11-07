@@ -56,6 +56,8 @@ mod check;
 mod containers;
 #[path = "cli/diagnostics.rs"]
 mod diagnostics;
+#[path = "cli/doc.rs"]
+mod doc;
 #[path = "cli/domains.rs"]
 mod domains;
 #[path = "cli/embedding.rs"]

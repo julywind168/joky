@@ -1,3 +1,5 @@
+//! Arrays with a fixed compile-time length.
+
 import joky/internal/fixed_array
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}

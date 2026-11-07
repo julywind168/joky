@@ -1,3 +1,5 @@
+//! Borrowed contiguous views of elements.
+
 // Half-open borrowed ranges. Views cannot resize or own their storage.
 import joky/internal/buffer
 import joky/iter as iteration.{type Iter}

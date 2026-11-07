@@ -2,6 +2,7 @@
 mod build;
 mod check;
 mod diagnostic;
+mod doc;
 mod explain;
 mod format;
 mod project;
@@ -20,6 +21,7 @@ use std::{ffi::OsString, path::PathBuf};
 const HELP: &str = "Joky — check, test, run, build, inspect and format Joky programs
 
 Usage:
+  joky doc --std [-o <directory>]
   joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture] [--timeout-ms N] [<file.jk> | <project-dir> | joky.toml]
   joky check [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
   joky run [--interpreter] [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-- <program-args>...]
@@ -31,6 +33,7 @@ Usage:
   joky --version
 
 Commands:
+  doc              Generate offline standard-library HTML (default: target/doc/std)
   test             Run #test functions in isolated processes (default timeout: 30000 ms)
   check            Check syntax and semantics without running or generating code
   explain-parallel  Explain dispatch eligibility without running the program
@@ -45,7 +48,7 @@ Options:
   --no-prelude        Disable implicit standard-library imports
   --parallel          Enable checked Parallel execution (default: 1 worker)
   --task-workers N    Enable Parallel with 1..256 workers; build sets a startup default
-  -o, --output <path>  Output executable for a file, or bundle directory for a project
+  -o, --output <path>  Output executable, project bundle, or doc directory
   -h, --help           Show this help
   -V, --version        Show the version
 
@@ -69,6 +72,7 @@ Use @suspends on main for cooperative tasks; import joky/task for yield_now and 
 enum Command {
     Help,
     Version,
+    Doc(PathBuf),
     Test(testing::Options),
     Format(format::Options),
     Check {
@@ -108,6 +112,9 @@ impl Command {
                 return Err(cli_argument_error("Unexpected arguments after --version"));
             }
             return Ok(Self::Version);
+        }
+        if command == "doc" {
+            return doc::parse(args);
         }
         if command == "fmt" {
             return format::parse(args);
@@ -265,6 +272,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
             println!("joky {}", env!("CARGO_PKG_VERSION"));
             return 0;
         }
+        Command::Doc(output) => return doc::execute(output),
         Command::Test(options) => return testing::execute(options),
         Command::Format(options) => return format::execute(options),
         Command::Check { source, prelude } => return check::execute(source, *prelude),

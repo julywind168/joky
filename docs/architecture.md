@@ -72,6 +72,10 @@ JIT／AOT 默认使用 Cranelift `opt_level=speed`，由 `DEFAULT_CODEGEN_OPT_LE
 
 词法器借用原始 UTF-8 源码，以字节位置为唯一游标；关键词和数字直接从切片解析，
 标识符及解码后的字符串由 AST 所有。`Span` 保存文件身份 SourceId 与半开字节范围；源码文本由 SourceFile / SourceMap 的共享快照保存。
+`parser::documentation` 在独立模型中收集词法 trivia 内的文档注释，并利用声明范围提取签名，
+不改变执行 AST 或预编译标准库镜像的序列化结构。`imports::documentation` 复用内嵌源码清单和
+`SourceKind` 的导出策略；CLI `doc --std` 直接渲染静态 HTML，不进入类型实例化、VM 或 AOT。
+
 `parser::Diagnostic` 转为 `Error` 时统一保留 Parse 阶段、行号和范围，CLI 在最后一步渲染。
 
 `TypeRegistry::resolve_aliases` 收集模块全部记录、枚举及别名，迭代遍历类型依赖图并检测环，统一改写函数签名和

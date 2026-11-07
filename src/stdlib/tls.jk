@@ -1,3 +1,5 @@
+//! TLS connections and configuration.
+
 // The record engine never owns the socket. All network waits use the TCP reactor.
 import joky/string.{type StringBuilder}
 import joky/show.{type Show}

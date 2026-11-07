@@ -1,3 +1,5 @@
+//! Session state and lifecycle helpers.
+
 import joky/shutdown
 import joky/outbox
 import joky/time.{type Duration}

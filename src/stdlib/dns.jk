@@ -1,3 +1,5 @@
+//! Hostname resolution.
+
 // System lookup facade. TCP and DNS share the same bounded resolver.
 import joky/internal/resolve.{type ErrorKind, type ResolveError}
 import joky/array

@@ -1,3 +1,5 @@
+//! UUID generation and conversion.
+
 import joky/array.{ type Array }
 import joky/fixed_array.{ type FixedArray }
 import joky/slice.{ type Slice }

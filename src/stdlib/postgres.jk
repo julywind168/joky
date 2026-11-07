@@ -1,3 +1,5 @@
+//! PostgreSQL connections and queries.
+
 // Runtime SQL uses positional PostgreSQL parameters. Values never become SQL text.
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}

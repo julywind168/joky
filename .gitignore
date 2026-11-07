@@ -4,3 +4,6 @@
 /.github/copilot*
 
 benches/baselines
+
+# Generated standard-library website reference.
+/sites/joky-home/public/std/

@@ -1,3 +1,5 @@
+//! Borrowed equality assertions with readable failure messages.
+
 import joky/check
 import joky/eq.{type Eq}
 import joky/show.{type Show}
@@ -43,13 +45,14 @@ fn hex_digit(value: UInt32) -> Rune {
     Rune.from_u32(if value < 10 { 48 + value } else { 87 + value }).unwrap_or('0')
 }
 
-// Ordinary borrowed calls evaluate each argument once and render only on failure.
+/// Ordinary borrowed calls evaluate each argument once and render only on failure.
 pub fn assert_eq<T: Eq + Show>(actual: &T, expected: &T) @noescape {
     if !Eq.eq(actual, expected) {
         check.panic("assert_eq failed\n  actual: {quoted(actual)}\nexpected: {quoted(expected)}")
     }
 }
 
+/// Fails when the two borrowed values compare equal.
 pub fn assert_ne<T: Eq + Show>(actual: &T, expected: &T) @noescape {
     if Eq.eq(actual, expected) {
         check.panic("assert_ne failed (values must differ)\n  actual: {quoted(actual)}\nexpected: {quoted(expected)}")

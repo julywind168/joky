@@ -1,3 +1,5 @@
+//! Explicit replacement, swapping and dropping of values.
+
 // Checked whole-value operations, bound by trusted module identity.
 // Replace and swap lower at the call site without an escape boundary.
 #intrinsic("mem.replace")

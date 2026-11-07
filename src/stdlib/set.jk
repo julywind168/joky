@@ -1,3 +1,5 @@
+//! Unordered collections of unique values.
+
 // Single-owner unordered set. Map owns both the index and resident elements.
 import joky/map.{type Map}
 import joky/array.{type Array}

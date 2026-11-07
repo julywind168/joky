@@ -1,4 +1,7 @@
-// Test setup and output snapshots require a host capability; ordinary programs receive Unsupported.
+//! Isolated test inputs and captured output for `joky test`.
+
+//! Setup and snapshots require the test runner; ordinary programs receive `Unsupported`.
+//! Configure inputs before the tested program first reads them.
 import joky/array.{type Array}
 import joky/fs.{type IoError, type ErrorKind}
 import joky/result.{type Result, Ok, Err}
@@ -26,7 +29,7 @@ fn configure(kind: UInt64, key: String, value: String) @suspends -> Result<Unit,
     Ok({})
 }
 
-// Replace the entire argument list atomically. The packet preserves empty arguments.
+/// Replace the entire argument list atomically. The packet preserves empty arguments.
 pub fn set_args(values: Array<String>) @suspends -> Result<Unit, IoError> {
     if values.len() > 65536 {
         return Err(IoError { kind: ErrorKind.LimitExceeded, message: "Too many test arguments" })
@@ -47,21 +50,25 @@ pub fn set_args(values: Array<String>) @suspends -> Result<Unit, IoError> {
     }
     configure(0, "", packet.finish())
 }
+/// Sets one environment variable in this test context.
 pub fn set_env(name: String, value: String) @suspends -> Result<Unit, IoError> {
     configure(1, name, value)
 }
+/// Removes one environment variable from this test context.
 pub fn remove_env(name: String) @suspends -> Result<Unit, IoError> {
     configure(2, name, "")
 }
+/// Replaces this test context's standard input with UTF-8 text.
 pub fn set_stdin(text: String) @suspends -> Result<Unit, IoError> {
     configure(3, "", text)
 }
-// Unlike process.current_dir, this setup query does not freeze inputs.
+/// Unlike process.current_dir, this setup query does not freeze inputs.
 pub fn temp_dir() @suspends -> Result<String, IoError> {
     text_snapshot(4)
 }
-// Read cumulative output without clearing it or freezing application inputs.
+/// Read cumulative output without clearing it or freezing application inputs.
 pub fn stdout() @suspends -> Result<String, IoError> { text_snapshot(5) }
+/// Reads cumulative standard error without clearing the captured bytes.
 pub fn stderr() @suspends -> Result<String, IoError> { text_snapshot(6) }
 
 fn text_snapshot(kind: UInt64) @suspends -> Result<String, IoError> {

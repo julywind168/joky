@@ -1,3 +1,5 @@
+//! Files, directories and I/O errors.
+
 // File capabilities are supplied explicitly by the embedding host.
 import joky/array.{type Array}
 import joky/slice.{type Slice}

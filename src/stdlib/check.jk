@@ -1,3 +1,5 @@
+//! Assertions and explicit task failure.
+
 // The compiler binds this checked operation and preserves its call location.
 #intrinsic("check.assert")
 fn assert(condition: Bool, message: &String) @noescape

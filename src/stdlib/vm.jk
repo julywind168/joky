@@ -1,3 +1,5 @@
+//! Embedded Joky virtual machines and scripts.
+
 // A VM owns its registry entry; shared borrows allow calls during hot reload.
 import joky/show.{type Show}
 import joky/internal/buffer.{type Buffer}

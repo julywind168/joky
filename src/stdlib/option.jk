@@ -1,12 +1,21 @@
+//! Optional values and transformations that preserve absence.
+//!
+//! ```joky
+//! fn main() {
+//!     let answer = Some(21).map(| n | { n * 2 })
+//!     println(answer.unwrap())
+//! }
+//! ```
+
 import joky/mem
 import joky/check
 
-// The standard optional value. Qualified and imported constructors
-// retain the enum's nominal identity.
+/// The standard optional value. Qualified and imported constructors
+/// retain the enum's nominal identity.
 enum Option<T> { None, Some(T) }
 
 impl<T> Option<T> {
-    // An explicit assertion for callers that consider absence a task failure.
+    /// An explicit assertion for callers that consider absence a task failure.
     fn unwrap(self) -> T {
         match self {
             Some(value) => value
@@ -14,6 +23,7 @@ impl<T> Option<T> {
         }
     }
 
+    /// Returns the value, or fails with the supplied message.
     fn expect(self, message: &String) @noescape(message) -> T {
         match self {
             Some(value) => value
@@ -21,20 +31,25 @@ impl<T> Option<T> {
         }
     }
 
+    /// Replaces this option with `None` and returns its previous value.
     fn take(&mut self) -> Option<T> { mem.replace(self, None) }
 
+    /// Transforms the contained value; `None` skips the callback.
     fn map<U, F: FnOnce(T) -> U>(self, transform: F) -> Option<U> {
         match self { None => None, Some(value) => Some(transform(value)) }
     }
 
+    /// Calls a transformation that can itself return `None`.
     fn and_then<U, F: FnOnce(T) -> Option<U>>(self, transform: F) -> Option<U> {
         match self { None => None, Some(value) => transform(value) }
     }
 
+    /// Transforms the value, or returns the eagerly evaluated fallback.
     fn map_or<U, F: FnOnce(T) -> U>(self, fallback: U, transform: F) @noescape(transform) -> U {
         match self { Some(value) => transform(value), None => fallback }
     }
 
+    /// Keeps the value only when the borrowed predicate returns true.
     fn filter<F: FnOnce(&T) @noescape -> Bool>(self, predicate: F) @noescape(predicate) -> Self {
         match self {
             Some(value) => if predicate(&value) { Some(value) } else { None }
@@ -42,37 +57,42 @@ impl<T> Option<T> {
         }
     }
 
+    /// Tests the contained value, returning false for `None`.
     fn is_some_and<F: FnOnce(&T) @noescape -> Bool>(self, predicate: F) @noescape(predicate) -> Bool {
         match self { Some(value) => predicate(&value), None => false }
     }
 
+    /// Returns true when a value is present.
     fn is_some(&self) -> Bool {
         match self { None => false, Some(_) => true }
     }
 
+    /// Returns true when no value is present.
     fn is_none(&self) -> Bool {
         match self { None => true, Some(_) => false }
     }
 
-    // Only the missing branch invokes the consuming callback.
+    /// Only the missing branch invokes the consuming callback.
     fn unwrap_or_else<F: FnOnce() -> T>(self, fallback: F) -> T {
         match self { None => fallback(), Some(value) => value }
     }
 
-    // The fallback is evaluated even when this option already contains a value.
+    /// The fallback is evaluated even when this option already contains a value.
     fn unwrap_or(self, fallback: T) -> T {
         match self { None => fallback, Some(value) => value }
     }
 
+    /// Returns the next option when this option contains a value.
     fn and<U>(self, next: Option<U>) -> Option<U> {
         match self { None => None, Some(_) => next }
     }
 
+    /// Returns this option when present, otherwise the fallback.
     fn or(self, fallback: Self) -> Self {
         match self { None => fallback, Some(value) => Some(value) }
     }
 
-    // Both operands are evaluated before this ordinary by-value method call.
+    /// Both operands are evaluated before this ordinary by-value method call.
     fn zip<U>(self, other: Option<U>) -> Option<(T, U)> {
         let left = match self {
             None => return None
@@ -87,6 +107,7 @@ impl<T> Option<T> {
 }
 
 impl<T> Option<Option<T>> {
+    /// Removes one layer of optional wrapping.
     fn flatten(self) -> Option<T> {
         match self { Some(value) => value, None => None }
     }

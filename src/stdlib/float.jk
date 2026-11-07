@@ -1,3 +1,5 @@
+//! Floating-point values and conversions.
+
 import joky/option.{type Option, Some, None}
 
 import joky/result

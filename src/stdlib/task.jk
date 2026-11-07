@@ -1,3 +1,5 @@
+//! Task scheduling and suspension.
+
 import joky/string.{type StringBuilder}
 import joky/show.{type Show}
 import joky/result.{ type Result, Ok, Err }

@@ -1,3 +1,5 @@
+//! TCP connections and listeners.
+
 // Numeric endpoints and bounded TCP byte/text reads.
 import joky/show.{type Show}
 import joky/array.{type Array}

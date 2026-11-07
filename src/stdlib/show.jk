@@ -1,3 +1,5 @@
+//! Text rendering with the `Show` trait.
+
 import joky/string.{type StringBuilder, type Utf8Error, type Utf8ErrorCode}
 import joky/integer.{type ParseIntError}
 import joky/float.{type ParseFloatError}

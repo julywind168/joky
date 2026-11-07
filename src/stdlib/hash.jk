@@ -1,3 +1,5 @@
+//! Hashing support for key types.
+
 import joky/integer
 import joky/string
 import joky/internal/buffer

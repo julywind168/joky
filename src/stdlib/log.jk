@@ -1,3 +1,5 @@
+//! Application logging.
+
 // Structured events use a single stderr write. The caller selects every business field.
 import joky/array.{type Array}
 import joky/map.{type Map}
