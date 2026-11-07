@@ -137,7 +137,7 @@ fn module_page(name: &str, docs: &Documentation) -> String {
         out.push_str(
             "<details><summary>Source imports (not necessarily re-exports)</summary><pre><code>",
         );
-        out.push_str(&escape(&docs.imports.join("\n")));
+        out.push_str(&highlight(&docs.imports.join("\n")));
         out.push_str("</code></pre></details>");
     }
     out.push_str(&format!("<footer>Generated from the embedded {} source. Internal host declarations are omitted.</footer>", escape(name)));
@@ -172,7 +172,7 @@ fn label(e: &Entry) -> String {
     }
 }
 fn render_entry(e: &Entry, id: &str, level: u8, out: &mut String) {
-    out.push_str(&format!("<section id=\"{id}\"><h{level}><a href=\"#{id}\">{}</a></h{level}><pre><code>{}</code></pre>{}", label(e), escape(&e.signature), markdown(&e.docs)));
+    out.push_str(&format!("<section id=\"{id}\"><h{level}><a href=\"#{id}\">{}</a></h{level}><pre><code>{}</code></pre>{}", label(e), highlight(&e.signature), markdown(&e.docs)));
     for c in &e.children {
         render_entry(c, &format!("{id}-{}", anchor(c)), 3, out);
     }
@@ -184,6 +184,33 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+fn highlight(source: &str) -> String {
+    let Ok(spans) = joky::parser::documentation::syntax_spans(source) else {
+        return escape(source);
+    };
+    let mut out = String::new();
+    let mut cursor = 0;
+    for (span, category) in spans {
+        out.push_str(&escape(&source[cursor..span.start()]));
+        out.push_str(&format!(
+            "<span class=\"syntax-{category}\">{}</span>",
+            escape(&source[span.start()..span.end()])
+        ));
+        cursor = span.end();
+    }
+    out.push_str(&escape(&source[cursor..]));
+    out
+}
+fn code_block(source: &str, language: &str) -> String {
+    if matches!(language, "" | "jk" | "joky") {
+        format!(
+            "<pre><code class=\"language-joky\">{}</code></pre>",
+            highlight(source)
+        )
+    } else {
+        format!("<pre><code>{}</code></pre>", escape(source))
+    }
 }
 fn inline(text: &str) -> String {
     let parts: Vec<_> = text.split('`').collect();
@@ -206,13 +233,19 @@ fn inline(text: &str) -> String {
 // fenced examples. Raw HTML is always escaped; code text is never reformatted.
 fn markdown(text: &str) -> String {
     let mut out = String::new();
-    let mut code = false;
+    let mut code: Option<String> = None;
+    let mut language = "";
     let mut paragraph = false;
     let mut list = false;
     for line in text.lines() {
-        if code && !line.starts_with("```") {
-            out.push_str(&escape(line));
-            out.push('\n');
+        if let Some(source) = &mut code {
+            if line.starts_with("```") {
+                out.push_str(&code_block(source, language));
+                code = None;
+            } else {
+                source.push_str(line);
+                source.push('\n');
+            }
             continue;
         }
         let fence = line.starts_with("```");
@@ -231,8 +264,8 @@ fn markdown(text: &str) -> String {
             list = false;
         }
         if fence {
-            out.push_str(if code { "</code></pre>" } else { "<pre><code>" });
-            code = !code;
+            language = line[3..].trim();
+            code = Some(String::new());
         } else if let Some(heading) = heading {
             out.push_str(&format!("<h4>{}</h4>", inline(heading)));
         } else if let Some(item) = item {
@@ -247,8 +280,8 @@ fn markdown(text: &str) -> String {
             paragraph = true;
         }
     }
-    if code {
-        out.push_str("</code></pre>");
+    if let Some(source) = code {
+        out.push_str(&code_block(&source, language));
     }
     if paragraph {
         out.push_str("</p>");
@@ -267,10 +300,34 @@ mod tests {
     fn documentation_html_escapes_text_and_preserves_examples() {
         let html = markdown("# Example\n`a < b` and <script>\n- first\n```jk\nfn main() {\n    println(\"<tag>\")\n}\n```");
         assert!(html.contains("<code>a &lt; b</code> and &lt;script&gt;"));
-        assert!(html.contains("fn main() {\n    println(&quot;&lt;tag&gt;&quot;)\n}\n"));
+        assert!(html.contains("class=\"syntax-keyword\">fn</span>"));
+        assert!(html.contains("class=\"syntax-string\">&quot;&lt;tag&gt;&quot;</span>"));
+        assert!(html.contains("\n    <span class=\"syntax-function\">println</span>"));
         assert!(!html.contains("<script>"));
         assert_eq!(inline("an `unfinished span"), "an `unfinished span");
-        assert_eq!(markdown("```\n<"), "<pre><code>&lt;\n</code></pre>");
+        assert_eq!(markdown("```text\n<"), "<pre><code>&lt;\n</code></pre>");
+        assert_eq!(
+            markdown("```sh\necho '<script>'\n```"),
+            "<pre><code>echo &#39;&lt;script&gt;&#39;\n</code></pre>"
+        );
+        assert_eq!(
+            highlight("\"unfinished <script>"),
+            "&quot;unfinished &lt;script&gt;"
+        );
+        let code = "/* outer\n /* inner */ end */\nlet 文本 = r#\"<script>  &\"#\r\n";
+        let marked = highlight(code);
+        let mut text = String::new();
+        let mut tag = false;
+        for c in marked.chars() {
+            if c == '<' {
+                tag = true;
+            } else if c == '>' {
+                tag = false;
+            } else if !tag {
+                text.push(c);
+            }
+        }
+        assert_eq!(text, escape(code));
         assert_eq!(
             markdown("first\nsecond\n\n- one\n- two"),
             "<p>first\nsecond</p><ul><li>one</li><li>two</li></ul>"

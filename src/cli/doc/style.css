@@ -20,6 +20,17 @@ section { margin: 32px 0; border-top: 1px solid #ddd; padding-top: 8px; }
 section section { margin-left: 20px; }
 pre { overflow: auto; padding: 18px; background: #edf0f2; border-radius: 8px; line-height: 1.6; }
 code { font-family: ui-monospace, monospace; font-size: .9em; }
+/* Categories follow editors/vscode/syntaxes/joky.tmLanguage.json. */
+.syntax-keyword { color: #0000b8; }
+.syntax-control, .syntax-interpolation { color: #8b00a8; }
+.syntax-type { color: #1b637c; }
+.syntax-function, .syntax-annotation { color: #795e26; }
+.syntax-variable { color: #001080; }
+.syntax-string { color: #a31515; }
+.syntax-constant { color: #09613d; }
+.syntax-comment { color: #3d6a3d; font-style: italic; }
+.syntax-operator { color: #424d59; }
+.syntax-deprecated { color: #a31515; text-decoration: line-through; }
 footer { margin-top: 48px; color: #52616c; }
 details { margin-top: 32px; }
 @media (prefers-color-scheme: dark) {
@@ -28,6 +39,16 @@ details { margin-top: 32px; }
   pre, .modules li { background: #232b34; }
   section, header { border-color: #43505c; }
   footer { color: #a7b5c0; }
+  .syntax-keyword { color: #80b7e8; }
+  .syntax-control, .syntax-interpolation { color: #d7a0d4; }
+  .syntax-type { color: #65d0b7; }
+  .syntax-function, .syntax-annotation { color: #e2dfa8; }
+  .syntax-variable { color: #9cdcfe; }
+  .syntax-string { color: #e5aa89; }
+  .syntax-constant { color: #b5cea8; }
+  .syntax-comment { color: #96b586; }
+  .syntax-operator { color: #d4d4d4; }
+  .syntax-deprecated { color: #f48771; }
 }
 @media (max-width: 600px) {
   header, main { padding: 16px; }

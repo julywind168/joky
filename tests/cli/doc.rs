@@ -46,6 +46,23 @@ fn check_pages(path: &Path, count: &mut usize) {
     }
 }
 
+fn text_without_tags(html: &str) -> String {
+    let mut tag = false;
+    html.chars()
+        .filter(|&c| {
+            if c == '<' {
+                tag = true;
+                false
+            } else if c == '>' {
+                tag = false;
+                false
+            } else {
+                !tag
+            }
+        })
+        .collect()
+}
+
 #[test]
 fn doc_cli_generates_linked_offline_reference_and_regenerates() {
     let work = Workspace::new();
@@ -66,15 +83,23 @@ fn doc_cli_generates_linked_offline_reference_and_regenerates() {
     let index = fs::read_to_string(root.join("index.html")).unwrap();
     assert!(index.contains("json/typed/index.html"));
     let testing = fs::read_to_string(root.join("testing/index.html")).unwrap();
-    assert!(testing.contains("pub fn set_stdin(text: String) @suspends"));
-    assert!(!testing.contains("fn configure"));
-    assert!(!testing.contains("fn error"));
+    assert!(text_without_tags(&testing).contains("pub fn set_stdin(text: String) @suspends"));
+    assert!(testing.contains("class=\"syntax-annotation\">suspends</span>"));
+    assert!(!text_without_tags(&testing).contains("fn configure"));
+    assert!(!text_without_tags(&testing).contains("fn error"));
     let integer = fs::read_to_string(root.join("integer/index.html")).unwrap();
     assert!(!integer.contains("rune_from_valid_u32"));
     assert!(!integer.contains("parse_decimal"));
     let memory = fs::read_to_string(root.join("mem/index.html")).unwrap();
-    assert!(memory.contains("fn replace&lt;T&gt;"));
+    assert!(text_without_tags(&memory).contains("fn replace&lt;T&gt;"));
     assert!(!memory.contains("#intrinsic"));
+    let option = fs::read_to_string(root.join("option/index.html")).unwrap();
+    assert!(option.contains("class=\"language-joky\""));
+    assert!(option.contains("class=\"syntax-constant\">21</span>"));
+    assert!(option.contains("class=\"syntax-function\">println</span>"));
+    let style = fs::read_to_string(root.join("style.css")).unwrap();
+    assert!(style.contains(".syntax-keyword"));
+    assert!(style.contains("prefers-color-scheme: dark"));
     // Byte-for-byte deterministic output, including impl anchors.
     success(&work.cli(&["doc", "--std"]));
     assert_eq!(index, fs::read_to_string(root.join("index.html")).unwrap());

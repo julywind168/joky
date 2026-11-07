@@ -3,6 +3,9 @@
 use super::{ast::*, Diagnostic, Lexer, Token, TokenKind};
 use crate::Span;
 
+mod highlight;
+pub use highlight::syntax_spans;
+
 #[derive(Debug)]
 pub struct Entry {
     pub name: String,
