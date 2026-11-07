@@ -7654,12 +7654,14 @@ HTTP/1.1 响应支持 Content-Length、基本 chunked 以及关闭连接定界�
 模块使用 rustls 的 TLS 1.2／1.3 配置。配置与连接都是拥有值，构造和 I/O 方法均为 `@suspends`，
 返回 `Result<…, tls.TlsError>`。配置可用于多次握手，独立拥有的配置和 TlsStream 可转移到 Parallel worker。
 握手消费调用方已有的 TcpStream，域名解析和 TCP 建连仍由 `tcp.connect` 完成。
+`server_name` 只借用，可直接传命名字符串或显式 `&name`；成功、失败或取消后原字符串仍由调用者持有。
+TLS 会话在开始握手前保存所需服务名称，不保留调用方的字符串引用，也不再要求先转换成字节数组。
 
 | API | 行为 |
 | --- | --- |
 | `tls.ClientConfig.web_roots()` | 使用随程序编译的 webpki-roots 公共根证书。系统钥匙串的额外 CA 不会自动导入 |
 | `tls.ClientConfig.from_ca_pem(pem)` | 仅信任给定 PEM 中的 CA，空信任集报错 |
-| `config.connect(socket, server_name)` | 按 DNS 名或 IP 校验对端服务证书。名字与 TCP 拨号地址分开传入，便于连接指定地址时仍验证服务身份 |
+| `config.connect(socket, server_name: &String)` | 按 DNS 名或 IP 校验对端服务证书。名字与 TCP 拨号地址分开传入，便于连接指定地址时仍验证服务身份 |
 | `tls.ServerConfig.from_pem(chain, key)` | 加载叶证书在前的 PEM 链和匹配的未加密 PEM 私钥。每个输入最多 128 KiB |
 | `config.accept(socket)` | 完成服务端握手并返回 TlsStream。首版使用单个服务端身份，未启用客户端证书认证、ALPN 或会话恢复 |
 | `config.share()`（ServerConfig） | 返回独立拥有的配置句柄，复用已解析的证书和密钥 |
@@ -7919,12 +7921,12 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 
 | 接口 | 结果 |
 | --- | --- |
-| `fs.open(path: String, options: fs.OpenOptions) @suspends` | `Result<File, IoError>` |
-| `fs.rename(from: String, to: String) @suspends` | `Result<Unit, IoError>` |
-| `fs.remove_file(path: String) @suspends` | `Result<Unit, IoError>` |
-| `fs.create_dir(path: String)` / `fs.remove_dir(path: String)` @suspends | `Result<Unit, IoError>`，创建一级目录或删除空目录 |
-| `fs.metadata(path: String) @suspends` | `Result<Metadata, IoError>`，kind 为 Regular、Directory、Symlink 或 Other，size 为宿主报告的字节数。末级符号链接返回链接本身的信息，包括悬空链接 |
-| `fs.read_dir(path: String) @suspends` | `Result<Array<String>, IoError>` |
+| `fs.open(path: &String, options: fs.OpenOptions) @suspends` | `Result<File, IoError>` |
+| `fs.rename(from: &String, to: &String) @suspends` | `Result<Unit, IoError>` |
+| `fs.remove_file(path: &String) @suspends` | `Result<Unit, IoError>` |
+| `fs.create_dir(path: &String)` / `fs.remove_dir(path: &String)` @suspends | `Result<Unit, IoError>`，创建一级目录或删除空目录 |
+| `fs.metadata(path: &String) @suspends` | `Result<Metadata, IoError>`，kind 为 Regular、Directory、Symlink 或 Other，size 为宿主报告的字节数。末级符号链接返回链接本身的信息，包括悬空链接 |
+| `fs.read_dir(path: &String) @suspends` | `Result<Array<String>, IoError>` |
 | `file.read(&mut self, limit: UInt64) @suspends` | `Result<Array<UInt8>, IoError>` |
 | `file.write(&mut self, bytes: &Slice<UInt8>) @suspends` | `Result<UInt64, IoError>` |
 | `file.read_all(&mut self) @suspends` | `Result<Array<UInt8>, IoError>` |
@@ -7936,6 +7938,11 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 | `file.seek(&mut self, from: fs.SeekFrom) @suspends` | `Result<UInt64, IoError>` |
 | `file.sync_all(&mut self) @suspends` | `Result<Unit, IoError>` |
 | `file.close(self) @suspends` | `Result<Unit, IoError>` |
+
+路径参数统一借用 `&String`，调用后仍可复用原字符串；支持自动共享借用，也可显式传 `&path`。
+文件服务在提交异步请求时建立所需路径快照，不把语言字符串的引用交给后台工作线程。
+字面量和临时字符串保活到调用结束；失败或取消后借用结束，已提交操作仍遵循原有取消规则。
+`write_text(text: String)` 继续消费文本，将 UTF-8 缓冲区转交给完整写入流程。
 
 这些路径操作与 `open` 共用服务基准目录。输入路径须为非空 UTF-8 字符串，最多 4096 字节，且不能含 NUL。
 本机 `rename` 直接请求操作系统重命名；可在同一文件系统内将写好并关闭的临时文件替换到目标文件名。

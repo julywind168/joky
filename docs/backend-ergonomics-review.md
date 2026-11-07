@@ -566,10 +566,10 @@ on_close 自身失败传播，不重试。处理器只被借用，可持有拥�
 | 完成构建 | `StringBuilder.finish()` | 业界常见 `to_string()`/`build()`，`finish` 可接受，但应与 http 内部 `Wire.finish()`（关闭连接）区分语义 |
 | 错误枚举变体 | 已改为 `InvalidRequest`、`LimitExceeded`、`TransactionClosed` | LimitExceeded 同时覆盖请求和服务资源上限；TransactionClosed 只表示事务失效，宿主状态码保持不变 |
 | HTTP 状态 | `Success` | `Ok`（见 §7） |
-| 参数传递 | `process.env`／`env_or` 的名称、`resolve_path` 的路径、TCP/DNS 主机名、数据库 URL 已改为 &String；SQL 改为拥有型 Query | 挂起调用支持不逃逸参数的自动共享借用；字面量和临时值保活到调用结束，命名字符串可重复使用 |
+| 参数传递 | `process.env`／`env_or` 的名称、`resolve_path` 的路径、TCP/DNS 主机名、数据库 URL、文件路径与 TLS 服务名已改为 &String；SQL 改为拥有型 Query | 挂起调用支持不逃逸参数的自动共享借用；字面量和临时值保活到调用结束，命名字符串可重复使用 |
 
 挂起自动借用沿用不逃逸检查，并覆盖失败、取消及 join/race 分支清理。process 只在调用线程读取键，
-DNS 和 PostgreSQL 后台任务仍拥有必要的输入副本；借用接口省去调用方为复用字符串而做的额外 clone。
+DNS、PostgreSQL、文件后台任务与 TLS 会话仍拥有必要的输入副本；借用接口省去调用方为复用字符串而做的额外 clone。
 SQL 模板独立保存参数快照，执行消费 Query；Query.new 则直接接收文本及参数的所有权。
 只读且不逃逸的参数优先使用 &String；会返回、保存或转移字符串所有权的参数继续按值，例如 env_or 的 fallback。
 
@@ -655,9 +655,9 @@ postgres_orders_http.jk 在完成 1–3 后应缩短到约当前一半，且不�
 | --- | --- | --- |
 | 唯一标头查询【已实现】 | Request.header_unique 返回 Result<Option<&String>, DuplicateHeader>，订单示例已迁移 | 区分缺失、唯一值与重复，不复制标头值；名称按 ASCII 忽略大小写，相同值重复也报错，单个值不按逗号拆分。header/header_all 保留原语义；嵌套文本借用结果目前需在同步助手中处理，订单的 order_key 校验后只 clone 唯一值，再交给挂起 handler。 |
 | session 结束原因【已实现】 | [session](../src/stdlib/session.jk) 的 run/run_draining 清理后返回 Result<End, Error<R.Error>>；Handler.on_close 保持无参数 | 区分 EOF、处理器停止、空闲超时、停机、控制停止与输出关闭；保留原始读写错误，排空失败可同时返回 ReadAndWrite。沿用 race 获胜规则；结构化取消不返回结果、不启动 on_close；chat 显式报告读写错误。 |
-| 只读字符串输入的所有权约定仍不一致 | [fs.open](../src/stdlib/fs.jk) 消费 path，[TLS ClientConfig.connect](../src/stdlib/tls.jk) 消费 server_name；DNS、process、postgres URL 已借用。vm.file_text 和 HTTP TLS 连接因此仍有显式 clone | 可按 §10 的规则评估改为 &String，让宿主在移交异步任务前建立所需副本。但这是公开签名及宿主边界调整，需验证借用跨挂起的存活、取消清理和三后端行为，不能直接删掉这些 clone。 |
+| 只读字符串参数【已统一】 | [fs](../src/stdlib/fs.jk) 的 open、rename、remove_file、create_dir、remove_dir、metadata、read_dir 路径以及 [TLS ClientConfig.connect](../src/stdlib/tls.jk) 的 server_name 均借用 &String；与 DNS、process、postgres URL 一致 | 文件服务在提交时快照路径，TLS 在建会话时保存服务名；内部签名同步改为借用。vm.file_text、HTTP 的 TCP/TLS 连接去掉多余 clone。write_text 仍消费并转换文本缓冲区；需存入返回值或业务对象的字符串继续按值。 |
 
-唯一标头查询与 session 结束原因已补齐；后续可集中统一只读字符串参数。
+唯一标头查询、session 结束原因与上述只读字符串参数已补齐。
 这些是便利性及可观察性问题，不因本轮 chat 性能结果而推断其为性能瓶颈；其余接口暂未更改。
 
 本轮验证：JSON 数值／codec、process、DNS、TCP duplex 及 chat 启停共 7 项针对性测试通过，
@@ -667,3 +667,7 @@ postgres_orders_http.jk 在完成 1–3 后应缩短到约当前一半，且不�
 后续 session 落地复用现有行协议、消息协议与排空 fixture，断言结束原因、原始读取错误、写失败与
 ReadAndWrite，以及清理和取消行为。相关 JIT、解释器、AOT 用例、阻塞写入的排空／溢出取消与
 chat 三后端启停检查通过；未运行全量检查或 benchmark。
+
+只读字符串参数迁移验证复用现有文件路径、TLS、HTTP 客户端和 VM 文件加载用例，覆盖三后端、
+并行借用、失败与取消后的所有权及资源释放；文件接口定向检查、格式与 Clippy 通过。
+未新增测试入口，未运行全量检查、逐指令穷举或 benchmark。

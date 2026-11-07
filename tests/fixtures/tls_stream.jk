@@ -5,7 +5,7 @@ import joky/fs
 import joky/array.{type Array}
 import joky/task
 
-fn pem(path: String) @suspends -> Array<UInt8> {
+fn pem(path: &String) @suspends -> Array<UInt8> {
     var file = fs.open(path, fs.OpenOptions.default())!
     file.read_all_limited(131072)!
 }
@@ -31,7 +31,9 @@ fn cancelled_read(stream: &mut tls.TlsStream) @suspends {
     stream.read_exact(8);
 }
 fn client(config: &tls.ClientConfig, socket: TcpStream, scenario: Int32) @suspends {
-    let result = config.connect(socket, if scenario == 1 { "wrong.example" } else { "localhost" })
+    let name = if scenario == 1 { "wrong-server-name.example" } else { "localhost" }
+    let result = config.connect(socket, name)
+    assert(!name.is_empty(), "server name remains owned by the caller after handshake")
     if scenario == 1 || scenario == 2 {
         assert(match result { Err(Certificate) => true, _ => false }, "reject wrong identity or untrusted issuer")
         return
@@ -62,7 +64,7 @@ fn exchange(c: &tls.ClientConfig, s: &tls.ServerConfig, scenario: Int32) @suspen
     let (outgoing, incoming) = pair()
     join { client(c, outgoing, scenario), server(s, incoming, scenario) }
 }
-fn start_handshake(c: &tls.ClientConfig, socket: TcpStream) @suspends { c.connect(socket, "localhost"); }
+fn start_handshake(c: &tls.ClientConfig, socket: TcpStream, name: &String) @suspends { c.connect(socket, name); }
 fn main() @suspends {
     let c = tls.ClientConfig.from_ca_pem(pem("ca.pem"))!
     let s = tls.ServerConfig.from_pem(pem("server.pem"), pem("test-only-key.pem"))!
@@ -75,6 +77,8 @@ fn main() @suspends {
     exchange(&c, &s, 3)
     exchange(&c, &s, 4)
     var (outgoing, peer) = pair()
-    race { start_handshake(&c, outgoing), task.sleep(25ms) }
+    let name = "localhost"
+    race { start_handshake(&c, outgoing, &name), task.sleep(25ms) }
+    assert(name == "localhost", "cancelling a handshake leaves the borrowed name alive")
     while !peer.read(16384)!.is_empty() {}
 }

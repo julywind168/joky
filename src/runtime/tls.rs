@@ -97,7 +97,11 @@ impl Operation {
             Self::ClientConfig => (vec![Type::UInt64, bytes(1)?, error], client),
             Self::ServerConfig => (vec![bytes(0)?, bytes(1)?, error], server),
             Self::Client => (
-                vec![Type::reference(client, false), bytes(1)?, error],
+                vec![
+                    Type::reference(client, false),
+                    Type::reference(Type::String, false),
+                    error,
+                ],
                 session,
             ),
             Self::Server => (vec![Type::reference(server, false), error], session),
@@ -267,9 +271,8 @@ pub(crate) unsafe fn call(arena: &mut Arena, slots: &[u64], op: Operation) -> Re
         let charge = OwnerCharge::new(arena, SESSION_BUDGET + cost)?;
         let result = match (&owner.value, op) {
             (Value::Client(c), O::Client) => {
-                let bytes = buffer(slots[1])?.bytes()?;
-                std::str::from_utf8(bytes)
-                    .ok()
+                let name = super::owned_text::borrow(slots[1] as *const Buffer)?;
+                Some(name)
                     .filter(|s| s.len() <= 253)
                     .and_then(|s| ServerName::try_from(s).ok())
                     .ok_or(INVALID_NAME)

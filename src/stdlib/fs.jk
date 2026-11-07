@@ -72,14 +72,14 @@ impl Show for FileKind {
 pub struct Metadata { pub kind: FileKind, pub size: UInt64 }
 pub struct File { owner: fs.FileOwner }
 extern fn __io_stdin() @suspends -> fs.OutcomeOwner
-extern fn __fs_rename(from: String, to: String) @suspends -> fs.OutcomeOwner
-extern fn __fs_remove_file(path: String) @suspends -> fs.OutcomeOwner
-extern fn __fs_create_dir(path: String) @suspends -> fs.OutcomeOwner
-extern fn __fs_remove_dir(path: String) @suspends -> fs.OutcomeOwner
-extern fn __fs_metadata(path: String) @suspends -> fs.OutcomeOwner
+extern fn __fs_rename(from: &String, to: &String) @suspends -> fs.OutcomeOwner
+extern fn __fs_remove_file(path: &String) @suspends -> fs.OutcomeOwner
+extern fn __fs_create_dir(path: &String) @suspends -> fs.OutcomeOwner
+extern fn __fs_remove_dir(path: &String) @suspends -> fs.OutcomeOwner
+extern fn __fs_metadata(path: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_kind(result: &mut fs.OutcomeOwner) @suspends -> UInt64
-extern fn __fs_read_dir(path: String) @suspends -> fs.OutcomeOwner
-extern fn __fs_open(path: String, flags: UInt64) @suspends -> fs.OutcomeOwner
+extern fn __fs_read_dir(path: &String) @suspends -> fs.OutcomeOwner
+extern fn __fs_open(path: &String, flags: UInt64) @suspends -> fs.OutcomeOwner
 extern fn __fs_read(file: &mut fs.FileOwner, limit: UInt64) @suspends -> fs.OutcomeOwner
 extern fn __fs_write(file: &mut fs.FileOwner, bytes: &Slice<UInt8>) @suspends -> fs.OutcomeOwner
 extern fn __fs_seek(file: &mut fs.FileOwner, origin: UInt64, offset: UInt64) @suspends -> fs.OutcomeOwner
@@ -105,7 +105,7 @@ fn error_kind(code: UInt64) -> ErrorKind {
 fn error(result: &mut fs.OutcomeOwner, code: UInt64) @suspends -> IoError {
     IoError { kind: error_kind(code), message: __fs_message(result) }
 }
-pub fn open(path: String, options: OpenOptions) @suspends -> Result<File, IoError> {
+pub fn open(path: &String, options: OpenOptions) @suspends -> Result<File, IoError> {
     var flags: UInt64 = 0
     if options.read { flags = flags | 1 }
     if options.write { flags = flags | 2 }
@@ -122,22 +122,22 @@ fn status(var result: fs.OutcomeOwner) @suspends -> Result<Unit, IoError> {
     let code = __fs_code(&mut result)
     if code == 0 { Ok({}) } else { Err(error(&mut result, code)) }
 }
-pub fn rename(from: String, to: String) @suspends -> Result<Unit, IoError> {
+pub fn rename(from: &String, to: &String) @suspends -> Result<Unit, IoError> {
     status(__fs_rename(from, to))
 }
-pub fn remove_file(path: String) @suspends -> Result<Unit, IoError> {
+pub fn remove_file(path: &String) @suspends -> Result<Unit, IoError> {
     status(__fs_remove_file(path))
 }
-pub fn create_dir(path: String) @suspends -> Result<Unit, IoError> { status(__fs_create_dir(path)) }
-pub fn remove_dir(path: String) @suspends -> Result<Unit, IoError> { status(__fs_remove_dir(path)) }
-pub fn metadata(path: String) @suspends -> Result<Metadata, IoError> {
+pub fn create_dir(path: &String) @suspends -> Result<Unit, IoError> { status(__fs_create_dir(path)) }
+pub fn remove_dir(path: &String) @suspends -> Result<Unit, IoError> { status(__fs_remove_dir(path)) }
+pub fn metadata(path: &String) @suspends -> Result<Metadata, IoError> {
     var result = __fs_metadata(path)
     let code = __fs_code(&mut result)
     if code != 0 { return Err(error(&mut result, code)) }
     let kind: FileKind = match __fs_kind(&mut result) { 0 => Regular, 1 => Directory, 2 => Symlink, _ => Other }
     Ok(Metadata { kind, size: __fs_count(&mut result) })
 }
-pub fn read_dir(path: String) @suspends -> Result<Array<String>, IoError> {
+pub fn read_dir(path: &String) @suspends -> Result<Array<String>, IoError> {
     var result = __fs_read_dir(path)
     let code = __fs_code(&mut result)
     if code != 0 { return Err(error(&mut result, code)) }

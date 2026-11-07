@@ -9,7 +9,7 @@ import joky/tcp.{type TcpStream, type IoError}
 extern fn __tls_client_config(bundled: UInt64, pem: Array<UInt8>, error: &mut UInt64) @suspends -> tls.ClientOwner
 extern fn __tls_server_config(chain: Array<UInt8>, key: Array<UInt8>, error: &mut UInt64) @suspends -> tls.ServerOwner
 extern fn __tls_server_share(config: &tls.ServerOwner) @suspends -> tls.ServerOwner
-extern fn __tls_client(config: &tls.ClientOwner, name: Array<UInt8>, error: &mut UInt64) @suspends -> tls.SessionOwner
+extern fn __tls_client(config: &tls.ClientOwner, name: &String, error: &mut UInt64) @suspends -> tls.SessionOwner
 extern fn __tls_server(config: &tls.ServerOwner, error: &mut UInt64) @suspends -> tls.SessionOwner
 extern fn __tls_feed(session: &mut tls.SessionOwner, bytes: Array<UInt8>) @suspends -> UInt64
 extern fn __tls_drain(session: &mut tls.SessionOwner) @suspends -> Array<UInt8>
@@ -51,9 +51,9 @@ fn client_config(bundled: UInt64, pem: Array<UInt8>) @suspends -> Result<ClientC
 impl ClientConfig {
     pub fn web_roots() @suspends -> Result<Self, TlsError> { client_config(1, []) }
     pub fn from_ca_pem(pem: Array<UInt8>) @suspends -> Result<Self, TlsError> { client_config(0, pem) }
-    pub fn connect(&self, socket: TcpStream, server_name: String) @suspends -> Result<TlsStream, TlsError> {
+    pub fn connect(&self, socket: TcpStream, server_name: &String) @suspends -> Result<TlsStream, TlsError> {
         var error: UInt64 = 0
-        let session = __tls_client(&self.storage, server_name.into_bytes(), &mut error)
+        let session = __tls_client(&self.storage, server_name, &mut error)
         if error != 0 { return Err(failure(error)) }
         handshake(socket, session)
     }

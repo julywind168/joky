@@ -150,14 +150,15 @@ impl Operation {
         let file = Type::reference(owner.clone(), true);
         let result = Type::reference(outcome.clone(), true);
         let bytes = |t: &Type| matches!(t,Type::Record(r)if r.name=="joky/array.Array"&&r.arguments==[Type::UInt8]&&r.fields.len()==1&&matches!(&r.fields[0].ty,Type::Buffer(t)if **t==Type::UInt8));
+        let path = Type::reference(Type::String, false);
         let (params, ret) = match self {
-            Self::Open => (vec![Type::String, Type::UInt64], outcome),
-            Self::Rename => (vec![Type::String, Type::String], outcome),
+            Self::Open => (vec![path, Type::UInt64], outcome),
+            Self::Rename => (vec![path.clone(), path], outcome),
             Self::CreateDir
             | Self::RemoveDir
             | Self::Metadata
             | Self::RemoveFile
-            | Self::ReadDir => (vec![Type::String], outcome),
+            | Self::ReadDir => (vec![path], outcome),
             Self::Stdin => (vec![], outcome),
             Self::Process => (
                 vec![

@@ -11,7 +11,7 @@ fn exercise(settings: &Settings) @suspends -> Int32 {
     options.write = true
     options.create = true
     options.truncate = true
-    var file = fs.open(settings.path.clone(), options)!
+    var file = fs.open(&settings.path, options)!
     file.write_text(settings.text.clone())!
     if file.seek(fs.SeekFrom.Start(0))! != 0 { return -1 }
     let text = file.read_text()!
@@ -37,7 +37,7 @@ fn main() @suspends -> Int32 {
     0
 }
 fn read(path: &String) @suspends {
-    var file = fs.open(path.clone(), fs.OpenOptions.default())!
+    var file = fs.open(path, fs.OpenOptions.default())!
     file.read(16);
 }
 fn parked() @suspends {

@@ -506,7 +506,8 @@ fn filesystem_native_options_errors_and_text_bytes() {
 #[test]
 fn filesystem_internal_resources_reject_forgery_and_wrong_signatures() {
     let cases = [
-        "extern fn __fs_open(path: String, flags: UInt64) -> fs.OutcomeOwner",
+        "extern fn __fs_open(path: &String, flags: UInt64) -> fs.OutcomeOwner",
+        "extern fn __fs_open(path: String, flags: UInt64) @suspends -> fs.OutcomeOwner",
         "extern fn __fs_read(file: &mut fs.FileOwner, limit: Int32) @suspends -> fs.OutcomeOwner",
         "extern fn __fs_code(result: &mut fs.FileOwner) @suspends -> UInt64",
         "import joky/fs fn duplicate(file: fs.File) { let a=file; let b=file }",

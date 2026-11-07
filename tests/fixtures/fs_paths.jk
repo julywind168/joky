@@ -1,26 +1,30 @@
 import joky/fs
 
 fn main() @suspends {
-    let entries = fs.read_dir("paths")!
+    let directory = "paths"
+    let source = "paths/旧.txt"
+    let destination = "paths/ready"
+    let created = "paths/new"
+    let entries = fs.read_dir(directory)!
     assert(entries.len() == 3, "immediate children only")
     assert(entries.contains("旧.txt") && entries.contains("ready") && entries.contains("sub"), "entry names")
     assert(fs.read_dir("paths/sub")!.is_empty(), "empty directory")
-    assert(fs.rename("paths/旧.txt", "paths/ready").is_ok(), "replace existing destination")
-    var file = fs.open("paths/ready", fs.OpenOptions.default())!
+    assert(fs.rename(source, destination).is_ok(), "replace existing destination")
+    var file = fs.open(destination, fs.OpenOptions.default())!
     assert(file.read_text()! == "new contents", "renamed file contents")
     file.close()!
-    let info = fs.metadata("paths/ready")!
+    let info = fs.metadata(destination)!
     assert(info.kind == fs.FileKind.Regular && info.size == 12, "regular file metadata")
-    fs.create_dir("paths/new")!
-    assert(fs.metadata("paths/new")!.kind == fs.FileKind.Directory, "directory metadata")
-    assert(fs.create_dir("paths/new").err()!.kind == fs.ErrorKind.AlreadyExists, "existing directory")
-    assert(fs.remove_dir("paths").is_err(), "refuse nonempty directory")
-    fs.remove_dir("paths/new")!
-    assert(fs.metadata("paths/new").err()!.kind == fs.ErrorKind.NotFound, "removed directory")
-    fs.remove_file("paths/ready")!
+    fs.create_dir(created)!
+    assert(fs.metadata(created)!.kind == fs.FileKind.Directory, "directory metadata")
+    assert(fs.create_dir(created).err()!.kind == fs.ErrorKind.AlreadyExists, "existing directory")
+    assert(fs.remove_dir(directory).is_err(), "refuse nonempty directory")
+    fs.remove_dir(created)!
+    assert(fs.metadata(created).err()!.kind == fs.ErrorKind.NotFound, "removed directory")
+    fs.remove_file(destination)!
     assert(fs.remove_file("paths/sub").is_err(), "directory is not a file")
-    assert(fs.read_dir("paths")!.len() == 1, "removed file")
-    assert(fs.remove_file("paths/旧.txt").err()!.kind == fs.ErrorKind.NotFound, "missing file")
+    assert(fs.read_dir(directory)!.len() == 1, "removed file")
+    assert(fs.remove_file(source).err()!.kind == fs.ErrorKind.NotFound, "missing file")
     assert(fs.read_dir("paths/missing").err()!.kind == fs.ErrorKind.NotFound, "missing directory")
     assert(fs.rename("paths/sub", "").err()!.kind == fs.ErrorKind.InvalidInput, "invalid destination")
     assert(fs.read_dir("bad\0path").err()!.kind == fs.ErrorKind.InvalidInput, "invalid directory path")

@@ -707,10 +707,10 @@ impl Client {
     pub fn http(host: String, port: UInt16) -> Result<Self, ClientError> { make_client(host, port, None) }
     pub fn https(host: String, port: UInt16, config: tls.ClientConfig) -> Result<Self, ClientError> { make_client(host, port, Some(config)) }
     fn open(&self) @suspends -> Result<Wire, ClientError> {
-        let socket = match tcp.connect(self.host.clone(), self.port) { result.Ok(s) => s, Err(e) => return Err(Connect(e)) }
+        let socket = match tcp.connect(&self.host, self.port) { result.Ok(s) => s, Err(e) => return Err(Connect(e)) }
         match &self.config {
             None => result.Ok(Plain(BufferedTcp.new(socket))),
-            Some(config) => match config.connect(socket, self.host.clone()) { result.Ok(s) => result.Ok(Secure(s)), Err(e) => Err(Handshake(e)) }
+            Some(config) => match config.connect(socket, &self.host) { result.Ok(s) => result.Ok(Secure(s)), Err(e) => Err(Handshake(e)) }
         }
     }
     pub fn get(&self, target: String) @suspends -> Result<ClientResponse, ClientError> {
