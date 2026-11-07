@@ -1,5 +1,5 @@
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
-import joky/check.{assert, panic}
+import joky/check.{assert}
 import joky/integer
 import joky/string
 import joky/task
@@ -9,12 +9,12 @@ fn ensure(ok: Bool) { assert(ok, "Duplex message session") }
 // Receive commands independently of the server's unsolicited pushes.
 fn commands(reader: &mut BufferedTcpReader) @suspends {
     for expected in range(1, 4) {
-        let bytes = match reader.read_message(16) { Ok(Some(bytes)) => bytes, _ => panic("Duplex message session") }
-        let text = match String.from_utf8(bytes) { Ok(text) => text, _ => panic("Duplex message session") }
+        let bytes = reader.read_message(16).expect("Duplex message session").expect("Duplex message session")
+        let text = String.from_utf8(bytes).expect("Duplex message session")
         let command = expected.to_string()
-        ensure(text.equals(&command))
+        ensure(text == command)
     }
-    match reader.read_message(0) { Ok(None) => {}, _ => panic("Duplex message session") }
+    ensure(reader.read_message(0).expect("Duplex message session").is_none())
 }
 fn pushes(writer: &mut TcpWriter) @suspends {
     for index in range(1, 4) {
@@ -24,7 +24,7 @@ fn pushes(writer: &mut TcpWriter) @suspends {
     ensure(writer.shutdown().is_ok())
 }
 fn serve(listener: &mut TcpListener) @suspends {
-    let stream = match listener.accept() { Ok(stream) => stream, _ => panic("Duplex message session") }
+    let stream = listener.accept().expect("Duplex message session")
     var (reader, writer) = BufferedTcp.new(stream).split()
     join { commands(&mut reader), pushes(&mut writer) }
     reader.close();
@@ -40,21 +40,20 @@ fn send(writer: &mut TcpWriter) @suspends {
 fn receive(reader: &mut BufferedTcpReader) @suspends {
     var expected: Int32 = 1
     while true {
-        let bytes = match reader.read_message(16) {
-            Ok(Some(bytes)) => bytes
-            Ok(None) => { break }
-            Err(_) => panic("Duplex message session")
+        let bytes = match reader.read_message(16).expect("Duplex message session") {
+            Some(bytes) => bytes
+            None => break
         }
-        let text = match String.from_utf8(bytes) { Ok(text) => text, _ => panic("Duplex message session") }
+        let text = String.from_utf8(bytes).expect("Duplex message session")
         let value = expected.to_string()
-        ensure(text.equals(&value))
+        ensure(text == value)
         println(text)
-        expected = expected + 1
+        expected += 1
     }
     ensure(expected == 4)
 }
 fn client(address: Address) @suspends {
-    let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => panic("Duplex message session") }
+    let stream = TcpStream.connect(address).expect("Duplex message session")
     var (reader, writer) = BufferedTcp.new(stream).split()
     // Both halves stay owned by this task until the entire session ends.
     join { receive(&mut reader), send(&mut writer) }

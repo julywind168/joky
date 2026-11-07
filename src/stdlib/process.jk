@@ -13,12 +13,12 @@ extern fn __fs_bytes(result: &mut fs.OutcomeOwner) @suspends -> Array<UInt8>
 extern fn __fs_count(result: &mut fs.OutcomeOwner) @suspends -> UInt64
 
 fn error(result: &mut fs.OutcomeOwner, code: UInt64) @suspends -> IoError {
-    let kind = if code == 1 { ErrorKind.Unsupported } else {
-        if code == 3 { ErrorKind.NotFound } else {
-            if code == 5 { ErrorKind.InvalidInput } else {
-                if code == 8 { ErrorKind.LimitExceeded } else { ErrorKind.SystemFailure }
-            }
-        }
+    let kind = match code {
+        1 => ErrorKind.Unsupported
+        3 => ErrorKind.NotFound
+        5 => ErrorKind.InvalidInput
+        8 => ErrorKind.LimitExceeded
+        _ => ErrorKind.SystemFailure
     }
     IoError { kind, message: __fs_message(result) }
 }
@@ -51,11 +51,7 @@ pub fn env(name: &String) @suspends -> Result<Option<String>, IoError> {
     }
 }
 pub fn env_or(name: &String, fallback: String) @suspends -> Result<String, IoError> {
-    match env(name) {
-        Ok(Some(value)) => Ok(value)
-        Ok(None) => Ok(fallback)
-        Err(error) => Err(error)
-    }
+    Ok(env(name)?.unwrap_or(fallback))
 }
 pub fn current_dir() @suspends -> Result<String, IoError> { text(3, 0, "") }
 pub fn resolve_path(path: &String) @suspends -> Result<String, IoError> { text(4, 0, path) }

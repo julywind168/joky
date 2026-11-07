@@ -164,10 +164,8 @@ fn magnitude(text: &String, start: UInt64, limit: UInt64) -> Result<UInt64, Numb
 
 impl Number {
     pub fn from_text(input: &String) -> Result<Number, NumberError> {
-        match validate(input) {
-            Err(failure) => Err(failure)
-            Ok(_) => Ok(Number { text: input.clone() })
-        }
+        validate(input)?
+        Ok(Number { text: input.clone() })
     }
     pub fn from_i64(value: Int64) -> Number { Number { text: value.to_string() } }
     pub fn from_u64(value: UInt64) -> Number { Number { text: value.to_string() } }
@@ -176,10 +174,8 @@ impl Number {
         let text = value.to_text()
         // The shared formatter's finite output satisfies JSON grammar and fits
         // the bound, including fixed decimal subnormals and negative zero.
-        match validate(&text) {
-            Err(failure) => Err(failure)
-            Ok(_) => Ok(Number { text: text })
-        }
+        validate(&text)?
+        Ok(Number { text })
     }
     pub fn as_text(&self) -> &String { &self.text }
     pub fn to_i64(&self) -> Result<Int64, NumberError> {
@@ -187,14 +183,10 @@ impl Number {
         let negative = byte_at(self.text.bytes(), 0) == 45
         let start: UInt64 = if negative { 1 } else { 0 }
         let limit: UInt64 = if negative { 9223372036854775808 } else { 9223372036854775807 }
-        match magnitude(&self.text, start, limit) {
-            Err(failure) => Err(failure)
-            Ok(value) => {
-                if negative {
-                    if value == 0 { Ok(0) } else { Ok(-int64(value - 1) - 1) }
-                } else { Ok(int64(value)) }
-            }
-        }
+        let value = magnitude(&self.text, start, limit)?
+        if negative {
+            if value == 0 { Ok(0) } else { Ok(-int64(value - 1) - 1) }
+        } else { Ok(int64(value)) }
     }
     pub fn to_u64(&self) -> Result<UInt64, NumberError> {
         integer_end(&self.text)?

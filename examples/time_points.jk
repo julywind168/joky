@@ -1,17 +1,16 @@
 import joky/time.{ type Instant, type Timestamp }
 import joky/task
 import joky/io.{ println }
-import joky/check.{ panic }
 
 fn main() @suspends {
     let started = Instant.now()
-    let deadline = started.checked_add(250ms).unwrap_or_else(move || { panic("Deadline overflow") })
+    let deadline = started.checked_add(250ms).expect("Deadline overflow")
     task.sleep_until(deadline)
-    println(started.elapsed().unwrap_or_else(move || { panic("Clock changed") }))
+    println(started.elapsed().expect("Clock changed"))
 
     let now = Timestamp.now()
     println(now)
     println(now.as_unix_millis())
-    let parsed = Timestamp.parse("2024-03-01T00:30:00+01:00").unwrap_or_else(move || { panic("Invalid timestamp") })
+    let parsed = Timestamp.parse("2024-03-01T00:30:00+01:00").expect("Invalid timestamp")
     println(parsed)
 }

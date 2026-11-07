@@ -632,3 +632,34 @@ fn main() @suspends -> Int32 {
 
 每项落地时同步更新 language.md 与相关示例，示例应作为"目标写法"的验收标准：
 postgres_orders_http.jk 在完成 1–3 后应缩短到约当前一半，且不再出现手写 JSON 字符串与标头循环。
+
+## 13. examples 与标准库写法复查（2026-11-07）
+
+本轮扫描 examples 与标准库 Joky 源码中的解包、错误透传、字符串复制和条件分支，重点复查
+网络示例、chat 配置、process、JSON、HTTP 与 session。以下是已核实的问题，不表示所有实现均已逐行审计。
+
+### 已直接清理的写法
+
+- `time_points` 与 `tcp_duplex` 用已有 `expect(message)` 替代闭包／match 后 panic，保留失败消息。
+  duplex 的 EOF 仍单独处理，字符串比较使用借用的 `==`。
+- `dns_lookup` 与 chat 的环境配置去掉借用调用前的 String.clone；DNS 空结果检查使用 is_empty。
+- `process.env_or` 用 `?` 和 Option.unwrap_or 表达错误传播及缺省值；错误码映射由嵌套 if 改为 match。
+- `json.Number` 的文本验证及整数转换用 `?` 展平错误透传，保留边界检查、错误位置和 Int64 最小值算法。
+
+没有机械替换教学示例中的 match，也没有把资源收尾改成提前返回。例如 `vm.file_text` 在读取失败时仍先 close，
+该顺序不能为了缩短写法而改成直接 `read_text()?`。
+
+### 需要设计决定的接口
+
+| 问题 | 当前依据 | 建议与待定边界 |
+| --- | --- | --- |
+| 读取“至多一个标头”需要先收集、复制再检查数量 | [订单 HTTP 示例](../examples/postgres_orders_http.jk) 的 Idempotency-Key 使用 header_all；[Request.header_all](../src/stdlib/http.jk) 返回 Array<String>，header 则只取第一个 | 考虑增加 `header_unique(name) -> Result<Option<&String>, DuplicateHeader>`：区分缺失与重复，避免为单值校验收集数组。不能将所有标头都改成唯一，也不能默认用逗号合并；返回借用的生命周期和诊断类型需确定。 |
+| session 无法向应用报告正常 EOF、协议错误或写失败的区别 | [session.read](../src/stdlib/session.jk) 将 Reader 的 Err 转成 None；发送失败直接退出；Handler.on_close 无参数，run 返回 Unit | 考虑让 run 返回结束原因，或增加错误／带原因关闭回调。需先决定 Reader.Error 如何传给 Handler、race 多分支同时结束的优先规则，以及取消时回调能否运行；不能简单吞掉错误后补一个日志。 |
+| 只读字符串输入的所有权约定仍不一致 | [fs.open](../src/stdlib/fs.jk) 消费 path，[TLS ClientConfig.connect](../src/stdlib/tls.jk) 消费 server_name；DNS、process、postgres URL 已借用。vm.file_text 和 HTTP TLS 连接因此仍有显式 clone | 可按 §10 的规则评估改为 &String，让宿主在移交异步任务前建立所需副本。但这是公开签名及宿主边界调整，需验证借用跨挂起的存活、取消清理和三后端行为，不能直接删掉这些 clone。 |
+
+优先级建议：先补唯一标头查询，再设计 session 结束原因，最后集中统一只读字符串参数。
+这些是便利性及可观察性问题，不因本轮 chat 性能结果而推断其为性能瓶颈；本轮未更改上述接口。
+
+本轮验证：JSON 数值／codec、process、DNS、TCP duplex 及 chat 启停共 7 项针对性测试通过，
+相关 CLI 用例覆盖三后端；另外实际运行 time_points 的 JIT、解释器和 AOT，核对输出结构与固定时间解析结果。
+`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 和文档链接／diff 检查通过；未跑全量检查或 benchmark。

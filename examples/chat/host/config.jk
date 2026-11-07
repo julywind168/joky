@@ -1,7 +1,7 @@
 import joky/process
 
 pub fn port(name: String, fallback: UInt16) @suspends -> Result<UInt16, String> {
-    let text = match process.env(name.clone()) {
+    let text = match process.env(name) {
         Ok(Some(value)) => value
         Ok(None) => { return Ok(fallback) }
         Err(error) => { return Err(error.message) }
