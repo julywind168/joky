@@ -882,8 +882,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
         let unsupported = |ty: &Type| {
             ty.dyn_interface().is_none()
                 && ty.contains_buffers()
-                && !ty.is_suspend_safe_owner()
-                && !ty.is_scoped_suspend_safe_owner()
+                && !ty.is_suspend_safe_local_owner()
                 && !ty.is_resource_view()
                 && !ty.is_scoped_suspending_closure()
         };

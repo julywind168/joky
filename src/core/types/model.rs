@@ -424,9 +424,13 @@ impl Type {
 
         self.is_owner() && safe_storage(self)
     }
-    /// Inline owned sums may carry shared loans in a local CPS activation.
-    /// This is not storage or transfer eligibility; provenance still checks each loan.
-    pub(crate) fn is_scoped_suspend_safe_owner(&self) -> bool {
+    /// Owners may stay in a local CPS activation with suspend-safe shared loans.
+    /// This includes reference-free owners, but does not grant storage or transfer
+    /// eligibility; provenance still checks each loan.
+    pub(crate) fn is_suspend_safe_local_owner(&self) -> bool {
+        if self.is_suspend_safe_owner() {
+            return true;
+        }
         self.is_owner()
             && self.contains_references()
             && !self.contains_unstorable_closures()

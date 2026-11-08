@@ -94,8 +94,7 @@ impl Reference {
         false
     }
 }
-/// Loans held for child tasks of one dynamic task scope, keyed by scope id.
-/// They end at that scope's join; nested scopes keep their own entries.
+/// Retained loans and their exclusivity, keyed by retention site and source slot.
 type RegionLoans = BTreeMap<(usize, usize), (Reference, bool)>;
 
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -103,8 +102,9 @@ struct State {
     // Most instructions preserve reference slots; CFG snapshots share them until a write.
     slots: std::rc::Rc<BTreeMap<usize, Reference>>,
     // Stored loans live until the root arena is released, even if their values die.
-    retained: BTreeMap<(usize, usize), (Reference, bool)>,
+    retained: RegionLoans,
     arena_retained: BTreeMap<usize, RegionLoans>,
+    // Child-task loans end at their scope's join; nested scopes keep separate entries.
     regions: BTreeMap<u32, RegionLoans>,
     // Object/control identity and stored reference dependencies stay separate:
     // copying an array element does not borrow its relocatable payload.
@@ -260,16 +260,9 @@ pub(super) fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
         ),
         Op::DynPack { owner, .. } => (refs(owner), vec![]),
         Op::Buffer(super::BufferOp::Access { src, .. }) => (refs(src), vec![]),
-        Op::Buffer(super::BufferOp::End(owner)) => (
-            refs(owner)
-                .into_iter()
-                .filter(|s| s.ty.is_owner())
-                .collect(),
-            refs(owner)
-                .into_iter()
-                .filter(|s| !s.ty.is_owner())
-                .collect(),
-        ),
+        Op::Buffer(super::BufferOp::End(owner)) => {
+            refs(owner).into_iter().partition(|s| s.ty.is_owner())
+        }
         Op::Graph(op) => match op.as_ref() {
             GraphOp::Link {
                 reference, source, ..
@@ -508,15 +501,20 @@ fn reference_buffer(ty: &Type) -> bool {
         .any(|element| element.contains_references())
 }
 fn writable_buffer(ty: &Type) -> bool {
-    reference_buffer(ty) && (ty.is_owner() || ty.reference_type().is_some_and(|r| r.mutable))
+    reference_buffer(ty) && exclusive_access(ty)
 }
-fn retain(state: &mut State, key: (usize, usize), value: Reference, mutable: bool) -> bool {
-    if let Some((old, exclusive)) = state.retained.get_mut(&key) {
+/// Moving an owner or using an exclusive reference requires exclusive access;
+/// moving a shared-reference lane does not modify its referent.
+fn exclusive_access(ty: &Type) -> bool {
+    ty.is_owner() || ty.reference_type().is_some_and(|r| r.mutable)
+}
+fn retain(loans: &mut RegionLoans, key: (usize, usize), value: Reference, mutable: bool) -> bool {
+    if let Some((old, exclusive)) = loans.get_mut(&key) {
         let changed = merge(old, &value) | (mutable && !*exclusive);
         *exclusive |= mutable;
         changed
     } else {
-        state.retained.insert(key, (value, mutable));
+        loans.insert(key, (value, mutable));
         true
     }
 }
@@ -527,15 +525,7 @@ fn retain_region(
     value: Reference,
     mutable: bool,
 ) -> bool {
-    let region = state.regions.entry(scope).or_default();
-    if let Some((old, exclusive)) = region.get_mut(&key) {
-        let changed = merge(old, &value) | (mutable && !*exclusive);
-        *exclusive |= mutable;
-        changed
-    } else {
-        region.insert(key, (value, mutable));
-        true
-    }
+    retain(state.regions.entry(scope).or_default(), key, value, mutable)
 }
 fn explicit_arena(ty: &Type) -> bool {
     ty.is_explicit_arena()
@@ -545,13 +535,12 @@ fn explicit_arena(ty: &Type) -> bool {
 }
 
 fn retain_arena(state: &mut State, arena: usize, key: (usize, usize), value: Reference) -> bool {
-    let region = state.arena_retained.entry(arena).or_default();
-    if let Some((old, _)) = region.get_mut(&key) {
-        merge(old, &value)
-    } else {
-        region.insert(key, (value, false));
-        true
-    }
+    retain(
+        state.arena_retained.entry(arena).or_default(),
+        key,
+        value,
+        false,
+    )
 }
 
 fn move_arena(state: &mut State, old: &Set, new: usize) {
@@ -606,7 +595,7 @@ fn join(to: &mut State, from: &State) -> bool {
         }
     }
     for (&key, (value, mutable)) in &from.retained {
-        changed |= retain(to, key, value.clone(), *mutable);
+        changed |= retain(&mut to.retained, key, value.clone(), *mutable);
     }
     for (&scope, region) in &from.regions {
         for (&key, (value, mutable)) in region {
@@ -1371,7 +1360,7 @@ fn analyze(
                     }
                     check_access(
                         &slot,
-                        slot.ty.is_owner() || slot.ty.reference_type().is_some_and(|r| r.mutable),
+                        exclusive_access(&slot.ty),
                         &state,
                         &live[pc],
                         None,
@@ -1577,7 +1566,7 @@ fn analyze(
                 for arg in args.iter().flat_map(refs) {
                     check_access(
                         &arg,
-                        arg.ty.is_owner() || arg.ty.reference_type().unwrap().mutable,
+                        exclusive_access(&arg.ty),
                         &state,
                         &live[pc],
                         None,
@@ -1617,7 +1606,7 @@ fn analyze(
                         for arg in inputs.iter().filter(|arg| !arg.ty.is_owner()) {
                             check_storage(arg, &state)?;
                             let value = state[&arg.index].clone();
-                            retain(&mut state, (loan, arg.index), value, false);
+                            retain(&mut state.retained, (loan, arg.index), value, false);
                         }
                         let contents = union(inputs.iter().map(|s| state[&s.index].clone()));
                         let identity = state[&args[0].index].clone();
@@ -1699,8 +1688,7 @@ fn analyze(
                             }
                         }
                     }
-                    let exclusive =
-                        src.ty.is_owner() || src.ty.reference_type().is_some_and(|r| r.mutable);
+                    let exclusive = exclusive_access(&src.ty);
                     check_access(&src, exclusive, &state, &alive, Some(dst.index), &[])?;
                     let mut value = state[&src.index].clone();
                     let contents = buffer_contents(&state, &src);
@@ -1726,9 +1714,7 @@ fn analyze(
             }
             Op::Buffer(super::BufferOp::Access { src, mutable }) => {
                 for src in refs(src) {
-                    let exclusive = *mutable
-                        && (src.ty.is_owner()
-                            || src.ty.reference_type().is_some_and(|r| r.mutable));
+                    let exclusive = *mutable && exclusive_access(&src.ty);
                     check_access(&src, exclusive, &state, &live[pc], None, &[])?;
                 }
             }
@@ -1825,7 +1811,7 @@ fn analyze(
                     value.loans = Set::from([loan]);
                     for member in members {
                         let contents = state[&member.index].clone();
-                        retain(&mut state, (loan, member.index), contents, false);
+                        retain(&mut state.retained, (loan, member.index), contents, false);
                         state.get_mut(&member.index).unwrap().invalid = true;
                     }
                     state.insert(dst.index, value);
@@ -2094,7 +2080,7 @@ fn analyze(
                     check_storage(input, &state)?;
                     check_access(input, false, &state, &live[pc], None, &[])?;
                     let value = state[&input.index].clone();
-                    retain(&mut state, (loan, input.index), value, false);
+                    retain(&mut state.retained, (loan, input.index), value, false);
                 }
                 let contents = union(inputs.iter().map(|s| state[&s.index].clone()));
                 state
@@ -2143,8 +2129,7 @@ fn analyze(
                 let detach = matches!(&plan.ops[pc], Op::ReadOwner { detach: true, .. });
                 let consumed = if detach { &selected } else { owner };
                 for input in refs(consumed) {
-                    let exclusive =
-                        input.ty.is_owner() || input.ty.reference_type().is_some_and(|r| r.mutable);
+                    let exclusive = exclusive_access(&input.ty);
                     check_access(&input, exclusive, &state, &alive, None, &[])?;
                 }
                 let values: Vec<_> = refs(&selected)
@@ -2166,8 +2151,7 @@ fn analyze(
                 // the selected lanes are read here; the explicit End that
                 // follows releases the remainder and ends the binding.
                 for input in refs(src) {
-                    let exclusive =
-                        input.ty.is_owner() || input.ty.reference_type().is_some_and(|r| r.mutable);
+                    let exclusive = exclusive_access(&input.ty);
                     check_access(&input, exclusive, &state, &alive, None, &[])?;
                 }
                 let values: Vec<_> = refs(src)
@@ -2278,7 +2262,7 @@ fn analyze(
                     if !target.is_closure_value() {
                         let value = state[&input.index].clone();
                         if arenas.is_empty() {
-                            retain(&mut state, (loan, input.index), value, false);
+                            retain(&mut state.retained, (loan, input.index), value, false);
                         } else {
                             for arena in &arenas {
                                 retain_arena(
@@ -2370,7 +2354,7 @@ fn analyze(
                     let value = state[&arg.index].clone();
                     check_storage(&arg, &state)?;
                     retain(
-                        &mut state,
+                        &mut state.retained,
                         (loan, arg.index),
                         value,
                         arg.ty.reference_type().unwrap().mutable,
@@ -2493,7 +2477,7 @@ fn analyze(
                     check_storage(&capture, &state)?;
                     let value = state[&capture.index].clone();
                     retain(
-                        &mut state,
+                        &mut state.retained,
                         (loan, capture.index),
                         value,
                         capture.ty.reference_type().unwrap().mutable,
@@ -2581,14 +2565,7 @@ fn analyze(
                     })
                     .collect();
                 for arg in &inputs {
-                    check_access(
-                        arg,
-                        arg.ty.is_owner() || arg.ty.reference_type().is_some_and(|r| r.mutable),
-                        &state,
-                        &live[pc],
-                        None,
-                        &[],
-                    )?;
+                    check_access(arg, exclusive_access(&arg.ty), &state, &live[pc], None, &[])?;
                 }
                 for &(source, destination) in &functions[name].inferred_arena_retained {
                     let arenas: Set = arguments
@@ -2660,7 +2637,7 @@ fn analyze(
                         check_storage(arg, &state)?;
                         let value = state[&arg.index].clone();
                         retain(
-                            &mut state,
+                            &mut state.retained,
                             (loan, arg.index),
                             value,
                             arg.ty.reference_type().unwrap().mutable,
@@ -2689,8 +2666,7 @@ fn analyze(
                 }
                 for mut dst in result.iter().flat_map(refs) {
                     dst.ty = types[&dst.index].clone();
-                    let mutable =
-                        dst.ty.is_owner() || dst.ty.reference_type().is_some_and(|r| r.mutable);
+                    let mutable = exclusive_access(&dst.ty);
                     // A returned borrow does not point into an owning sibling lane.
                     // Keep fresh view identities outside owner and stored-content roots.
                     let origin = if dst.ty.is_owner() {
@@ -2745,10 +2721,7 @@ fn analyze(
                         if explicit_arena(&arg.ty) && !explicit_arena(&dst.ty) {
                             continue;
                         }
-                        if !mutable
-                            || arg.ty.is_owner()
-                            || arg.ty.reference_type().is_some_and(|r| r.mutable)
-                        {
+                        if !mutable || exclusive_access(&arg.ty) {
                             value.origins.extend(source.origins.iter().cloned());
                             value.storage |= source.storage;
                             value.interior |= source.interior;
