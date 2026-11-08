@@ -486,6 +486,17 @@ pub(crate) enum Op {
 }
 
 impl Op {
+    /// Call targets for effect propagation, including indirect-call contracts.
+    /// Function values and cleanup hooks have separate propagation rules.
+    fn callees(&self) -> impl Iterator<Item = &String> {
+        let (single, branches) = match self {
+            Self::Call { name, .. } | Self::TaskBranch { entry: name, .. } => (Some(name), &[][..]),
+            Self::Concurrent { branches, .. } => (None, branches.as_slice()),
+            _ => (None, &[][..]),
+        };
+        single.into_iter().chain(branches.iter().map(|b| &b.name))
+    }
+
     /// Concrete code dependencies, including callbacks used only during cleanup.
     /// Indirect-call signature placeholders describe contracts, not code entries.
     pub(crate) fn dependencies(&self) -> impl Iterator<Item = &String> {
@@ -1173,14 +1184,10 @@ impl ModulePlan {
                                 true
                             }
                             Op::Buffer(BufferOp::End(_)) => true,
-                            Op::Call { name, .. } => functions[name].may_fail,
-                            Op::Concurrent { branches, .. } => branches
-                                .iter()
-                                .any(|branch| functions[&branch.name].may_fail),
                             // Registration can fail on capacity limits; joins
                             // observe child failure and cancellation.
                             Op::TaskBranch { .. } | Op::TaskJoin { .. } => true,
-                            _ => false,
+                            _ => op.callees().any(|callee| functions[callee].may_fail),
                         }
                     })
                 {

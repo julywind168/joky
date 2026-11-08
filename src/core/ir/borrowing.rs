@@ -667,19 +667,11 @@ pub(super) fn infer_module(
         {
             pending.insert(name.clone());
         }
-        for op in &body.ops {
-            let callees: Vec<_> = match op {
-                Op::Call { name, .. } => vec![name],
-                Op::Concurrent { branches, .. } => branches.iter().map(|b| &b.name).collect(),
-                Op::TaskBranch { entry, .. } => vec![entry],
-                _ => vec![],
-            };
-            for callee in callees {
-                callers
-                    .entry(callee.clone())
-                    .or_default()
-                    .insert(name.clone());
-            }
+        for callee in body.ops.iter().flat_map(Op::callees) {
+            callers
+                .entry(callee.clone())
+                .or_default()
+                .insert(name.clone());
         }
     }
     let mut budget = 20_000_000usize;

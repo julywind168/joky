@@ -872,27 +872,21 @@ pub(super) fn check_module(
                 changed = true;
             }
             if !reference_capability.contains(name)
-                && body.ops.iter().any(|op| match op {
-                    Op::Call { name, .. } => reference_capability.contains(name),
-                    Op::Concurrent { branches, .. } => branches
-                        .iter()
-                        .any(|branch| reference_capability.contains(&branch.name)),
-                    Op::TaskBranch { entry, .. } => reference_capability.contains(entry),
-                    _ => false,
-                })
+                && body
+                    .ops
+                    .iter()
+                    .flat_map(Op::callees)
+                    .any(|callee| reference_capability.contains(callee))
             {
                 reference_capability.insert(name.clone());
                 changed = true;
             }
             if !functions[name].needs_arena
-                && body.ops.iter().any(|op| match op {
-                    Op::Call { name, .. } => functions[name].needs_arena,
-                    Op::Concurrent { branches, .. } => branches
-                        .iter()
-                        .any(|branch| functions[&branch.name].needs_arena),
-                    Op::TaskBranch { entry, .. } => functions[entry].needs_arena,
-                    _ => false,
-                })
+                && body
+                    .ops
+                    .iter()
+                    .flat_map(Op::callees)
+                    .any(|callee| functions[callee].needs_arena)
             {
                 functions.get_mut(name).unwrap().needs_arena = true;
                 changed = true;
@@ -907,14 +901,7 @@ pub(super) fn check_module(
                             .iter()
                             .chain(elements.iter().flat_map(|e| &e.hooks))
                             .any(|hook| functions[&hook.name].uses_arena)
-                    }) || match op {
-                        Op::Call { name, .. } => functions[name].uses_arena,
-                        Op::Concurrent { branches, .. } => branches
-                            .iter()
-                            .any(|branch| functions[&branch.name].uses_arena),
-                        Op::TaskBranch { entry, .. } => functions[entry].uses_arena,
-                        _ => false,
-                    }
+                    }) || op.callees().any(|callee| functions[callee].uses_arena)
                 })
             {
                 functions.get_mut(name).unwrap().uses_arena = true;
