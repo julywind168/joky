@@ -1200,17 +1200,7 @@ impl ModulePlan {
         memory::check_module(&mut functions, &bodies)?;
         for body in bodies.values_mut() {
             body.lower_graph_ops();
-            body.erase_local_ends();
-            let mut spans = Vec::new();
-            let mut ops = Vec::new();
-            for (op, span) in body.ops.drain(..).zip(body.op_spans.drain(..)) {
-                if !matches!(op, Op::Closure(_)) {
-                    ops.push(op);
-                    spans.push(span);
-                }
-            }
-            body.ops = ops;
-            body.op_spans = spans;
+            body.lower_checked_storage();
         }
         for name in generics.borrow().templates.keys() {
             functions.remove(name);

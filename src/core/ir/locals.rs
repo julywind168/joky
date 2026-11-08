@@ -668,19 +668,20 @@ impl FunctionPlan {
         }
     }
 
-    pub(super) fn erase_local_ends(&mut self) {
+    /// Erase analysis-only markers and lower checked storage in source order.
+    pub(super) fn lower_checked_storage(&mut self) {
         let mut spans = Vec::with_capacity(self.op_spans.len());
         let mut index = 0;
-        self.ops.retain(|op| {
-            let keep = !matches!(op, Op::EndLocal(_) | Op::Buffer(BufferOp::Access { .. }));
-            if keep {
-                spans.push(self.op_spans[index]);
-            }
+        self.ops.retain_mut(|op| {
+            let span = self.op_spans[index];
             index += 1;
-            keep
-        });
-        self.op_spans = spans;
-        for op in &mut self.ops {
+            if matches!(
+                op,
+                Op::EndLocal(_) | Op::Closure(_) | Op::Buffer(BufferOp::Access { .. })
+            ) {
+                return false;
+            }
+            spans.push(span);
             let next = match op {
                 Op::Buffer(BufferOp::End(owner)) if owner.ty.is_place() => {
                     Some(PlaceOp::End(owner.clone()))
@@ -776,7 +777,9 @@ impl FunctionPlan {
             if let Some(next) = next {
                 *op = Op::Place(next);
             }
-        }
+            true
+        });
+        self.op_spans = spans;
     }
 
     pub(super) fn local_field_expr(

@@ -189,24 +189,24 @@ impl FunctionPlan {
                 inference.substitutions.constants = constants;
             }
         }
-        generics::inference_passes(&mut inference, context.default, |inference| {
-            let mut local = vars.clone();
-            for field in fields {
+        // Resolve field types once, preserving initializer order for every pass.
+        let inputs: Vec<_> = fields
+            .iter()
+            .map(|field| {
                 let formal = &record
                     .fields
                     .iter()
                     .find(|f| f.name == field.name)
                     .unwrap()
                     .ty;
-                self.infer_generic_argument(
-                    formal,
-                    &field.value,
-                    &local,
-                    functions,
-                    types,
-                    inference,
-                )?;
-                self.hint_bindings(&field.value, &mut local, functions, types);
+                (&field.value, formal)
+            })
+            .collect();
+        generics::inference_passes(&mut inference, context.default, |inference| {
+            let mut local = vars.clone();
+            for &(value, formal) in &inputs {
+                self.infer_generic_argument(formal, value, &local, functions, types, inference)?;
+                self.hint_bindings(value, &mut local, functions, types);
             }
             if let Some(base) = base {
                 self.infer_generic_argument(
@@ -228,15 +228,7 @@ impl FunctionPlan {
                 .any(|p| inference.substitutions.argument(p).is_none())
         {
             self.diagnose_argument_hints(
-                fields.iter().map(|field| {
-                    let formal = &record
-                        .fields
-                        .iter()
-                        .find(|f| f.name == field.name)
-                        .unwrap()
-                        .ty;
-                    (&field.value, formal)
-                }),
+                inputs.iter().copied(),
                 &record.parameters,
                 &inference.substitutions,
                 vars,
