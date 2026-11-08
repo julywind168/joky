@@ -18,6 +18,10 @@ printf 'one\ntwo' | JOKY_LINE_PREFIX='item: ' cargo run -- run examples/stdin_li
 `print/println` 和 `eprint/eprintln` 每次写入后刷新，无换行提示也能立即输出。
 挂起入口、错误与 EOF 规则见[程序输入与标准流](language.md#程序输入与标准流)。
 
+`joky build` 在 stderr 依次显示 `Compiling`、`Linking`、`Finished`：
+开始编译时显示输入路径，启动系统链接器前显示产物名，成功发布后显示产物路径与总构建耗时。
+失败时停止在对应阶段，不输出 `Finished`。状态词在支持颜色的终端中加粗显示为绿色，支持 `NO_COLOR`。
+
 ## 源码静态检查
 
 ```sh

@@ -123,6 +123,7 @@ pub(super) fn build(
             ));
         }
     }
+    super::progress::status("Linking", Path::new(name).display());
     let linked = linker.arg("-o").arg(&executable).output()
         .map_err(|error| {
             build_error(

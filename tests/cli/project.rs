@@ -66,7 +66,16 @@ fn project_build_relocates_resources_and_preserves_previous_output_on_failure() 
         ),
     );
     std::fs::create_dir(work.path().join("app/assets/empty")).unwrap();
-    success(&work.cli(&["build", "app"]));
+    let built = work.cli(&["build", "app"]);
+    success(&built);
+    let stderr = String::from_utf8_lossy(&built.stderr);
+    let lines: Vec<_> = stderr.lines().collect();
+    assert_eq!(lines.len(), 3, "{stderr}");
+    assert_eq!(lines[0].trim_start(), "Compiling app (AOT)");
+    assert_eq!(lines[1].trim_start(), "Linking demo");
+    assert!(lines[2].trim_start().starts_with("Finished "), "{stderr}");
+    assert!(lines[2].contains("/app/dist (built in "), "{stderr}");
+    assert!(!stderr.contains(".joky-build-"), "{stderr}");
     let dist = work.path().join("app/dist");
     let binary = dist.join("demo");
     assert!(dist.join("assets/empty").is_dir());
@@ -83,6 +92,7 @@ fn project_build_relocates_resources_and_preserves_previous_output_on_failure() 
         .output()
         .unwrap();
     failure(&failed, "JOKY_RUNTIME does not name a runtime archive");
+    assert!(!String::from_utf8_lossy(&failed.stderr).contains("Finished"));
     assert_eq!(std::fs::read(&binary).unwrap(), previous);
     assert!(std::fs::read_dir(work.path().join("app"))
         .unwrap()

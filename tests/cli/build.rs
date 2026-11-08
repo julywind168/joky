@@ -28,14 +28,26 @@ fn built_program_matches_jit_output_and_avoids_native_symbol_collisions() {
         let build = command.output().unwrap();
         success(&build);
         assert!(build.stdout.is_empty());
-        assert_eq!(
-            String::from_utf8_lossy(&build.stderr),
-            if colored {
-                "\x1b[1;32m     Built\x1b[0m hello world\n"
+        let stderr = String::from_utf8_lossy(&build.stderr);
+        let lines: Vec<_> = stderr.lines().collect();
+        assert_eq!(lines.len(), 3, "{stderr}");
+        for ((line, action), expected) in
+            lines.iter().zip(["Compiling", "Linking", "Finished"]).zip([
+                "hello world.jk (AOT)",
+                "hello world",
+                "hello world (built in ",
+            ])
+        {
+            let prefix = if colored {
+                format!("\x1b[1;32m{action:>10}\x1b[0m ")
             } else {
-                "     Built hello world\n"
-            }
-        );
+                format!("{action:>10} ")
+            };
+            let details = line.strip_prefix(&prefix).expect("styled build status");
+            assert!(details.starts_with(expected), "{stderr}");
+            assert!(!details.contains('\x1b'), "{stderr}");
+        }
+        assert!(lines[2].ends_with("s)"), "{stderr}");
     }
     // The artifact remains runnable without either its source or the CLI.
     std::fs::remove_file(work.path().join("hello world.jk")).unwrap();
@@ -118,11 +130,17 @@ fn failed_build_preserves_source_and_existing_output() {
         .output()
         .unwrap();
     failure(&output, "test linker failure");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Compiling"), "{stderr}");
+    assert!(stderr.contains("Linking"), "{stderr}");
+    assert!(!stderr.contains("Finished"), "{stderr}");
     work.write("safe.jk", "fn main() { unknown() }");
-    failure(
-        &work.cli(&["build", "safe.jk", "-o", "existing"]),
-        "Undeclared function",
-    );
+    let output = work.cli(&["build", "safe.jk", "-o", "existing"]);
+    failure(&output, "Undeclared function");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Compiling"), "{stderr}");
+    assert!(!stderr.contains("Linking"), "{stderr}");
+    assert!(!stderr.contains("Finished"), "{stderr}");
     assert_eq!(
         std::fs::read_to_string(work.path().join("existing")).unwrap(),
         "keep this output"

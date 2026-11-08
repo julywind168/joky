@@ -302,6 +302,10 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
         Command::Explain { source, prelude } => return explain::execute(source, *prelude),
         Command::Run { source: path, .. } | Command::Build { source: path, .. } => path,
     };
+    let started = std::time::Instant::now();
+    if matches!(command, Command::Build { .. }) {
+        progress::status("Compiling", format_args!("{} (AOT)", path.display()));
+    }
     let mut progress = progress::Progress::new(
         path,
         match command {
@@ -370,7 +374,14 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
                         build::build(&ast, entry, source_path, &output, mode, false)?;
                         output
                     };
-                    progress::status("Built", output.display());
+                    progress::status(
+                        "Finished",
+                        format_args!(
+                            "{} (built in {:.2}s)",
+                            output.display(),
+                            started.elapsed().as_secs_f64()
+                        ),
+                    );
                     Ok(0)
                 }
                 _ => unreachable!(),

@@ -124,7 +124,7 @@ pub fn failure(output: &Output, message: &str) {
     assert!(output.stdout.is_empty());
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(
-        error.starts_with("error: ") && error.contains(message),
+        error.lines().any(|line| line.starts_with("error: ")) && error.contains(message),
         "{error}"
     );
     assert!(!error.contains("panicked"), "{error}");
