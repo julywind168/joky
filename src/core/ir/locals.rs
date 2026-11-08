@@ -245,7 +245,7 @@ impl FunctionPlan {
     /// Reserve backing bytes after reference checking and template removal.
     /// A frame's slot allocation is stable across polls; loop entries reuse it.
     pub(super) fn reserve_cps_locals(&mut self) -> Result<(), Error> {
-        for (op, span) in self.ops.iter().zip(&self.op_spans) {
+        for (op, span) in self.ops.iter_spanned() {
             let local = match op {
                 Op::Local { dst, target, .. } if !target.is_place() => Some((dst.index, target)),
                 _ => None,
@@ -670,18 +670,13 @@ impl FunctionPlan {
 
     /// Erase analysis-only markers and lower checked storage in source order.
     pub(super) fn lower_checked_storage(&mut self) {
-        let mut spans = Vec::with_capacity(self.op_spans.len());
-        let mut index = 0;
         self.ops.retain_mut(|op| {
-            let span = self.op_spans[index];
-            index += 1;
             if matches!(
                 op,
                 Op::EndLocal(_) | Op::Closure(_) | Op::Buffer(BufferOp::Access { .. })
             ) {
                 return false;
             }
-            spans.push(span);
             let next = match op {
                 Op::Buffer(BufferOp::End(owner)) if owner.ty.is_place() => {
                     Some(PlaceOp::End(owner.clone()))
@@ -779,7 +774,6 @@ impl FunctionPlan {
             }
             true
         });
-        self.op_spans = spans;
     }
 
     pub(super) fn local_field_expr(

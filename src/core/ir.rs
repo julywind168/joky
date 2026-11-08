@@ -39,6 +39,7 @@ mod generics;
 mod graph;
 mod indexed_loops;
 mod inference;
+mod instructions;
 mod interpolation;
 mod iterators;
 mod locals;
@@ -62,6 +63,7 @@ pub(crate) use buffers::storage_tests::{
 pub(crate) use buffers::BufferOp;
 use control_flow::unreachable_error;
 use inference::integer_literal;
+use instructions::Instructions;
 
 #[derive(Clone)]
 pub(crate) enum Constant {
@@ -574,8 +576,7 @@ pub(crate) struct FunctionPlan {
     consuming_captures: bool,
     pub(crate) is_destructor: bool,
     unsafe_context: bool,
-    pub(crate) ops: Vec<Op>,
-    pub(crate) op_spans: Vec<Span>,
+    pub(crate) ops: Instructions,
     current_span: Span,
     return_type: Type,
     infer_return: bool,
@@ -1417,8 +1418,7 @@ impl FunctionPlan {
             consuming_captures: false,
             is_destructor,
             unsafe_context: false,
-            ops: Vec::new(),
-            op_spans: Vec::new(),
+            ops: Instructions::default(),
             current_span: f.span,
             return_type: f.ret_ty.clone(),
             infer_return,
@@ -1906,22 +1906,22 @@ impl FunctionPlan {
 
         if let Op::EndLocal(slot) = &op {
             if slot.ty.is_place() {
-                self.ops.push(Op::Place(PlaceOp::End(slot.clone())));
-                self.op_spans.push(self.current_span);
+                self.ops
+                    .push(Op::Place(PlaceOp::End(slot.clone())), self.current_span);
                 return;
             }
             if slot.ty.is_closure_value() {
-                self.ops.push(Op::Closure(Box::new(closures::ClosureOp::End(
-                    slot.clone(),
-                ))));
-                self.op_spans.push(self.current_span);
+                self.ops.push(
+                    Op::Closure(Box::new(closures::ClosureOp::End(slot.clone()))),
+                    self.current_span,
+                );
                 if !slot.ty.is_owner() {
                     return;
                 }
             }
             if slot.ty.is_owner() {
-                self.ops.push(Op::Buffer(BufferOp::End(slot.clone())));
-                self.op_spans.push(self.current_span);
+                self.ops
+                    .push(Op::Buffer(BufferOp::End(slot.clone())), self.current_span);
                 return;
             }
         }
@@ -1939,8 +1939,7 @@ impl FunctionPlan {
                         src: src.clone(),
                     }
                 };
-                self.ops.push(Op::Place(op));
-                self.op_spans.push(self.current_span);
+                self.ops.push(Op::Place(op), self.current_span);
                 return;
             }
             if let Some(place) = self
@@ -1955,31 +1954,36 @@ impl FunctionPlan {
                 self.callable_modes.insert(dst.index, mode);
             }
             if dst.ty.is_closure_value() && dst.index != src.index {
-                self.ops
-                    .push(Op::Closure(Box::new(closures::ClosureOp::Move {
+                self.ops.push(
+                    Op::Closure(Box::new(closures::ClosureOp::Move {
                         dst: dst.clone(),
                         src: src.clone(),
-                    })));
-                self.op_spans.push(self.current_span);
+                    })),
+                    self.current_span,
+                );
             }
             if dst.ty.is_owner() {
-                self.ops.push(Op::Buffer(BufferOp::Move {
-                    dst: dst.clone(),
-                    src: src.clone(),
-                }));
-                self.op_spans.push(self.current_span);
+                self.ops.push(
+                    Op::Buffer(BufferOp::Move {
+                        dst: dst.clone(),
+                        src: src.clone(),
+                    }),
+                    self.current_span,
+                );
                 if dst.ty.is_aggregate() {
                     self.register_owner(dst.clone(), None);
                 }
                 return;
             }
             if dst.ty.reference_type().is_some() {
-                self.ops.push(Op::Reference {
-                    dst: dst.clone(),
-                    src: src.clone(),
-                    moving: true,
-                });
-                self.op_spans.push(self.current_span);
+                self.ops.push(
+                    Op::Reference {
+                        dst: dst.clone(),
+                        src: src.clone(),
+                        moving: true,
+                    },
+                    self.current_span,
+                );
                 return;
             }
             if dst.ty.is_aggregate() {
@@ -2007,8 +2011,7 @@ impl FunctionPlan {
             }
             _ => None,
         };
-        self.ops.push(op);
-        self.op_spans.push(self.current_span);
+        self.ops.push(op, self.current_span);
         if let Some(owner) = owner {
             self.register_owner(owner, None);
         }

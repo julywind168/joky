@@ -1115,7 +1115,7 @@ fn analyze(
                 .sum::<usize>();
         budget = budget.checked_sub(cost).ok_or_else(|| {
             type_error(
-                plan.op_spans.get(pc).unwrap_or(&plan.span),
+                plan.ops.spans().get(pc).unwrap_or(&plan.span),
                 ErrorCode::ResourceLimit,
                 "Reference flow analysis exceeds its compilation budget; split the function into smaller functions",
             )

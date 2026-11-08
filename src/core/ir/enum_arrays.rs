@@ -182,8 +182,7 @@ pub(super) fn lower(
         element: Type::Enum(e), ..}) if elements.contains_key(&e.id))
     };
     for body in bodies.values_mut().filter(|b| b.ops.iter().any(selected)) {
-        let spans = std::mem::take(&mut body.op_spans);
-        for (op, span) in std::mem::take(&mut body.ops).into_iter().zip(spans) {
+        for (op, span) in body.ops.take_spanned() {
             // The original checked projection and reservation already point at
             // the selected element. Only encode the RHS at the final write.
             if let Op::WriteMemory {
@@ -213,8 +212,7 @@ pub(super) fn lower(
                 }
             }
             if !selected(&op) {
-                body.ops.push(op);
-                body.op_spans.push(span);
+                body.ops.push(op, span);
                 continue;
             }
             body.current_span = span;

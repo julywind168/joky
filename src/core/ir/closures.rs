@@ -1368,7 +1368,7 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
             };
             if used.is_some_and(|src| !live.contains(&src.index)) {
                 return Err(type_error(
-                    &plan.op_spans[pc],
+                    &plan.ops.spans()[pc],
                     ErrorCode::InvalidAssignment,
                     "Use of a moved or uninitialized closure",
                 ));

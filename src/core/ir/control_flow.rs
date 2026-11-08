@@ -210,15 +210,11 @@ impl FunctionPlan {
         // Operator syntax can dispatch to user-defined Add. Earlier calls in
         // the same semicolon sequence do not consume its final calculation.
         let span = tail.span();
-        if self.ops[start..]
-            .iter()
-            .zip(&self.op_spans[start..])
-            .any(|(op, site)| {
-                matches!(op, Op::Call { .. })
-                    && span.source_id() == site.source_id()
-                    && span.contains(site.start())
-            })
-        {
+        if self.ops.iter_spanned().skip(start).any(|(op, site)| {
+            matches!(op, Op::Call { .. })
+                && span.source_id() == site.source_id()
+                && span.contains(site.start())
+        }) {
             return Ok(());
         }
         let message = match tail {

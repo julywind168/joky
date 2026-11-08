@@ -88,7 +88,7 @@ fn factory(
         aliases.insert(index, index);
     }
     let mut result = None;
-    for (op, span) in body.ops.iter().zip(&body.op_spans) {
+    for (op, span) in body.ops.iter_spanned() {
         match op {
             Op::Copy(dst, src) | Op::Reference { dst, src, .. } => {
                 if dst.ty.value_lanes().len() != 1 || src.ty.value_lanes().len() != 1 {
@@ -350,7 +350,7 @@ pub(super) fn lower(
         factories.extend(found);
     }
     for body in bodies.values_mut() {
-        for (op, span) in body.ops.iter_mut().zip(&mut body.op_spans) {
+        for (op, span) in body.ops.iter_spanned_mut() {
             if let Op::Call {
                 indirect: None,
                 name,
@@ -445,13 +445,7 @@ pub(super) fn lower(
         let Some(mut remaining) = local_bytes.and_then(|n| (64 * 1024usize).checked_sub(n)) else {
             continue;
         };
-        let mut ops = Vec::new();
-        let mut spans = Vec::new();
-        for (pc, (mut op, span)) in std::mem::take(&mut body.ops)
-            .into_iter()
-            .zip(std::mem::take(&mut body.op_spans))
-            .enumerate()
-        {
+        for (pc, (mut op, span)) in body.ops.take_spanned().enumerate() {
             let target = safe.get(&pc).and_then(|layout| {
                 let words = layout.size().div_ceil(8);
                 if layout.align() > std::mem::align_of::<u64>() || remaining < words * 8 + 7 {
@@ -471,12 +465,14 @@ pub(super) fn lower(
             if let Some((target, bytes)) = target {
                 if let Ok(storage) = body.slot(Type::reference(target.clone(), true)) {
                     remaining -= bytes;
-                    ops.push(Op::Local {
-                        dst: storage.clone(),
-                        value: None,
-                        target: target.clone(),
-                    });
-                    spans.push(span);
+                    body.ops.push(
+                        Op::Local {
+                            dst: storage.clone(),
+                            value: None,
+                            target: target.clone(),
+                        },
+                        span,
+                    );
                     match &mut op {
                         Op::Buffer(BufferOp::Storage { scratch, .. })
                         | Op::Place(PlaceOp::View { scratch, .. }) => *scratch = Some(storage),
@@ -484,10 +480,7 @@ pub(super) fn lower(
                     }
                 }
             }
-            ops.push(op);
-            spans.push(span);
+            body.ops.push(op, span);
         }
-        body.ops = ops;
-        body.op_spans = spans;
     }
 }

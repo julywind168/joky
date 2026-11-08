@@ -116,7 +116,15 @@ pub(super) fn solve(
         let block = &blocks[i];
         budget = budget
             .checked_sub(words * (1 + block.successors.len()))
-            .ok_or_else(|| limit(plan.op_spans.get(block.start).copied().unwrap_or(plan.span)))?;
+            .ok_or_else(|| {
+                limit(
+                    plan.ops
+                        .spans()
+                        .get(block.start)
+                        .copied()
+                        .unwrap_or(plan.span),
+                )
+            })?;
         let mut input = block.uses.clone();
         for &s in &block.successors {
             for ((dst, &out), &kill) in input.iter_mut().zip(&blocks[s].input).zip(&block.defs) {
@@ -157,7 +165,7 @@ pub(super) fn solve(
             current.extend(uses.iter().map(|s| s.index));
             entries = entries
                 .checked_sub(current.len())
-                .ok_or_else(|| limit(plan.op_spans[pc]))?;
+                .ok_or_else(|| limit(plan.ops.spans()[pc]))?;
             live[pc] = current.clone();
         }
     }

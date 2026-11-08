@@ -229,13 +229,15 @@ impl FunctionPlan {
             }));
             return;
         }
-        self.ops.push(Op::Cleanup(CleanupOp::Register {
-            value,
-            place,
-            hooks: vec![],
-            elements: vec![],
-        }));
-        self.op_spans.push(self.current_span);
+        self.ops.push(
+            Op::Cleanup(CleanupOp::Register {
+                value,
+                place,
+                hooks: vec![],
+                elements: vec![],
+            }),
+            self.current_span,
+        );
     }
 
     pub(super) fn resolve_cleanups(&mut self) -> Result<(), Error> {
@@ -246,7 +248,7 @@ impl FunctionPlan {
             }
         }
         for (index, cleanup_index, ty) in pending {
-            let span = self.op_spans[index];
+            let span = self.ops.spans()[index];
             let hooks = self.owner_hooks(ty.clone(), span)?;
             let mut elements = Vec::new();
             for (buffer, scalar) in ty.scalar_types().iter().enumerate() {

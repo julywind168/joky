@@ -384,9 +384,7 @@ impl FunctionPlan {
         if !self.ops.iter().any(|op| matches!(op, Op::Graph(_))) {
             return;
         }
-        let ops = std::mem::take(&mut self.ops);
-        let spans = std::mem::take(&mut self.op_spans);
-        for (op, span) in ops.into_iter().zip(spans) {
+        for (op, span) in self.ops.take_spanned() {
             self.current_span = span;
             match op {
                 Op::Graph(op) => match *op {

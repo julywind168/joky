@@ -34,7 +34,8 @@ impl Instruction<'_> {
     fn span(&self) -> &Span {
         self.facts
             .plan
-            .op_spans
+            .ops
+            .spans()
             .get(self.pc)
             .unwrap_or(&self.facts.plan.span)
     }

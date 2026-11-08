@@ -446,7 +446,7 @@ pub(crate) fn compile(
     body_names.sort();
     for name in body_names {
         let body = &plan.bodies[name];
-        for (op, span) in body.ops.iter().zip(&body.op_spans) {
+        for (op, span) in body.ops.iter_spanned() {
             if matches!(op, Op::FunctionRef(slot, _) if !matches!(slot.ty, crate::Type::Function(_)))
             {
                 return Err(abi_error(
@@ -632,7 +632,7 @@ fn lower_unoptimized(
     }
     let mut code = Vec::with_capacity(pc);
     let mut spans = Vec::with_capacity(pc);
-    for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
+    for (op, span) in plan.ops.iter_spanned() {
         let instruction = match op {
             Op::Place(op) => Instruction::Place(Box::new(places::lower(op, layouts))),
             Op::Closure(_) => unreachable!("closure responsibility is erased after checking"),

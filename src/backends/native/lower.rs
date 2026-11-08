@@ -2154,7 +2154,7 @@ fn lower_ops(
         .collect();
     let mut terminated = false;
     let mut checkpoint = true;
-    for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
+    for (op, &span) in plan.ops.iter_spanned() {
         if terminated && !matches!(op, Op::Label(_)) {
             continue;
         }

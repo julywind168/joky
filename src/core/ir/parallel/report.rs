@@ -82,7 +82,7 @@ pub fn explain_parallel(
                     ..
                 } => {
                     sites.push(ParallelSite {
-                        span: body.op_spans[index], function: display_name(&name),
+                        span: body.ops.spans()[index], function: display_name(&name),
                         construct: "isolate".into(), disposition: ParallelDisposition::Local,
                         reason: "isolate body stays on its worker; certified borrowed child groups may dispatch remotely".into(),
                     });
@@ -119,7 +119,7 @@ pub fn explain_parallel(
                 ),
             };
             sites.push(ParallelSite {
-                span: body.op_spans[index],
+                span: body.ops.spans()[index],
                 function: display_name(&name),
                 construct: construct.into(),
                 disposition,

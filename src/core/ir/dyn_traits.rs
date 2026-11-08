@@ -68,7 +68,7 @@ impl ModulePlan {
                     ));
                 }
             }
-            for (op, span) in body.ops.iter().zip(&body.op_spans) {
+            for (op, span) in body.ops.iter_spanned() {
                 if let Op::DynPack {
                     owner,
                     table,

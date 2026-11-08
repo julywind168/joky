@@ -1053,7 +1053,7 @@ pub(super) fn check_module(
         }
         buffers::check_function(body, info)?;
         let mut local_bytes = 0usize;
-        for (op, span) in body.ops.iter().zip(&body.op_spans) {
+        for (op, span) in body.ops.iter_spanned() {
             let storage = match op {
                 Op::Local {
                     target,
@@ -1136,7 +1136,7 @@ pub(super) fn check_module(
         }
         closures::check(body, info)?;
         borrowing::check(body, info, functions, &body.type_registry)?;
-        for (op, span) in body.ops.iter().zip(&body.op_spans) {
+        for (op, span) in body.ops.iter_spanned() {
             if let Op::Alloc { target, .. } | Op::ArenaAlloc { target, .. } = op {
                 // Rigid templates have no concrete layout until instantiation.
                 if !target

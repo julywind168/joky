@@ -218,7 +218,7 @@ fn evaluate(
     let local = types.with_parameters(&constant.parameters)?;
     let plan = FunctionPlan::new(&definition, &functions, &local, nominals, generics, 0)?;
     let mut slots: Vec<Option<Constant>> = vec![None; plan.slot_count];
-    for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
+    for (op, span) in plan.ops.iter_spanned() {
         let (dst, value) = match op {
             Op::Literal(dst, value) => (dst, value.clone()),
             Op::Copy(dst, src) => (dst, slots[src.index].clone().unwrap()),
