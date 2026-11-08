@@ -1,4 +1,4 @@
-//! Static, offline standard-library reference generation.
+//! Static, offline homepage and standard-library reference generation.
 use super::{cli_argument_error, Command, Error};
 use joky::parser::documentation::{Documentation, Entry};
 use std::{
@@ -7,8 +7,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub(super) struct Options {
+    output: PathBuf,
+    standard: bool,
+    open: bool,
+}
+
 pub(super) fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Command, Error> {
     let mut standard = false;
+    let mut open = false;
     let mut output = None;
     while let Some(arg) = args.next() {
         if arg == "--help" || arg == "-h" {
@@ -16,6 +23,8 @@ pub(super) fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Command,
         }
         if arg == "--std" && !standard {
             standard = true;
+        } else if arg == "--open" && !open {
+            open = true;
         } else if (arg == "-o" || arg == "--output") && output.is_none() {
             let path = args
                 .next()
@@ -31,30 +40,134 @@ pub(super) fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Command,
             )));
         }
     }
-    if !standard {
-        return Err(cli_argument_error("Use joky doc --std [-o <directory>]"));
-    }
-    Ok(Command::Doc(
-        output.unwrap_or_else(|| PathBuf::from("target/doc/std")),
-    ))
+    Ok(Command::Doc(Options {
+        output: output.unwrap_or_else(|| {
+            PathBuf::from(if standard {
+                "target/doc/std"
+            } else {
+                "target/doc"
+            })
+        }),
+        standard,
+        open,
+    }))
 }
 
-pub(super) fn execute(output: &Path) -> u8 {
-    match generate(output) {
-        Ok(()) => {
-            println!("Generated {}", output.join("index.html").display());
-            0
+pub(super) fn execute(options: &Options) -> u8 {
+    let result = if options.standard {
+        let home = options.output.parent().is_some_and(|parent| {
+            fs::read_to_string(parent.join(".joky-doc")).ok().as_deref() == Some(SITE_MARKER)
+                && parent.join("index.html").is_file()
+        });
+        generate(&options.output, home)
+    } else {
+        generate_site(&options.output)
+    };
+    let result = result.and_then(|()| {
+        let index = options.output.join("index.html");
+        println!("Generated {}", index.display());
+        if options.open {
+            open_browser(&index)?;
         }
+        Ok(())
+    });
+    match result {
+        Ok(()) => 0,
         Err(error) => {
             eprintln!("error: {error}");
             1
         }
     }
 }
+
+fn open_browser(index: &Path) -> Result<(), Error> {
+    let path = fs::canonicalize(index).map_err(io)?;
+    let launcher = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    let status = std::process::Command::new(launcher)
+        .arg(&path)
+        .status()
+        .map_err(|error| {
+            io(std::io::Error::new(
+                error.kind(),
+                format!(
+                    "Documentation was generated, but could not open {} with {launcher}: {error}",
+                    path.display()
+                ),
+            ))
+        })?;
+    if !status.success() {
+        return Err(super::cli_error_with_code(
+            super::ErrorCode::IoError,
+            format!(
+                "Documentation was generated, but {launcher} failed to open {}",
+                path.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn io(error: std::io::Error) -> Error {
     super::cli_error_with_code(super::ErrorCode::IoError, error.to_string())
 }
 const MARKER: &str = "Joky standard documentation v1\n";
+const SITE_MARKER: &str = "Joky documentation site v1\n";
+const HOME_FILES: &[(&str, &str)] = &[
+    (
+        "index.html",
+        include_str!("../../sites/joky-home/public/index.html"),
+    ),
+    (
+        "style.css",
+        include_str!("../../sites/joky-home/public/style.css"),
+    ),
+    (
+        "main.js",
+        include_str!("../../sites/joky-home/public/main.js"),
+    ),
+    (
+        "favicon.svg",
+        include_str!("../../sites/joky-home/public/favicon.svg"),
+    ),
+];
+
+fn generate_site(output: &Path) -> Result<(), Error> {
+    directory(output)?;
+    let entries = fs::read_dir(output)
+        .map_err(io)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(io)?;
+    // Upgrade the default directory left by an earlier "doc --std".
+    let standard_only = HOME_FILES.iter().all(|(name, _)| {
+        fs::symlink_metadata(output.join(name))
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    }) && fs::symlink_metadata(output.join(".joky-doc"))
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        && fs::read_to_string(output.join("std/.joky-doc"))
+            .ok()
+            .as_deref()
+            == Some(MARKER);
+    if !entries.is_empty()
+        && !standard_only
+        && fs::read_to_string(output.join(".joky-doc")).ok().as_deref() != Some(SITE_MARKER)
+    {
+        return Err(cli_argument_error(
+            "Output directory is not empty and was not generated by joky doc",
+        ));
+    }
+    generate(&output.join("std"), true)?;
+    write(&output.join(".joky-doc"), SITE_MARKER)?;
+    for (name, content) in HOME_FILES {
+        write(&output.join(name), content)?;
+    }
+    Ok(())
+}
 fn directory(path: &Path) -> Result<(), Error> {
     if let Ok(meta) = fs::symlink_metadata(path) {
         if meta.file_type().is_symlink() || !meta.is_dir() {
@@ -75,7 +188,7 @@ fn write(path: &Path, text: &str) -> Result<(), Error> {
     }
     fs::write(path, text).map_err(io)
 }
-fn generate(output: &Path) -> Result<(), Error> {
+fn generate(output: &Path, home: bool) -> Result<(), Error> {
     let modules = joky::documentation::standard_library()?;
     directory(output)?;
     let marker = output.join(".joky-doc");
@@ -97,7 +210,7 @@ fn generate(output: &Path) -> Result<(), Error> {
         let body = module_page(name, docs);
         write(
             &output.join(slug).join("index.html"),
-            &page(name, &"../".repeat(slug.split('/').count()), &body),
+            &page(name, &"../".repeat(slug.split('/').count()), &body, home),
         )?;
         index.push_str(&format!(
             "<li><a href=\"{slug}/index.html\">{}</a><p>{}</p></li>",
@@ -108,11 +221,18 @@ fn generate(output: &Path) -> Result<(), Error> {
     index.push_str("</ul>");
     write(
         &output.join("index.html"),
-        &page("Joky standard library", "./", &index),
+        &page("Joky standard library", "./", &index, home),
     )
 }
-fn page(title: &str, root: &str, body: &str) -> String {
-    format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{0} — Joky</title><link rel=\"stylesheet\" href=\"{root}style.css\"></head><body><header><a href=\"{root}index.html\">Joky / std</a><span>v{1}</span></header><main><h1>{0}</h1>{body}</main></body></html>", escape(title), env!("CARGO_PKG_VERSION"))
+fn page(title: &str, root: &str, body: &str, home: bool) -> String {
+    let home_link = if home {
+        format!(
+            "<a href=\"{root}../index.html\">Joky 首页</a><span aria-hidden=\"true\"> / </span>"
+        )
+    } else {
+        String::new()
+    };
+    format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{0} — Joky</title><link rel=\"stylesheet\" href=\"{root}style.css\"></head><body><header><nav aria-label=\"Documentation\">{home_link}<a href=\"{root}index.html\">Joky / std</a></nav><span>v{1}</span></header><main><h1>{0}</h1>{body}</main></body></html>", escape(title), env!("CARGO_PKG_VERSION"))
 }
 fn module_page(name: &str, docs: &Documentation) -> String {
     let mut out = markdown(&docs.docs);

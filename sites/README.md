@@ -4,28 +4,27 @@
 `joky-home/.openai/hosting.json` 保存站点 ID 和静态目录，
 不含凭据，也需提交。
 
-本地预览：
+本地预览完整站点（从仓库根目录执行）：
 
 ```sh
-python3 -m http.server 4173 --bind 127.0.0.1 --directory sites/joky-home/public
+cargo run -- doc -o target/site
+python3 -m http.server 4173 --bind 127.0.0.1 --directory target/site
 ```
 
-在浏览器中访问 `http://127.0.0.1:4173`。验证范围为 JavaScript 语法、页面布局、
-示例切换、复制按钮和页内导航；只改静态首页无需运行编译器的 Cargo 检查。
+在浏览器中访问 `http://127.0.0.1:4173`，或使用 `cargo run -- doc --open`
+直接打开默认生成的离线首页。首页导航链接到 `./std/index.html`，
+标准库的模块页可返回首页；所有资源与导航均使用相对链接。
 
-## 标准库文档产物
+## 文档产物
 
-`joky doc --std` 生成独立、可离线浏览的标准库文档。需要预览与首页同站的 `/std/` 时，
-从仓库根目录执行：
+`joky doc` 将这里的首页、CSS、JavaScript、SVG 与生成的标准库文档组合成完整站点。
+源码在编译时内嵌；修改首页后需重新构建 Joky 再生成。生成目录不要手工编辑或提交。
+`joky doc --std` 保留只生成独立标准库文档的能力。
 
-```sh
-cargo run -- doc --std -o sites/joky-home/public/std
-```
-
-`public/std/` 是生成产物，不手工编辑、不提交；发布包必须在构建后包含它，
-嵌套模块（如 `/std/json/typed/`）的链接也可直接访问。
-首页导航接入时将目标设为 `/std/`，并把文档生成加入发布步骤；目前首页导航尚未改动，
-本地生成不会自动发布线上站点。生成命令和当前限制见[语言参考](../docs/language.md#标准库文档)。
+发布包应使用 `joky doc -o <空目录或已有站点生成目录>` 的完整产物，
+包含首页资源及 `std/`（含 `std/json/typed/` 等嵌套模块）。
+不要直接对非空的首页源码目录执行生成，以免覆盖手工维护的源码。
+本地生成不会自动发布线上站点。命令说明见[语言参考](../docs/language.md#标准库文档)。
 
 ## 发布工作区
 

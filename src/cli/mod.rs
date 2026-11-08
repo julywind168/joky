@@ -22,7 +22,7 @@ use std::{ffi::OsString, path::PathBuf};
 const HELP: &str = "Joky — check, test, run, build, inspect and format Joky programs
 
 Usage:
-  joky doc --std [-o <directory>]
+  joky doc [--std] [--open] [-o <directory>]
   joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture] [--timeout-ms N] [<file.jk> | <project-dir> | joky.toml]
   joky check [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
   joky run [-q | -v] [--interpreter] [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-- <program-args>...]
@@ -34,7 +34,7 @@ Usage:
   joky --version
 
 Commands:
-  doc              Generate offline standard-library HTML (default: target/doc/std)
+  doc              Generate offline homepage and standard-library HTML (default: target/doc)
   test             Run #test functions in isolated processes (default timeout: 30000 ms)
   check            Check syntax and semantics without running or generating code
   explain-parallel  Explain dispatch eligibility without running the program
@@ -43,6 +43,8 @@ Commands:
   build            Compile a native executable using the system C compiler (cc)
 
 Options:
+  --std               Generate only standard-library docs (default: target/doc/std)
+  --open              Open generated documentation in the default browser
   --check             Report formatting differences without writing (exit 1)
   --stdin             Read fmt input from stdin; write formatted source to stdout
   --interpreter       Execute 'run' or 'test' with the register bytecode interpreter
@@ -76,7 +78,7 @@ Use @suspends on main for cooperative tasks; import joky/task for yield_now and 
 enum Command {
     Help,
     Version,
-    Doc(PathBuf),
+    Doc(doc::Options),
     Test(testing::Options),
     Format(format::Options),
     Check {

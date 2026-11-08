@@ -25,10 +25,10 @@ fn check_pages(path: &Path, count: &mut usize) {
                 "duplicate anchors: {}",
                 path.display()
             );
-            for href in attributes(&html, " href=\"") {
+            for href in attributes(&html, " href=\"").chain(attributes(&html, " src=\"")) {
                 if let Some(id) = href.strip_prefix('#') {
                     assert!(
-                        ids.contains(&id),
+                        id.is_empty() || ids.contains(&id),
                         "missing anchor {href}: {}",
                         path.display()
                     );
@@ -162,7 +162,7 @@ fn doc_cli_generates_linked_offline_reference_and_regenerates() {
 fn doc_cli_validates_arguments_and_preserves_unowned_output() {
     let work = Workspace::new();
     for args in [
-        vec!["doc"],
+        vec!["doc", "--open", "--open"],
         vec!["doc", "--std", "--std"],
         vec!["doc", "--std", "--output"],
         vec!["doc", "--std", "input.jk"],
@@ -222,4 +222,142 @@ fn doc_cli_option_example_executes() {
     let output = work.cli(&["run", "doc_option.jk"]);
     success(&output);
     assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn doc_cli_generates_homepage_and_upgrades_standard_only_output() {
+    let work = Workspace::new();
+    success(&work.cli(&["doc", "--std"]));
+    let root = work.path().join("target/doc");
+    let standalone = fs::read_to_string(root.join("std/index.html")).unwrap();
+    assert!(!standalone.contains("Joky 首页"));
+    work.write("target/doc/preview.txt", "keep preview");
+    let output = work.cli(&["doc"]);
+    success(&output);
+    assert_eq!(
+        fs::read_to_string(root.join("preview.txt")).unwrap(),
+        "keep preview"
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("target/doc/index.html"));
+    let home = fs::read_to_string(root.join("index.html")).unwrap();
+    let style = fs::read_to_string(root.join("style.css")).unwrap();
+    assert!(!style.contains("@import"));
+    assert!(!style.contains("https://"));
+    assert_eq!(
+        home,
+        include_str!("../../sites/joky-home/public/index.html")
+    );
+    let mut count = 0;
+    check_pages(&root, &mut count);
+    assert!(count > 30);
+    let nested = fs::read_to_string(root.join("std/json/typed/index.html")).unwrap();
+    assert!(nested.contains("href=\"../../../index.html\">Joky 首页"));
+    // Regenerating just std preserves the installed site's home navigation.
+    success(&work.cli(&["doc", "--std"]));
+    assert_eq!(
+        nested,
+        fs::read_to_string(root.join("std/json/typed/index.html")).unwrap()
+    );
+    work.write("target/doc/notes.txt", "keep");
+    success(&work.cli(&["doc"]));
+    assert_eq!(home, fs::read_to_string(root.join("index.html")).unwrap());
+    assert_eq!(fs::read_to_string(root.join("notes.txt")).unwrap(), "keep");
+    success(&work.cli(&["doc", "-o", "custom site"]));
+    check_pages(&work.path().join("custom site"), &mut count);
+    work.write("unowned/index.html", "keep");
+    failure(&work.cli(&["doc", "-o", "unowned"]), "not empty");
+    assert_eq!(
+        fs::read_to_string(work.path().join("unowned/index.html")).unwrap(),
+        "keep"
+    );
+    success(&work.cli(&["doc", "--std", "-o", "conflict/std"]));
+    work.write("conflict/index.html", "handwritten home");
+    failure(&work.cli(&["doc", "-o", "conflict"]), "not empty");
+    assert_eq!(
+        fs::read_to_string(work.path().join("conflict/index.html")).unwrap(),
+        "handwritten home"
+    );
+    // Neither output layout may be mistaken for the other and overwritten.
+    failure(
+        &work.cli(&["doc", "--std", "-o", "custom site"]),
+        "not empty",
+    );
+    failure(&work.cli(&["doc", "-o", "target/doc/std"]), "not empty");
+}
+
+#[cfg(unix)]
+#[test]
+fn doc_cli_opens_selected_index_and_reports_launcher_failure() {
+    use std::os::unix::fs::PermissionsExt;
+    let work = Workspace::new();
+    let launcher = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    let script = format!("bin/{launcher}");
+    work.write(
+        &script,
+        "#!/bin/sh\nprintf '%s' \"$1\" > \"$DOC_OPEN_CAPTURE\"\nexit \"$DOC_OPEN_STATUS\"\n",
+    );
+    fs::set_permissions(work.path().join(script), fs::Permissions::from_mode(0o755)).unwrap();
+    let capture = work.path().join("opened");
+    let run = |args: &[&str], status: &str| {
+        Command::new(env!("CARGO_BIN_EXE_joky"))
+            .current_dir(work.path())
+            .env("PATH", work.path().join("bin"))
+            .env("DOC_OPEN_CAPTURE", &capture)
+            .env("DOC_OPEN_STATUS", status)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    for (args, index) in [
+        (
+            vec!["doc", "--open", "-o", "site with spaces"],
+            "site with spaces/index.html",
+        ),
+        (vec!["doc", "--std", "--open"], "target/doc/std/index.html"),
+    ] {
+        success(&run(&args, "0"));
+        assert_eq!(
+            fs::read_to_string(&capture).unwrap(),
+            fs::canonicalize(work.path().join(index))
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+    }
+    let failed = run(&["doc", "--open"], "1");
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stdout).contains("Generated target/doc/index.html"));
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("failed to open"));
+    assert!(work.path().join("target/doc/index.html").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn doc_cli_refuses_symlink_home_assets_and_standard_directory() {
+    use std::os::unix::fs::symlink;
+    let work = Workspace::new();
+    success(&work.cli(&["doc"]));
+    work.write("outside", "untouched");
+    fs::remove_file(work.path().join("target/doc/main.js")).unwrap();
+    symlink(
+        work.path().join("outside"),
+        work.path().join("target/doc/main.js"),
+    )
+    .unwrap();
+    failure(&work.cli(&["doc"]), "symlink");
+    assert_eq!(
+        fs::read_to_string(work.path().join("outside")).unwrap(),
+        "untouched"
+    );
+    fs::create_dir(work.path().join("linked")).unwrap();
+    symlink(
+        work.path().join("target/doc/std"),
+        work.path().join("linked/std"),
+    )
+    .unwrap();
+    failure(&work.cli(&["doc", "-o", "linked"]), "symlink");
 }
