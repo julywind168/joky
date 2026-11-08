@@ -303,27 +303,27 @@ pub trait FromRow {
 fn column(row: &Row, i: UInt64) -> Result<&Value, ColumnError> {
     row.get_ref(i).ok_or(OutOfBounds(i))
 }
-fn required_column<T>(value: Result<Option<T>, ColumnError>, i: UInt64) -> Result<T, ColumnError> {
-    value?.ok_or(UnexpectedNull(i))
+fn required_column<T>(value: Result<Option<T>, ColumnError>, i: UInt64) -> Result<T, DbError> {
+    value.map_err(|error| { Column(error) })?.ok_or(Column(UnexpectedNull(i)))
 }
 impl FromSql for Int64 {
     fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Int64, DbError> {
-        required_column(get_i64(row, i), i).map_err(|error| { Column(error) })
+        required_column(get_i64(row, i), i)
     }
 }
 impl FromSql for Bool {
     fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Bool, DbError> {
-        required_column(get_bool(row, i), i).map_err(|error| { Column(error) })
+        required_column(get_bool(row, i), i)
     }
 }
 impl FromSql for String {
     fn from_sql(row: &Row, i: UInt64) @noescape -> Result<String, DbError> {
-        required_column(get_text(row, i), i).map(|value| { value.clone() }).map_err(|error| { Column(error) })
+        Ok(required_column(get_text(row, i), i)?.clone())
     }
 }
 impl FromSql for Array<UInt8> {
     fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Array<UInt8>, DbError> {
-        required_column(get_bytes(row, i), i).map(|value| { array.clone(value) }).map_err(|error| { Column(error) })
+        Ok(array.clone(required_column(get_bytes(row, i), i)?))
     }
 }
 impl FromSql for time.Timestamp {

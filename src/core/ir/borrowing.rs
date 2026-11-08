@@ -260,7 +260,16 @@ pub(super) fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
         ),
         Op::DynPack { owner, .. } => (refs(owner), vec![]),
         Op::Buffer(super::BufferOp::Access { src, .. }) => (refs(src), vec![]),
-        Op::Buffer(super::BufferOp::End(owner)) => (refs(owner), vec![]),
+        Op::Buffer(super::BufferOp::End(owner)) => (
+            refs(owner)
+                .into_iter()
+                .filter(|s| s.ty.is_owner())
+                .collect(),
+            refs(owner)
+                .into_iter()
+                .filter(|s| !s.ty.is_owner())
+                .collect(),
+        ),
         Op::Graph(op) => match op.as_ref() {
             GraphOp::Link {
                 reference, source, ..
@@ -1674,7 +1683,10 @@ fn analyze(
             }
             Op::Buffer(super::BufferOp::Move { dst, src }) => {
                 for (dst, src) in refs(dst).into_iter().zip(refs(src)) {
-                    if dst.index != src.index && state.get(&dst.index).is_some_and(|v| !v.invalid) {
+                    if dst.index != src.index
+                        && dst.ty.is_owner()
+                        && state.get(&dst.index).is_some_and(|v| !v.invalid)
+                    {
                         check_access(&dst, true, &state, &alive, Some(src.index), &[])?;
                         if dst.ty.is_explicit_arena() {
                             let roots: Vec<_> = state[&dst.index]
@@ -1687,7 +1699,9 @@ fn analyze(
                             }
                         }
                     }
-                    check_access(&src, true, &state, &alive, Some(dst.index), &[])?;
+                    let exclusive =
+                        src.ty.is_owner() || src.ty.reference_type().is_some_and(|r| r.mutable);
+                    check_access(&src, exclusive, &state, &alive, Some(dst.index), &[])?;
                     let mut value = state[&src.index].clone();
                     let contents = buffer_contents(&state, &src);
                     if dst.index != src.index {
@@ -1712,7 +1726,10 @@ fn analyze(
             }
             Op::Buffer(super::BufferOp::Access { src, mutable }) => {
                 for src in refs(src) {
-                    check_access(&src, *mutable, &state, &live[pc], None, &[])?;
+                    let exclusive = *mutable
+                        && (src.ty.is_owner()
+                            || src.ty.reference_type().is_some_and(|r| r.mutable));
+                    check_access(&src, exclusive, &state, &live[pc], None, &[])?;
                 }
             }
             Op::Buffer(super::BufferOp::Borrow {
@@ -1761,7 +1778,10 @@ fn analyze(
                 for owner in refs(owner) {
                     // Moving out ends this binding without ending the destination owner.
                     if state.get(&owner.index).is_some_and(|v| !v.invalid) {
-                        check_access(&owner, true, &state, &alive, None, &[])?;
+                        // Ending an inline shared-reference lane does not end its referent.
+                        if owner.ty.is_owner() {
+                            check_access(&owner, true, &state, &alive, None, &[])?;
+                        }
                         if owner.ty.is_explicit_arena() {
                             let roots: Vec<_> = state[&owner.index]
                                 .origins
@@ -2123,7 +2143,9 @@ fn analyze(
                 let detach = matches!(&plan.ops[pc], Op::ReadOwner { detach: true, .. });
                 let consumed = if detach { &selected } else { owner };
                 for input in refs(consumed) {
-                    check_access(&input, true, &state, &alive, None, &[])?;
+                    let exclusive =
+                        input.ty.is_owner() || input.ty.reference_type().is_some_and(|r| r.mutable);
+                    check_access(&input, exclusive, &state, &alive, None, &[])?;
                 }
                 let values: Vec<_> = refs(&selected)
                     .iter()
@@ -2144,7 +2166,9 @@ fn analyze(
                 // the selected lanes are read here; the explicit End that
                 // follows releases the remainder and ends the binding.
                 for input in refs(src) {
-                    check_access(&input, true, &state, &alive, None, &[])?;
+                    let exclusive =
+                        input.ty.is_owner() || input.ty.reference_type().is_some_and(|r| r.mutable);
+                    check_access(&input, exclusive, &state, &alive, None, &[])?;
                 }
                 let values: Vec<_> = refs(src)
                     .iter()
@@ -2667,8 +2691,15 @@ fn analyze(
                     dst.ty = types[&dst.index].clone();
                     let mutable =
                         dst.ty.is_owner() || dst.ty.reference_type().is_some_and(|r| r.mutable);
+                    // A returned borrow does not point into an owning sibling lane.
+                    // Keep fresh view identities outside owner and stored-content roots.
+                    let origin = if dst.ty.is_owner() {
+                        loan
+                    } else {
+                        2 * plan.slot_count + n + pc
+                    };
                     let mut value = Reference {
-                        origins: BTreeSet::from([Origin::new(loan)]),
+                        origins: BTreeSet::from([Origin::new(origin)]),
                         loans: Set::from([loan]),
                         storage: dst.ty.is_owner() || dst.ty.is_buffer_view(),
                         // Unknown ordinary host references retain their existing ABI

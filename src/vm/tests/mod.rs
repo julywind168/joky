@@ -182,6 +182,9 @@ mod bitwise_tests;
 #[path = "language/borrowed_dyn_tests.rs"]
 mod borrowed_dyn_tests;
 
+#[path = "language/borrowed_owner_enum_tests.rs"]
+mod borrowed_owner_enum_tests;
+
 #[path = "language/borrowed_match_tests.rs"]
 mod borrowed_match_tests;
 

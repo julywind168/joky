@@ -893,12 +893,12 @@ pub(super) fn enum_owners(variants: &[EnumVariant], span: Span) -> Result<Vec<Ar
         && variants
             .iter()
             .filter_map(|v| v.payload.as_ref())
-            .any(|ty| !ty.is_owner() && (!ty.is_copy_storage_value() || ty.contains_references()))
+            .any(|ty| !ty.is_owner() && !ty.is_copy_storage_value() && !ty.is_scoped_shared_value())
     {
         return Err(error(
             ErrorCode::TypeMismatch,
             span,
-            "Payloads of an owning enum must be owners or reference-free Copy data",
+            "Payloads of an owning enum must be owners, Copy data or scoped shared borrows",
         ));
     }
     Ok(owners)

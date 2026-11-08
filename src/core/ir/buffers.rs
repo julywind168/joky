@@ -883,6 +883,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
             ty.dyn_interface().is_none()
                 && ty.contains_buffers()
                 && !ty.is_suspend_safe_owner()
+                && !ty.is_scoped_suspend_safe_owner()
                 && !ty.is_resource_view()
                 && !ty.is_scoped_suspending_closure()
         };
@@ -911,7 +912,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                 _ => false,
             })
         {
-            return Err(type_error(&info.span, ErrorCode::InvalidCall, "Only reference-free owning values may cross ordinary language suspension; buffer views and owners containing references require synchronous functions. Keep borrowed pipelines in a synchronous helper"));
+            return Err(type_error(&info.span, ErrorCode::InvalidCall, "Owning values crossing ordinary language suspension require reference-free storage or suspend-safe shared borrows. Keep other borrowed aggregates and pipelines in a synchronous helper"));
         }
     }
     if signature.ret.is_owner()
@@ -941,11 +942,17 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
     }
     if signature.ret.is_buffer_view() {
         let mutable = signature.ret.reference_type().unwrap().mutable;
-        if !signature.params.iter().any(|ty| {
-            ty.reference_type().is_some_and(|r| {
-                (ty.is_buffer_view() || r.target.is_place()) && (!mutable || r.mutable)
+        // A consumed inline aggregate may forward a borrow it already carries.
+        if !signature
+            .params
+            .iter()
+            .flat_map(Type::scalar_types)
+            .any(|ty| {
+                ty.reference_type().is_some_and(|r| {
+                    (ty.is_buffer_view() || r.target.is_place()) && (!mutable || r.mutable)
+                })
             })
-        }) {
+        {
             return Err(type_error(
                 &info.span,
                 ErrorCode::InvalidAssignment,

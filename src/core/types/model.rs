@@ -391,7 +391,7 @@ impl Type {
     }
     /// Owning values whose complete storage tree is reference-free can be
     /// moved between ordinary CPS activations. Borrowed views and aggregates
-    /// containing references still require synchronous use.
+    /// containing references need separate scoped eligibility and loan checking.
     pub(crate) fn is_suspend_safe_owner(&self) -> bool {
         if self.contains_unstorable_closures() {
             return false;
@@ -423,6 +423,22 @@ impl Type {
         }
 
         self.is_owner() && safe_storage(self)
+    }
+    /// Inline owned sums may carry shared loans in a local CPS activation.
+    /// This is not storage or transfer eligibility; provenance still checks each loan.
+    pub(crate) fn is_scoped_suspend_safe_owner(&self) -> bool {
+        self.is_owner()
+            && self.contains_references()
+            && !self.contains_unstorable_closures()
+            && self.scalar_types().iter().all(|ty| {
+                if let Some(reference) = ty.reference_type() {
+                    !reference.mutable && ty.is_suspend_safe_view()
+                } else if ty.is_owner() {
+                    ty.is_suspend_safe_owner()
+                } else {
+                    ty.is_copy_storage_value()
+                }
+            })
     }
     pub(crate) fn with_buffer_element(&self, element: Type) -> Self {
         match self {
@@ -534,6 +550,9 @@ impl Type {
             return true;
         }
         if self.is_owner() {
+            if self.contains_references() {
+                return false;
+            }
             // Nested arrays can share their element DAG many times. Validate
             // each aggregate identity once rather than recursively expanding it.
             let mut pending = vec![self];

@@ -1070,6 +1070,7 @@ pub(super) fn check_module(
                 if info.suspends
                     && !target.is_copy_value()
                     && !target.is_suspend_safe_owner()
+                    && !target.is_scoped_suspend_safe_owner()
                     && !target.is_callable_parameter()
                     && !target.is_scoped_suspending_closure()
                 {

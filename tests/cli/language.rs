@@ -2719,3 +2719,15 @@ fn sql_templates_execute_in_aot_without_prelude() {
     success(&work.cli(&["fmt", "--check", "sql.jk"]));
     success(&work.cli(&["check", "--no-prelude", "sql.jk"]));
 }
+
+#[test]
+#[cfg(unix)]
+fn borrowed_owner_enums_run_in_standalone_aot() {
+    let work = Workspace::new();
+    let source = include_str!("../fixtures/borrowed_owner_enums.jk").replace(
+        "extern fn record_drop(id: Int32)",
+        "fn record_drop(id: Int32) { println(id) }",
+    );
+    work.write("mixed.jk", &source);
+    work.assert_native("mixed.jk", &[], b"1\n2\n", 0);
+}
