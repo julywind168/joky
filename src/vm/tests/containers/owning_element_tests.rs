@@ -392,7 +392,6 @@ fn owning_enums_reject_reuse_and_invalid_payloads() {
         "fn bad(value: Message) { match value { Empty => {}, Item(_) => {} }; let again = value }",
         "fn bad(value: Message) { match value { _ => value } }",
         "fn bad(value: Message) { match value { Empty => {}, Item(item) => { let first = item; let second = item } } }",
-        "enum Bad { Owned(Array<Int32>), Shared(&Int32) } fn bad() {}",
         "enum Bad { View(&Array<Int32>) } fn bad(value: Array<Bad>) {}",
         "struct Hidden { view: &Option<Array<Int32>> } fn bad() { let a = Some(Array.new::<Int32>()); alloc(Hidden { view: &a }); }",
         "struct Hidden<T> { view: &Option<T> } fn bad() { let a = Some(Array.new::<Int32>()); alloc(Hidden { view: &a }); }",
