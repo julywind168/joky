@@ -5,6 +5,7 @@ mod diagnostic;
 mod doc;
 mod explain;
 mod format;
+mod progress;
 mod project;
 mod source;
 mod testing;
@@ -24,7 +25,7 @@ Usage:
   joky doc --std [-o <directory>]
   joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture] [--timeout-ms N] [<file.jk> | <project-dir> | joky.toml]
   joky check [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
-  joky run [--interpreter] [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-- <program-args>...]
+  joky run [-q | -v] [--interpreter] [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-- <program-args>...]
   joky build [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
   joky explain-parallel [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
   joky fmt [--check] <file.jk>
@@ -48,6 +49,8 @@ Options:
   --no-prelude        Disable implicit standard-library imports
   --parallel          Enable checked Parallel execution (default: 1 worker)
   --task-workers N    Enable Parallel with 1..256 workers; build sets a startup default
+  -q, --quiet         Hide run startup progress (errors are still reported)
+  -v, --verbose       Show run startup progress and timings even when stderr is redirected
   -o, --output <path>  Output executable, project bundle, or doc directory
   -h, --help           Show this help
   -V, --version        Show the version
@@ -62,6 +65,7 @@ Program arguments follow -- after an explicit run input or in a native executabl
 Parallel executables accept --task-workers N before -- at startup. Precedence:
 startup option > JOKY_TASK_WORKERS > build default. Local rejects worker configuration.
 Run uses the same precedence after explicit --parallel or --task-workers; build ignores the environment.
+Run shows loading, compilation and startup timings when stderr is a terminal.
 Programs start at fn main() or fn main() -> Int32.
 Import joky/io.{print, println}; Show values are borrowed automatically, e.g. println(42).
 String literals interpolate by default, e.g. \"value={value}\"; double braces escape literal braces.
@@ -85,6 +89,7 @@ enum Command {
     },
     Run {
         source: PathBuf,
+        progress: Option<bool>,
         interpreter: bool,
         arguments: Vec<OsString>,
         prelude: bool,
@@ -139,6 +144,7 @@ impl Command {
         let mut source = None;
         let mut output = None;
         let mut interpreter = false;
+        let mut progress = None;
         let mut prelude = true;
         let mut parallel = false;
         let mut workers = None;
@@ -170,6 +176,20 @@ impl Command {
                     Some(PathBuf::from(args.next().ok_or_else(|| {
                         cli_argument_error("Missing path after --output")
                     })?));
+            } else if !positional_only
+                && matches!(arg.to_str(), Some("-q" | "--quiet" | "-v" | "--verbose"))
+            {
+                if build {
+                    return Err(cli_argument_error(
+                        "--quiet and --verbose are only available for 'joky run'",
+                    ));
+                }
+                if progress.is_some() {
+                    return Err(cli_argument_error(
+                        "Specify --quiet or --verbose only once; they cannot be combined",
+                    ));
+                }
+                progress = Some(arg == "-v" || arg == "--verbose");
             } else if !positional_only && arg == "--interpreter" {
                 if build {
                     return Err(cli_argument_error(
@@ -249,6 +269,7 @@ impl Command {
         } else {
             Ok(Self::Run {
                 source,
+                progress,
                 interpreter,
                 arguments,
                 prelude,
@@ -279,6 +300,13 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
         Command::Explain { source, prelude } => return explain::execute(source, *prelude),
         Command::Run { source: path, .. } | Command::Build { source: path, .. } => path,
     };
+    let mut progress = progress::Progress::new(
+        path,
+        match command {
+            Command::Run { progress, .. } => progress,
+            _ => Some(false),
+        },
+    );
     let result = (|| -> Result<u8, Error> {
         let project = project::Project::load(path)?;
         let prelude = match command {
@@ -319,7 +347,12 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
         let result = (|| {
             let entry = validate_program(&ast, vm.type_registry())?;
             match command {
-                Command::Run { mode, .. } => run(&ast, entry, &mut vm, mode),
+                Command::Run {
+                    mode, interpreter, ..
+                } => {
+                    progress.compiling(interpreter);
+                    run(&ast, entry, &mut vm, mode, &progress)
+                }
                 Command::Build {
                     source: ref source_path,
                     ref output,
@@ -435,8 +468,10 @@ fn run(
     entry: EntryPoint,
     vm: &mut VmEngine,
     mode: ExecutionMode,
+    progress: &progress::Progress<'_>,
 ) -> Result<u8, Error> {
     vm.load_module(ast)?;
+    progress.running();
     if let ExecutionMode::Parallel { workers } = mode {
         let prepared = vm.prepare_parallel_task("main", vec![], vec![])?;
         let executor = joky::runtime::parallel::ParallelExecutor::new(workers, 4096)?;

@@ -2637,6 +2637,12 @@ Unicode、`--help` 和 `--task-workers`。原生产物使用 `./program [--task-
 Joky 自身选项放在分隔符之前；项目自动发现时若要传参，显式写 `joky run . -- ...`。
 没有输入文件时的 `joky run -- -file.jk` 仍用于保护以 `-` 开头的源码文件名。
 
+`run` 在 stderr 连接终端时显示 `Loading`、`Compiling`、`Running` 三个启动阶段，
+并报告加载、编译和总启动耗时；解释器模式的编译目标标为 `bytecode`。
+`-q` / `--quiet` 关闭这些提示，`-v` / `--verbose` 在 stderr 重定向时也显示；两者不能同时使用。
+提示不写入 stdout，错误诊断不受 quiet 影响。启动耗时截至进入程序执行，
+不包含 `main` 内部的初始化或程序通过嵌入式 VM 加载脚本的时间。
+
 `import joky/process` 提供以下挂起函数；错误类型为 `joky/fs.IoError`：
 
 | API | 返回值与规则 |
