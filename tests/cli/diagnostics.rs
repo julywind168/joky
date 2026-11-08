@@ -101,6 +101,13 @@ fn invalid_assignment_diagnostic_marks_the_source_expression() {
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(error.contains("invalid_assignment"), "{error}");
         assert!(error.contains("x = 2"), "{error}");
+        assert_eq!(
+            error
+                .matches("Cannot assign to immutable binding `x`")
+                .count(),
+            1,
+            "{error}"
+        );
     }
 }
 
@@ -157,7 +164,11 @@ fn parser_errors_render_ariadne_source_context() {
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("bad.jk:2:1"), "{error}");
     assert!(error.contains("2 │ $"), "{error}");
-    assert!(error.contains("Unexpected character '$'"), "{error}");
+    assert_eq!(
+        error.matches("Unexpected character '$'").count(),
+        1,
+        "{error}"
+    );
 }
 
 #[test]
@@ -819,6 +830,33 @@ fn ownership_diagnostics_render_related_locations_from_imported_sources() {
             1
         );
         assert!(output.stdout.is_empty());
+    }
+    // Exercise the actual CLI stream policy without changing the test process environment.
+    for colored in [true, false] {
+        let mut command = work.command();
+        command.args(["check", "main.jk"]);
+        if colored {
+            command.env_remove("NO_COLOR").env("CLICOLOR_FORCE", "1");
+        } else {
+            command.env("NO_COLOR", "1").env_remove("CLICOLOR_FORCE");
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        for (message, color) in [
+            ("`文本` declared here", "\x1b[36m"),
+            ("`文本` moved or consumed here", "\x1b[33m"),
+            ("`文本` used again here", "\x1b[31m"),
+        ] {
+            let line = diagnostic
+                .lines()
+                .find(|line| line.contains(message))
+                .unwrap();
+            assert_eq!(line.contains(color), colored, "{diagnostic}");
+        }
+        if !colored {
+            assert!(!diagnostic.contains('\x1b'), "{diagnostic}");
+        }
     }
 }
 

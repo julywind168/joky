@@ -1,5 +1,6 @@
 //! Access, escape and suspension checks shared by instruction transfers.
 use super::*;
+use crate::ErrorLabelKind;
 
 impl Instruction<'_> {
     pub(super) fn record_escape(&self, value: Option<&Reference>, returned: bool) {
@@ -147,7 +148,11 @@ impl Instruction<'_> {
         }
         let binding = self.facts.plan.diagnostic_bindings.get(&slot.index);
         if let Some((name, declaration, _)) = binding {
-            error = error.with_label(*declaration, format!("`{name}` declared here"));
+            error = error.with_label(
+                *declaration,
+                ErrorLabelKind::Context,
+                format!("`{name}` declared here"),
+            );
         }
         if let Some(pc) = state
             .get(&slot.index)
@@ -160,9 +165,17 @@ impl Instruction<'_> {
             } else {
                 "on a path reaching this use"
             };
-            error = error.with_label(moved, format!("{name} moved or consumed here {context}"));
+            error = error.with_label(
+                moved,
+                ErrorLabelKind::Secondary,
+                format!("{name} moved or consumed here {context}"),
+            );
             if let Some((name, _, ty)) = binding {
-                error = error.with_label(*self.span(), format!("`{name}` used again here"));
+                error = error.with_label(
+                    *self.span(),
+                    ErrorLabelKind::Primary,
+                    format!("`{name}` used again here"),
+                );
                 error = error.with_help(format!("If the earlier operation only reads the value, consider `&{name}` and a reference-accepting parameter or binding instead of transferring ownership."));
                 if *ty == Type::String {
                     error = error.with_help(format!("If an independent String is needed, use `{name}.clone()` at the earlier move; cloning allocates a new string."));

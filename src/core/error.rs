@@ -127,11 +127,20 @@ struct ErrorDetails {
     help: Vec<String>,
 }
 
+/// The semantic role of a source annotation, independent of terminal styling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorLabelKind {
+    Primary,
+    Secondary,
+    Context,
+}
+
 /// An additional source location explaining a compiler diagnostic.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ErrorLabel {
     pub span: Span,
     pub message: String,
+    pub kind: ErrorLabelKind,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,12 +228,18 @@ impl Error {
         self.details.as_ref().map_or(&[], |context| &context.help)
     }
 
-    pub(crate) fn with_label(mut self, span: Span, message: impl Into<String>) -> Self {
+    pub(crate) fn with_label(
+        mut self,
+        span: Span,
+        kind: ErrorLabelKind,
+        message: impl Into<String>,
+    ) -> Self {
         self.details
             .get_or_insert_with(Default::default)
             .labels
             .push(ErrorLabel {
                 span,
+                kind,
                 message: message.into(),
             });
         self

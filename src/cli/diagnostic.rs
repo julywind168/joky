@@ -1,6 +1,6 @@
 //! Terminal rendering for source diagnostics.
-use ariadne::{sources, Config, IndexType, Label, Report, ReportKind};
-use joky::{parser::escape_diagnostic_text, Error, ErrorCode, Span};
+use ariadne::{sources, Color, Config, IndexType, Label, Report, ReportKind};
+use joky::{parser::escape_diagnostic_text, Error, ErrorCode, ErrorLabelKind, Span};
 use std::borrow::Cow;
 use std::path::Path;
 
@@ -17,23 +17,17 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
         .map_or((path, source), |file| (Path::new(file.name()), file.text()));
     let code = error.code();
     let code = (code != ErrorCode::Generic).then(|| code.as_str());
-    // Keep the value details in the header once, above the caller highlight.
+    // Keep the complete diagnostic in the header once, including runtime value details.
     let message = if error.span() != Some(span) {
-        error.message().lines().next().unwrap_or(error.message())
+        error.message().to_owned()
     } else {
-        error.message()
+        error.line().map_or_else(
+            || error.message().to_owned(),
+            |line| format!("Line {line}: {}", error.message()),
+        )
     };
-    let rendered =
-        render_span(path, source, span, message, code, error).unwrap_or_else(|| error.to_string());
-    let header = error.line().map_or_else(
-        || error.message().to_owned(),
-        |line| format!("Line {line}: {}", error.message()),
-    );
-    let mut output = if error.labels().is_empty() {
-        format!("{header}\n{rendered}")
-    } else {
-        rendered
-    };
+    let mut output =
+        render_span(path, source, span, &message, code, error).unwrap_or_else(|| error.to_string());
     for run in error.runtime_trace().chunk_by(|left, right| left == right) {
         use std::fmt::Write;
         let frame = &run[0];
@@ -109,8 +103,12 @@ fn render_span(
     if let Some(code) = code {
         report = report.with_code(code);
     }
-    if !error.labels().iter().any(|label| label.span == source_span) {
-        report = report.with_label(Label::new((file, span)).with_message(message.to_owned()));
+    if !error
+        .labels()
+        .iter()
+        .any(|label| label.kind == ErrorLabelKind::Primary && label.span == source_span)
+    {
+        report = report.with_label(Label::new((file, span)).with_color(Color::Red));
     }
     for label in error.labels() {
         let (label_path, label_source) =
@@ -123,8 +121,16 @@ fn render_span(
             };
         let (escaped, _, span) = display_span(label_source, label.span)?;
         cache.insert(label_path.clone(), escaped.into_owned());
-        report =
-            report.with_label(Label::new((label_path, span)).with_message(label.message.clone()));
+        let color = match label.kind {
+            ErrorLabelKind::Primary => Color::Red,
+            ErrorLabelKind::Secondary => Color::Yellow,
+            ErrorLabelKind::Context => Color::Cyan,
+        };
+        report = report.with_label(
+            Label::new((label_path, span))
+                .with_message(label.message.clone())
+                .with_color(color),
+        );
     }
     report
         .with_config(Config::default().with_index_type(IndexType::Byte))

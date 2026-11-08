@@ -78,6 +78,13 @@ fn display_failure() { assert_eq(Value { number: 3 }, Value { number: 4 }) }
             assert!(stderr.contains(expected), "missing {expected:?}: {stderr}");
         }
         assert!(!stderr.contains("╭─[ joky/assertions.jk:"), "{stderr}");
+        assert_eq!(
+            stderr
+                .matches("assert_eq failed\n  actual: \"4\"\nexpected: \"5\"")
+                .count(),
+            1,
+            "{stderr}"
+        );
     }
 }
 
