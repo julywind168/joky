@@ -267,7 +267,7 @@ impl Row {
                 found = Some(i)
             }
         }
-        match found { Some(i) => Ok(i), None => Err(MissingColumn) }
+        found.ok_or(MissingColumn)
     }
     pub fn get<T: FromSql>(&self, name: &String) @noescape -> Result<T, DbError> {
         let i = match self.column_index(name) { Ok(i) => i, Err(reason) => return Err(Column(reason)) }
@@ -300,32 +300,30 @@ pub trait FromSql {
 pub trait FromRow {
     fn from_row(row: &Row) @noescape -> Result<Self, DbError>
 }
+fn column(row: &Row, i: UInt64) -> Result<&Value, ColumnError> {
+    row.get_ref(i).ok_or(OutOfBounds(i))
+}
+fn required_column<T>(value: Result<Option<T>, ColumnError>, i: UInt64) -> Result<T, ColumnError> {
+    value?.ok_or(UnexpectedNull(i))
+}
 impl FromSql for Int64 {
     fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Int64, DbError> {
-        match get_i64(row, i) {
-            Ok(Some(value)) => Ok(value), Ok(None) => Err(Column(UnexpectedNull(i))), Err(reason) => Err(Column(reason))
-        }
+        required_column(get_i64(row, i), i).map_err(|error| { Column(error) })
     }
 }
 impl FromSql for Bool {
     fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Bool, DbError> {
-        match get_bool(row, i) {
-            Ok(Some(value)) => Ok(value), Ok(None) => Err(Column(UnexpectedNull(i))), Err(reason) => Err(Column(reason))
-        }
+        required_column(get_bool(row, i), i).map_err(|error| { Column(error) })
     }
 }
 impl FromSql for String {
     fn from_sql(row: &Row, i: UInt64) @noescape -> Result<String, DbError> {
-        match get_text(row, i) {
-            Ok(Some(value)) => Ok(value.clone()), Ok(None) => Err(Column(UnexpectedNull(i))), Err(reason) => Err(Column(reason))
-        }
+        required_column(get_text(row, i), i).map(|value| { value.clone() }).map_err(|error| { Column(error) })
     }
 }
 impl FromSql for Array<UInt8> {
     fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Array<UInt8>, DbError> {
-        match get_bytes(row, i) {
-            Ok(Some(value)) => Ok(array.clone(value)), Ok(None) => Err(Column(UnexpectedNull(i))), Err(reason) => Err(Column(reason))
-        }
+        required_column(get_bytes(row, i), i).map(|value| { array.clone(value) }).map_err(|error| { Column(error) })
     }
 }
 impl FromSql for time.Timestamp {
@@ -353,14 +351,12 @@ impl FromSql for Float64 {
     }
 }
 fn text_array(row: &Row, i: UInt64) -> Result<&Array<Option<String>>, ColumnError> {
-    if i >= row.len() { return Err(OutOfBounds(i)) }
-    match row.borrow_ref(i) {
+    match column(row, i)? {
         TextArrayValue(values) => Ok(values), Null(TextArray) => Err(UnexpectedNull(i)), _ => Err(TypeMismatch(i))
     }
 }
 fn int_array(row: &Row, i: UInt64) -> Result<&Array<Option<Int64>>, ColumnError> {
-    if i >= row.len() { return Err(OutOfBounds(i)) }
-    match row.borrow_ref(i) {
+    match column(row, i)? {
         IntArrayValue(values) => Ok(values), Null(IntArray) => Err(UnexpectedNull(i)), _ => Err(TypeMismatch(i))
     }
 }
@@ -399,8 +395,7 @@ impl FromSql for Array<Int64> {
     }
 }
 fn json_text(row: &Row, i: UInt64) -> Result<&String, ColumnError> {
-    if i >= row.len() { return Err(OutOfBounds(i)) }
-    match row.borrow_ref(i) {
+    match column(row, i)? {
         JsonValue(value) => Ok(value), Null(Jsonb) => Err(UnexpectedNull(i)), _ => Err(TypeMismatch(i))
     }
 }
@@ -431,26 +426,22 @@ impl<T: FromSql> FromSql for Option<T> {
 }
 
 pub fn get_bool(row: &Row, i: UInt64) -> Result<Option<Bool>, ColumnError> {
-    if i >= row.len() { return Err(OutOfBounds(i)) }
-    match row.borrow_ref(i) {
+    match column(row, i)? {
         BoolValue(v) => Ok(Some(v)), Null(Boolean) => Ok(None), _ => Err(TypeMismatch(i))
     }
 }
 pub fn get_i64(row: &Row, i: UInt64) -> Result<Option<Int64>, ColumnError> {
-    if i >= row.len() { return Err(OutOfBounds(i)) }
-    match row.borrow_ref(i) {
+    match column(row, i)? {
         IntValue(v) => Ok(Some(v)), Null(Integer) => Ok(None), _ => Err(TypeMismatch(i))
     }
 }
 pub fn get_text(row: &Row, i: UInt64) -> Result<Option<&String>, ColumnError> {
-    if i >= row.len() { return Err(OutOfBounds(i)) }
-    match row.borrow_ref(i) {
+    match column(row, i)? {
         TextValue(v) => Ok(Some(v)), Null(Text) => Ok(None), _ => Err(TypeMismatch(i))
     }
 }
 pub fn get_bytes(row: &Row, i: UInt64) -> Result<Option<&Array<UInt8>>, ColumnError> {
-    if i >= row.len() { return Err(OutOfBounds(i)) }
-    match row.borrow_ref(i) {
+    match column(row, i)? {
         BytesValue(v) => Ok(Some(v)), Null(Bytes) => Ok(None), _ => Err(TypeMismatch(i))
     }
 }
@@ -581,24 +572,24 @@ fn take_int_array(data: &Array<UInt8>, offset: &mut UInt64) -> Value {
     IntArrayValue(values)
 }
 fn cell(data: &Array<UInt8>, offset: &mut UInt64) -> Value {
-    let tag = take(data, offset, 1)
-    if tag < 4 { return Null(match tag { 0 => Boolean, 1 => Integer, 2 => Text, _ => Bytes }) }
-    if tag == 4 { return BoolValue(take(data, offset, 1) != 0) }
-    if tag == 5 { return IntValue(int64(take(data, offset, 8))) }
-    if tag == 8 { return Null(Timestamp) }
-    if tag == 9 { return Null(Uuid) }
-    if tag == 10 { return Null(Jsonb) }
-    if tag == 11 { return TimestampValue(time.Timestamp.from_unix_micros(int64(take(data, offset, 8)))!) }
-    if tag == 14 { return Null(Float) }
-    if tag == 15 { return Null(TextArray) }
-    if tag == 16 { return Null(IntArray) }
-    if tag == 17 { return FloatValue(Float64.from_bits(take(data, offset, 8))) }
-    if tag == 18 { return take_text_array(data, offset) }
-    if tag == 19 { return take_int_array(data, offset) }
-    let bytes = take_bytes(data, offset)
-    if tag == 12 { return UuidValue(uuid.Uuid.from_slice(bytes.slice(0, bytes.len()))!) }
-    if tag == 13 { return JsonValue(String.from_utf8(bytes)!) }
-    if tag == 6 { TextValue(String.from_utf8(bytes)!) } else { BytesValue(bytes) }
+    match take(data, offset, 1) {
+        0 => Null(Boolean), 1 => Null(Integer), 2 => Null(Text), 3 => Null(Bytes),
+        4 => BoolValue(take(data, offset, 1) != 0),
+        5 => IntValue(int64(take(data, offset, 8))),
+        6 => TextValue(String.from_utf8(take_bytes(data, offset))!),
+        8 => Null(Timestamp), 9 => Null(Uuid), 10 => Null(Jsonb),
+        11 => TimestampValue(time.Timestamp.from_unix_micros(int64(take(data, offset, 8)))!),
+        12 => {
+            let bytes = take_bytes(data, offset)
+            UuidValue(uuid.Uuid.from_slice(bytes.slice(0, bytes.len()))!)
+        },
+        13 => JsonValue(String.from_utf8(take_bytes(data, offset))!),
+        14 => Null(Float), 15 => Null(TextArray), 16 => Null(IntArray),
+        17 => FloatValue(Float64.from_bits(take(data, offset, 8))),
+        18 => take_text_array(data, offset),
+        19 => take_int_array(data, offset),
+        _ => BytesValue(take_bytes(data, offset))
+    }
 }
 fn rows(data: Array<UInt8>) -> Array<Row> {
     var result: Array<Row> = []
@@ -614,26 +605,27 @@ fn rows(data: Array<UInt8>) -> Array<Row> {
     }
     result
 }
-fn run(owner: &postgres.Owner, mode: UInt64, sql: &String, params: Array<Value>) @suspends -> Result<postgres.Owner, DbError> {
-    let result = __pg_run(owner, mode, sql, encode(params)?)
+fn run(owner: &postgres.Owner, mode: UInt64, query: Query) @suspends -> Result<postgres.Owner, DbError> {
+    let Query { text, parameters } = query
+    let result = __pg_run(owner, mode, &text, encode(parameters)?)
     check_status(&result)?
     Ok(result)
 }
-fn exec(owner: &postgres.Owner, sql: &String, params: Array<Value>) @suspends -> Result<UInt64, DbError> {
-    let result = run(owner, 0, sql, params)?
+fn exec(owner: &postgres.Owner, query: Query) @suspends -> Result<UInt64, DbError> {
+    let result = run(owner, 0, query)?
     Ok(__pg_count(&result))
 }
-fn fetch(owner: &postgres.Owner, sql: &String, params: Array<Value>) @suspends -> Result<Array<Row>, DbError> {
-    let result = run(owner, 3, sql, params)?
+fn fetch(owner: &postgres.Owner, query: Query) @suspends -> Result<Array<Row>, DbError> {
+    let result = run(owner, 3, query)?
     Ok(rows(__pg_data(&result)))
 }
-fn optional_row(owner: &postgres.Owner, sql: &String, params: Array<Value>) @suspends -> Result<Option<Row>, DbError> {
-    let result = run(owner, 4, sql, params)?
+fn optional_row(owner: &postgres.Owner, query: Query) @suspends -> Result<Option<Row>, DbError> {
+    let result = run(owner, 4, query)?
     var found = rows(__pg_data(&result))
     Ok(found.pop())
 }
 fn required_row(found: Option<Row>) -> Result<Row, DbError> {
-    match found { Some(row) => Ok(row), None => Err(ResultRead(NoRows)) }
+    found.ok_or(ResultRead(NoRows))
 }
 fn scalar_value<T: FromSql>(row: Row) -> Result<T, DbError> {
     if row.len() != 1 { return Err(ResultRead(ColumnCount(row.len()))) }
@@ -654,9 +646,9 @@ impl Pool {
         }
     }
     pub fn share(&self) @suspends -> Self { Pool { owner: __pg_share(&self.owner) } }
-    pub fn execute(&self, query: Query) @suspends -> Result<UInt64, DbError> { let Query { text, parameters } = query; exec(&self.owner, &text, parameters) }
-    pub fn query(&self, query: Query) @suspends -> Result<Array<Row>, DbError> { let Query { text, parameters } = query; fetch(&self.owner, &text, parameters) }
-    pub fn query_optional(&self, query: Query) @suspends -> Result<Option<Row>, DbError> { let Query { text, parameters } = query; optional_row(&self.owner, &text, parameters) }
+    pub fn execute(&self, query: Query) @suspends -> Result<UInt64, DbError> { exec(&self.owner, query) }
+    pub fn query(&self, query: Query) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, query) }
+    pub fn query_optional(&self, query: Query) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, query) }
     pub fn query_one(&self, query: Query) @suspends -> Result<Row, DbError> { required_row(self.query_optional(query)?) }
     pub fn query_scalar<T: FromSql>(&self, query: Query) @suspends -> Result<T, DbError> {
         scalar_value::<T>(self.query_one(query)?)
@@ -672,9 +664,9 @@ impl Pool {
     }
 }
 impl Transaction {
-    pub fn execute(&mut self, query: Query) @suspends -> Result<UInt64, DbError> { let Query { text, parameters } = query; exec(&self.owner, &text, parameters) }
-    pub fn query(&mut self, query: Query) @suspends -> Result<Array<Row>, DbError> { let Query { text, parameters } = query; fetch(&self.owner, &text, parameters) }
-    pub fn query_optional(&mut self, query: Query) @suspends -> Result<Option<Row>, DbError> { let Query { text, parameters } = query; optional_row(&self.owner, &text, parameters) }
+    pub fn execute(&mut self, query: Query) @suspends -> Result<UInt64, DbError> { exec(&self.owner, query) }
+    pub fn query(&mut self, query: Query) @suspends -> Result<Array<Row>, DbError> { fetch(&self.owner, query) }
+    pub fn query_optional(&mut self, query: Query) @suspends -> Result<Option<Row>, DbError> { optional_row(&self.owner, query) }
     pub fn query_one(&mut self, query: Query) @suspends -> Result<Row, DbError> { required_row(self.query_optional(query)?) }
     pub fn query_scalar<T: FromSql>(&mut self, query: Query) @suspends -> Result<T, DbError> {
         scalar_value::<T>(self.query_one(query)?)

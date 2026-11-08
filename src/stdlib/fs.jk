@@ -93,16 +93,11 @@ extern fn __fs_file(result: &mut fs.OutcomeOwner) @suspends -> fs.FileOwner
 extern fn __fs_bytes(result: &mut fs.OutcomeOwner) @suspends -> Array<UInt8>
 extern fn __fs_count(result: &mut fs.OutcomeOwner) @suspends -> UInt64
 fn error_kind(code: UInt64) -> ErrorKind {
-    if code == 1 { return ErrorKind.Unsupported }
-    if code == 2 { return ErrorKind.PermissionDenied }
-    if code == 3 { return ErrorKind.NotFound }
-    if code == 4 { return ErrorKind.AlreadyExists }
-    if code == 5 { return ErrorKind.InvalidInput }
-    if code == 6 { return ErrorKind.Busy }
-    if code == 7 { return ErrorKind.Closed }
-    if code == 8 { return ErrorKind.LimitExceeded }
-    if code == 9 { return ErrorKind.WriteZero }
-    ErrorKind.SystemFailure
+    match code {
+        1 => Unsupported, 2 => PermissionDenied, 3 => NotFound,
+        4 => AlreadyExists, 5 => InvalidInput, 6 => Busy,
+        7 => Closed, 8 => LimitExceeded, 9 => WriteZero, _ => SystemFailure
+    }
 }
 fn error(result: &mut fs.OutcomeOwner, code: UInt64) @suspends -> IoError {
     IoError { kind: error_kind(code), message: __fs_message(result) }
@@ -116,13 +111,15 @@ pub fn open(path: &String, options: OpenOptions) @suspends -> Result<File, IoErr
     if options.create_new { flags = flags | 16 }
     if options.truncate { flags = flags | 32 }
     var result = __fs_open(path, flags)
-    let code = __fs_code(&mut result)
-    if code != 0 { return Err(error(&mut result, code)) }
+    check_status(&mut result)?
     Ok(File { owner: __fs_file(&mut result) })
 }
+fn check_status(result: &mut fs.OutcomeOwner) @suspends -> Result<Unit, IoError> {
+    let code = __fs_code(result)
+    if code == 0 { Ok({}) } else { Err(error(result, code)) }
+}
 fn status(var result: fs.OutcomeOwner) @suspends -> Result<Unit, IoError> {
-    let code = __fs_code(&mut result)
-    if code == 0 { Ok({}) } else { Err(error(&mut result, code)) }
+    check_status(&mut result)
 }
 pub fn rename(from: &String, to: &String) @suspends -> Result<Unit, IoError> {
     status(__fs_rename(from, to))
@@ -134,23 +131,20 @@ pub fn create_dir(path: &String) @suspends -> Result<Unit, IoError> { status(__f
 pub fn remove_dir(path: &String) @suspends -> Result<Unit, IoError> { status(__fs_remove_dir(path)) }
 pub fn metadata(path: &String) @suspends -> Result<Metadata, IoError> {
     var result = __fs_metadata(path)
-    let code = __fs_code(&mut result)
-    if code != 0 { return Err(error(&mut result, code)) }
+    check_status(&mut result)?
     let kind: FileKind = match __fs_kind(&mut result) { 0 => Regular, 1 => Directory, 2 => Symlink, _ => Other }
     Ok(Metadata { kind, size: __fs_count(&mut result) })
 }
 pub fn read_dir(path: &String) @suspends -> Result<Array<String>, IoError> {
     var result = __fs_read_dir(path)
-    let code = __fs_code(&mut result)
-    if code != 0 { return Err(error(&mut result, code)) }
+    check_status(&mut result)?
     let names = String.from_utf8(__fs_bytes(&mut result))!
     if names.is_empty() { Ok(Array.new::<String>()) } else { Ok(names.split("\0")) }
 }
 // Acquire the host's exclusive stdin stream; normal file operations retain their contracts.
 pub fn stdin() @suspends -> Result<File, IoError> {
     var result = __io_stdin()
-    let code = __fs_code(&mut result)
-    if code != 0 { return Err(error(&mut result, code)) }
+    check_status(&mut result)?
     Ok(File { owner: __fs_file(&mut result) })
 }
 impl File {
@@ -205,14 +199,12 @@ impl File {
     }
     pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, IoError> {
         var result = __fs_read(&mut self.owner, limit)
-        let code = __fs_code(&mut result)
-        if code != 0 { return Err(error(&mut result, code)) }
+        check_status(&mut result)?
         Ok(__fs_bytes(&mut result))
     }
     pub fn write(&mut self, bytes: &Slice<UInt8>) @suspends -> Result<UInt64, IoError> {
         var result = __fs_write(&mut self.owner, bytes)
-        let code = __fs_code(&mut result)
-        if code != 0 { return Err(error(&mut result, code)) }
+        check_status(&mut result)?
         Ok(__fs_count(&mut result))
     }
     pub fn seek(&mut self, from: SeekFrom) @suspends -> Result<UInt64, IoError> {
@@ -222,22 +214,15 @@ impl File {
             SeekFrom.End(value) => (2, uint64(value))
         }
         var result = __fs_seek(&mut self.owner, origin, offset)
-        let code = __fs_code(&mut result)
-        if code != 0 { return Err(error(&mut result, code)) }
+        check_status(&mut result)?
         Ok(__fs_count(&mut result))
     }
     pub fn sync_all(&mut self) @suspends -> Result<Unit, IoError> {
-        var result = __fs_sync(&mut self.owner)
-        let code = __fs_code(&mut result)
-        if code != 0 { return Err(error(&mut result, code)) }
-        Ok({})
+        status(__fs_sync(&mut self.owner))
     }
     pub fn close(self) @suspends -> Result<Unit, IoError> {
         var owner = self.owner
-        var result = __fs_close(&mut owner)
-        let code = __fs_code(&mut result)
-        if code != 0 { return Err(error(&mut result, code)) }
-        Ok({})
+        status(__fs_close(&mut owner))
     }
 }
 
@@ -259,12 +244,6 @@ fn read_remaining(file: &mut File, max_bytes: Option<UInt64>) @suspends -> Resul
 }
 
 fn decode_text(result: Result<Array<UInt8>, IoError>) -> Result<String, ReadTextError> {
-    let bytes = match result {
-        Ok(bytes) => bytes
-        Err(error) => { return Err(ReadTextError.Io(error)) }
-    }
-    match String.from_utf8(bytes) {
-        Ok(text) => Ok(text)
-        Err(error) => Err(ReadTextError.Utf8(error))
-    }
+    let bytes = result.map_err(|error| { ReadTextError.Io(error) })?
+    String.from_utf8(bytes).map_err(|error| { ReadTextError.Utf8(error) })
 }

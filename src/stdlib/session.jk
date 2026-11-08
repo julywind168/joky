@@ -111,7 +111,7 @@ fn send_result<E>(queue: &mut outbox.Mailbox, writer: TcpWriter) @suspends -> Re
 }
 fn stop<E>(queue: &mut outbox.Mailbox) @suspends -> Result<End, Error<E>> { queue.receive(); Ok(End.Stopped) }
 pub fn run<R: Reader, H: Handler<Message = R.Message>>(connection: Connection, stream: TcpStream, protocol: R, handler: &H) @suspends @noescape -> Result<End, Error<R.Error>> {
-    var (outgoing, control, options) = split(connection)
+    var Connection { outgoing, control, options } = connection
     let (reader, writer) = BufferedTcp.new(stream).split()
     let outcome = race {
         receive(handler, reader, protocol, options)
@@ -121,11 +121,6 @@ pub fn run<R: Reader, H: Handler<Message = R.Message>>(connection: Connection, s
     // Both mailbox owners remain alive until application cleanup finishes.
     handler.on_close()
     outcome
-}
-
-fn split(connection: Connection) -> (outbox.Mailbox, outbox.Mailbox, Options) {
-    let Connection { outgoing, control, options } = connection
-    (outgoing, control, options)
 }
 
 // Shutdown only competes with reading, never with an admitted on_message callback.
@@ -175,7 +170,7 @@ fn drain<R: Reader, H: Handler<Message = R.Message>>(handler: &H, reader: Buffer
     finish(received, sent)
 }
 pub fn run_draining<R: Reader, H: Handler<Message = R.Message>>(connection: Connection, stream: TcpStream, protocol: R, handler: &H, shutdown: &shutdown.Controller) @suspends @noescape -> Result<End, Error<R.Error>> {
-    var (outgoing, control, options) = split(connection)
+    var Connection { outgoing, control, options } = connection
     let output = outgoing.handle()
     let (reader, writer) = BufferedTcp.new(stream).split()
     let outcome = race {
