@@ -370,7 +370,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
                         build::build(&ast, entry, source_path, &output, mode, false)?;
                         output
                     };
-                    eprintln!("Built {}", output.display());
+                    progress::status("Built", output.display());
                     Ok(0)
                 }
                 _ => unreachable!(),

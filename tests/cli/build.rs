@@ -17,10 +17,26 @@ fn built_program_matches_jit_output_and_avoids_native_symbol_collisions() {
     let run = work.cli(&["run", "hello world.jk"]);
     success(&run);
     assert_eq!(run.stdout, b"42\n");
-    let build = work.cli(&["build", "hello world.jk"]);
-    success(&build);
-    assert!(build.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&build.stderr).contains("Built hello world"));
+    for colored in [true, false] {
+        let mut command = work.command();
+        command.args(["build", "hello world.jk"]);
+        if colored {
+            command.env_remove("NO_COLOR").env("CLICOLOR_FORCE", "1");
+        } else {
+            command.env("NO_COLOR", "1").env_remove("CLICOLOR_FORCE");
+        }
+        let build = command.output().unwrap();
+        success(&build);
+        assert!(build.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8_lossy(&build.stderr),
+            if colored {
+                "\x1b[1;32m     Built\x1b[0m hello world\n"
+            } else {
+                "     Built hello world\n"
+            }
+        );
+    }
     // The artifact remains runnable without either its source or the CLI.
     std::fs::remove_file(work.path().join("hello world.jk")).unwrap();
     let native = Command::new(work.path().join("hello world"))

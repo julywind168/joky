@@ -1,4 +1,4 @@
-//! Startup progress stays on stderr and finishes before the program takes over.
+//! Shared command status styling and run startup progress on stderr.
 use std::{fmt::Display, io::IsTerminal, path::Path, time::Instant};
 
 pub(super) struct Progress<'a> {
@@ -46,14 +46,17 @@ impl<'a> Progress<'a> {
     }
 
     fn status(&self, action: &str, details: impl Display) {
-        if !self.enabled {
-            return;
+        if self.enabled {
+            status(action, details);
         }
-        // Share Ariadne's stderr color policy, including NO_COLOR and forced color.
-        if concolor::get(concolor::Stream::Stderr).color() {
-            eprintln!("\x1b[1;32m{action:>10}\x1b[0m {details}");
-        } else {
-            eprintln!("{action:>10} {details}");
-        }
+    }
+}
+
+pub(super) fn status(action: &str, details: impl Display) {
+    // Share Ariadne's stderr color policy, including NO_COLOR and forced color.
+    if concolor::get(concolor::Stream::Stderr).color() {
+        eprintln!("\x1b[1;32m{action:>10}\x1b[0m {details}");
+    } else {
+        eprintln!("{action:>10} {details}");
     }
 }
