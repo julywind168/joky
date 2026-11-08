@@ -1,6 +1,6 @@
 const samples = {
   hello: { filename: 'hello.jk', output: '42', code: 'fn main() {\n    println(42)\n}' },
-  loop: { filename: 'loops.jk', output: '45', code: 'import joky/io.{println}\n\nfn sum(n: Int32) -> Int32 {\n    var i = 0\n    var total = 0\n    while i < n {\n        total = total + i\n        i = i + 1\n    }\n    total\n}\n\nfn main() {\n    { let displayed: Int32 = sum(10) println(&displayed) }\n}' }
+  loop: { filename: 'loops.jk', output: '45', code: 'import joky/io.{println}\n\nfn sum(n: Int32) -> Int32 {\n    var i = 0\n    var total = 0\n    while i < n {\n        total = total + i\n        i = i + 1\n    }\n    total\n}\n\nfn main() {\n    println(sum(10))\n}' }
 };
 let selected = 'hello';
 const tabs = [...document.querySelectorAll('[data-sample]')];

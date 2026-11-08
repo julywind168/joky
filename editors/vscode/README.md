@@ -18,7 +18,7 @@ code --install-extension joky-0.1.2.vsix
 如文件之前被手动关联为其他语言，通过 **Change Language Mode** 改回 Joky。
 
 当前扩展使用本地标识 `joky-local.joky`，尚未发布到 Marketplace。
-打包脚本允许缺少远程仓库与许可证文件；发布前应确定实际 publisher、仓库地址和许可。
+扩展采用 MIT / Apache 2.0 双许可，许可证随 VSIX 分发。正式发布 Marketplace 前需配置 publisher。
 
 ## 支持范围
 

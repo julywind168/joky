@@ -15,7 +15,7 @@
   <div class="page-shell">
     <header class="site-header">
       <a class="brand" href="#" aria-label="Joky 首页"><span class="brand-face" aria-hidden="true">{<i>··</i>}</span>joky<span class="brand-dot">.</span></a>
-      <nav aria-label="主导航"><a href="#about">认识 Joky</a><a href="#examples">代码一瞥</a><a href="./std/index.html">标准库文档</a><a href="#start">开始探索 <span aria-hidden="true">↗</span></a></nav>
+      <nav aria-label="主导航"><a href="#about">认识 Joky</a><a href="#examples">代码一瞥</a><a href="./std/index.html">标准库文档</a><a href="https://github.com/julywind168/joky">GitHub</a><a href="#start">开始探索 <span aria-hidden="true">↗</span></a></nav>
       <span class="status"><span></span> 正在生长中</span>
     </header>
 
@@ -59,8 +59,8 @@
         <div class="sample-card" id="sample-panel" role="tabpanel" aria-labelledby="hello-tab" tabindex="0"><div class="sample-toolbar"><span id="sample-filename">hello.jk</span><button class="copy-button" id="copy-code" aria-label="复制示例代码"><span aria-hidden="true">⧉</span> 复制代码</button></div><pre class="sample-code"><code id="sample-code"></code></pre><div class="sample-result"><span>OUTPUT</span><samp id="sample-output">42</samp><span class="result-check" aria-hidden="true">✓</span></div></div>
       </section>
 
-      <section class="start" id="start" aria-labelledby="start-title"><div><p class="eyebrow">03 / LET’S MAKE SOMETHING</p><h2 id="start-title">下一行，交给你。</h2><p>在 Joky 源码目录里，运行你的第一个示例。</p></div><div class="start-command"><div><code>cargo run -- run examples/hello.jk</code><button id="copy-command" class="copy-icon" aria-label="复制运行命令">⧉</button></div><p><span class="tiny-dot"></span> 需要 Rust 1.97+ <span class="command-divider">/</span> 默认以 JIT 执行</p></div></section>
-      <div class="development-note"><span aria-hidden="true">✿</span><p>Joky 还在生长。目前适合语言实现与嵌入实验，尚无包管理或多线程调度。<br class="desktop-break">欢迎带着好奇心，从一个小小的想法开始。</p></div>
+      <section class="start" id="start" aria-labelledby="start-title"><div><p class="eyebrow">03 / LET’S MAKE SOMETHING</p><h2 id="start-title">下一行，交给你。</h2><p>先从 <a href="https://github.com/julywind168/joky">GitHub 获取源码</a>，按 <a href="https://github.com/julywind168/joky/blob/main/README.md#安装与产物">安装说明</a>准备工具链，再在源码目录运行右侧命令。</p><p>已有 Joky？从 <a href="https://github.com/julywind168/joky/blob/main/docs/getting-started.md">入门教程</a>开始写自己的程序。<a href="https://github.com/julywind168/joky/releases">发行包</a>发布前可先从源码安装。</p></div><div class="start-command"><div><code>cargo run -- run examples/hello.jk</code><button id="copy-command" class="copy-icon" aria-label="复制运行命令">⧉</button></div><p><span class="tiny-dot"></span> 需要 Rust 1.97+ <span class="command-divider">/</span> 默认以 JIT 执行</p></div></section>
+      <div class="development-note"><span aria-hidden="true">✿</span><p>Joky 还在生长。目前适合语言实现与嵌入实验，支持本地 path 依赖与可选多线程任务执行，尚无 registry 包下载。<br class="desktop-break">欢迎带着好奇心，从一个小小的想法开始。</p></div>
     </main>
     <footer><a class="brand footer-brand" href="#" aria-label="回到 Joky 首页">joky<span class="brand-dot">.</span></a><span>A little language. A curious journey.</span><span>Made with Rust &amp; curiosity <span class="coral-text">♡</span></span></footer>
   </div>

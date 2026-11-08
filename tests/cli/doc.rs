@@ -32,6 +32,8 @@ fn check_pages(path: &Path, count: &mut usize) {
                         "missing anchor {href}: {}",
                         path.display()
                     );
+                } else if href.starts_with("https://") {
+                    assert!(href.starts_with("https://github.com/julywind168/joky"));
                 } else {
                     assert!(
                         path.parent().unwrap().join(href).is_file(),

@@ -1,0 +1,40 @@
+name: Build distributions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build host distribution
+        run: ./scripts/package.sh
+      - name: Verify relocated toolchain
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/joky-relocated"
+          cd target/dist
+          shasum -a 256 -c *.sha256
+          tar -xzf joky-*.tar.gz -C "$RUNNER_TEMP/joky-relocated"
+          bundle=$(find "$RUNNER_TEMP/joky-relocated" -mindepth 1 -maxdepth 1 -type d)
+          cd "$RUNNER_TEMP"
+          "$bundle/bin/joky" run "$bundle/share/doc/joky/examples/hello.jk" > hello.out
+          test "$(cat hello.out)" = 42
+          "$bundle/bin/joky" run --interpreter "$bundle/share/doc/joky/examples/hello.jk" > hello.out
+          test "$(cat hello.out)" = 42
+          "$bundle/bin/joky" build "$bundle/share/doc/joky/examples/hello.jk" -o hello
+          test "$(./hello)" = 42
+      - uses: actions/upload-artifact@v4
+        with:
+          name: joky-${{ matrix.os }}
+          path: target/dist/joky-*
+          if-no-files-found: error

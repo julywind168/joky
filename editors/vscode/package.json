@@ -5,7 +5,7 @@
   "version": "0.1.2",
   "publisher": "joky-local",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "(MIT OR Apache-2.0)",
   "engines": {
     "vscode": "^1.85.0",
     "node": ">=22"
@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "test": "node --test test/*.test.cjs",
-    "package": "npm test && vsce package --no-dependencies --allow-missing-repository --skip-license"
+    "package": "npm test && vsce package --no-dependencies"
   },
   "devDependencies": {
     "@vscode/vsce": "4.0.0",
@@ -50,5 +50,10 @@
         }
       }
     ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/julywind168/joky.git",
+    "directory": "editors/vscode"
   }
 }

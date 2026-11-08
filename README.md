@@ -1,181 +1,102 @@
 # Joky
 
-Joky 是一个 Rust 实现的小型语言项目，包含共享类型检查、Cranelift JIT/AOT、
-寄存器字节码解释器、CPS 挂起运行时和内置 `joky/vm` 模块。
-目前适合语言实现和嵌入实验，已实现范围与限制见下文。
+Joky 是一门用 Rust 实现的静态类型语言，适合语言实现、脚本嵌入和运行时实验。
+同一份代码可以通过 JIT 或字节码解释器运行，也可以编译成原生程序；
+支持所有权与借用、可挂起任务，以及 Rust / C 宿主嵌入。
+目前处于早期开发阶段，语法和 API 仍可能变化，支持范围与限制见下文。
+
+```joky
+import joky/task
+
+fn main() @suspends {
+    let name = "Joky"
+    println("Hello, {name}!")
+    task.sleep(10ms)
+    println("Ready.")
+}
+```
+
+[入门教程](docs/getting-started.md) · [语言参考](docs/language.md) ·
+[命令行指南](docs/cli.md) · [文档索引](docs/README.md) ·
+[源码仓库](https://github.com/julywind168/joky)
 
 ## 快速开始
 
-需要 Rust 1.97+；当前开发验证使用 Rust 1.99.0，macOS arm64 已通过 full、stress 与 Godot 集成检查。
-原生链接及集成测试需要系统 `cc`（目前验证 macOS/Linux）。
+已安装 Joky 时，将上面的代码保存为 `hello.jk`，执行 `joky run hello.jk`。
+预期依次输出 `Hello, Joky!` 和 `Ready.`。
+
+首次从源码试用，需要 Rust 1.97+ 和系统 C 工具链（用于 Rust 依赖的构建）：
 
 ```sh
-cargo build --release
-./target/release/joky run examples/hello.jk
-./target/release/joky run --interpreter examples/loops.jk
-./target/release/joky build examples/hello.jk -o /tmp/hello
-/tmp/hello
+git clone https://github.com/julywind168/joky.git
+cd joky
+cargo run -- run examples/hello.jk
 ```
 
-两次源码运行依次输出 `42`、`45`，生成的 `/tmp/hello` 输出 `42`。最小程序：
-
-```joky
-fn main() {
-    println(42)
-}
-```
-
-- `run` 默认使用 JIT，无需 C 编译器；`run --interpreter` 不生成机器码。
-  终端中显示加载、编译、运行阶段及启动耗时；`-q` / `--quiet` 关闭提示，
-  `-v` / `--verbose` 在 stderr 重定向时也显示，程序 stdout 不受影响。
-- `check` 静态检查文件或项目，不执行、不生成产物，也不需要 `cc`；
-  单文件和库包允许没有 `main`；应用检查配置入口及其导入依赖，库包检查自身全部源码模块。成功静默返回 0，错误返回 1。
-- `test` 运行 `#test` 函数，支持 JIT / 解释器、筛选、输出捕获与逐测试超时；不要求 `main`。
-- `doc` 生成首页与标准库离线文档，入口为 `target/doc/index.html`；`--open` 自动打开，`--std` 仅生成标准库文档；
-  `-o <目录>` 可指定文档目录，详见[标准库文档](docs/language.md#标准库文档)。
-- `build` 使用 AOT 与系统 `cc`，生成可独立执行的程序。默认输出位于源码旁，去掉 `.jk`；
-  Windows 的文件名后缀为 `.exe`，但其原生链接尚未验证。
-- `build` 的 `-o` / `--output` 可指定产物，父目录须已存在。失败构建保留已有产物，不能覆盖源码。
-- 默认 prelude 提供容器类型名 `Array` / `Map` / `Set`、`Option` / `Result`、`Some` / `None` / `Ok` / `Err`、借用式状态判断 / 默认值 / 组合方法、整数方法与边界常量，以及 `print` / `println` / `assert` / `assert_eq` / `assert_ne` / `panic`。
-  支持后缀 `!` 强制解包与 `?` 失败提前返回（[语义](docs/language.md#optionresult-与-outcome-后缀解包)）。
-  [Option / Result 示例](examples/option_result.jk)展示 `?` / `!`、`map`、默认值、`and` / `or` 和 `ok` / `err` 转换；普通默认值急切求值，`unwrap_or_else` 可按需执行同步回调。
-  也提供输出到 stderr 的 `eprint` / `eprintln`。`check` / `test` / `run` / `build` 均可用 `--no-prelude` 关闭；使用 `array` 等容器模块前缀或 `joky/vm` 时仍需显式导入。
-- 程序入口必须无参数，返回 Unit 或 Int32；支持同步 main 和 `fn main() @suspends`。
-  Unit 对应退出码 0，Int32 取低 8 位；`joky/io` 的 `print` / `println` 借用实现 Show 的值，
-  可直接写 `println(value)`、`println(42)`，挂起函数中也能直接打印标量；普通字符串字面量默认插值，支持 `r` 原始字符串与三引号多行去缩进，`"value={value}"` 生成拥有型文本。
-  关闭 prelude 时显式导入 `joky/io.{print, println}`；CLI 不再预注册类型专用打印宿主。
-- 时长字面量 `250ms` / `1.5s` 产生独立的 `joky/time.Duration`，支持纳秒到小时的单位、受检换算和格式化；`1h + 30min` 通过标准 `joky/ops.Add` 相加（溢出失败）。
-  自定义类型可实现同型、按值的 Add，支持 `T: Add` 静态泛型派发；
-  `#every(1s)`、域定时器/提交截止时间及 session 的 `idle_timeout` 统一使用时长。
-  `joky/time.Instant` 提供单调耗时和受检截止运算，`Timestamp` 提供 Unix 换算与纳秒 UTC 文本（系统读取为微秒）；
-  `task.sleep_until(Instant)` 使用绝对截止时间，支持宿主虚拟时钟。
-  `import joky/task` 提供 `task.sleep(Duration)`、`task.timeout(Duration, operation)`、`task.yield_now()`；
-  在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。
-- `joky/random` 提供操作系统安全随机字节，以及显式设种子的非密码学 `Rng`、无偏整数范围采样和原地洗牌；
-  同一种子与调用顺序在三个后端上可复现。示例：[random.jk](examples/random.jk)。
-- `joky/url` 提供 UTF-8 组件百分号编解码和保留重复键的查询串解析；HTTP Request 可分别读取路径与查询键值对；
-- `joky/hex` 与 `joky/base64` 提供字节与文本编解码，包含 URL-safe/无填充配置、严格校验和错误字节偏移；
-  可直接将安全随机字节编码为 token。示例：[codecs.jk](examples/codecs.jk)。
-- `joky/uuid` 提供系统安全随机源生成的 UUID v4 / v7、严格标准文本解析、16 字节转换和 Map 键支持。
-  v7 使用毫秒时间戳前缀，支持比较与时间戳读取；同毫秒内不保证生成顺序。
-  示例：[uuid.jk](examples/uuid.jk)。
-- `joky/crypto` 提供 SHA-256、HMAC-SHA256 和完整 tag 的恒定时间校验，返回原始 32 字节，
-  可直接接 Hex/Base64；`Sha256` / `HmacSha256` 支持跨挂起的流式更新与消费式完成。
-  示例：[crypto.jk](examples/crypto.jk)。
-- `joky/password` 提供 Argon2id 密码哈希、PHC 验证与参数升级判断，使用随机盐和有界后台计算，
-  工作区计入任务内存预算。示例：[password.jk](examples/password.jk)。
-- `run` / `build` 的 `--task-workers N` 显式启用任务分支多线程，缺省 Local；需要受检的挂起 main。
-  支持标量、String、Array、List、Map/Set、FixedArray、嵌套聚合、受检函数值及 TCP 拥有转移、任务定时器和 stdout 输出；
-  VM、文件、目录、准入与邮箱通过任务树控制代理使用，业务 `when` 按完整域访问集在 worker 并行计算并统一提交，Godot 回调保持 Local；
-  [模式与准入范围](docs/language.md#任务执行模式)。
-- `joky explain-parallel <文件或项目>` 静态解释并行准入与本地回退原因，显示源码位置、参数或捕获及调用链，不执行程序；
-  [报告状态与限制](docs/language.md#并行资格诊断)。
-- 使用 `joky --help` 查看参数。开发时可用 `cargo run -- run examples/hello.jk`。
-
-## 程序输入与输出
-
-程序可通过 `joky/process` 读取启动参数、只读环境快照和启动目录，通过 `joky/io` 读取有界 stdin。
-例如：
-
-```sh
-cargo run -- run examples/dns_lookup.jk -- localhost
-printf '%s\n' '{"answer":42}' | cargo run -- run examples/stdin_json.jk
-printf 'one\ntwo' | JOKY_LINE_PREFIX='item: ' cargo run -- run examples/stdin_lines.jk
-```
-
-`--` 后为程序参数，原生程序同样使用 `./program -- args...`；参数不含程序名。
-`print/println` 和 `eprint/eprintln` 每次写入后刷新，无换行提示也能立即输出。
-挂起入口、错误与 EOF 规则见[程序输入与标准流](docs/language.md#程序输入与标准流)。
-
-## 源码静态检查
-
-```sh
-cargo run -- check examples/captured_pipeline.jk
-cargo run -- check examples/chat
-```
-
-安装后可直接使用 `joky check <file.jk | project-dir | joky.toml>`；省略输入时向上查找最近的项目清单。
-检查覆盖语法、类型、泛型约束、所有权、借用、`@noescape` 和挂起限制，包括未调用的生产函数及泛型模板；`#test` 函数体由 `joky test` 检查。
-错误沿用源码位置和错误码，写入 stderr。`--no-prelude` 关闭隐式导入；以 `-` 开头的文件名放在 `--` 后。
-应用项目检查入口及导入依赖；`[package]` 库包检查自身源码根中的全部模块；详细边界见[静态检查](docs/language.md#静态检查)。
-
-## 用 Joky 写测试
-
-测试函数前加 `#test`，使用已有的 `assert(condition, message)`：
-
-```joky
-fn add(left: Int32, right: Int32) -> Int32 { left + right }
-
-#test
-fn adds_numbers() {
-    assert(add(2, 3) == 5, "addition result")
-}
-```
-
-```sh
-cargo run -- test examples/testing.jk
-cargo run -- test --interpreter examples/testing.jk
-cargo run -- test examples/testing.jk --filter threshold
-cargo run -- test tests/joky --list
-cargo run -- test tests/joky
-cargo run -- test examples/testing_inputs.jk
-cargo run -- test examples/testing_output.jk
-```
-
-[完整示例](examples/testing.jk)还包含捕获局部阈值的流水线和 `@suspends` 测试；
-[标准库测试](tests/joky/stdlib_test.jk)用 Joky 检查 Array、String、Option 和 Result 的公开行为。
-每个测试使用独立进程和临时目录，失败后继续；默认超时 30 秒，可用 `--timeout-ms` 调整。
-[输入注入示例](examples/testing_inputs.jk)用 `joky/testing` 设置参数、环境和文本 stdin，
-再用普通 `process` / `io` / `fs` API 运行应用并检查输出文件；临时文件由父进程清理。
-[输出断言示例](examples/testing_output.jk)用 `testing.stdout()` / `testing.stderr()` 查询累计输出，
-再用 `assert_eq` 检查内容；查询不清空，`--nocapture` 仍可显示应用输出。
-详细发现范围、诊断与首版限制见[原生测试](docs/language.md#原生测试)。
-编译器内部、拒绝诊断、ABI 和资源清理仍由 Rust 测试负责。
-
-## 源码格式化
-
-```sh
-joky fmt file.jk             # 原地格式化一个文件
-joky fmt --check file.jk     # 不写入；需要格式化时退出码为 1
-joky fmt --stdin < file.jk   # 从标准输入读取，向标准输出写出
-```
-
-第一版采用保守规则：花括号、圆括号和方括号内按四空格缩进，统一常见标点与
-运算符周围的空格，清理代码行尾空白，并为非空结果补齐末尾换行。保留已有换行、
-空行及 LF/CRLF；注释、字符与字符串原文（包括插值内部和三引号字符串的缩进）不改写。
-泛型尖括号、比较/移位与 `/` 两侧保留原有的有无空格关系；暂不做长行折行、
-导入排序或递归目录格式化。
-
-`fmt` 只要求语法有效，不解析依赖、不要求 `main`、不初始化 VM。
-写回前核对 token 内容和换行位置，语法错误或格式化失败时不覆盖原文件；
-文件通过同目录临时文件完整写入后替换，保留权限，符号链接写入其目标。
-`--check` 可与 `--stdin` 组合，此时只返回状态，不输出格式化内容。
-路径以 `-` 开头时使用 `joky fmt -- -file.jk`。
-开发时无需安装，可用 `cargo run -- fmt --check file.jk`。
+预期输出 `42`。首次编译需要下载并构建依赖；后续运行复用缓存。
+该命令使用 Debug 构建，无需先进行 Release 编译。
+已有 CLI 的 `run` / `check` 不调用系统 `cc`，`build` 原生链接需要它。
 
 ## 安装与产物
 
-VS Code 的 `.jk` 语法高亮与基础编辑支持见 [Joky 扩展](editors/vscode/README.md)，
-可在本地打包并安装 VSIX。
+当前推荐从源码安装完整工具链；在上面的仓库目录执行：
 
 ```sh
 ./scripts/install.sh
 export PATH="$HOME/.local/bin:$PATH"
+joky --version
+joky run examples/hello.jk
+joky build examples/hello.jk -o /tmp/joky-hello
+/tmp/joky-hello
 ```
 
-默认安装到 `~/.local`，也支持 `./scripts/install.sh /path/to/prefix`。
-脚本一起部署 `bin/joky`、`lib/joky/libjoky.a` 和 `include/joky/` 下的 C 头文件。
-`cargo install --path .` 只安装 CLI；包含数组、arena 分配、除法、外部调用（包括通用文本输出）、CPS 或 `joky/vm`
-的原生构建还需要匹配的 runtime archive，用于错误传播及运行时支持。
-构建时依次查找 `JOKY_RUNTIME`、CLI 旁的 `libjoky.a`、安装目录 `lib/joky/libjoky.a`。
+最后两次程序运行均输出 `42`。将 PATH 设置加入你的 shell 配置后，新终端也可直接使用 `joky`。
+安装脚本默认构建 Release，首次耗时会比快速试用更长；本地开发可用
+`./scripts/install.sh --debug /tmp/joky-dev` 验证相同安装布局。
+默认前缀是 `~/.local`，可传入其他目录，如 `./scripts/install.sh /path/to/prefix`。
+
+完整安装包含 `bin/joky`、`lib/joky/libjoky.a`、`include/joky/` 和许可证。
+`cargo install --path .` 只安装 CLI，不是完整安装；AOT 程序通常还需要匹配的 runtime archive。
+构建时按 `JOKY_RUNTIME`、CLI 旁的 `libjoky.a`、安装目录 `lib/joky/libjoky.a` 的顺序查找。
 生成的程序运行时不再需要源码、CLI 或 archive。
 
-Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
-`cargo build --release` 还生成 `libjoky.rlib` 和 `libjoky.a`；Rust 嵌入方通过 Cargo 依赖消费库。
-宿主文本统一使用显式 `JokyText` 指针/长度描述符，旧长度前缀 ABI 已移除；
-已有绑定需按[文本 ABI 迁移说明](docs/architecture.md#宿主与字符串-abi)更新并重新编译。
-当前保持单 crate，静态库包含编译器、VM 和 runtime；Release 配置见
-[构建与验证](docs/architecture.md#构建与验证)。
+| 平台 | 当前状态 |
+| --- | --- |
+| macOS arm64 | 主要开发验证平台；已有 Debug、Release、stress 与 Godot 集成验证记录 |
+| Linux | 有原生链接验证；发行包需要在对应架构与系统环境单独验证 |
+| macOS x86_64 / Windows | 尚未完成发行验证；不作为首版已验证安装路径 |
+
+macOS 可用 Xcode Command Line Tools 提供 `cc`；Linux 需要发行版的 C 编译器和链接工具。
+当前开发工具链为 Rust 1.99.0；`rust-version` 声明最低版本 1.97，最低版本兼容性需另行验证。
+
+预编译包发布后可从 [Releases](https://github.com/julywind168/joky/releases) 获取；
+没有适合平台的附件时使用上述源码路径，不要只拷贝 `joky` 二进制。
+完整包的安装、校验与维护者打包步骤见[发行包说明](docs/distribution.md)。
+编辑器高亮的安装方式见 [VS Code 扩展](editors/vscode/README.md)。
+
+## 下一步
+
+| 想做什么 | 从哪里开始 |
+| --- | --- |
+| 写第一个项目 | [入门教程](docs/getting-started.md)：变量、容器、借用、错误处理、测试与任务 |
+| 使用命令行 | [命令行指南](docs/cli.md)：输入输出、检查、格式化、测试和项目 |
+| 查语法与标准库 | [语言参考](docs/language.md)；`joky doc --open` 生成并打开离线标准库文档 |
+| 嵌入 Rust / C | [架构与 ABI](docs/architecture.md)、[Rust 示例](examples/embedding.rs)、[C VM 示例](examples/vm_runtime.c) |
+| 尝试有状态服务 | [聊天室](examples/chat/README.md)、[HTTP 服务](examples/http_server.jk) |
+| 参与开发 | [贡献规范](CONTRIBUTING.md)与[文档索引](docs/README.md) |
+
+常用命令：
+
+```sh
+joky check hello.jk
+joky fmt hello.jk
+joky run hello.jk
+joky run --interpreter hello.jk
+joky doc --open
+```
+
+`check` 成功时静默退出，错误写入 stderr。`run` 的终端进度提示可用 `-q` 关闭，程序 stdout 不受影响。
+`build` 单文件时默认输出到源码旁；`-o` 的父目录需要已存在。项目构建生成可搬动的目录包。
 
 ## 当前能力
 
@@ -193,79 +114,13 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 解释器执行限额不覆盖编译阶段或原生回调，其他执行与嵌入限制见[已知边界](docs/architecture.md#已知边界)。
 文件服务支持读写、重命名、删除文件和列出目录。能力由宿主提供，CLI 启用本机实现，嵌入缺省为 Unsupported；Godot 验证适配器不提供文件服务。
 
-## 示例与文档
-
-- [文档索引](docs/README.md)：使用参考、实现设计与开发记录。
-- [语言与内置模块](docs/language.md)：当前语法、求值顺序、类型准入与 API。
-- [架构与嵌入约束](docs/architecture.md)：模块职责、IR、代码所有权和宿主 ABI。
-- [解释器设计](docs/interpreter.md)：字节码、预算、调度和运行时诊断。
-- [基础示例](examples/hello.jk)、[整数范围](examples/ranges.jk)、[范围切片](examples/range_slices.jk)、[范围模式](examples/range_patterns.jk)、[泛型](examples/generics.jk)、[拥有闭包](examples/owned_closures.jk)、[模式与枚举](examples/enums.jk)、[文本与格式化](examples/show.jk)、[容器](examples/maps.jk)。
-- 遍历入门先看 [for 遍历与编号](examples/for.jk)：`&values` 共享读取、`&mut values` 原地修改、`values` 消费数组。
-  再看 [借用流水线](examples/borrowed_pipelines.jk) 的 filter/map/take 方法链，以及
-  [普通组合器](examples/iterator_adapters.jk) 的消费式组合与捕获回调。
-  [捕获阈值与加分值](examples/captured_pipeline.jk) 展示共享 filter/map 的只读捕获；闭包的不逃逸契约由编译器检查。
-  独占流水线仍要求同步、无捕获的 `@noescape` 回调，共享 map 结果限无引用 Copy 值；
-  常见限制与替代写法见[语言参考](docs/language.md#借用流水线的常见错误)。
-- 进阶：[共享迭代协议](examples/shared_iterator_protocol.jk) 展示 `SharedIterator` 泛型入口、`step_shared` 显式推进和底层组合函数。
-- [挂起闭包与超时组合](examples/suspending_closures.jk)。
-- [时长字面量与定时等待](examples/durations.jk)。
-- [停机通知](docs/language.md#停机通知-jokyshutdown)与 [TCP 排空](examples/tcp_shutdown.jk)：显式 Unix 信号订阅、停止接收、等待在途请求与超时取消。
-- [HTTPS 服务](examples/https_server.jk) 复用 HTTP handler，通过 [joky/tls](docs/language.md#tls-字节流-jokytls) 配置证书、验证服务端身份并收发加密字节。
-- [HTTP 订单服务](examples/postgres_orders_http.jk) 在连接间共享 PostgreSQL 池，支持用原 Idempotency-Key 在服务重启后重试订单。
-- [PostgreSQL 事务示例](examples/postgres_orders.jk) 使用 [joky/postgres](docs/language.md#postgresql-数据库-jokypostgres) 的参数绑定、连接池与事务，演示提交回执丢失后的订单去重。
-- [HTTP 客户端](examples/http_client.jk) 使用 [http.Client](docs/language.md#http-客户端-jokyhttp) 发送 GET 和 JSON POST，可配置 HTTPS 信任根、连接期限和响应体上限。
-- [HTTP JSON 服务](examples/http_server.jk) 使用 [joky/http](docs/language.md#http-服务端-jokyhttp) 处理定长 HTTP/1.1 请求，支持读取超时和停机排空。响应的 `X-Request-Id` 可用于查找同一请求的[结构化日志](docs/language.md#结构化日志-jokylog)。
-- [跨挂起借用](docs/language.md#跨挂起借用)、[文件](examples/files.jk)、[TCP 消息](examples/tcp_messages.jk)、[双向会话](examples/tcp_duplex.jk)、[JSON 派生](examples/json_derive.jk)。
-- [Rust 嵌入](examples/embedding.rs)、[宿主驱动任务](examples/host_tasks.rs)、[C VM](examples/vm_runtime.c) 与 [C CPS](examples/cps_runtime.c)。
-- [贡献规范](CONTRIBUTING.md)、[基准方法](benches/README.md)与[历史性能记录](docs/interpreter-performance.md)。
-
-## 本地源码依赖
-
-本地复用通过 `[dependencies]` 声明 `path`，独立库使用无入口的 `[package]` 清单。
-示例：`joky run examples/packages/app`、`joky check examples/packages/common`、
-`joky test examples/packages/common`，配置见 [应用清单](examples/packages/app/joky.toml) 和
-[库清单](examples/packages/common/joky.toml)。
-
-## TCP 状态域聊天室
-
-[chat 项目](examples/chat/README.md) 用 `joky.toml` 声明 host 入口、源码根和运行时资源。
-在仓库根目录执行：
-
-```sh
-cargo build --bin joky --lib
-target/debug/joky run examples/chat
-# 原生项目构建，产物可整体搬动后直接运行：
-target/debug/joky build examples/chat -o /tmp/chat-app --parallel
-/tmp/chat-app/chat --task-workers 3
-```
-
-聊天端口为 `127.0.0.1:7777`，管理端口为 `127.0.0.1:7778`。
-修改 `examples/chat/script/main.jk` 后向管理端发送 `reload`；`shutdown` 或 SIGINT/SIGTERM 停止准入并排空会话输出，5s 后取消剩余任务。
-目录说明、协议、配置与验证命令见[应用说明](examples/chat/README.md)。
-
-预留模式示例：`cargo run -- run examples/reservation.jk`，演示并发重复请求、回复丢失后的幂等重试、
-有界结果保留、预留到期回收与迟到回复校验，详见[语言参考](docs/language.md#跨挂起业务的预留模式)。
-
 ## 验证
 
-```sh
-./scripts/check.sh         # 默认快速检查：Debug 测试与短输入基准正确性
-./scripts/check.sh --full  # 兼容别名：与默认 Debug 检查相同
-./scripts/check.sh --stress # 独立压力检查：Debug 穷举与长输入基准正确性
-./scripts/check.sh --release # 按需显式使用 Release
-```
+开发者使用 `./scripts/check.sh` 运行格式、Clippy、Debug 测试和三后端短输入基准正确性检查。
+按改动范围选择检查，完整规则见 [AGENTS.md](AGENTS.md#按改动范围验证)；
+性能测量见[基准方法](benches/README.md)。普通安装和试用不需要执行整套测试。
 
-非公开开发期间默认只跑 Debug；明确要求发布验收时运行 `--full --release` 和 `--stress --release`。
-quick/full 检查包含格式、Clippy、测试及三后端基准正确性，不计时、不判断性能回归。
-要求和范围见 [CONTRIBUTING.md](CONTRIBUTING.md)。性能测量另用
-`cargo bench --bench while`，工作负载、调用边界及统计口径统一见[基准方法](benches/README.md)。
-JSON 的固定版本外部语料回归独立运行，命令、离线用法与验收记录见
-[JSON 收尾验收](docs/json-codec.md#12-独立验收与可复现语料回归)。
+## 许可
 
-## 参考与许可
-
-[Cranelift 文档](https://docs.rs/cranelift/) ·
-[Cranelift 源码](https://github.com/bytecodealliance/wasmtime/tree/main/cranelift) ·
-[System V ABI](https://refspecs.linuxbase.org/elf/x86_64-abi-0.99.pdf)
-
-MIT / Apache 2.0 双许可。
+Joky 采用 [MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE) 双许可，可任选其一。
+第三方依赖保留各自的许可证。
