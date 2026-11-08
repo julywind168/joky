@@ -47,6 +47,11 @@ Linux 可安装发行版的 C 编译器和链接工具。缺少 runtime 时请�
 
 ## 维护者：生成与验证发行包
 
+VS Code 扩展单独分发为 `joky-<version>.vsix`，安装步骤见[扩展说明](../editors/vscode/README.md)。
+**VS Code extension** 工作流在相关 push / PR 和手动运行时打包并保存 `joky-vscode` artifact；
+已发布 GitHub Release 会触发同一工作流，把对应源码版本的 VSIX 与 `joky-vscode-SHA256SUMS` 附加到该 Release。
+首次运行前下载入口可能没有产物。该工作流不创建 Release，也不发布 Marketplace。
+
 从仓库任意位置调用 `scripts/package.sh`（仓库外使用脚本的完整路径），
 它使用当前 host target、锁定的 Cargo 依赖和 Release 构建，输出到 `target/dist/`。
 可传入输出目录；已有同名包时拒绝覆盖。

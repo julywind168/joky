@@ -53,10 +53,10 @@ function closed(result) {
   assert.ok(result.state.equals(grammar.tokenizeLine('', INITIAL).ruleStack), `Unclosed grammar state: ${result.state}`);
 }
 
-test('manifest registers a declarative .jk language with embedded interpolation', () => {
+test('manifest registers the .jk language with embedded interpolation', () => {
   assert.deepEqual(manifest.contributes.languages[0].extensions, ['.jk']);
   assert.equal(manifest.contributes.grammars[0].scopeName, 'source.joky');
-  assert.equal(manifest.main, undefined);
+  assert.equal(manifest.main, './src/extension.cjs');
   assert.equal(manifest.contributes.grammars[0].embeddedLanguages['meta.embedded.inline.joky'], 'joky');
 });
 

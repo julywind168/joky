@@ -1,8 +1,8 @@
 {
   "name": "joky",
   "displayName": "Joky",
-  "description": "Syntax highlighting and basic editing support for the Joky language.",
-  "version": "0.1.2",
+  "description": "Joky syntax highlighting, run and check commands, and document formatting.",
+  "version": "0.2.0",
   "publisher": "joky-local",
   "private": true,
   "license": "(MIT OR Apache-2.0)",
@@ -19,12 +19,13 @@
   ],
   "scripts": {
     "test": "node --test test/*.test.cjs",
-    "package": "npm test && vsce package --no-dependencies"
+    "package": "npm test && vsce package --no-dependencies",
+    "test:host": "node test/run-host.cjs"
   },
   "devDependencies": {
     "@vscode/vsce": "4.0.0",
-    "vscode-textmate": "9.3.2",
-    "vscode-oniguruma": "2.0.1"
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.3.2"
   },
   "contributes": {
     "languages": [
@@ -49,11 +50,122 @@
           "meta.embedded.inline.joky": "joky"
         }
       }
+    ],
+    "commands": [
+      {
+        "command": "joky.run",
+        "title": "Run File or Project",
+        "category": "Joky",
+        "icon": "$(play)",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
+        "command": "joky.check",
+        "title": "Check File or Project",
+        "category": "Joky",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
+        "command": "joky.format",
+        "title": "Format Document",
+        "category": "Joky",
+        "enablement": "isWorkspaceTrusted && editorLangId == joky"
+      },
+      {
+        "command": "joky.selectCompiler",
+        "title": "Select Compiler...",
+        "category": "Joky"
+      }
+    ],
+    "configuration": {
+      "title": "Joky",
+      "properties": {
+        "joky.executablePath": {
+          "type": "string",
+          "default": "joky",
+          "scope": "machine-overridable",
+          "description": "Joky executable name on PATH, or an absolute path to the executable (without quotes or arguments)."
+        }
+      }
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "joky.run",
+          "when": "resourceLangId == joky",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "joky.run",
+          "when": "editorLangId == joky",
+          "group": "joky"
+        },
+        {
+          "command": "joky.check",
+          "when": "editorLangId == joky",
+          "group": "joky"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "joky.run",
+          "when": "resourceExtname == .jk || resourceFilename == joky.toml",
+          "group": "joky"
+        },
+        {
+          "command": "joky.check",
+          "when": "resourceExtname == .jk || resourceFilename == joky.toml",
+          "group": "joky"
+        }
+      ]
+    },
+    "taskDefinitions": [
+      {
+        "type": "joky",
+        "required": [
+          "command",
+          "target"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "run",
+              "check"
+            ]
+          },
+          "target": {
+            "type": "string"
+          }
+        }
+      }
     ]
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/julywind168/joky.git",
     "directory": "editors/vscode"
+  },
+  "main": "./src/extension.cjs",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onLanguage:joky"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Syntax highlighting is available; compiler commands require a trusted workspace.",
+      "restrictedConfigurations": [
+        "joky.executablePath"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": "limited",
+      "description": "Syntax highlighting is available; compiler commands require local or remote filesystem access."
+    }
   }
 }

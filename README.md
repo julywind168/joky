@@ -72,7 +72,8 @@ macOS 可用 Xcode Command Line Tools 提供 `cc`；Linux 需要发行版的 C �
 预编译包发布后可从 [Releases](https://github.com/julywind168/joky/releases) 获取；
 没有适合平台的附件时使用上述源码路径，不要只拷贝 `joky` 二进制。
 完整包的安装、校验与维护者打包步骤见[发行包说明](docs/distribution.md)。
-编辑器高亮的安装方式见 [VS Code 扩展](editors/vscode/README.md)。
+VS Code 用户可安装 [Joky 扩展](editors/vscode/README.md)：下载 VSIX 即可获得高亮，
+配好编译器后可直接运行、检查和格式化，无需自行打包扩展。
 
 ## 下一步
 
