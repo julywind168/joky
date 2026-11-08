@@ -940,6 +940,7 @@ dependencies = [
  "hmac",
  "joky-image-derive",
  "libc",
+ "libloading",
  "mio",
  "rustls",
  "sha2 0.11.1",

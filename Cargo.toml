@@ -36,6 +36,7 @@ mio = { version = "1.2.4", features = ["os-poll", "net"] }
 toml = { version = "1.1.8", default-features = false, features = ["parse", "std", "serde"] }
 libc = "0.2"
 signal-hook = "0.4.6"
+libloading = "0.8"
 joky-image-derive = { path = "tools/image-derive" }
 
 [dependencies]
@@ -77,7 +78,7 @@ signal-hook.workspace = true
 
 [dev-dependencies]
 serde_json = "1"
-libloading = "0.8"
+libloading.workspace = true
 
 [[bench]]
 name = "while"

@@ -37,3 +37,7 @@ joky-image-derive.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 signal-hook.workspace = true
+
+# The shared source is also analyzed with cfg(test) by rust-analyzer.
+[dev-dependencies]
+libloading.workspace = true
