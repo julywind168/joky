@@ -177,6 +177,35 @@ impl foo.Foreign { fn v(self)->Int32 { self.n } } fn main(){}", TypeMismatch, "C
     }
 
     #[test]
+    fn ownership_diagnostics_preserve_binding_and_move_locations() {
+        for (source, declaration, moved, used, name, clone) in [
+            ("fn main() {\n let s = \"hello\"\n let t = s\n println(s)\n println(t)\n}", 2, 3, 4, "s", true),
+            ("fn take(s: String) {}\nfn f(s: String) {\n take(s)\n println(s)\n}", 2, 3, 4, "s", true),
+            ("fn take(s: String) {}\nfn f(flag: Bool) {\n let s=\"hello\"\n if flag { take(s) }\n println(s)\n}", 3, 4, 5, "s", true),
+            ("fn take(s: String) {}\nfn main() {\n let s=\"hello\"\n for i in 0..2 { take(s) }\n}", 3, 4, 4, "s", true),
+            ("fn take(s: String) {}\nfn main() {\n var s=\"hello\"\n take(s)\n s=\"again\"\n take(s)\n println(s)\n}", 3, 6, 7, "s", true),
+            ("fn take(s: String) {}\nfn main() {\n let s=\"outer\"\n { let s=\"inner\"\n take(s)\n println(s) }\n println(s)\n}", 4, 5, 6, "s", true),
+            ("fn take(a: Array<Int32>) {}\nfn main() {\n let a=[42]\n take(a)\n println(a.len())\n}", 3, 4, 5, "a", false),
+            ("struct Item { text: String }\nfn take(v: Item) {}\nfn main() {\n let v=Item {text:\"hello\"}\n take(v)\n take(v)\n}", 4, 5, 6, "v", false),
+        ] {
+            let error = check_source(source, &Default::default()).unwrap_err();
+            assert_eq!(error.code(), crate::ErrorCode::InvalidAssignment);
+            let labels = error.labels();
+            assert_eq!(labels.len(), 3, "{source}: {error:?}");
+            for (label, line) in labels.iter().zip([declaration, moved, used]) {
+                assert_eq!(label.span.line_column(source).0, line, "{source}: {label:?}");
+                assert!(label.message.contains(&format!("`{name}`")));
+            }
+            assert_eq!(error.span(), Some(labels[2].span));
+            assert_eq!(error.help().iter().any(|help| help.contains(".clone()")), clone);
+            assert!(error.help()[0].contains(&format!("`&{name}`")));
+            if moved == used {
+                assert!(labels[1].message.contains("previous loop iteration"));
+            }
+        }
+    }
+
+    #[test]
     fn preparation_snapshot_is_independent_of_later_source_edits() {
         let mut ast =
             crate::parser::parse("type Number = Int32 fn value() -> Number { 42 }").unwrap();

@@ -24,12 +24,16 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
         error.message()
     };
     let rendered =
-        render_span(path, source, span, message, code).unwrap_or_else(|| error.to_string());
+        render_span(path, source, span, message, code, error).unwrap_or_else(|| error.to_string());
     let header = error.line().map_or_else(
         || error.message().to_owned(),
         |line| format!("Line {line}: {}", error.message()),
     );
-    let mut output = format!("{header}\n{rendered}");
+    let mut output = if error.labels().is_empty() {
+        format!("{header}\n{rendered}")
+    } else {
+        rendered
+    };
     for run in error.runtime_trace().chunk_by(|left, right| left == right) {
         use std::fmt::Write;
         let frame = &run[0];
@@ -94,7 +98,51 @@ fn render_span(
     source_span: Span,
     message: &str,
     code: Option<&str>,
+    error: &Error,
 ) -> Option<String> {
+    let (escaped, location, span) = display_span(source, source_span)?;
+    let file = path.display().to_string();
+    let mut output = Vec::new();
+    let mut cache = std::collections::BTreeMap::from([(file.clone(), escaped.into_owned())]);
+    let mut report = Report::build(ReportKind::Error, (file.clone(), location..location))
+        .with_message(message.to_owned());
+    if let Some(code) = code {
+        report = report.with_code(code);
+    }
+    if !error.labels().iter().any(|label| label.span == source_span) {
+        report = report.with_label(Label::new((file, span)).with_message(message.to_owned()));
+    }
+    for label in error.labels() {
+        let (label_path, label_source) =
+            if let Some(file) = error.sources().get(label.span.source_id()) {
+                (file.name().to_owned(), file.text())
+            } else if label.span.source_id() == source_span.source_id() {
+                (path.display().to_string(), source)
+            } else {
+                continue;
+            };
+        let (escaped, _, span) = display_span(label_source, label.span)?;
+        cache.insert(label_path.clone(), escaped.into_owned());
+        report =
+            report.with_label(Label::new((label_path, span)).with_message(label.message.clone()));
+    }
+    report
+        .with_config(Config::default().with_index_type(IndexType::Byte))
+        .finish()
+        .write(sources(cache), &mut output)
+        .ok()?;
+    let mut rendered = String::from_utf8(output).ok()?;
+    for help in error.help() {
+        use std::fmt::Write;
+        let _ = writeln!(rendered, "  help: {help}");
+    }
+    Some(rendered)
+}
+
+fn display_span(
+    source: &str,
+    source_span: Span,
+) -> Option<(Cow<'_, str>, usize, std::ops::Range<usize>)> {
     let span = normalize_span(source, source_span);
     let display = source.strip_prefix('\u{feff}').unwrap_or(source);
     let skipped = source.len() - display.len();
@@ -122,23 +170,7 @@ fn render_span(
     } else {
         (span.start, span)
     };
-    let file = path.display().to_string();
-    let mut output = Vec::new();
-    let mut report = Report::build(ReportKind::Error, (file.clone(), location..location))
-        .with_message(message.to_owned());
-    if let Some(code) = code {
-        report = report.with_code(code);
-    }
-    let report = report
-        .with_label(Label::new((file.clone(), span)).with_message(message.to_owned()))
-        // Lexer spans are UTF-8 byte offsets. Ariadne defaults to character
-        // offsets, which would misplace labels after a non-ASCII character.
-        .with_config(Config::default().with_index_type(IndexType::Byte))
-        .finish();
-    report
-        .write(sources([(file, escaped)]), &mut output)
-        .ok()
-        .and_then(|_| String::from_utf8(output).ok())
+    Some((escaped, location, span))
 }
 
 fn normalize_span(source: &str, span: Span) -> std::ops::Range<usize> {

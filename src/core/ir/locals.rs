@@ -281,6 +281,17 @@ impl FunctionPlan {
         mut binding: Binding,
     ) -> Result<Binding, Error> {
         let target = slot_type(&binding.slot);
+        if !name.starts_with('$') {
+            if let Some(slot) = &binding.slot {
+                for scalar in slot.scalars().filter(|s| s.ty.is_owner()) {
+                    self.diagnostic_bindings.insert(
+                        scalar.index,
+                        (name.to_owned(), self.current_span, target.clone()),
+                    );
+                }
+            }
+        }
+
         if target.is_owner() {
             let owner = binding.slot.as_ref().unwrap();
             let scope = self.local_scopes.last_mut().unwrap();

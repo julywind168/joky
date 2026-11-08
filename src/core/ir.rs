@@ -602,6 +602,8 @@ pub(crate) struct FunctionPlan {
     graph_loop_depth: Option<usize>,
     graph_handles: std::collections::HashSet<usize>,
     borrowed_names: locals::BorrowedLocals,
+    /// Source bindings keyed by their stable IR storage slots, including shadowed names.
+    diagnostic_bindings: HashMap<usize, (String, Span, Type)>,
     local_scopes: Vec<Vec<Slot>>,
     argument_scopes: Vec<std::collections::HashSet<usize>>,
     /// Implicit conversions must have a proof after all bodies have been analyzed.
@@ -1454,6 +1456,7 @@ impl FunctionPlan {
             graph_loop_depth: None,
             graph_handles: Default::default(),
             borrowed_names: locals::borrowed_names(&f.body),
+            diagnostic_bindings: HashMap::new(),
             local_scopes: vec![Vec::new()],
             argument_scopes: Vec::new(),
             implicit_borrows: Vec::new(),
@@ -1750,6 +1753,7 @@ impl FunctionPlan {
                 ty: p.ty.clone(),
             });
             index += p.ty.parameter_slots();
+            plan.current_span = p.span;
             let binding = plan.local_binding(
                 &p.name,
                 Binding {
@@ -1758,6 +1762,7 @@ impl FunctionPlan {
                     place: None,
                 },
             )?;
+            plan.current_span = f.span;
             if vars.insert(p.name.clone(), binding).is_some() {
                 return Err(type_error(
                     &f.span,

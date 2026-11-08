@@ -781,3 +781,69 @@ fn unicode_source_controls_have_visible_diagnostics_and_explicit_literal_values(
     );
     work.assert_all_backends("main.jk", &[], b"", 42);
 }
+
+#[test]
+fn ownership_diagnostics_render_related_locations_from_imported_sources() {
+    let work = Workspace::new();
+    work.write("main.jk", "import app/bad\nfn main() { bad.fail() }");
+    // All three ranges must use the imported source, including BOM/UTF-8/CRLF offsets.
+    work.write(
+        "app/bad.jk",
+        "\u{feff}// Unicode source\r\npub fn fail() {\r\n    let 文本 = \"hello\"\r\n    let moved = 文本\r\n    println(文本)\r\n    println(moved)\r\n}\r\n",
+    );
+    for args in [
+        vec!["check", "main.jk"],
+        vec!["run", "main.jk"],
+        vec!["run", "--interpreter", "main.jk"],
+        vec!["build", "main.jk", "-o", "program"],
+    ] {
+        let output = work.cli(&args);
+        failure(&output, "app/bad.jk:5");
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        for expected in [
+            "let 文本 = \"hello\"",
+            "let moved = 文本",
+            "println(文本)",
+            "`文本` declared here",
+            "`文本` moved or consumed here",
+            "`文本` used again here",
+            "`&文本`",
+            "`文本.clone()`",
+        ] {
+            assert!(diagnostic.contains(expected), "{args:?}: {diagnostic}");
+        }
+        assert_eq!(
+            diagnostic
+                .matches("Use of a moved or uninitialized owning value")
+                .count(),
+            1
+        );
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn ownership_diagnostic_repairs_execute_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "repairs.jk",
+        r#"
+fn read(text: &String) { assert(text.byte_length() == 5, "borrowed contents") }
+fn consume(text: String) { assert(text.byte_length() == 5, "owned contents") }
+fn main() {
+    let text = "hello"
+    read(&text)
+    let independent = text.clone()
+    consume(independent)
+    var renewed = "hello"
+    consume(renewed)
+    renewed = "hello"
+    read(&renewed)
+    consume(renewed)
+    println(text)
+}
+"#,
+    );
+    work.assert_all_backends("repairs.jk", &[], b"hello\n", 0);
+}

@@ -120,9 +120,18 @@ pub struct RuntimeFrame {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct ErrorTrace {
+struct ErrorDetails {
     interpreter: Vec<RuntimeFrame>,
     native_call_sites: Vec<Span>,
+    labels: Vec<ErrorLabel>,
+    help: Vec<String>,
+}
+
+/// An additional source location explaining a compiler diagnostic.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ErrorLabel {
+    pub span: Span,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -133,7 +142,7 @@ pub struct Error {
     message: String,
     line: Option<usize>,
     span: Option<Span>,
-    trace: Option<Box<ErrorTrace>>,
+    details: Option<Box<ErrorDetails>>,
 }
 
 impl Error {
@@ -145,7 +154,7 @@ impl Error {
             message: message.into(),
             line: None,
             span: None,
-            trace: None,
+            details: None,
         }
     }
 
@@ -157,7 +166,7 @@ impl Error {
             message: message.into(),
             line: None,
             span: None,
-            trace: None,
+            details: None,
         }
     }
 
@@ -200,22 +209,53 @@ impl Error {
         self.span
     }
 
+    /// Related declaration, move, or other explanatory source locations.
+    pub fn labels(&self) -> &[ErrorLabel] {
+        self.details.as_ref().map_or(&[], |context| &context.labels)
+    }
+
+    /// Conditional repair guidance, without implying an automatically applicable edit.
+    pub fn help(&self) -> &[String] {
+        self.details.as_ref().map_or(&[], |context| &context.help)
+    }
+
+    pub(crate) fn with_label(mut self, span: Span, message: impl Into<String>) -> Self {
+        self.details
+            .get_or_insert_with(Default::default)
+            .labels
+            .push(ErrorLabel {
+                span,
+                message: message.into(),
+            });
+        self
+    }
+
+    pub(crate) fn with_help(mut self, message: impl Into<String>) -> Self {
+        self.details
+            .get_or_insert_with(Default::default)
+            .help
+            .push(message.into());
+        self
+    }
+
     /// Interpreter activations, innermost first; empty for errors without a trace.
     /// Spans refer to the failing module version's source, including after reload.
     pub fn runtime_trace(&self) -> &[RuntimeFrame] {
-        self.trace.as_ref().map_or(&[], |trace| &trace.interpreter)
+        self.details
+            .as_ref()
+            .map_or(&[], |trace| &trace.interpreter)
     }
 
     /// Source call sites recorded as failures propagate through native synchronous
     /// calls, innermost first. These carry no bytecode PCs or native stack frames.
     pub fn native_call_sites(&self) -> &[Span] {
-        self.trace
+        self.details
             .as_ref()
             .map_or(&[], |trace| &trace.native_call_sites)
     }
 
     pub(crate) fn push_native_call_site(&mut self, span: Span) {
-        self.trace
+        self.details
             .get_or_insert_with(Default::default)
             .native_call_sites
             .push(span);
@@ -225,7 +265,7 @@ impl Error {
         if self.span.is_none() {
             self.span = Some(frame.span);
         }
-        self.trace
+        self.details
             .get_or_insert_with(Default::default)
             .interpreter
             .push(frame);

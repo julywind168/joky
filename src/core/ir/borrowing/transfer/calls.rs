@@ -253,7 +253,7 @@ impl Instruction<'_> {
                     state.arena_retained.remove(&root);
                 }
             }
-            state.get_mut(&arg.index).unwrap().invalid = true;
+            state.get_mut(&arg.index).unwrap().invalidate(self.pc);
         }
         Ok(())
     }

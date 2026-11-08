@@ -39,17 +39,7 @@ impl Instruction<'_> {
         let value = state
             .get(&slot.index)
             .filter(|v| !v.invalid)
-            .ok_or_else(|| {
-                type_error(
-                    self.span(),
-                    ErrorCode::InvalidAssignment,
-                    if slot.ty.is_owner() {
-                        "Use of a moved or uninitialized owning value"
-                    } else {
-                        "Use of a moved, sealed or uninitialized exclusive reference"
-                    },
-                )
-            })?;
+            .ok_or_else(|| self.unavailable_value(slot, state))?;
         let projection;
         let value = if path.is_empty() {
             value
@@ -142,6 +132,46 @@ impl Instruction<'_> {
         }
         Ok(())
     }
+    fn unavailable_value(&self, slot: &Slot, state: &State) -> Error {
+        let mut error = type_error(
+            self.span(),
+            ErrorCode::InvalidAssignment,
+            if slot.ty.is_owner() {
+                "Use of a moved or uninitialized owning value"
+            } else {
+                "Use of a moved, sealed or uninitialized exclusive reference"
+            },
+        );
+        if !slot.ty.is_owner() {
+            return error;
+        }
+        let binding = self.facts.plan.diagnostic_bindings.get(&slot.index);
+        if let Some((name, declaration, _)) = binding {
+            error = error.with_label(*declaration, format!("`{name}` declared here"));
+        }
+        if let Some(pc) = state
+            .get(&slot.index)
+            .and_then(|value| value.invalidated_at)
+        {
+            let moved = self.facts.plan.ops.spans()[pc];
+            let name = binding.map_or("This value".to_owned(), |(name, _, _)| format!("`{name}`"));
+            let context = if pc >= self.pc {
+                "in a previous loop iteration"
+            } else {
+                "on a path reaching this use"
+            };
+            error = error.with_label(moved, format!("{name} moved or consumed here {context}"));
+            if let Some((name, _, ty)) = binding {
+                error = error.with_label(*self.span(), format!("`{name}` used again here"));
+                error = error.with_help(format!("If the earlier operation only reads the value, consider `&{name}` and a reference-accepting parameter or binding instead of transferring ownership."));
+                if *ty == Type::String {
+                    error = error.with_help(format!("If an independent String is needed, use `{name}.clone()` at the earlier move; cloning allocates a new string."));
+                }
+            }
+        }
+        error
+    }
+
     pub(super) fn check_storage(&self, slot: &Slot, state: &State) -> Result<(), Error> {
         self.record_escape(state.get(&slot.index), false);
         if self.facts.escaped.is_none()

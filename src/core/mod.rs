@@ -22,7 +22,7 @@ pub(crate) mod state_domain;
 pub mod types;
 pub(crate) mod vm;
 
-pub use error::{Error, ErrorCode, ErrorPhase, RuntimeFrame};
+pub use error::{Error, ErrorCode, ErrorLabel, ErrorPhase, RuntimeFrame};
 pub use signature::{EntryAbi, FunctionSignature};
 pub use span::Span;
 pub use types::Type;

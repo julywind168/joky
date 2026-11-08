@@ -155,7 +155,7 @@ impl Instruction<'_> {
                     for member in members {
                         let contents = state[&member.index].clone();
                         retain(&mut state.retained, (loan, member.index), contents, false);
-                        state.get_mut(&member.index).unwrap().invalid = true;
+                        state.get_mut(&member.index).unwrap().invalidate(self.pc);
                     }
                     state.insert(dst.index, value);
                 }
@@ -227,7 +227,7 @@ impl Instruction<'_> {
                 let mut value = state[&src.index].clone();
                 if *moving {
                     if src.ty.reference_type().unwrap().mutable && dst.index != src.index {
-                        state.get_mut(&src.index).unwrap().invalid = true;
+                        state.get_mut(&src.index).unwrap().invalidate(self.pc);
                     }
                 } else {
                     value.ancestors.extend(&value.loans);
@@ -236,7 +236,7 @@ impl Instruction<'_> {
                 if !exclusive && self.facts.construction.contains(&src.index) {
                     for (&index, alias) in std::rc::Rc::make_mut(&mut state.slots) {
                         if self.facts.construction.contains(&index) && alias.overlaps(&value) {
-                            alias.invalid = true;
+                            alias.invalidate(self.pc);
                         }
                     }
                 }
@@ -271,7 +271,7 @@ impl Instruction<'_> {
 
                 for value in std::rc::Rc::make_mut(&mut state.slots).values_mut() {
                     if value.has_root(&roots) {
-                        value.invalid = true;
+                        value.invalidate(self.pc);
                     }
                 }
             }
@@ -283,7 +283,7 @@ impl Instruction<'_> {
                         // Callable moves preserve capture origins, but end the old
                         // abstract value just like concrete environment moves.
                         if src.index != dst.index && !src.ty.is_copy_value() {
-                            state.get_mut(&src.index).unwrap().invalid = true;
+                            state.get_mut(&src.index).unwrap().invalidate(self.pc);
                         }
                     }
                 }
@@ -320,7 +320,7 @@ impl Instruction<'_> {
                     self.check_access(reference, true, state, self.live, None, &[])?;
                     for input in value.iter().flat_map(refs) {
                         self.check_access(&input, true, state, self.live, None, &[])?;
-                        state.get_mut(&input.index).unwrap().invalid = true;
+                        state.get_mut(&input.index).unwrap().invalidate(self.pc);
                     }
                 }
                 PlaceOp::Copy { dst, src } | PlaceOp::MoveInit { dst, src, .. }
@@ -331,7 +331,7 @@ impl Instruction<'_> {
                             self.check_access(dst, true, state, alive, Some(src.index), &[])?;
                         }
                         self.check_access(src, true, state, alive, Some(dst.index), &[])?;
-                        state.get_mut(&src.index).unwrap().invalid = true;
+                        state.get_mut(&src.index).unwrap().invalidate(self.pc);
                         state.insert(
                             dst.index,
                             Reference {
@@ -357,7 +357,7 @@ impl Instruction<'_> {
                 PlaceOp::End(dst) if dst.ty.is_owner() => {
                     if state.get(&dst.index).is_some_and(|v| !v.invalid) {
                         self.check_access(dst, true, state, alive, None, &[])?;
-                        state.get_mut(&dst.index).unwrap().invalid = true;
+                        state.get_mut(&dst.index).unwrap().invalidate(self.pc);
                     }
                 }
                 PlaceOp::Read { dst, reference, .. } if dst.ty.is_owner() => {
@@ -383,7 +383,7 @@ impl Instruction<'_> {
                     self.check_access(reference, true, state, alive, Some(value.index), &[])?;
                     for value in refs(value) {
                         self.check_access(&value, true, state, alive, Some(reference.index), &[])?;
-                        state.get_mut(&value.index).unwrap().invalid = true;
+                        state.get_mut(&value.index).unwrap().invalidate(self.pc);
                     }
                 }
                 PlaceOp::Load { reference, .. } => {

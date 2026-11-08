@@ -45,12 +45,18 @@ struct Reference {
     loans: Set,
     ancestors: Set,
     invalid: bool,
+    /// One deterministic invalidating instruction, for diagnostics only.
+    invalidated_at: Option<usize>,
     /// This loan addresses reclaimable owner storage, even if its type is &Int32.
     storage: bool,
     /// Derived from element/Slice storage rather than a stable owning object.
     interior: bool,
 }
 impl Reference {
+    fn invalidate(&mut self, pc: usize) {
+        self.invalid = true;
+        self.invalidated_at = Some(self.invalidated_at.map_or(pc, |old| old.min(pc)));
+    }
     fn has_root(&self, roots: &Set) -> bool {
         self.origins
             .iter()
@@ -439,6 +445,7 @@ fn merge(target: &mut Reference, value: &Reference) -> bool {
         target.loans.len(),
         target.ancestors.len(),
         target.invalid,
+        target.invalidated_at,
         target.storage,
         target.interior,
     );
@@ -450,6 +457,9 @@ fn merge(target: &mut Reference, value: &Reference) -> bool {
         .ancestors
         .retain(|loan| value.ancestors.contains(loan));
     target.invalid |= value.invalid;
+    if let Some(pc) = value.invalidated_at {
+        target.invalidated_at = Some(target.invalidated_at.map_or(pc, |old| old.min(pc)));
+    }
     target.storage |= value.storage;
     target.interior |= value.interior;
     // Unions only grow, ancestry intersection only shrinks, and flags only set.
@@ -460,6 +470,7 @@ fn merge(target: &mut Reference, value: &Reference) -> bool {
             target.loans.len(),
             target.ancestors.len(),
             target.invalid,
+            target.invalidated_at,
             target.storage,
             target.interior,
         )

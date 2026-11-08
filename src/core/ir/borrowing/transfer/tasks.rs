@@ -124,7 +124,7 @@ impl Instruction<'_> {
                     .flat_map(refs)
                     .filter(|arg| arg.ty == Type::String || arg.ty.is_suspend_safe_owner())
                 {
-                    state.get_mut(&arg.index).unwrap().invalid = true;
+                    state.get_mut(&arg.index).unwrap().invalidate(self.pc);
                 }
             }
             // A dynamic branch registration snapshots its captures here while
@@ -202,7 +202,7 @@ impl Instruction<'_> {
                     .iter()
                     .filter(|c| c.ty == Type::String || c.ty.is_suspend_safe_owner())
                 {
-                    state.get_mut(&capture.index).unwrap().invalid = true;
+                    state.get_mut(&capture.index).unwrap().invalidate(self.pc);
                 }
             }
             // Joining ends the scope's child-task loans on every path through

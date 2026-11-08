@@ -76,7 +76,7 @@ impl Instruction<'_> {
                 // Reclaiming buffer storage never revokes copied content
                 // references: their shared loans remain until the root ends.
                 for arg in args.iter().filter(|arg| arg.ty.is_owner()).flat_map(refs) {
-                    state.get_mut(&arg.index).unwrap().invalid = true;
+                    state.get_mut(&arg.index).unwrap().invalidate(self.pc);
                 }
                 for dst in dst.iter().flat_map(refs) {
                     state.insert(dst.index, result.clone());
@@ -142,7 +142,7 @@ impl Instruction<'_> {
                     let mut value = state[&src.index].clone();
                     let contents = buffer_contents(state, &src);
                     if dst.index != src.index {
-                        state.get_mut(&src.index).unwrap().invalid = true;
+                        state.get_mut(&src.index).unwrap().invalidate(self.pc);
                         if dst.ty.is_owner() {
                             if dst.ty.is_explicit_arena() {
                                 let roots =
@@ -227,7 +227,7 @@ impl Instruction<'_> {
                                 state.arena_retained.remove(&root);
                             }
                         }
-                        state.get_mut(&owner.index).unwrap().invalid = true;
+                        state.get_mut(&owner.index).unwrap().invalidate(self.pc);
                     }
                 }
             }
@@ -274,7 +274,7 @@ impl Instruction<'_> {
                 // Record projections consume the whole source; tuple patterns
                 // detach each leaf through Detach and end the remainder after.
                 for input in refs(consumed) {
-                    state.get_mut(&input.index).unwrap().invalid = true;
+                    state.get_mut(&input.index).unwrap().invalidate(self.pc);
                 }
                 for (index, dst) in outputs.into_iter().enumerate() {
                     let value = values[if owner.ty.is_place() { 0 } else { index }].clone();
@@ -294,7 +294,7 @@ impl Instruction<'_> {
                     .map(|slot| (state[&slot.index].clone(), buffer_contents(state, slot)))
                     .collect();
                 for input in refs(src) {
-                    state.get_mut(&input.index).unwrap().invalid = true;
+                    state.get_mut(&input.index).unwrap().invalidate(self.pc);
                 }
                 for (dst, (mut value, contents)) in refs(dst).into_iter().zip(values) {
                     if dst.ty.is_owner() {
@@ -324,12 +324,12 @@ impl Instruction<'_> {
                 }
                 if owner.ty.is_place() {
                     for input in refs(src) {
-                        state.get_mut(&input.index).unwrap().invalid = true;
+                        state.get_mut(&input.index).unwrap().invalidate(self.pc);
                     }
                 } else {
                     for (dst, src) in refs(dst).into_iter().zip(refs(src)) {
                         let value = state[&src.index].clone();
-                        state.get_mut(&src.index).unwrap().invalid = true;
+                        state.get_mut(&src.index).unwrap().invalidate(self.pc);
                         state.insert(dst.index, value);
                     }
                 }
