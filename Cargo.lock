@@ -889,6 +889,7 @@ version = "0.1.0"
 dependencies = [
  "argon2",
  "ariadne",
+ "concolor",
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",

@@ -75,10 +75,44 @@ fn run_can_select_the_interpreter_without_a_c_compiler() {
                 lines[2].starts_with("Running hello.jk (compiled in "),
                 "{stderr}"
             );
-            assert!(lines[2].contains("; startup "), "{stderr}");
+            assert!(!stderr.contains("startup"), "{stderr}");
         } else {
             assert!(output.stderr.is_empty());
         }
+    }
+}
+
+#[test]
+fn run_progress_colors_only_status_words_and_respects_no_color() {
+    let work = Workspace::new();
+    work.write("hello.jk", include_str!("../../examples/hello.jk"));
+    for colored in [true, false] {
+        let mut command = work.command();
+        command.args(["run", "--verbose", "hello.jk"]);
+        if colored {
+            command.env_remove("NO_COLOR").env("CLICOLOR_FORCE", "1");
+        } else {
+            command.env("NO_COLOR", "1").env_remove("CLICOLOR_FORCE");
+        }
+        let output = command.output().unwrap();
+        success(&output);
+        assert_eq!(output.stdout, b"42\n");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let lines: Vec<_> = stderr.lines().collect();
+        assert_eq!(lines.len(), 3, "{stderr}");
+        for (line, action) in lines.iter().zip(["Loading", "Compiling", "Running"]) {
+            let prefix = if colored {
+                format!("\x1b[1;32m{action:>10}\x1b[0m ")
+            } else {
+                format!("{action:>10} ")
+            };
+            let details = line.strip_prefix(&prefix).expect("styled status prefix");
+            assert!(details.starts_with("hello.jk"), "{stderr}");
+            assert!(!details.contains('\x1b'), "{stderr}");
+        }
+        assert!(lines[1].contains("JIT; loaded in "), "{stderr}");
+        assert!(lines[2].contains("compiled in "), "{stderr}");
+        assert!(!stderr.contains("startup"), "{stderr}");
     }
 }
 
