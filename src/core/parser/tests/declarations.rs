@@ -203,7 +203,7 @@ fn every_declarations_parse_literal_periods_and_reject_invalid_attributes() {
 
 #[test]
 fn test_declarations_validate_signatures_and_preserve_formatting() {
-    let source = "#test\nfn checks_value() {}\n#test\npub fn suspends() @suspends {}\n";
+    let source = "#test\nfn checks_value() {}\n\n#test\npub fn suspends() @suspends {}\n";
     let module = parse(source).unwrap();
     assert!(module
         .items
