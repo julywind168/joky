@@ -596,8 +596,10 @@ impl Parser<'_> {
         }
         let empty = self.peek() == &TokenKind::OrOr;
         if empty {
+            self.format_role(format::Role::EmptyClosure);
             self.advance();
         } else {
+            self.format_role(format::Role::ClosureOpen);
             self.expect(&TokenKind::Pipe)?;
         }
         let mut params = Vec::new();
@@ -635,6 +637,7 @@ impl Parser<'_> {
             }
         }
         if !empty {
+            self.format_role(format::Role::ClosureClose);
             self.expect(&TokenKind::Pipe)?;
         }
         let (suspends, noescape, names) = self.parse_fn_attrs()?;

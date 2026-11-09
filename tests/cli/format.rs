@@ -22,7 +22,7 @@ fn stdin(work: &Workspace, flags: &[&str], source: &[u8]) -> std::process::Outpu
 fn fmt_cli_stdin_and_check_do_not_execute_or_resolve_imports() {
     let work = Workspace::new();
     let source = "import missing/module\nfn f(){unknown()}";
-    let expected = b"import missing/module\nfn f() { unknown() }\n";
+    let expected = b"import missing/module\nfn f() {\n    unknown()\n}\n";
     let output = stdin(&work, &[], source.as_bytes());
     success(&output);
     assert_eq!(output.stdout, expected);
@@ -54,7 +54,7 @@ fn fmt_cli_file_check_write_and_errors_preserve_source() {
     success(&work.cli(&["fmt", "--", "-sample file.jk"]));
     assert_eq!(
         std::fs::read_to_string(work.path().join("-sample file.jk")).unwrap(),
-        "fn f() { let n = 1 }\n"
+        "fn f() {\n    let n = 1\n}\n"
     );
     success(&work.cli(&["fmt", "--check", "--", "-sample file.jk"]));
     let broken = "fn f(  {";
@@ -117,16 +117,27 @@ fn fmt_cli_formatted_program_preserves_behavior_on_all_backends() {
     work.write(
         "program.jk",
         concat!(
+            "fn choose(value:Bool)->Int32{match value{true=>1;2,false=>3}}\n",
+            "fn identity<T:Copy>(value:T)->T{value}\n",
+            "fn discard(){42;}\n",
             "fn main(){\nlet n=5\n-2;\nprintln(n)\n",
             "let text=\"\"\"\n  n={n}\n  \"\"\"\nprintln(text)\n",
             "println(r#\"{raw} \\n\"#)\n",
             "/* nested /* } */ comment */\n",
-            "var total=2\ntotal=total*-3\nprintln(total)\n}\n",
+            "var total=2\ntotal=total*-3\nprintln(total)\n",
+            "let half=|value:Int32|{value/2}\nprintln(half(8))\n",
+            "let amount=10+\n20\nprintln(amount)\n",
+            "println(choose(true))\nprintln(identity::<Int32>(8))\ndiscard()\n}\n",
         ),
     );
     success(&work.cli(&["fmt", "program.jk"]));
     success(&work.cli(&["fmt", "--check", "program.jk"]));
-    work.assert_all_backends("program.jk", &[], b"5\nn=5\n{raw} \\n\n-6\n", 0);
+    work.assert_all_backends(
+        "program.jk",
+        &[],
+        b"5\nn=5\n{raw} \\n\n-6\n4\n30\n2\n8\n",
+        0,
+    );
 }
 
 #[test]
@@ -151,7 +162,7 @@ fn fmt_projects_select_own_sources_without_resolving_dependencies_or_entries() {
     success(&work.cli(&["fmt", "app/joky.toml"]));
     assert_eq!(
         std::fs::read_to_string(work.path().join("app/src/a.jk")).unwrap(),
-        "fn a() { unknown() }\n"
+        "fn a() {\n    unknown()\n}\n"
     );
     success(
         &work

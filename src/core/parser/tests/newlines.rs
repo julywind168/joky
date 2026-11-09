@@ -159,7 +159,7 @@ fn physical_newlines_and_initial_bom_preserve_original_spans() {
         assert_eq!(Span::empty(3).line_column(&source), (1, 1));
 
         let source = format!("\u{feff}fn main(){{// 注{newline}42}}");
-        let expected = format!("\u{feff}fn main() {{ // 注{newline}    42 }}{newline}");
+        let expected = format!("\u{feff}fn main() {{ // 注{newline}    42{newline}}}{newline}");
         assert_eq!(crate::parser::format(&source).unwrap(), expected);
         assert_eq!(crate::parser::format(&expected).unwrap(), expected);
     }

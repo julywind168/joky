@@ -218,6 +218,7 @@ impl Parser<'_> {
         self.advance();
         let mut path = self.expect_ident()?;
         while self.peek() == &TokenKind::Slash {
+            self.format_role(format::Role::ImportSlash);
             self.advance();
             path.push('/');
             path.push_str(&self.expect_ident()?);
@@ -226,6 +227,7 @@ impl Parser<'_> {
         let mut members = Vec::new();
         if self.peek() == &TokenKind::Dot {
             self.advance();
+            self.format_role(format::Role::ImportOpen);
             self.expect(&TokenKind::LBrace)?;
             while self.peek() != &TokenKind::RBrace {
                 let member_start = self.peek_span().start();
@@ -249,6 +251,7 @@ impl Parser<'_> {
                     return Err(self.error("Expected ',' or '}' in import member list".into()));
                 }
             }
+            self.format_role(format::Role::ImportClose);
             self.expect(&TokenKind::RBrace)?;
         }
         if alias.is_none() {

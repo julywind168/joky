@@ -153,6 +153,7 @@ impl Parser<'_> {
         ) {
             let negative = self.peek() == &TokenKind::Minus;
             if negative {
+                self.format_role(format::Role::Prefix);
                 self.advance();
             }
             let literal = match self.peek().clone() {
@@ -175,6 +176,7 @@ impl Parser<'_> {
                 self.advance();
                 let negative = self.peek() == &TokenKind::Minus;
                 if negative {
+                    self.format_role(format::Role::Prefix);
                     self.advance();
                 }
                 let TokenKind::IntLit(magnitude) = self.peek().clone() else {

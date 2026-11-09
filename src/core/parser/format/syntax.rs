@@ -1,0 +1,408 @@
+//! Source roles and a position-independent parse shape. Neither depends on types
+//! being resolved, generated declaration identities, or debug representations.
+use super::{is_close, is_open, Role};
+use crate::core::parser::{
+    ast::{Expr, FnDef, Item, Module},
+    lexer::{Lexer, Token, TokenKind},
+    Diagnostic, Parser,
+};
+use crate::Span;
+use std::{collections::BTreeMap, mem::Discriminant, ops::Range};
+
+pub(super) struct Syntax {
+    pub tokens: Vec<Token>,
+    pub roles: Vec<Role>,
+    pub pairs: Vec<Option<usize>>,
+    pub break_after: Vec<bool>,
+    pub continuation: Vec<bool>,
+    pub anchors: Vec<Option<usize>>,
+    shape: Shape,
+}
+
+#[derive(Default, PartialEq, Eq)]
+struct Shape {
+    declarations: Vec<Declaration>,
+    expressions: Vec<Expression>,
+}
+
+#[derive(PartialEq, Eq)]
+struct Declaration {
+    kind: &'static str,
+    range: Range<usize>,
+    parts: Vec<Range<usize>>,
+}
+
+#[derive(PartialEq, Eq)]
+struct Expression {
+    kind: Discriminant<Expr>,
+    range: Range<usize>,
+    children: usize,
+    trailing: bool,
+}
+
+impl Syntax {
+    pub fn parse(source: &str) -> Result<Self, Diagnostic> {
+        let raw = Lexer::tokenize(source)?;
+        let mut parser = Parser::new(raw.clone(), source);
+        parser.formatting = Some(Vec::new());
+        let module = parser.parse_module()?;
+        let hints: BTreeMap<_, _> = parser
+            .formatting
+            .take()
+            .unwrap()
+            .into_iter()
+            .map(|(span, role)| (span.start(), role))
+            .collect();
+        let tokens = split_type_delimiters(source, raw, &hints);
+        let roles: Vec<_> = tokens
+            .iter()
+            .map(|token| hints.get(&token.span.start()).copied().unwrap_or_default())
+            .collect();
+        let mut syntax = Self {
+            pairs: vec![None; tokens.len()],
+            break_after: vec![false; tokens.len()],
+            continuation: vec![false; tokens.len()],
+            anchors: vec![None; tokens.len()],
+            tokens,
+            roles,
+            shape: Shape::default(),
+        };
+        let mut stack = Vec::new();
+        let mut depths = vec![0; syntax.tokens.len()];
+        for (i, token) in syntax.tokens.iter().enumerate() {
+            if is_close(&token.kind, syntax.roles[i]) {
+                if let Some(open) = stack.pop() {
+                    syntax.pairs[open] = Some(i);
+                    syntax.pairs[i] = Some(open);
+                }
+            }
+            depths[i] = stack.len();
+            if is_open(&token.kind, syntax.roles[i]) {
+                stack.push(i);
+            }
+        }
+        syntax.declarations(&module);
+        for root in module.expression_roots() {
+            // Include root boundaries so moving an expression between declarations
+            // cannot be hidden by flattening the pre-order traversal.
+            syntax.shape.declarations.push(Declaration {
+                kind: "expression root",
+                range: syntax.range(root.span()),
+                parts: Vec::new(),
+            });
+            let mut pending = vec![root];
+            while let Some(expr) = pending.pop() {
+                let children = expr.children();
+                let range = syntax.range(expr.span());
+                syntax.shape.expressions.push(Expression {
+                    kind: std::mem::discriminant(expr),
+                    range: range.clone(),
+                    children: children.len(),
+                    trailing: matches!(expr, Expr::Sequence { trailing: true, .. }),
+                });
+                match expr {
+                    Expr::Block { span, .. } => {
+                        syntax.braces(*span, Role::BlockOpen, true);
+                    }
+                    Expr::Unsafe { span, .. } | Expr::Graph { span, .. } => {
+                        syntax.braces(*span, Role::BlockOpen, false);
+                    }
+                    Expr::Concurrent { span, .. }
+                    | Expr::Match {
+                        conditional: false,
+                        iteration: false,
+                        span,
+                        ..
+                    } => {
+                        syntax.braces(*span, Role::ArmsOpen, false);
+                    }
+                    _ => {}
+                }
+                match expr {
+                    Expr::If {
+                        then_branch,
+                        else_branch,
+                        span,
+                        ..
+                    } => {
+                        syntax.anchor(then_branch, *span);
+                        if let Some(body) = else_branch {
+                            syntax.anchor(body, *span);
+                        }
+                    }
+                    Expr::IfChain {
+                        arms,
+                        fallback,
+                        span,
+                    } => {
+                        for (_, body) in arms {
+                            syntax.anchor(body, *span);
+                        }
+                        if let Some(body) = fallback {
+                            syntax.anchor(body, *span);
+                        }
+                    }
+                    Expr::While { body, span, .. }
+                    | Expr::Isolate { body, span }
+                    | Expr::TaskScope { body, span }
+                    | Expr::Branch { body, span } => syntax.anchor(body, *span),
+                    Expr::AnonymousFunction(f) => syntax.anchor(&f.body, f.span),
+                    Expr::IndexedLoop(loop_) => syntax.anchor(&loop_.body, loop_.span),
+                    Expr::Match {
+                        arms,
+                        span,
+                        conditional,
+                        ..
+                    } => {
+                        for arm in arms {
+                            syntax.anchor(
+                                &arm.body,
+                                if *conditional {
+                                    *span
+                                } else {
+                                    arm.pattern.span()
+                                },
+                            );
+                        }
+                    }
+                    Expr::When(w) => {
+                        syntax.anchor(&w.body, w.span);
+                        for body in w.missing.iter().chain(w.alias.iter()) {
+                            syntax.anchor(body, w.span);
+                        }
+                    }
+                    _ => {}
+                }
+                if matches!(
+                    expr,
+                    Expr::Let { .. }
+                        | Expr::Var { .. }
+                        | Expr::Assign { .. }
+                        | Expr::Destructure { .. }
+                        | Expr::FieldAssign { .. }
+                        | Expr::BinOp { .. }
+                        | Expr::BinaryChain { .. }
+                        | Expr::Logical { .. }
+                        | Expr::Unary { .. }
+                        | Expr::Call { .. }
+                        | Expr::Invoke { .. }
+                        | Expr::MethodCall(_)
+                        | Expr::Field { .. }
+                        | Expr::Index { .. }
+                        | Expr::Return { .. }
+                ) && !range.is_empty()
+                {
+                    for i in range.start + 1..range.end {
+                        if depths[i] == depths[range.start]
+                            && !is_close(&syntax.tokens[i].kind, syntax.roles[i])
+                        {
+                            syntax.continuation[i] = true;
+                        }
+                    }
+                }
+                pending.extend(children.into_iter().rev());
+            }
+        }
+        Ok(syntax)
+    }
+
+    pub fn same_structure(&self, other: &Self) -> bool {
+        self.roles == other.roles && self.shape == other.shape
+    }
+
+    fn range(&self, span: Span) -> Range<usize> {
+        let start = self
+            .tokens
+            .partition_point(|t| t.span.end() <= span.start());
+        let end = self.tokens.partition_point(|t| t.span.start() < span.end());
+        start.min(end)..end
+    }
+
+    fn declaration(&mut self, kind: &'static str, span: Span, parts: impl Iterator<Item = Span>) {
+        let range = self.range(span);
+        if !range.is_empty() {
+            self.break_after[range.end - 1] = true;
+        }
+        self.shape.declarations.push(Declaration {
+            kind,
+            range,
+            parts: parts.map(|span| self.range(span)).collect(),
+        });
+    }
+
+    fn function(&mut self, f: &FnDef) {
+        self.declaration("function", f.span, f.params.iter().map(|p| p.span));
+        self.anchor(&f.body, f.span);
+    }
+
+    fn declarations(&mut self, module: &Module) {
+        for import in &module.imports {
+            // The parser also inserts imports for desugared language features.
+            let range = self.range(import.span);
+            if self
+                .tokens
+                .get(range.start)
+                .is_some_and(|t| t.kind == TokenKind::Import)
+            {
+                self.declaration("import", import.span, import.members.iter().map(|m| m.span));
+            }
+        }
+        for item in &module.items {
+            match item {
+                Item::FnDef(f) => self.function(f),
+                Item::ExternFn(f) => {
+                    self.declaration("extern", f.span, f.params.iter().map(|p| p.span));
+                }
+            }
+        }
+        for record in &module.records {
+            self.declaration("record", record.span, record.fields.iter().map(|p| p.span));
+        }
+        for enumeration in &module.enums {
+            self.declaration(
+                "enum",
+                enumeration.span,
+                enumeration.variants.iter().map(|v| v.span),
+            );
+        }
+        for alias in &module.type_aliases {
+            self.declaration("alias", alias.span, std::iter::once(alias.target_span));
+        }
+        for constant in &module.constants {
+            self.declaration(
+                "constant",
+                constant.span,
+                std::iter::once(constant.value.span()),
+            );
+        }
+        for implementation in &module.implementations {
+            self.declaration("impl", implementation.span, std::iter::empty());
+            self.braces(implementation.span, Role::DeclarationsOpen, false);
+            for method in &implementation.methods {
+                self.function(method);
+            }
+            for ty in &implementation.associated_types {
+                self.declaration("associated type", ty.span, std::iter::once(ty.target_span));
+            }
+            for constant in &implementation.constants {
+                self.declaration(
+                    "associated constant",
+                    constant.span,
+                    std::iter::once(constant.value.span()),
+                );
+            }
+        }
+        for definition in &module.traits {
+            self.declaration("trait", definition.span, std::iter::empty());
+            self.braces(definition.span, Role::DeclarationsOpen, false);
+            for method in &definition.methods {
+                self.declaration(
+                    "trait method",
+                    method.span,
+                    method.params.iter().map(|p| p.span),
+                );
+                if let Some(body) = &method.body {
+                    self.anchor(body, method.span);
+                }
+            }
+            for ty in &definition.associated_types {
+                self.declaration("associated type", ty.span, std::iter::empty());
+            }
+        }
+    }
+
+    fn braces(&mut self, span: Span, role: Role, exact_start: bool) {
+        let range = self.range(span);
+        let Some(close) = range.end.checked_sub(1) else {
+            return;
+        };
+        if self.tokens[close].kind != TokenKind::RBrace {
+            return;
+        }
+        if let Some(open) = self.pairs[close] {
+            // Generated blocks may borrow a containing expression's span. Only
+            // real source braces are allowed to acquire a block layout.
+            if open >= range.start && (!exact_start || open == range.start) {
+                self.roles[open] = role;
+                self.roles[close] = match role {
+                    Role::BlockOpen => Role::BlockClose,
+                    Role::ArmsOpen => Role::ArmsClose,
+                    Role::DeclarationsOpen => Role::DeclarationsClose,
+                    _ => unreachable!(),
+                };
+                if !exact_start && range.start < open {
+                    self.anchors[open] = Some(range.start);
+                }
+            }
+        }
+    }
+
+    /// A block aligns with its header, including when a condition or signature
+    /// ends on an indented continuation line. Desugared loops retain source spans.
+    fn anchor(&mut self, body: &Expr, header: Span) {
+        let range = self.range(body.span());
+        let Some(close) = range.end.checked_sub(1) else {
+            return;
+        };
+        if self.tokens[close].kind == TokenKind::RBrace {
+            if let Some(open) = self.pairs[close] {
+                let anchor = self.range(header).start;
+                if open >= range.start && anchor < open {
+                    self.anchors[open] = Some(anchor);
+                }
+            }
+        }
+    }
+}
+
+/// Treat type punctuation the way the parser consumes it. This permits `> >`
+/// and `>>` to share a canonical spelling without confusing a shift with types.
+fn split_type_delimiters(
+    source: &str,
+    raw: Vec<Token>,
+    hints: &BTreeMap<usize, Role>,
+) -> Vec<Token> {
+    let mut result = Vec::with_capacity(raw.len());
+    for token in raw {
+        let angles: Vec<_> = hints
+            .range(token.span.start()..token.span.end())
+            .filter_map(|(&offset, role)| {
+                matches!(role, Role::TypeOpen | Role::TypeClose).then_some(offset)
+            })
+            .collect();
+        if angles.is_empty() {
+            result.push(token);
+            continue;
+        }
+        let mut cursor = token.span.start();
+        for offset in angles.into_iter().chain(std::iter::once(token.span.end())) {
+            if cursor < offset {
+                result.push(punctuation(source, &token, cursor..offset));
+            }
+            if offset < token.span.end() {
+                result.push(punctuation(source, &token, offset..offset + 1));
+            }
+            cursor = offset + 1;
+        }
+    }
+    result
+}
+
+fn punctuation(source: &str, original: &Token, range: Range<usize>) -> Token {
+    let kind = match &source[range.clone()] {
+        "<" => TokenKind::Lt,
+        ">" => TokenKind::Gt,
+        "=" => TokenKind::Eq,
+        "<<" => TokenKind::Shl,
+        ">>" => TokenKind::Shr,
+        ">=" => TokenKind::Ge,
+        ">>=" => TokenKind::CompoundAssign(crate::parser::ast::BinOp::Shr),
+        _ => unreachable!("only type punctuation is split"),
+    };
+    Token {
+        kind,
+        span: Span::from(range).with_source(original.span.source_id()),
+        line: original.line,
+        end_line: original.end_line,
+    }
+}

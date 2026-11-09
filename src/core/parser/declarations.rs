@@ -12,6 +12,7 @@ impl Parser<'_> {
                 self.advance();
             }
             let borrowed = if self.peek() == &TokenKind::Amp {
+                self.format_role(format::Role::Prefix);
                 self.advance();
                 let mutable = self.peek() == &TokenKind::Mut;
                 if mutable {

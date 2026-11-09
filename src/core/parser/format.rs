@@ -1,104 +1,70 @@
-//! Conservative source formatting over tokens and their original trivia.
-//!
-//! Comments and literals remain verbatim, and no expression newline is moved.
-//! The parser validates input; a second lexical pass guards token boundaries.
-use super::{Diagnostic, Lexer, Parser, Token, TokenKind};
+//! Syntax-aware formatting over original tokens, comments and literal spellings.
+mod layout;
+mod syntax;
+use super::{Diagnostic, Token, TokenKind};
+use syntax::Syntax;
 
-/// Format one syntactically valid module without resolving imports or types.
-///
-/// Uses four-space delimiter indentation and conservative horizontal spacing.
-/// Existing newlines, comments and literal spellings are preserved. In particular,
-/// interpolation bodies and multiline string indentation are not rewritten.
+/// Format valid syntax without resolving imports, checking types or running code.
+/// Nonempty blocks expand, expression continuations indent, and syntax roles
+/// distinguish operators from generic, import and closure punctuation.
 pub fn format(source: &str) -> Result<String, Diagnostic> {
-    let tokens = Lexer::tokenize(source)?;
-    Parser::new(tokens.clone(), source).parse_module()?;
-    let pieces = pieces(source, &tokens);
-    let mut output = String::with_capacity(source.len());
-    if source.starts_with('\u{feff}') {
-        output.push('\u{feff}');
-    }
-    let mut depth = 0usize;
-    let mut previous_token: Option<&Token> = None;
-    let mut previous_prefix = false;
-    for (index, piece) in pieces.iter().enumerate() {
-        let kind = piece.token.map(|token| &token.kind);
-        let prefix = piece.token.is_some_and(|token| {
-            is_prefix(
-                &token.kind,
-                previous_token
-                    .filter(|previous| previous.end_line == token.line)
-                    .map(|previous| &previous.kind),
-            )
-        });
-        let indent = depth.saturating_sub(usize::from(kind.is_some_and(is_close)));
-        copy_line_breaks(piece.gap, &mut output);
-        if index == 0 || output.ends_with(['\r', '\n']) {
-            output.extend(std::iter::repeat_n(' ', indent * 4));
-        } else if let Some(previous) = index.checked_sub(1).map(|i| &pieces[i]) {
-            if space_between(previous, piece, previous_prefix, prefix) {
-                output.push(' ');
-            }
-        }
-        output.push_str(piece.text);
-        if let Some(kind) = kind {
-            if is_close(kind) {
-                depth = depth.saturating_sub(1);
-            } else if matches!(
-                kind,
-                TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket
-            ) {
-                depth += 1;
-            }
-            previous_token = piece.token;
-            previous_prefix = prefix;
-        }
-    }
-    // Preserve trailing blank lines without retaining their horizontal spaces.
-    let trailing = pieces.last().map_or(source, |piece| &source[piece.end..]);
-    copy_line_breaks(trailing, &mut output);
-    if !pieces.is_empty() && !output.ends_with(['\r', '\n']) {
-        let ending = source
-            .find(['\r', '\n'])
-            .map_or("\n", |i| line_ending(&source[i..]));
-        output.push_str(ending);
-    }
-    verify_tokens(source, &tokens, &output)?;
+    let syntax = Syntax::parse(source)?;
+    let pieces = pieces(source, &syntax.tokens);
+    let output = layout::render(source, &syntax, &pieces);
+    verify(source, &syntax, &output)?;
     Ok(output)
 }
 
-fn line_ending(text: &str) -> &str {
-    if text.starts_with("\r\n") {
-        "\r\n"
-    } else {
-        &text[..1]
-    }
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum Role {
+    #[default]
+    Normal,
+    TypeOpen,
+    TypeClose,
+    Prefix,
+    ClosureOpen,
+    ClosureClose,
+    EmptyClosure,
+    ImportSlash,
+    ImportOpen,
+    ImportClose,
+    BlockOpen,
+    BlockClose,
+    ArmsOpen,
+    ArmsClose,
+    DeclarationsOpen,
+    DeclarationsClose,
 }
 
-fn copy_line_breaks(mut gap: &str, output: &mut String) {
-    while let Some(index) = gap.find(['\r', '\n']) {
-        let ending = line_ending(&gap[index..]);
-        // Removing all horizontal space here would merge two lines into a CRLF.
-        if ending == "\n" && output.ends_with('\r') {
-            output.push(' ');
-        }
-        output.push_str(ending);
-        gap = &gap[index + ending.len()..];
-    }
+fn is_open(kind: &TokenKind, role: Role) -> bool {
+    role == Role::TypeOpen
+        || matches!(
+            kind,
+            TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket
+        )
+}
+
+fn is_close(kind: &TokenKind, role: Role) -> bool {
+    role == Role::TypeClose
+        || matches!(
+            kind,
+            TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket
+        )
 }
 
 struct Piece<'a> {
     text: &'a str,
     gap: &'a str,
     end: usize,
-    token: Option<&'a Token>,
+    token: Option<usize>,
 }
 
 /// The lexer has already established that gaps contain only whitespace/comments.
 /// Scan just these gaps, never strings or interpolation, to retain comment bytes.
-fn pieces<'a>(source: &'a str, tokens: &'a [Token]) -> Vec<Piece<'a>> {
+fn pieces<'a>(source: &'a str, tokens: &[Token]) -> Vec<Piece<'a>> {
     let mut result = Vec::new();
     let mut end = 0;
-    for token in tokens {
+    for (index, token) in tokens.iter().enumerate() {
         let start = token.span.start();
         let mut cursor = end;
         while cursor < start {
@@ -139,7 +105,7 @@ fn pieces<'a>(source: &'a str, tokens: &'a [Token]) -> Vec<Piece<'a>> {
                 text: &source[start..token.span.end()],
                 gap: &source[end..start],
                 end: token.span.end(),
-                token: Some(token),
+                token: Some(index),
             });
             end = token.span.end();
         }
@@ -147,140 +113,38 @@ fn pieces<'a>(source: &'a str, tokens: &'a [Token]) -> Vec<Piece<'a>> {
     result
 }
 
-fn is_close(kind: &TokenKind) -> bool {
-    matches!(
-        kind,
-        TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket
-    )
-}
-
-fn ends_operand(kind: &TokenKind) -> bool {
-    matches!(
-        kind,
-        TokenKind::Ident(_)
-            | TokenKind::IntLit(_)
-            | TokenKind::FloatLit(_)
-            | TokenKind::TupleIndex(_)
-            | TokenKind::StrLit(_)
-            | TokenKind::Interpolated(_)
-            | TokenKind::SqlTemplate(_)
-            | TokenKind::CharLit(_)
-            | TokenKind::True
-            | TokenKind::False
-            | TokenKind::RParen
-            | TokenKind::RBracket
-            | TokenKind::RBrace
-            | TokenKind::Question
-            | TokenKind::Bang
-    )
-}
-
-fn is_prefix(kind: &TokenKind, previous: Option<&TokenKind>) -> bool {
-    matches!(
-        kind,
-        TokenKind::Minus | TokenKind::Star | TokenKind::Amp | TokenKind::Bang | TokenKind::Tilde
-    ) && !previous.is_some_and(ends_operand)
-}
-
-fn binary(kind: &TokenKind, prefix: bool) -> bool {
-    !prefix
-        && matches!(
-            kind,
-            TokenKind::Eq
-                | TokenKind::EqEq
-                | TokenKind::Ne
-                | TokenKind::Le
-                | TokenKind::Ge
-                | TokenKind::Plus
-                | TokenKind::Minus
-                | TokenKind::Star
-                | TokenKind::Percent
-                | TokenKind::Amp
-                | TokenKind::Pipe
-                | TokenKind::Caret
-                | TokenKind::AndAnd
-                | TokenKind::OrOr
-                | TokenKind::Arrow
-                | TokenKind::FatArrow
-                | TokenKind::CompoundAssign(_)
-        )
-}
-
-fn space_between(
-    left: &Piece<'_>,
-    right: &Piece<'_>,
-    left_prefix: bool,
-    right_prefix: bool,
-) -> bool {
-    let (Some(left), Some(right_token)) = (left.token, right.token) else {
-        // Keep comments separated from code and one another, including `/* */ /`.
-        return true;
-    };
-    use TokenKind::*;
-    let (a, b) = (&left.kind, &right_token.kind);
-    // Generic brackets vs comparisons/shifts and imports vs division need more
-    // syntax context. Preserve their existing separation rather than guess.
-    if matches!(a, Lt | Gt | Shl | Shr | Slash) || matches!(b, Lt | Gt | Shl | Shr | Slash) {
-        return !right.gap.is_empty();
-    }
-    // Removing this separator can turn member access into a floating literal.
-    if matches!(a, IntLit(_)) && matches!(b, Dot) {
-        return true;
-    }
-    // References must not turn into a single logical-and token.
-    if matches!((a, b), (Amp, Amp)) {
-        return true;
-    }
-    if matches!(
-        b,
-        Comma | Semi | Colon | RParen | RBracket | Dot | ColonColon | Question
-    ) || matches!(a, LParen | LBracket | Dot | ColonColon | At | Hash)
-    {
-        return false;
-    }
-    if matches!((a, b), (LBrace, RBrace)) {
-        return false;
-    }
-    if binary(a, left_prefix) || binary(b, right_prefix) {
-        return true;
-    }
-    if left_prefix || (matches!(b, Bang) && !right_prefix) {
-        return false;
-    }
-    if matches!(b, LParen | LBracket) {
-        return matches!(a, If | While | Match | Return | In | Colon | Comma | Semi)
-            || matches!(a, Ident(name) if name == "when")
-            // A string before parentheses is a when label, not a callee.
-            || matches!((a, b), (StrLit(_), LParen));
-    }
-    true
-}
-
-fn verify_tokens(source: &str, original: &[Token], output: &str) -> Result<(), Diagnostic> {
+fn verify(source: &str, original: &Syntax, output: &str) -> Result<(), Diagnostic> {
     let error = || {
         Diagnostic::at(
             1,
             0..source.len(),
-            "Formatting would change token boundaries; source left unchanged",
+            "Formatting would change source structure; source left unchanged",
         )
     };
-    let formatted = Lexer::tokenize(output).map_err(|_| error())?;
-    if original.len() != formatted.len() {
+    let formatted = Syntax::parse(output).map_err(|_| error())?;
+    if original.tokens.len() != formatted.tokens.len() || !original.same_structure(&formatted) {
         return Err(error());
     }
-    for (before, after) in original.iter().zip(&formatted) {
-        if before.kind == TokenKind::Eof {
-            continue;
-        }
-        if std::mem::discriminant(&before.kind) != std::mem::discriminant(&after.kind)
-            || before.span.slice(source) != after.span.slice(output)
-            || before.line != after.line
-            || before.end_line != after.end_line
+    for (before, after) in original.tokens.iter().zip(&formatted.tokens) {
+        if before.kind != TokenKind::Eof
+            && (std::mem::discriminant(&before.kind) != std::mem::discriminant(&after.kind)
+                || before.span.slice(source) != after.span.slice(output))
         {
             return Err(error());
         }
     }
+    if comments(source, &original.tokens) != comments(output, &formatted.tokens) {
+        return Err(error());
+    }
     Ok(())
+}
+
+fn comments<'a>(source: &'a str, tokens: &[Token]) -> Vec<&'a str> {
+    pieces(source, tokens)
+        .into_iter()
+        .filter(|piece| piece.token.is_none())
+        .map(|piece| piece.text)
+        .collect()
 }
 
 #[cfg(test)]

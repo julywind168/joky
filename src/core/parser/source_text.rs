@@ -98,7 +98,10 @@ mod tests {
                 rejects(&text.replace('@', &ch.to_string()), ch);
             }
             let text = format!("fn f() {{ r#\"{ch}\"# }}\n");
-            assert_eq!(format(&text).unwrap(), text);
+            assert_eq!(
+                format(&text).unwrap(),
+                format!("fn f() {{\n    r#\"{ch}\"#\n}}\n")
+            );
         }
     }
 }

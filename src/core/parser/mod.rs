@@ -85,6 +85,8 @@ struct Parser<'src> {
     durations: bool,
     arrays: bool,
     iterators: bool,
+    /// Syntax roles are collected only by the source formatter.
+    formatting: Option<Vec<(Span, format::Role)>>,
 }
 
 impl<'src> Parser<'src> {
@@ -111,6 +113,7 @@ impl<'src> Parser<'src> {
             durations: false,
             arrays: false,
             iterators: false,
+            formatting: None,
         }
     }
 
@@ -217,6 +220,16 @@ impl<'src> Parser<'src> {
             self.pos += 1;
         }
         &tok.kind
+    }
+
+    fn format_role(&mut self, role: format::Role) {
+        if let Some(roles) = &mut self.formatting {
+            let mut span = self.tokens[self.pos].span;
+            if matches!(role, format::Role::TypeOpen | format::Role::TypeClose) {
+                span = Span::new(span.start(), span.start() + 1).with_source(self.source);
+            }
+            roles.push((span, role));
+        }
     }
 
     fn found_token(&self) -> String {

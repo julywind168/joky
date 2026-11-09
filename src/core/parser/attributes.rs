@@ -121,6 +121,7 @@ impl Parser<'_> {
                     TokenKind::IntLit(_) | TokenKind::Minus => {
                         let negative = self.peek() == &TokenKind::Minus;
                         if negative {
+                            self.format_role(format::Role::Prefix);
                             self.advance();
                         }
                         let TokenKind::IntLit(magnitude) = self.peek().clone() else {

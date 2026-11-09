@@ -70,6 +70,7 @@ impl Parser<'_> {
                 ))
             }
             TokenKind::Amp => {
+                self.format_role(format::Role::Prefix);
                 self.advance();
                 let mutable = self.peek() == &TokenKind::Mut;
                 if mutable {
@@ -226,7 +227,7 @@ impl Parser<'_> {
     fn parse_associated_equalities(&mut self) -> Result<Vec<AssociatedEquality>, Diagnostic> {
         let mut equalities = Vec::new();
         if self.peek() == &TokenKind::Lt {
-            self.advance();
+            self.expect_type_open()?;
             loop {
                 let span = self.peek_span();
                 let name = self.expect_ident()?;
@@ -252,7 +253,7 @@ impl Parser<'_> {
     ) -> Result<Vec<std::sync::Arc<TypeParameter>>, Diagnostic> {
         let mut type_params = Vec::<std::sync::Arc<TypeParameter>>::new();
         if self.peek() == &TokenKind::Lt {
-            self.advance();
+            self.expect_type_open()?;
             loop {
                 let span = self.peek_span();
                 let constant = self.peek() == &TokenKind::Const;
@@ -481,6 +482,7 @@ impl Parser<'_> {
 
     // Split angle brackets only while parsing type syntax.
     fn expect_type_open(&mut self) -> Result<(), Diagnostic> {
+        self.format_role(format::Role::TypeOpen);
         if self.peek() == &TokenKind::Shl {
             let token = &mut self.tokens[self.pos];
             let start = token.span.start();
@@ -494,6 +496,7 @@ impl Parser<'_> {
     }
 
     fn expect_type_close(&mut self) -> Result<(), Diagnostic> {
+        self.format_role(format::Role::TypeClose);
         if matches!(
             self.peek(),
             TokenKind::Shr | TokenKind::Ge | TokenKind::CompoundAssign(BinOp::Shr)

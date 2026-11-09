@@ -333,6 +333,7 @@ impl Parser<'_> {
             _ => return self.parse_postfix(),
         };
         let start = self.peek_span().start();
+        self.format_role(format::Role::Prefix);
         self.advance();
         if op == UnaryOp::Borrow && self.peek() == &TokenKind::Mut {
             self.advance();
