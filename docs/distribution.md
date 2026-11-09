@@ -47,6 +47,19 @@ Linux 可安装发行版的 C 编译器和链接工具。缺少 runtime 时请�
 卸载时删除专用安装目录并移除对应 PATH 设置，不要删除整个 `~/.local`。
 安装失败可通过[问题反馈入口](../SUPPORT.md)提交版本、平台与完整错误。
 
+## 维护者：发布官网与在线标准库
+
+[官网](https://julywind168.github.io/joky/)与[标准库文档](https://julywind168.github.io/joky/std/)
+由 [GitHub Pages 工作流](https://github.com/julywind168/joky/actions/workflows/pages.yml)发布。
+推送到 `main` 或手动运行工作流时，用 Rust 1.99.0 构建 Debug CLI，执行
+`joky doc -o target/site`，再上传静态产物；此流程不运行全量测试或 Release 验收。
+首页源文件位于 `sites/joky-home/public/`，标准库页面从同一提交内嵌的源码生成。
+
+本地预览可执行 `cargo run --locked -- doc -o target/site`，然后用静态服务器打开
+`target/site/`。链接使用相对路径，适配 GitHub Pages 的 `/joky/` 项目路径与离线文档。
+首次部署需在仓库 Settings → Pages 中选择 **GitHub Actions** 作为构建来源；
+发布结果与地址以工作流的 `github-pages` deployment 为准。
+
 ## 维护者：生成与验证发行包
 
 日常平台证据来自 [CLI smoke](https://github.com/julywind168/joky/actions/workflows/ci.yml)：

@@ -18,6 +18,7 @@ fn main() @suspends {
 }
 ```
 
+[官网](https://julywind168.github.io/joky/) · [在线标准库](https://julywind168.github.io/joky/std/) ·
 [入门教程](docs/getting-started.md) · [语言参考](docs/language.md) ·
 [命令行指南](docs/cli.md) · [文档索引](docs/README.md) ·
 [源码仓库](https://github.com/julywind168/joky) · [问题反馈](SUPPORT.md) ·

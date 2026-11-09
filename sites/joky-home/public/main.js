@@ -1,5 +1,5 @@
 const samples = {
-  hello: { filename: 'hello.jk', output: '42', code: 'fn main() {\n    println(42)\n}' },
+  hello: { filename: 'hello_world.jk', output: 'Hello, world!', code: 'fn main() {\n    println("Hello, world!")\n}' },
   loop: { filename: 'loops.jk', output: '45', code: 'import joky/io.{println}\n\nfn sum(n: Int32) -> Int32 {\n    var i = 0\n    var total = 0\n    while i < n {\n        total = total + i\n        i = i + 1\n    }\n    total\n}\n\nfn main() {\n    println(sum(10))\n}' }
 };
 let selected = 'hello';
@@ -9,11 +9,12 @@ function renderSample(name) {
   selected = name;
   const sample = samples[name];
   codeElement.replaceChildren();
-  const tokens = sample.code.split(/(\b(?:fn|var|let|while|import)\b|\b\d+\b|\b(?:println|main|sum)\b)/g);
+  const tokens = sample.code.split(/("(?:\\.|[^"\\])*"|\b(?:fn|var|let|while|import)\b|\b\d+\b|\b(?:println|main|sum)\b)/g);
   tokens.forEach(token => {
     const span = document.createElement('span');
     span.textContent = token;
-    if (/^(fn|var|let|while|import)$/.test(token)) span.className = 'keyword';
+    if (/^"/.test(token)) span.className = 'string';
+    else if (/^(fn|var|let|while|import)$/.test(token)) span.className = 'keyword';
     else if (/^\d+$/.test(token)) span.className = 'number';
     else if (/^(println|main|sum)$/.test(token)) span.className = 'function';
     codeElement.append(span);
@@ -58,5 +59,5 @@ async function copyText(value, successMessage) {
   }
 }
 document.getElementById('copy-code').addEventListener('click', () => copyText(samples[selected].code, '代码已复制，带上它开始探索吧。'));
-document.getElementById('copy-command').addEventListener('click', () => copyText('cargo run -- run examples/hello.jk', '运行命令已复制。'));
+document.getElementById('copy-command').addEventListener('click', () => copyText('cargo run -- run examples/hello_world.jk', '运行命令已复制。'));
 renderSample(selected);
