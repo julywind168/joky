@@ -885,7 +885,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "joky"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argon2",
  "ariadne",
@@ -917,7 +917,7 @@ dependencies = [
 
 [[package]]
 name = "joky-image-derive"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "quote",
  "syn 2.0.119",
@@ -925,7 +925,7 @@ dependencies = [
 
 [[package]]
 name = "joky-stdlib-bootstrap"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argon2",
  "ariadne",

@@ -21,6 +21,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99.0
       - name: Build host distribution
         run: ./scripts/package.sh
+      - name: Verify native conversion and shutdown regressions
+        shell: bash
+        run: |
+          cargo test --locked --release --lib float_math_and_checked_conversions_match_backends
+          cargo test --locked --release --test cli float_math_fixture_runs_in_aot_and_reports_static_errors
+          cargo test --locked --release --lib string_queries_matches_models_in_independent_aot_objects
+          cargo test --locked --release --lib signal_pipe_reader_outlives_close_and_callback_unregistration
+          for attempt in {1..20}; do
+            echo "Shutdown/reactor repetition $attempt/20"
+            cargo test --locked --release --lib shared_reactor_
+            cargo test --locked --release --test cli shutdown_signal_subscription_is_explicit_repeatable_and_scoped
+          done
       - name: Verify relocated toolchain
         shell: bash
         run: |

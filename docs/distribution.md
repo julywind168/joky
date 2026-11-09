@@ -91,6 +91,8 @@ VS Code 扩展单独分发为 `joky-<version>.vsix`，安装步骤见[扩展说�
 包内 CLI 和 runtime 来自同一次构建，包含 SHA-256 校验文件。脚本不上传、不创建 Release。
 GitHub 的 **Build distributions** 手动工作流在 macOS arm64 和 Linux x86_64
 生成 Release 包，校验解包后的三种运行路径，然后保存为 Actions artifacts。
+上传前还执行浮点到窄整数转换、GCC AOT 字符串互操作及信号管道关闭回归，
+并各重复 20 次信号订阅和 Reactor 同步测试；这两组平台回归不替代完整发布验收。
 Runner 标签与架构按 [GitHub 官方列表](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)选择。
 这些 artifacts 需下载并经过发布验收后，才能作为 GitHub Release 附件发布。
 工作流尚未执行时，不把目标平台列为本次发行已验证。
