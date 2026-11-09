@@ -1,5 +1,7 @@
 //! Formatting does not initialize the VM, resolve imports, or execute code.
-use super::{cli_argument_error, cli_error_with_code, diagnostic, Command, Error, ErrorCode};
+use super::{
+    cli_argument_error, cli_error_with_code, diagnostic, project, Command, Error, ErrorCode,
+};
 use std::{
     ffi::OsString,
     fs::{self, OpenOptions},
@@ -20,7 +22,7 @@ pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Err
     for arg in args {
         if !positional_only {
             if arg == "--help" || arg == "-h" {
-                return Ok(Command::Help);
+                return Ok(Command::Help(super::help::FORMAT));
             }
             if arg == "--" {
                 positional_only = true;
@@ -57,53 +59,79 @@ pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Err
             "--stdin cannot be combined with a source file",
         ));
     }
-    if !stdin && source.is_none() {
-        return Err(cli_argument_error(
-            "Missing source file; use fmt <file.jk> or fmt --stdin",
-        ));
+    if !stdin {
+        source = Some(source.or_else(project::discover).ok_or_else(|| {
+            cli_argument_error("Missing source file or joky.toml project. Use 'joky fmt <directory>', 'joky fmt --stdin', or 'joky init'.")
+        })?);
     }
-    if source
-        .as_ref()
-        .is_some_and(|path| path.extension().is_none_or(|ext| ext != "jk"))
-    {
+    if source.as_ref().is_some_and(|path| {
+        !path.is_dir()
+            && path.file_name().is_none_or(|name| name != "joky.toml")
+            && path.extension().is_none_or(|ext| ext != "jk")
+    }) {
         return Err(cli_argument_error("Source file must have a .jk extension"));
     }
     Ok(Command::Format(Options { source, check }))
 }
 
 pub(super) fn execute(options: &Options) -> u8 {
-    let path = options.source.as_deref().unwrap_or(Path::new("<stdin>"));
+    let mut path = options
+        .source
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("<stdin>"));
     let mut source = String::new();
     let result = (|| -> Result<u8, Error> {
-        if let Some(path) = &options.source {
-            source = fs::read_to_string(path).map_err(|error| io_error("read", path, error))?;
-        } else {
+        let Some(input) = &options.source else {
             io::stdin()
                 .read_to_string(&mut source)
-                .map_err(|error| io_error("read", path, error))?;
-        }
-        let formatted = joky::parser::format(&source)?;
-        if options.check {
-            if formatted != source {
-                eprintln!("Needs formatting: {}", path.display());
-                return Ok(1);
+                .map_err(|error| io_error("read", &path, error))?;
+            let formatted = joky::parser::format(&source)?;
+            if options.check {
+                if formatted != source {
+                    eprintln!("Needs formatting: <stdin>");
+                    return Ok(1);
+                }
+            } else {
+                io::stdout()
+                    .lock()
+                    .write_all(formatted.as_bytes())
+                    .map_err(|error| io_error("write", Path::new("<stdout>"), error))?;
             }
-        } else if let Some(path) = &options.source {
-            if formatted != source {
-                replace_file(path, &source, &formatted)?;
-            }
+            return Ok(0);
+        };
+        let files = if input.is_dir() || input.file_name().is_some_and(|name| name == "joky.toml") {
+            project::format_sources(input)?
         } else {
-            io::stdout()
-                .lock()
-                .write_all(formatted.as_bytes())
-                .map_err(|error| io_error("write", Path::new("<stdout>"), error))?;
+            std::collections::BTreeSet::from([input.clone()])
+        };
+        let mut changes = Vec::new();
+        for file in files {
+            path = file;
+            source = fs::read_to_string(&path).map_err(|error| io_error("read", &path, error))?;
+            let formatted = joky::parser::format(&source)?;
+            if formatted != source {
+                changes.push((path.clone(), source.clone(), formatted));
+            }
+        }
+        // Parse every source before publishing any changes. Syntax errors in a
+        // later file must leave earlier files untouched too.
+        if options.check {
+            for (file, _, _) in &changes {
+                eprintln!("Needs formatting: {}", file.display());
+            }
+            return Ok(u8::from(!changes.is_empty()));
+        }
+        for (file, original, formatted) in changes {
+            path = file;
+            source = original;
+            replace_file(&path, &source, &formatted)?;
         }
         Ok(0)
     })();
     match result {
         Ok(code) => code,
         Err(error) => {
-            let rendered = diagnostic::render_error(path, &source, &error);
+            let rendered = diagnostic::render_error(&path, &source, &error);
             eprintln!("error: {}: {rendered}", path.display());
             1
         }

@@ -1,6 +1,79 @@
 //! Project roots, manifests, runtime files, and native bundle publication.
 use super::*;
 
+#[test]
+#[cfg(unix)]
+fn init_creates_a_project_that_checks_formats_and_executes_in_all_backends() {
+    let work = Workspace::new();
+    success(&work.cli(&["init", "new app", "--name", "hello"]));
+    let manifest = work.path().join("new app/joky.toml");
+    assert!(std::fs::read_to_string(&manifest)
+        .unwrap()
+        .contains("name = \"hello\""));
+    success(&work.cli(&["check", "new app"]));
+    success(&work.cli(&["fmt", "--check", "new app"]));
+    for args in [
+        vec!["run", "new app"],
+        vec!["run", "--interpreter", "new app"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, b"Hello, Joky!\n");
+    }
+    success(&work.cli(&["build", "new app"]));
+    let output = Command::new(work.path().join("new app/dist/hello"))
+        .output()
+        .unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"Hello, Joky!\n");
+    let output = work
+        .command()
+        .current_dir(work.path().join("new app/src"))
+        .arg("run")
+        .output()
+        .unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"Hello, Joky!\n");
+    let other = Workspace::new();
+    success(&other.cli(&["init"]));
+    success(&other.cli(&["check"]));
+    success(&other.cli(&["fmt", "--check"]));
+}
+
+#[test]
+fn init_preserves_existing_files_and_validates_arguments() {
+    let work = Workspace::new();
+    work.write("app/src/main.jk", "keep me");
+    failure(&work.cli(&["init", "app"]), "Refusing to overwrite");
+    assert_eq!(
+        std::fs::read_to_string(work.path().join("app/src/main.jk")).unwrap(),
+        "keep me"
+    );
+    assert!(!work.path().join("app/joky.toml").exists());
+    work.write("existing/joky.toml", "keep this too");
+    failure(&work.cli(&["init", "existing"]), "Refusing to overwrite");
+    assert!(!work.path().join("existing/src").exists());
+    for args in [
+        vec!["init", "--name"],
+        vec!["init", "--name", "bad name"],
+        vec!["init", "a", "b"],
+        vec!["init", "--unknown"],
+    ] {
+        assert!(!work.cli(&args).status.success(), "{args:?}");
+    }
+    assert!(!work.path().join("a").exists());
+    success(&work.cli(&["init", "--", "-demo"]));
+    success(&work.cli(&["check", "--", "-demo"]));
+    #[cfg(unix)]
+    {
+        std::fs::create_dir(work.path().join("linked")).unwrap();
+        std::os::unix::fs::symlink(work.path().join("app/src"), work.path().join("linked/src"))
+            .unwrap();
+        failure(&work.cli(&["init", "linked"]), "Refusing to overwrite");
+        assert!(!work.path().join("linked/joky.toml").exists());
+    }
+}
+
 const CONFIG: &str = r#"
 [project]
 name = "demo"

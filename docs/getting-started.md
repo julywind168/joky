@@ -5,6 +5,20 @@
 每节的 Joky 代码块都是完整程序：保存为所示文件名，然后运行对应命令。
 除特别说明外，命令在保存文件的目录执行。
 
+想直接创建项目，可以先执行：
+
+```sh
+joky init hello
+cd hello
+joky run
+joky check
+joky fmt --check
+```
+
+初始化生成 `joky.toml` 和 `src/main.jk`，首次运行输出 `Hello, Joky!`。
+后续可直接编辑 `src/main.jk`；`joky run --help` 查看运行命令的参数和示例。
+下面继续使用单文件示例，便于分别试验每项语言能力。
+
 ## 1. 变量与函数
 
 保存为 `hello.jk`：

@@ -19,7 +19,7 @@ pub(super) fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Command,
     let mut output = None;
     while let Some(arg) = args.next() {
         if arg == "--help" || arg == "-h" {
-            return Ok(Command::Help);
+            return Ok(Command::Help(super::help::DOC));
         }
         if arg == "--std" && !standard {
             standard = true;

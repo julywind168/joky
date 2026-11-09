@@ -128,3 +128,76 @@ fn fmt_cli_formatted_program_preserves_behavior_on_all_backends() {
     success(&work.cli(&["fmt", "--check", "program.jk"]));
     work.assert_all_backends("program.jk", &[], b"5\nn=5\n{raw} \\n\n-6\n", 0);
 }
+
+#[test]
+fn fmt_projects_select_own_sources_without_resolving_dependencies_or_entries() {
+    let work = Workspace::new();
+    work.write("app/joky.toml", "[project]\nname='format'\nentry='missing.jk'\nsource-root='src'\n[dependencies]\nmissing={path='../not-installed'}\n");
+    work.write("app/src/a.jk", "fn a(){unknown()}");
+    work.write("app/src/nested/b.jk", "fn b(){}");
+    for directory in [".hidden", "target", "dist", "dependency"] {
+        work.write(&format!("app/src/{directory}/broken.jk"), "fn broken(");
+    }
+    work.write("app/src/dependency/joky.toml", "[package]\nname='dep'\n");
+    work.write("app/assets/broken.jk", "fn broken(");
+    let check = work.cli(&["fmt", "--check", "app"]);
+    assert_eq!(check.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&check.stderr);
+    assert_eq!(text.matches("Needs formatting:").count(), 2, "{text}");
+    assert_eq!(
+        std::fs::read_to_string(work.path().join("app/src/a.jk")).unwrap(),
+        "fn a(){unknown()}"
+    );
+    success(&work.cli(&["fmt", "app/joky.toml"]));
+    assert_eq!(
+        std::fs::read_to_string(work.path().join("app/src/a.jk")).unwrap(),
+        "fn a() { unknown() }\n"
+    );
+    success(
+        &work
+            .command()
+            .current_dir(work.path().join("app/src/nested"))
+            .args(["fmt", "--check"])
+            .output()
+            .unwrap(),
+    );
+    work.write(
+        "app/joky.toml",
+        "[package]\nname='format'\nsource-root='src'\n",
+    );
+    success(&work.cli(&["fmt", "--check", "app"]));
+    work.write("app/joky.toml", "[project]\nsource-root='../outside'\n");
+    failure(&work.cli(&["fmt", "app"]), "relative to the project");
+}
+
+#[test]
+fn fmt_directories_preflight_syntax_and_skip_symlinks() {
+    let work = Workspace::new();
+    work.write("plain/a.jk", "fn a(){}");
+    work.write("plain/nested/z.jk", "fn z(");
+    failure(&work.cli(&["fmt", "plain"]), "z.jk");
+    assert_eq!(
+        std::fs::read_to_string(work.path().join("plain/a.jk")).unwrap(),
+        "fn a(){}"
+    );
+    work.write("plain/nested/z.jk", "fn z(){}");
+    work.write("outside/broken.jk", "fn broken(");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink(work.path().join("outside"), work.path().join("plain/link")).unwrap();
+        symlink(
+            work.path().join("outside/broken.jk"),
+            work.path().join("plain/link.jk"),
+        )
+        .unwrap();
+    }
+    success(&work.cli(&["fmt", "plain"]));
+    success(&work.cli(&["fmt", "--check", "plain"]));
+    assert_eq!(
+        std::fs::read_to_string(work.path().join("outside/broken.jk")).unwrap(),
+        "fn broken("
+    );
+    std::fs::create_dir(work.path().join("empty")).unwrap();
+    success(&work.cli(&["fmt", "empty"]));
+}

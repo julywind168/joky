@@ -51,7 +51,7 @@ pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Err
     let mut args = args;
     while let Some(arg) = args.next() {
         if !positional && (arg == "--help" || arg == "-h") {
-            return Ok(Command::Help);
+            return Ok(Command::Help(super::help::TEST));
         }
         if !positional && arg == "--" {
             positional = true;

@@ -5,6 +5,8 @@ mod diagnostic;
 mod doc;
 mod explain;
 mod format;
+mod help;
+mod init;
 mod progress;
 mod project;
 mod source;
@@ -22,23 +24,25 @@ use std::{ffi::OsString, path::PathBuf};
 const HELP: &str = "Joky — check, test, run, build, inspect and format Joky programs
 
 Usage:
+  joky init [--name <name>] [<directory>]
   joky doc [--std] [--open] [-o <directory>]
   joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture] [--timeout-ms N] [<file.jk> | <project-dir> | joky.toml]
   joky check [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
   joky run [-q | -v] [--interpreter] [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-- <program-args>...]
   joky build [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
   joky explain-parallel [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
-  joky fmt [--check] <file.jk>
+  joky fmt [--check] [<file.jk> | <directory> | joky.toml]
   joky fmt [--check] --stdin
   joky --help
   joky --version
 
 Commands:
+  init             Create a minimal application with joky.toml and src/main.jk
   doc              Generate offline homepage and standard-library HTML (default: target/doc)
   test             Run #test functions in isolated processes (default timeout: 30000 ms)
   check            Check syntax and semantics without running or generating code
   explain-parallel  Explain dispatch eligibility without running the program
-  fmt              Format a source file without resolving imports or running code
+  fmt              Format files, directories or projects without running code
   run              Execute the program with the JIT compiler (or the interpreter)
   build            Compile a native executable using the system C compiler (cc)
 
@@ -57,7 +61,8 @@ Options:
   -h, --help           Show this help
   -V, --version        Show the version
 
-Without an input, check/test/run/build/explain-parallel find the nearest joky.toml in the current directory or its parents.
+Use joky <command> --help or joky help <command> for command-specific usage.
+Without an input, check/test/run/build/fmt/explain-parallel find the nearest joky.toml in the current directory or its parents.
 Check allows single files without main; projects require a valid program entry.
 Successful checks are silent (exit 0); errors go to stderr (exit 1).
 Projects declare [project] name, entry, source-root (default \".\"), and resources.
@@ -67,7 +72,7 @@ Program arguments follow -- after an explicit run input or in a native executabl
 Parallel executables accept --task-workers N before -- at startup. Precedence:
 startup option > JOKY_TASK_WORKERS > build default. Local rejects worker configuration.
 Run uses the same precedence after explicit --parallel or --task-workers; build ignores the environment.
-Run shows loading, compilation and startup timings when stderr is a terminal.
+Run shows loading and compilation timings when stderr is a terminal.
 Programs start at fn main() or fn main() -> Int32.
 Import joky/io.{print, println}; Show values are borrowed automatically, e.g. println(42).
 String literals interpolate by default, e.g. \"value={value}\"; double braces escape literal braces.
@@ -76,7 +81,8 @@ Use vm.register_int32 to expose a synchronous local Int32 function to it.
 Use @suspends on main for cooperative tasks; import joky/task for yield_now and sleep(Duration).";
 
 enum Command {
-    Help,
+    Help(&'static str),
+    Init(init::Options),
     Version,
     Doc(doc::Options),
     Test(testing::Options),
@@ -109,10 +115,26 @@ impl Command {
     fn parse(args: impl Iterator<Item = OsString>) -> Result<Self, Error> {
         let mut args = args;
         let Some(command) = args.next() else {
-            return Ok(Self::Help);
+            return Ok(Self::Help(HELP));
         };
         if command == "--help" || command == "-h" {
-            return Ok(Self::Help);
+            return Ok(Self::Help(HELP));
+        }
+        if command == "help" {
+            let topic = args.next();
+            if args.next().is_some() {
+                return Err(cli_argument_error("help accepts at most one command"));
+            }
+            let text = match topic {
+                None => HELP,
+                Some(topic) => help::command(&topic.to_string_lossy()).ok_or_else(|| {
+                    cli_argument_error(format!("Unknown command `{}`", topic.to_string_lossy()))
+                })?,
+            };
+            return Ok(Self::Help(text));
+        }
+        if command == "init" {
+            return init::parse(args);
         }
         if command == "--version" || command == "-V" {
             if args.next().is_some() {
@@ -153,7 +175,7 @@ impl Command {
         let mut positional_only = false;
         while let Some(arg) = args.next() {
             if !positional_only && (arg == "--help" || arg == "-h") {
-                return Ok(Self::Help);
+                return Ok(Self::Help(if build { help::BUILD } else { help::RUN }));
             }
             if arg == "--" && (!positional_only || !build && source.is_some()) {
                 if !build && source.is_some() {
@@ -238,7 +260,11 @@ impl Command {
             }
         }
         let source = source.or_else(project::discover).ok_or_else(|| {
-            cli_argument_error("Missing source file or joky.toml project. Use 'joky --help'.")
+            cli_argument_error(if build {
+                "Missing source file or joky.toml project. Try 'joky init' to create a project, or 'joky build hello.jk' to build a file."
+            } else {
+                "Missing source file or joky.toml project. Try 'joky init' followed by 'joky run', or 'joky run hello.jk' to run a file."
+            })
         })?;
         if !source.is_dir()
             && source.file_name().is_none_or(|name| name != "joky.toml")
@@ -287,14 +313,15 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
         Err(error) => return report(&error),
     };
     let path = match &command {
-        Command::Help => {
-            println!("{HELP}");
+        Command::Help(text) => {
+            println!("{text}");
             return 0;
         }
         Command::Version => {
             println!("joky {}", env!("CARGO_PKG_VERSION"));
             return 0;
         }
+        Command::Init(options) => return init::execute(options),
         Command::Doc(output) => return doc::execute(output),
         Command::Test(options) => return testing::execute(options),
         Command::Format(options) => return format::execute(options),

@@ -29,6 +29,74 @@ pub(super) fn discover() -> Option<PathBuf> {
     })
 }
 
+/// Formatting reads only source selection; missing imports, resources or an
+/// entry point must not prevent a syntax-only operation.
+pub(super) fn format_sources(input: &Path) -> Result<BTreeSet<PathBuf>, Error> {
+    let manifest = if input.is_dir() {
+        input.join(MANIFEST)
+    } else {
+        input.to_owned()
+    };
+    let root = if input.is_dir() && !manifest.exists() {
+        input.to_owned()
+    } else {
+        let text = fs::read_to_string(&manifest).map_err(|e| io(&manifest, e))?;
+        let table = text
+            .parse::<toml::Table>()
+            .map_err(|e| cli_argument_error(format!("Invalid {}: {e}", manifest.display())))?;
+        if table
+            .get("version")
+            .is_some_and(|version| version.as_integer() != Some(1))
+        {
+            return Err(cli_argument_error(
+                "Unsupported project manifest version; expected 1",
+            ));
+        }
+        let settings = match (table.get("project"), table.get("package")) {
+            (Some(toml::Value::Table(settings)), None)
+            | (None, Some(toml::Value::Table(settings))) => settings,
+            _ => {
+                return Err(cli_argument_error(
+                    "joky.toml requires one [project] or [package] table",
+                ))
+            }
+        };
+        let source_root = match settings.get("source-root") {
+            None => ".",
+            Some(toml::Value::String(value)) => value,
+            _ => {
+                return Err(cli_argument_error(
+                    "Project source-root must be a nonempty string",
+                ))
+            }
+        };
+        let manifest = manifest.canonicalize().map_err(|e| io(&manifest, e))?;
+        contained(manifest.parent().unwrap(), source_root, true)?
+    };
+    fn collect(directory: &Path, files: &mut BTreeSet<PathBuf>) -> Result<(), Error> {
+        for entry in fs::read_dir(directory).map_err(|e| io(directory, e))? {
+            let entry = entry.map_err(|e| io(directory, e))?;
+            let kind = entry.file_type().map_err(|e| io(&entry.path(), e))?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if kind.is_dir()
+                && !name.starts_with('.')
+                && name != "target"
+                && name != "dist"
+                && !entry.path().join(MANIFEST).exists()
+            {
+                collect(&entry.path(), files)?;
+            } else if kind.is_file() && entry.path().extension().is_some_and(|ext| ext == "jk") {
+                files.insert(entry.path());
+            }
+        }
+        Ok(())
+    }
+    let mut files = BTreeSet::new();
+    collect(&root, &mut files)?;
+    Ok(files)
+}
+
 impl Project {
     pub fn load(input: &Path) -> Result<Option<Self>, Error> {
         if !input.is_dir() && input.file_name().is_none_or(|n| n != MANIFEST) {

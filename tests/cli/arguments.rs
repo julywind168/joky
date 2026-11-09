@@ -4,12 +4,7 @@ use super::*;
 #[test]
 fn help_version_and_argument_errors_are_user_facing() {
     let work = Workspace::new();
-    for args in [
-        vec![],
-        vec!["--help"],
-        vec!["run", "--help"],
-        vec!["build", "-h"],
-    ] {
+    for args in [vec![], vec!["--help"]] {
         let output = work.cli(&args);
         success(&output);
         assert!(String::from_utf8_lossy(&output.stdout).contains("joky run"));
@@ -46,6 +41,55 @@ fn help_version_and_argument_errors_are_user_facing() {
     ] {
         failure(&work.cli(&args), message);
     }
+}
+
+#[test]
+fn command_help_is_scoped_and_missing_project_errors_offer_next_steps() {
+    let work = Workspace::new();
+    for (command, option) in [
+        ("init", "--name"),
+        ("run", "--interpreter"),
+        ("build", "--output"),
+        ("check", "--no-prelude"),
+        ("test", "--filter"),
+        ("fmt", "--stdin"),
+        ("doc", "--std"),
+        ("explain-parallel", "--no-prelude"),
+    ] {
+        let expected = format!("joky {command}");
+        let long = work.cli(&[command, "--help"]);
+        success(&long);
+        let text = String::from_utf8_lossy(&long.stdout);
+        assert!(text.contains(&expected) && text.contains(option), "{text}");
+        assert!(!text.contains("Commands:"), "{text}");
+        assert!(
+            !text.split_whitespace().any(|word| word
+                == if command == "doc" {
+                    "--interpreter"
+                } else {
+                    "--std"
+                }),
+            "{text}"
+        );
+        for args in [vec![command, "-h"], vec!["help", command]] {
+            let output = work.cli(&args);
+            success(&output);
+            assert_eq!(output.stdout, long.stdout);
+        }
+    }
+    failure(&work.cli(&["help", "unknown"]), "Unknown command");
+    failure(&work.cli(&["help", "run", "extra"]), "at most one");
+    let missing = work.cli(&["run"]);
+    failure(&missing, "Missing source file");
+    let text = String::from_utf8_lossy(&missing.stderr);
+    assert!(
+        text.contains("joky init") && text.contains("joky run hello.jk"),
+        "{text}"
+    );
+    work.write("main.jk", include_str!("../../examples/hello.jk"));
+    let output = work.cli(&["run", "main.jk", "--", "--help"]);
+    success(&output);
+    assert_eq!(output.stdout, b"42\n");
 }
 
 #[test]

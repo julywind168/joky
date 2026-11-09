@@ -8,7 +8,7 @@ pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, jok
             source: path,
             prelude,
         },
-        None => Command::Help,
+        None => Command::Help(super::help::CHECK),
     })
 }
 

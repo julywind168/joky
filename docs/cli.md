@@ -3,6 +3,26 @@
 先按 [README](../README.md#安装与产物) 安装 Joky；以下 `cargo run` 命令在源码仓库根目录执行，安装后可将 `cargo run --` 换成 `joky`。
 完整参数见 `joky --help`，首次写程序见[入门教程](getting-started.md)。
 
+## 创建项目与查看帮助
+
+```sh
+joky init hello
+joky run hello
+cd hello
+joky check
+joky fmt --check
+```
+
+`joky init [目录]` 创建最小应用：`joky.toml` 和 `src/main.jk`，运行输出 `Hello, Joky!`。
+省略目录时在当前目录初始化；现有文件不覆盖，已有其他内容的目录可保留使用。
+项目名默认采用目录名；目录名不符合 ASCII 字母、数字、`_`、`-` 规则时使用 `joky-app`，
+也可通过 `--name <名称>` 指定。初始化不安装依赖，也不创建 Git 仓库。
+
+`joky <命令> --help`、`joky <命令> -h` 和 `joky help <命令>` 显示该命令的参数与示例；
+`joky --help` 显示总览。没有项目且未提供输入时，`joky run` 提示创建项目或运行单文件的示例。
+已有项目中，`run`、`build`、`check`、`test`、`fmt`、`explain-parallel` 均可省略输入，
+从当前目录向上寻找最近的 `joky.toml`。
+
 ## 程序输入与输出
 
 程序可通过 `joky/process` 读取启动参数、只读环境快照和启动目录，通过 `joky/io` 读取有界 stdin。
@@ -77,7 +97,11 @@ cargo run -- test examples/testing_output.jk
 
 ```sh
 joky fmt file.jk             # 原地格式化一个文件
+joky fmt src                 # 递归格式化目录内的源码
+joky fmt                     # 自动发现项目，只格式化自身 source-root
+joky fmt app/joky.toml       # 显式选择应用项目或库包
 joky fmt --check file.jk     # 不写入；需要格式化时退出码为 1
+joky fmt --check .           # 列出选中范围内所有需要格式化的文件
 joky fmt --stdin < file.jk   # 从标准输入读取，向标准输出写出
 ```
 
@@ -85,11 +109,16 @@ joky fmt --stdin < file.jk   # 从标准输入读取，向标准输出写出
 运算符周围的空格，清理代码行尾空白，并为非空结果补齐末尾换行。保留已有换行、
 空行及 LF/CRLF；注释、字符与字符串原文（包括插值内部和三引号字符串的缩进）不改写。
 泛型尖括号、比较/移位与 `/` 两侧保留原有的有无空格关系；暂不做长行折行、
-导入排序或递归目录格式化。
+导入排序。
+
+目录模式递归处理 `.jk` 文件，跳过隐藏目录、`target`、`dist`、嵌套项目与符号链接。
+项目目录或清单指定了 `source-root` 时只处理该目录，不加载 path 依赖，不校验入口及运行时资源；
+应用和库包均支持。普通目录不需要清单；空目录成功退出，不修改任何文件。
 
 `fmt` 只要求语法有效，不解析依赖、不要求 `main`、不初始化 VM。
-写回前核对 token 内容和换行位置，语法错误或格式化失败时不覆盖原文件；
-文件通过同目录临时文件完整写入后替换，保留权限，符号链接写入其目标。
+写回前核对 token 内容和换行位置，先读取并格式化所有选中文件；任一文件有语法错误时整批不写回。
+写入阶段逐文件通过同目录临时文件完整写入后替换，并核对文件未被并发修改；
+保留权限，显式选择单个符号链接文件时写入其目标。写入阶段的 I/O 错误不会回滚此前已成功替换的其他文件。
 `--check` 可与 `--stdin` 组合，此时只返回状态，不输出格式化内容。
 路径以 `-` 开头时使用 `joky fmt -- -file.jk`。
 开发时无需安装，可用 `cargo run -- fmt --check file.jk`。

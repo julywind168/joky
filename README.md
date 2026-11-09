@@ -80,6 +80,7 @@ VS Code 用户可安装 [Joky 扩展](editors/vscode/README.md)：下载 VSIX �
 | 想做什么 | 从哪里开始 |
 | --- | --- |
 | 写第一个项目 | [入门教程](docs/getting-started.md)：变量、容器、借用、错误处理、测试与任务 |
+| 创建项目 | `joky init hello` 后执行 `joky run hello`；[项目操作与帮助](docs/cli.md#创建项目与查看帮助) |
 | 使用命令行 | [命令行指南](docs/cli.md)：输入输出、检查、格式化、测试和项目 |
 | 查语法与标准库 | [语言参考](docs/language.md)；`joky doc --open` 生成并打开离线标准库文档 |
 | 嵌入 Rust / C | [架构与 ABI](docs/architecture.md)、[Rust 示例](examples/embedding.rs)、[C VM 示例](examples/vm_runtime.c) |
