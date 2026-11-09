@@ -181,11 +181,15 @@ fn lower_conversion(builder: &mut FunctionBuilder, dst: &Slot, src: &Slot, value
         // The trusted checked-conversion bridges have already proven the
         // rounded value inside the target's exact bounds, so saturating
         // conversion cannot fire and preserves the mathematical result.
-        return if dst.ty.integer().unwrap().signed() {
-            builder.ins().fcvt_to_sint_sat(target, value)
+        // x64 float-to-integer instructions only support I32/I64 targets.
+        // Convert through the widened lane, then retain the checked low bits.
+        let lane = native_lane(&dst.ty).unwrap();
+        let converted = if dst.ty.integer().unwrap().signed() {
+            builder.ins().fcvt_to_sint_sat(lane, value)
         } else {
-            builder.ins().fcvt_to_uint_sat(target, value)
+            builder.ins().fcvt_to_uint_sat(lane, value)
         };
+        return narrow_lane(builder, &dst.ty, converted);
     }
     let source = if src.ty == Type::Rune {
         crate::core::integer::IntegerType::Rune

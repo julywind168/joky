@@ -40,7 +40,20 @@ fn string_queries_matches_models_in_independent_aot_objects() {
         let length = expected.len();
         harness.push_str(&format!("{{ const uint8_t expected_{index}[] = {{{bytes}}}; JokyOwnedTextV2 output = {{0}}; if (__joky_user_text_v2_{name}(&output) || joky_runtime_error_code() || output.byte_length != {length} || ({length} && memcmp(output.data, expected_{index}, {length}))) {{ fprintf(stderr, \"{name} failed\\n\"); return 2; }} joky_string_result_free_v2(&output); }}\n"));
     }
-    harness.push_str("if (bad_offset() != 0 || !joky_runtime_error_code()) return 3; joky_runtime_error_clear();\nif (huge_offset() != 0 || !joky_runtime_error_code()) return 4; joky_runtime_error_clear();\nif (overflow() != 0 || !joky_runtime_error_code()) return 5; joky_runtime_error_clear();\nif (reversed_byte_range() != 0 || !joky_runtime_error_code()) return 6; joky_runtime_error_clear();\nif (oversized_byte_range() != 0 || !joky_runtime_error_code()) return 7; joky_runtime_error_clear();\nreturn 0; }\n");
+    harness.push_str(
+        r#"if (bad_offset() != 0 || !joky_runtime_error_code()) { return 3; }
+joky_runtime_error_clear();
+if (huge_offset() != 0 || !joky_runtime_error_code()) { return 4; }
+joky_runtime_error_clear();
+if (overflow() != 0 || !joky_runtime_error_code()) { return 5; }
+joky_runtime_error_clear();
+if (reversed_byte_range() != 0 || !joky_runtime_error_code()) { return 6; }
+joky_runtime_error_clear();
+if (oversized_byte_range() != 0 || !joky_runtime_error_code()) { return 7; }
+joky_runtime_error_clear();
+return 0; }
+"#,
+    );
     std::fs::write(&host, harness).unwrap();
     link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
     assert!(Command::new(program).status().unwrap().success());
