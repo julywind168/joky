@@ -152,9 +152,6 @@
   "extensionKind": [
     "workspace"
   ],
-  "activationEvents": [
-    "onLanguage:joky"
-  ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
