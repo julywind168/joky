@@ -663,10 +663,10 @@ fn checked_failure_runs_and_reports_owned_messages_on_all_backends() {
             assert_eq!(output.stdout, events.as_bytes());
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(stderr.contains(message), "{stderr}");
-            assert!(
-                stderr.contains("assert") || stderr.contains("bytes"),
-                "{stderr}"
-            );
+            let has_source_location = stderr
+                .split("failure.jk:")
+                .any(|suffix| suffix.as_bytes().first().is_some_and(u8::is_ascii_digit));
+            assert!(has_source_location || stderr.contains("bytes"), "{stderr}");
         };
         assert_failure(work.cli(&["run", "failure.jk"]));
         assert_failure(work.cli(&["run", "--interpreter", "failure.jk"]));

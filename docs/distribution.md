@@ -95,6 +95,12 @@ Runner 标签与架构按 [GitHub 官方列表](https://docs.github.com/en/actio
 这些 artifacts 需下载并经过发布验收后，才能作为 GitHub Release 附件发布。
 工作流尚未执行时，不把目标平台列为本次发行已验证。
 
+本地下载 Artifacts 较慢时，可在创建 tag 和草稿 Release 后，手动运行
+[Attach release assets](https://github.com/julywind168/joky/actions/workflows/release-assets.yml)，
+填写 tag 与 **Build distributions** 的运行 ID。工作流只接受相同提交且已成功的构建，
+校验两平台包的 SHA-256，并对解包后的 Linux Release 工具链执行版本检查和安装冒烟，
+然后把四个 CLI 包／校验文件附加到草稿。它不会创建或公开 Release；发布验收完成后再发布草稿。
+
 打包与 smoke 检查不替代发布验收。按 [AGENTS.md](../AGENTS.md#按改动范围验证)
 执行明确要求的 Release 验收，并在发布说明记录版本、commit、工具链、平台和验证范围。
 第三方依赖保留各自许可证；发布前还需核对随二进制分发的依赖许可与 notices。

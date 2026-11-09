@@ -1,0 +1,80 @@
+name: Attach release assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag with a draft Release
+        required: true
+        type: string
+      distribution_run:
+        description: Successful Build distributions run ID for the same commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  attach:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      DISTRIBUTION_RUN: ${{ inputs.distribution_run }}
+    steps:
+      - name: Verify draft and build identity
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]
+          [[ "$DISTRIBUTION_RUN" =~ ^[0-9]+$ ]]
+          release_commit=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
+          build_commit=$(gh api "repos/$GH_REPO/actions/runs/$DISTRIBUTION_RUN" --jq .head_sha)
+          test "$release_commit" = "$build_commit"
+          test "$(gh api "repos/$GH_REPO/actions/runs/$DISTRIBUTION_RUN" --jq .conclusion)" = success
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Download verified distributions
+        run: gh run download "$DISTRIBUTION_RUN" --pattern 'joky-*' --dir artifacts
+      - name: Check package checksums and Linux build metadata
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess, tarfile
+          from pathlib import Path
+          tag = os.environ['RELEASE_TAG']
+          version = tag.removeprefix('v')
+          names = {f'joky-{version}-{target}.tar.gz{suffix}'
+                   for target in ['aarch64-apple-darwin', 'x86_64-unknown-linux-gnu']
+                   for suffix in ['', '.sha256']}
+          files = [p for p in Path('artifacts').rglob('*') if p.is_file()]
+          assert len(files) == 4 and {p.name for p in files} == names, files
+          for archive in (p for p in files if p.name.endswith('.tar.gz')):
+              digest, name = archive.with_name(archive.name + '.sha256').read_text().split()
+              with archive.open('rb') as stream:
+                  assert name == archive.name and hashlib.file_digest(stream, 'sha256').hexdigest() == digest
+              with tarfile.open(archive) as bundle:
+                  root = archive.name.removesuffix('.tar.gz')
+                  assert all(not Path(p.name).is_absolute() and '..' not in Path(p.name).parts
+                             and (p.name == root or p.name.startswith(root + '/')) for p in bundle.getmembers())
+                  assert bundle.getmember(root + '/share/licenses/joky/THIRD_PARTY_NOTICES.txt').isfile()
+                  if root.endswith('x86_64-unknown-linux-gnu'):
+                      bundle.extractall('relocated', filter='data')
+                      cli = Path('relocated', root, 'bin/joky').resolve()
+                      verbose = subprocess.check_output([str(cli), '--version', '--verbose'], text=True)
+                      print(verbose)
+                      metadata = dict(line.split(': ', 1) for line in verbose.splitlines() if ': ' in line)
+                      commit = json.loads(subprocess.check_output(['gh', 'api', f'repos/{os.environ["GH_REPO"]}/commits/{tag}'], text=True))['sha']
+                      assert metadata['commit'] == commit and metadata['source-state'] == 'clean'
+                      assert metadata['profile'] == 'release' and metadata['target'] == 'x86_64-unknown-linux-gnu'
+                      subprocess.run(['scripts/smoke-toolchain.sh', str(cli)], check=True)
+          PY
+      - name: Attach packages to the draft
+        run: |
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          gh release upload "$RELEASE_TAG" artifacts/*/*.tar.gz artifacts/*/*.sha256 --clobber

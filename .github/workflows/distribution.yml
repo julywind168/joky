@@ -29,6 +29,11 @@ jobs:
           shasum -a 256 -c *.sha256
           tar -xzf joky-*.tar.gz -C "$RUNNER_TEMP/joky-relocated"
           bundle=$(find "$RUNNER_TEMP/joky-relocated" -mindepth 1 -maxdepth 1 -type d)
+          "$bundle/bin/joky" --version --verbose | tee "$RUNNER_TEMP/joky-version.txt"
+          grep -Fx "commit: $GITHUB_SHA" "$RUNNER_TEMP/joky-version.txt"
+          grep -Fx 'source-state: clean' "$RUNNER_TEMP/joky-version.txt"
+          grep -Fx 'profile: release' "$RUNNER_TEMP/joky-version.txt"
+          grep -Fx "target: $(cat "$bundle/TARGET")" "$RUNNER_TEMP/joky-version.txt"
           cd "$RUNNER_TEMP"
           "$bundle/bin/joky" run "$bundle/share/doc/joky/examples/hello.jk" > hello.out
           test "$(cat hello.out)" = 'Hello, world!'

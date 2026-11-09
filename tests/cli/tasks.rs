@@ -147,11 +147,15 @@ fn main() @suspends {
 #[cfg(unix)]
 fn suspending_cli_entries_match_jit_interpreter_and_standalone() {
     let work = Workspace::new();
+    work.write(
+        "async_main.jk",
+        include_str!("../../examples/async_main.jk"),
+    );
+    work.assert_all_backends("async_main.jk", &[], b"42\n", 0);
     for (source, code, stdout) in [
         ("fn main() @suspends {}", 0, ""),
         ("fn unused() @suspends {} struct Unused {} impl Unused { fn f(self) @suspends {} } fn main() {}", 0, ""),
         ("fn callback() @suspends -> Int32 { 42 } fn apply(f: fn() @suspends -> Int32) @suspends -> Int32 { f() } fn main() @suspends -> Int32 { apply(callback) }", 42, ""),
-        (include_str!("../../examples/async_main.jk"), 0, "42\n"),
         (r#"
             import joky/task.{yield_now, sleep}
             fn main() @suspends -> Int32 {

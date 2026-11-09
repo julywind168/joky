@@ -25,7 +25,7 @@ fn shutdown_notification_fixture_executes_in_standalone_aot() {
 fn shutdown_tcp_stops_accepting_drains_and_cancels_at_deadline() {
     let work = Workspace::new();
     work.write("server.jk", include_str!("../../examples/tcp_shutdown.jk"));
-    success(&work.cli(&["build", "server.jk", "--no-prelude"]));
+    success(&work.cli(&["build", "server.jk"]));
     // Cover signal routing in both VM modes and a source-independent native binary.
     // Native uses the management request, which shares the same notification.
     for backend in ["jit", "interpreter", "aot"] {
@@ -33,7 +33,7 @@ fn shutdown_tcp_stops_accepting_drains_and_cancels_at_deadline() {
             Command::new(work.path().join("server"))
         } else {
             let mut c = work.command();
-            c.args(["run", "server.jk", "--no-prelude"]);
+            c.args(["run", "server.jk"]);
             if backend == "interpreter" {
                 c.arg("--interpreter");
             }
