@@ -104,11 +104,12 @@ Examples:
 pub(super) const FORMAT: &str = "Format Joky sources without resolving imports or running code.
 
 Usage:
-  joky fmt [--check] [<file.jk> | <directory> | joky.toml]
-  joky fmt [--check] --stdin
+  joky fmt [--check] [--diff] [<file.jk> | <directory> | joky.toml]
+  joky fmt [--check] [--diff] --stdin
 
 Options:
   --check      Report all formatting differences without writing (exit 1)
+  --diff       Preview a unified diff without writing (exit 1 if changed)
   --stdin      Read stdin; write formatted source to stdout (no files)
   -h, --help   Show this help
 
@@ -116,10 +117,12 @@ Without an input, find the nearest joky.toml in the current directory or its par
 Projects format only their source-root, without loading path dependencies or requiring main.
 Directories recurse through .jk files; hidden directories, target, dist, nested projects and symlinks are skipped.
 All selected files must parse before any are rewritten. Writes preserve file permissions.
+Formatting uses four spaces and a soft 100-character width. Standalone // fmt: off/on comments preserve a region.
 Examples:
   joky fmt
   joky fmt src
   joky fmt --check .
+  joky fmt --diff src
   joky fmt --stdin < hello.jk";
 
 pub(super) const DOC: &str = "Generate an offline homepage and standard-library HTML.

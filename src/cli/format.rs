@@ -1,4 +1,5 @@
 //! Formatting does not initialize the VM, resolve imports, or execute code.
+mod diff;
 use super::{
     cli_argument_error, cli_error_with_code, diagnostic, project, Command, Error, ErrorCode,
 };
@@ -12,11 +13,13 @@ use std::{
 pub(super) struct Options {
     source: Option<PathBuf>,
     check: bool,
+    diff: bool,
 }
 
 pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Error> {
     let mut source = None;
     let mut check = false;
+    let mut diff = false;
     let mut stdin = false;
     let mut positional_only = false;
     for arg in args {
@@ -28,9 +31,11 @@ pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Err
                 positional_only = true;
                 continue;
             }
-            if arg == "--check" || arg == "--stdin" {
+            if arg == "--check" || arg == "--stdin" || arg == "--diff" {
                 let flag = if arg == "--check" {
                     &mut check
+                } else if arg == "--diff" {
+                    &mut diff
                 } else {
                     &mut stdin
                 };
@@ -71,7 +76,11 @@ pub(super) fn parse(args: impl Iterator<Item = OsString>) -> Result<Command, Err
     }) {
         return Err(cli_argument_error("Source file must have a .jk extension"));
     }
-    Ok(Command::Format(Options { source, check }))
+    Ok(Command::Format(Options {
+        source,
+        check,
+        diff,
+    }))
 }
 
 pub(super) fn execute(options: &Options) -> u8 {
@@ -86,6 +95,10 @@ pub(super) fn execute(options: &Options) -> u8 {
                 .read_to_string(&mut source)
                 .map_err(|error| io_error("read", &path, error))?;
             let formatted = joky::parser::format(&source)?;
+            if options.diff {
+                print_diff("<stdin>", &source, &formatted)?;
+                return Ok(u8::from(formatted != source));
+            }
             if options.check {
                 if formatted != source {
                     eprintln!("Needs formatting: <stdin>");
@@ -115,6 +128,12 @@ pub(super) fn execute(options: &Options) -> u8 {
         }
         // Parse every source before publishing any changes. Syntax errors in a
         // later file must leave earlier files untouched too.
+        if options.diff {
+            for (file, original, formatted) in &changes {
+                print_diff(&file.to_string_lossy(), original, formatted)?;
+            }
+            return Ok(u8::from(!changes.is_empty()));
+        }
         if options.check {
             for (file, _, _) in &changes {
                 eprintln!("Needs formatting: {}", file.display());
@@ -136,6 +155,13 @@ pub(super) fn execute(options: &Options) -> u8 {
             1
         }
     }
+}
+
+fn print_diff(path: &str, original: &str, formatted: &str) -> Result<(), Error> {
+    io::stdout()
+        .lock()
+        .write_all(diff::unified(path, original, formatted).as_bytes())
+        .map_err(|error| io_error("write", Path::new("<stdout>"), error))
 }
 
 fn io_error(action: &str, path: &Path, error: io::Error) -> Error {

@@ -206,3 +206,101 @@ fn format_keeps_negative_patterns_and_attribute_literals_together() {
         "#repr(C, align: -1) struct Point { x: Int32 }\nfn f(value: Int32) -> Int32 {\n    match value {\n        -2 ..= -1 => 0,\n        _ => 1\n    }\n}\n",
     );
 }
+
+#[test]
+fn format_wraps_long_lists_records_and_signatures() {
+    let source = concat!(
+        "struct Record{first_field_name:Int32,second_field_name:Int32,third_field_name:Int32,fourth_field_name:Int32,fifth_field_name:Int32}\n",
+        "struct Header{a_very_long_field_name_that_already_uses_most_of_the_available_horizontal_space:AnEquallyLongNominalTypeNameForTheField}\n",
+        "fn calculate(first_argument:Int32,second_argument:Int32,third_argument:Int32,fourth_argument:Int32,fifth_argument:Int32)->Int32{",
+        "first_argument+second_argument+third_argument+fourth_argument+fifth_argument}\n",
+        "fn f(){call(first_argument_with_a_long_name,second_argument_with_a_long_name,third_argument_with_a_long_name);",
+        "let values=[1111111111,2222222222,3333333333,4444444444,5555555555,6666666666,7777777777,8888888888,9999999999];",
+        "let record=Record{first_field_name:11111111,second_field_name:22222222,third_field_name:33333333,fourth_field_name:44444444,fifth_field_name:55555555}}\n",
+    );
+    let output = format(source).unwrap();
+    assert!(output.contains("fn calculate(\n"), "{output}");
+    assert!(output.contains("call(\n"), "{output}");
+    assert!(output.contains("let values = [\n"), "{output}");
+    assert!(output.contains("let record = Record {\n"), "{output}");
+    for line in output.lines() {
+        assert!(
+            line.chars().count() <= 100,
+            "{}: {line}",
+            line.chars().count()
+        );
+    }
+    assert_eq!(format(&output).unwrap(), output);
+}
+
+#[test]
+fn format_wraps_operators_chains_and_nested_closure_arguments_stably() {
+    let source = concat!(
+        "fn f(){let total=first_very_long_operand_name+second_very_long_operand_name+third_very_long_operand_name+fourth_very_long_operand_name;",
+        "let result=receiver.first_long_method_name().second_long_method_name().third_long_method_name().fourth_long_method_name();",
+        "call(||{42},first_very_long_operand_name+second_very_long_operand_name+third_very_long_operand_name+fourth_very_long_operand_name)}\n",
+    );
+    let output = format(source).unwrap();
+    assert!(output.contains("+\n"), "{output}");
+    assert!(output.contains("\n        ."), "{output}");
+    for line in output.lines() {
+        assert!(line.chars().count() <= 100, "{line}");
+    }
+    assert_eq!(format(&output).unwrap(), output);
+}
+
+#[test]
+fn format_preserves_disabled_regions_including_bom_and_line_endings() {
+    let kept = "  // fmt: off\n let   deliberately_spaced=1;second(  deliberately_spaced )\n  // fmt: on\n";
+    let other = "// fmt: off\nfn   another( ){  }\n// fmt: on\n";
+    let source = format!("fn f(){{\n{kept}let active=2\n}}\n{other}");
+    let output = format(&source).unwrap();
+    assert!(output.contains(kept), "{output}");
+    assert!(output.contains(other), "{output}");
+    assert!(output.contains("\n    let active = 2\n"));
+    assert_eq!(format(&output).unwrap(), output);
+    let source = "\u{feff}// fmt: off\r\nfn f( ) {   }\r\n// fmt: on";
+    assert_format(source, source);
+    let source = "fn f(){call(\n// fmt: off\n  x , y,\n// fmt: on\nz)}\n";
+    let output = format(source).unwrap();
+    assert!(output.contains("// fmt: off\n  x , y,\n// fmt: on\n"));
+    assert_eq!(format(&output).unwrap(), output);
+}
+
+#[test]
+fn format_directives_require_standalone_balanced_comments() {
+    for source in [
+        "// fmt: off\nfn f(){}\n",
+        "// fmt: on\nfn f(){}\n",
+        "// fmt: off\n// fmt: off\n// fmt: on\nfn f(){}\n",
+    ] {
+        assert!(format(source).unwrap_err().message.contains("fmt:"));
+    }
+    let source = "fn f(){let text=\"// fmt: off\"\n/* // fmt: on */\ncall() // fmt: off\n}\n";
+    let output = format(source).unwrap();
+    assert!(output.contains("let text = \"// fmt: off\""));
+    assert_eq!(format(&output).unwrap(), output);
+}
+
+#[test]
+fn format_normalizes_blank_lines_and_treats_width_as_a_soft_limit() {
+    assert_format(
+        "\n\nfn a(){}\n\n\n\nfn b(){}\n\n\n",
+        "fn a() {}\n\nfn b() {}\n",
+    );
+    assert_format("\r\n \r\n", "");
+    let literal = format!("\"{}\"", "long literal ".repeat(20));
+    let source = format!("fn f(){{println({literal})}}\n");
+    let output = format(&source).unwrap();
+    assert!(output.contains(&literal));
+    assert!(output.contains("println(\n"), "{output}");
+    assert_eq!(format(&output).unwrap(), output);
+}
+
+#[test]
+fn format_separates_binding_keywords_from_tuple_and_array_patterns() {
+    assert_format(
+        "fn f(){let(x,y)=(1,2);var[a,b]=[3,4];for(key,value) in entries{call(key,value)}}\n",
+        "fn f() {\n    let (x, y) = (1, 2);\n    var [a, b] = [3, 4];\n    for (key, value) in entries {\n        call(key, value)\n    }\n}\n",
+    );
+}

@@ -1,15 +1,37 @@
-//! Layout preserves expression line boundaries and adds breaks only inside known
-//! blocks, after block-level semicolons, and between complete declarations.
-use super::{is_close, is_open, syntax::Syntax, Piece, Role, TokenKind};
+//! Structured groups and syntax-safe width breaks preserve expression boundaries.
+use super::{
+    is_close, is_open,
+    syntax::Syntax,
+    wrap::{after_operator, Wrap},
+    Piece, Role, TokenKind,
+};
+use std::ops::Range;
 
 struct Frame {
     open: usize,
+    piece: usize,
     role: Role,
     base: usize,
     expanded: bool,
 }
 
-pub(super) fn render(source: &str, syntax: &Syntax, pieces: &[Piece<'_>]) -> String {
+pub(super) fn render(
+    source: &str,
+    syntax: &Syntax,
+    pieces: &[Piece<'_>],
+    skipped: &[Range<usize>],
+) -> String {
+    let mut wrap = Wrap::new(syntax, pieces, skipped);
+    loop {
+        wrap.changed = false;
+        let output = render_once(source, syntax, pieces, &mut wrap);
+        if !wrap.changed {
+            return output;
+        }
+    }
+}
+
+fn render_once(source: &str, syntax: &Syntax, pieces: &[Piece<'_>], wrap: &mut Wrap<'_>) -> String {
     let ending = source
         .find(['\r', '\n'])
         .map_or("\n", |i| line_ending(&source[i..]));
@@ -22,6 +44,7 @@ pub(super) fn render(source: &str, syntax: &Syntax, pieces: &[Piece<'_>]) -> Str
     let mut line_indent = 0;
     let mut next_token = 0;
     let mut indents = vec![0; syntax.tokens.len()];
+    let mut column = 0;
     for (index, piece) in pieces.iter().enumerate() {
         let token = piece.token.map(|i| &syntax.tokens[i]);
         let role = piece.token.map_or(Role::Normal, |i| syntax.roles[i]);
@@ -37,17 +60,35 @@ pub(super) fn render(source: &str, syntax: &Syntax, pieces: &[Piece<'_>]) -> Str
                     && pieces[index - 1].token == Some(frame.open)
                     && syntax.pairs[frame.open] == piece.token
             });
-        if !empty_close {
+        if index > 0 && !empty_close {
             copy_line_breaks(piece.gap, &mut output);
+            if output.ends_with(['\r', '\n']) {
+                column = 0;
+            }
         }
         let trailing_comment = piece.token.is_none() && !piece.gap.contains(['\r', '\n']);
         let attached_separator =
             token.is_some_and(|t| matches!(t.kind, TokenKind::Semi | TokenKind::Comma));
         let expanded_close = closing && frames.last().is_some_and(|frame| frame.expanded);
-        if (expanded_close || (pending_break && !trailing_comment && !attached_separator))
+        let space = index > 0 && space_between(syntax, &pieces[index - 1], piece);
+        let width_break = !trailing_comment
+            && !attached_separator
+            && wrap.break_before(index, column + usize::from(space));
+        // A width break inside an inline group makes that whole group vertical.
+        // Re-render from the original pieces; each retry forces a new group, so
+        // this converges without reparsing or guessing a fixed iteration count.
+        if width_break {
+            if let Some(frame) = frames.last().filter(|frame| !frame.expanded) {
+                wrap.force(frame.piece);
+            }
+        }
+        if (expanded_close
+            || (pending_break && !trailing_comment && !attached_separator)
+            || width_break)
             && !output.ends_with(['\r', '\n'])
         {
             output.push_str(ending);
+            column = 0;
         }
         if index == 0 || output.ends_with(['\r', '\n']) {
             let base = frames
@@ -61,17 +102,24 @@ pub(super) fn render(source: &str, syntax: &Syntax, pieces: &[Piece<'_>]) -> Str
                     .unwrap_or(false)
                     || next_token.checked_sub(1).is_some_and(|i| {
                         syntax.roles[i] == Role::Prefix
-                            || binary(&syntax.tokens[i].kind, syntax.roles[i])
+                            || after_operator(&syntax.tokens[i].kind, syntax.roles[i])
                     }));
             line_indent = anchor.unwrap_or(base + usize::from(continuation));
             output.extend(std::iter::repeat_n(' ', line_indent * 4));
+            column += line_indent * 4;
             pending_break = false;
         } else if let Some(previous) = index.checked_sub(1).map(|i| &pieces[i]) {
             if space_between(syntax, previous, piece) {
                 output.push(' ');
+                column += 1;
             }
         }
         output.push_str(piece.text);
+        if let Some(end) = piece.text.rfind(['\r', '\n']) {
+            column = piece.text[end + 1..].chars().count();
+        } else {
+            column += piece.text.chars().count();
+        }
         let Some(i) = piece.token else { continue };
         indents[i] = line_indent;
         next_token = i + 1;
@@ -79,14 +127,15 @@ pub(super) fn render(source: &str, syntax: &Syntax, pieces: &[Piece<'_>]) -> Str
         if closing {
             frames.pop();
         } else if is_open(kind, role) {
-            let expanded = matches!(
-                role,
-                Role::BlockOpen | Role::ArmsOpen | Role::DeclarationsOpen
-            ) && syntax.pairs[i].is_some_and(|close| {
-                !source[syntax.tokens[i].span.end()..syntax.tokens[close].span.start()]
-                    .trim()
-                    .is_empty()
-            });
+            let expanded = wrap.expand(index, column.saturating_sub(piece.text.chars().count()))
+                || (matches!(
+                    role,
+                    Role::BlockOpen | Role::ArmsOpen | Role::DeclarationsOpen
+                ) && syntax.pairs[i].is_some_and(|close| {
+                    !source[syntax.tokens[i].span.end()..syntax.tokens[close].span.start()]
+                        .trim()
+                        .is_empty()
+                }));
             let base = if matches!(
                 role,
                 Role::BlockOpen | Role::ArmsOpen | Role::DeclarationsOpen
@@ -97,6 +146,7 @@ pub(super) fn render(source: &str, syntax: &Syntax, pieces: &[Piece<'_>]) -> Str
             };
             frames.push(Frame {
                 open: i,
+                piece: index,
                 role,
                 base,
                 expanded,
@@ -107,11 +157,9 @@ pub(super) fn render(source: &str, syntax: &Syntax, pieces: &[Piece<'_>]) -> Str
             || frames.last().is_some_and(|frame| {
                 (matches!(frame.role, Role::BlockOpen | Role::DeclarationsOpen)
                     && *kind == TokenKind::Semi)
-                    || (frame.role == Role::ArmsOpen && *kind == TokenKind::Comma)
+                    || (frame.expanded && *kind == TokenKind::Comma)
             });
     }
-    let trailing = pieces.last().map_or(source, |piece| &source[piece.end..]);
-    copy_line_breaks(trailing, &mut output);
     if !pieces.is_empty() && !output.ends_with(['\r', '\n']) {
         output.push_str(ending);
     }
@@ -127,18 +175,23 @@ fn line_ending(text: &str) -> &str {
 }
 
 fn copy_line_breaks(mut gap: &str, output: &mut String) {
+    let mut count = 0;
     while let Some(index) = gap.find(['\r', '\n']) {
+        if count == 2 {
+            break;
+        }
         let ending = line_ending(&gap[index..]);
         // Removing this separator would merge two distinct breaks into CRLF.
         if ending == "\n" && output.ends_with('\r') {
             output.push(' ');
         }
         output.push_str(ending);
+        count += 1;
         gap = &gap[index + ending.len()..];
     }
 }
 
-fn binary(kind: &TokenKind, role: Role) -> bool {
+pub(super) fn binary(kind: &TokenKind, role: Role) -> bool {
     role == Role::Normal
         && matches!(
             kind,
@@ -167,7 +220,7 @@ fn binary(kind: &TokenKind, role: Role) -> bool {
         )
 }
 
-fn space_between(syntax: &Syntax, left: &Piece<'_>, right: &Piece<'_>) -> bool {
+pub(super) fn space_between(syntax: &Syntax, left: &Piece<'_>, right: &Piece<'_>) -> bool {
     let (Some(left), Some(right)) = (left.token, right.token) else {
         return true;
     };
@@ -210,8 +263,10 @@ fn space_between(syntax: &Syntax, left: &Piece<'_>, right: &Piece<'_>) -> bool {
         return false;
     }
     if matches!(b, LParen | LBracket) {
-        return matches!(a, If | While | Match | Return | In | Colon | Comma | Semi)
-            || matches!(a, Ident(name) if name == "when")
+        return matches!(
+            a,
+            If | While | Match | Return | In | Let | Var | For | Colon | Comma | Semi
+        ) || matches!(a, Ident(name) if name == "when")
             || matches!((a, b), (StrLit(_), LParen));
     }
     true

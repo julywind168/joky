@@ -117,6 +117,8 @@ fn fmt_cli_formatted_program_preserves_behavior_on_all_backends() {
     work.write(
         "program.jk",
         concat!(
+            "fn sum(first_argument:Int32,second_argument:Int32,third_argument:Int32,fourth_argument:Int32,fifth_argument:Int32,sixth_argument:Int32)->Int32{first_argument+second_argument+third_argument+fourth_argument+fifth_argument+sixth_argument}\n",
+            "// fmt: off\nfn preserved( value:Int32 )->Int32{value}\n// fmt: on\n",
             "fn choose(value:Bool)->Int32{match value{true=>1;2,false=>3}}\n",
             "fn identity<T:Copy>(value:T)->T{value}\n",
             "fn discard(){42;}\n",
@@ -127,7 +129,9 @@ fn fmt_cli_formatted_program_preserves_behavior_on_all_backends() {
             "var total=2\ntotal=total*-3\nprintln(total)\n",
             "let half=|value:Int32|{value/2}\nprintln(half(8))\n",
             "let amount=10+\n20\nprintln(amount)\n",
-            "println(choose(true))\nprintln(identity::<Int32>(8))\ndiscard()\n}\n",
+            "println(choose(true))\nprintln(identity::<Int32>(8))\ndiscard()\n",
+            "let(first_argument,second_argument,third_argument,fourth_argument,fifth_argument,sixth_argument)=(1,2,3,4,5,6)\n",
+            "println(preserved(sum(first_argument,second_argument,third_argument,fourth_argument,fifth_argument,sixth_argument)))\n}\n",
         ),
     );
     success(&work.cli(&["fmt", "program.jk"]));
@@ -135,8 +139,60 @@ fn fmt_cli_formatted_program_preserves_behavior_on_all_backends() {
     work.assert_all_backends(
         "program.jk",
         &[],
-        b"5\nn=5\n{raw} \\n\n-6\n4\n30\n2\n8\n",
+        b"5\nn=5\n{raw} \\n\n-6\n4\n30\n2\n8\n21\n",
         0,
+    );
+}
+
+#[test]
+fn fmt_diff_previews_files_projects_and_stdin_without_writing() {
+    let work = Workspace::new();
+    let source = "fn f(){let n=1}";
+    work.write("plain/source file.jk", source);
+    let output = work.cli(&["fmt", "--diff", "plain"]);
+    assert_eq!(output.status.code(), Some(1));
+    let diff = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        diff.starts_with("--- \"a/plain/source file.jk\"\n+++ \"b/plain/source file.jk\"\n"),
+        "{diff}"
+    );
+    assert!(diff.contains("@@ -1 +1,3 @@\n"), "{diff}");
+    assert!(diff.contains("\\ No newline at end of file\n"));
+    assert!(diff.contains("+    let n = 1\n"));
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(work.path().join("plain/source file.jk")).unwrap(),
+        source
+    );
+    let output = stdin(&work, &["--diff", "--check"], source.as_bytes());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("--- a/<stdin>\n"));
+    work.write("plain/z.jk", "fn broken(");
+    let output = work.cli(&["fmt", "--diff", "plain"]);
+    failure(&output, "z.jk");
+    assert!(output.stdout.is_empty());
+    failure(
+        &work.cli(&["fmt", "--diff", "--diff", "plain"]),
+        "more than once",
+    );
+    work.write(
+        "app/joky.toml",
+        "[project]\nname='diff'\nsource-root='src'\n",
+    );
+    work.write("app/src/main.jk", "fn main(){println(1)}");
+    assert_eq!(work.cli(&["fmt", "--diff", "app"]).status.code(), Some(1));
+    success(&work.cli(&["fmt", "app"]));
+    let output = work.cli(&["fmt", "--diff", "app"]);
+    success(&output);
+    assert!(output.stdout.is_empty());
+    let output = stdin(&work, &["--diff"], b"fn f() {}\n");
+    success(&output);
+    assert!(output.stdout.is_empty());
+    work.write("bad-directive.jk", "// fmt: off\nfn f(){}\n");
+    failure(&work.cli(&["fmt", "bad-directive.jk"]), "Unclosed fmt: off");
+    assert_eq!(
+        std::fs::read_to_string(work.path().join("bad-directive.jk")).unwrap(),
+        "// fmt: off\nfn f(){}\n"
     );
 }
 

@@ -16,6 +16,7 @@ pub(super) struct Syntax {
     pub break_after: Vec<bool>,
     pub continuation: Vec<bool>,
     pub anchors: Vec<Option<usize>>,
+    pub chain: Vec<bool>,
     shape: Shape,
 }
 
@@ -63,6 +64,7 @@ impl Syntax {
             break_after: vec![false; tokens.len()],
             continuation: vec![false; tokens.len()],
             anchors: vec![None; tokens.len()],
+            chain: vec![false; tokens.len()],
             tokens,
             roles,
             shape: Shape::default(),
@@ -116,6 +118,11 @@ impl Syntax {
                     } => {
                         syntax.braces(*span, Role::ArmsOpen, false);
                     }
+                    _ => {}
+                }
+                match expr {
+                    Expr::MethodCall(call) => syntax.chain(&call.receiver),
+                    Expr::Field { base, .. } => syntax.chain(base),
                     _ => {}
                 }
                 match expr {
@@ -216,6 +223,17 @@ impl Syntax {
             .partition_point(|t| t.span.end() <= span.start());
         let end = self.tokens.partition_point(|t| t.span.start() < span.end());
         start.min(end)..end
+    }
+
+    fn chain(&mut self, receiver: &Expr) {
+        let dot = self.range(receiver.span()).end;
+        if self
+            .tokens
+            .get(dot)
+            .is_some_and(|t| t.kind == TokenKind::Dot)
+        {
+            self.chain[dot] = true;
+        }
     }
 
     fn declaration(&mut self, kind: &'static str, span: Span, parts: impl Iterator<Item = Span>) {

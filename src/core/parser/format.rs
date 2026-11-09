@@ -1,16 +1,22 @@
 //! Syntax-aware formatting over original tokens, comments and literal spellings.
 mod layout;
+mod skip;
 mod syntax;
+mod wrap;
 use super::{Diagnostic, Token, TokenKind};
 use syntax::Syntax;
 
 /// Format valid syntax without resolving imports, checking types or running code.
 /// Nonempty blocks expand, expression continuations indent, and syntax roles
 /// distinguish operators from generic, import and closure punctuation.
+/// Long lists and expressions use a soft 100-character width. Standalone
+/// `// fmt: off` / `// fmt: on` comments preserve complete source regions.
 pub fn format(source: &str) -> Result<String, Diagnostic> {
     let syntax = Syntax::parse(source)?;
     let pieces = pieces(source, &syntax.tokens);
-    let output = layout::render(source, &syntax, &pieces);
+    let skipped = skip::regions(source, &pieces)?;
+    let output = layout::render(source, &syntax, &pieces, &skipped);
+    let output = skip::restore(source, &skipped, output)?;
     verify(source, &syntax, &output)?;
     Ok(output)
 }
