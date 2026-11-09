@@ -1,14 +1,76 @@
 //! Operator traits.
+//!
+//! `Add` defines homogeneous, consuming addition: both operands and the result
+//! have the same type. Trait dispatch is static. Implement the trait to support
+//! `+` on an application type.
+//!
+//! ```joky
+//! import joky/ops.{type Add}
+//!
+//! struct Count { value: Int32 }
+//! impl Add for Count {
+//!     fn add(self, other: Self) -> Self {
+//!         Count { value: self.value + other.value }
+//!     }
+//! }
+//!
+//! fn main() {
+//!     let total = Count { value: 2 } + Count { value: 3 }
+//!     assert_eq(total.value, 5)
+//! }
+//! ```
 
-// Homogeneous, consuming addition. Operator dispatch is static.
-pub trait Add { fn add(self, other: Self) -> Self }
-impl Add for Int8 { fn add(self, other: Self) -> Self { self + other } }
-impl Add for Int16 { fn add(self, other: Self) -> Self { self + other } }
-impl Add for Int32 { fn add(self, other: Self) -> Self { self + other } }
-impl Add for Int64 { fn add(self, other: Self) -> Self { self + other } }
-impl Add for UInt8 { fn add(self, other: Self) -> Self { self + other } }
-impl Add for UInt16 { fn add(self, other: Self) -> Self { self + other } }
-impl Add for UInt32 { fn add(self, other: Self) -> Self { self + other } }
-impl Add for UInt64 { fn add(self, other: Self) -> Self { self + other } }
-impl Add for Float32 { fn add(self, other: Self) -> Self { self + other } }
-impl Add for Float64 { fn add(self, other: Self) -> Self { self + other } }
+/// Homogeneous, consuming addition. Operator dispatch is static.
+pub trait Add {
+    fn add(self, other: Self) -> Self
+}
+impl Add for Int8 {
+    fn add(self, other: Self) -> Self {
+        self + other
+    }
+}
+impl Add for Int16 {
+    fn add(self, other: Self) -> Self {
+        self + other
+    }
+}
+impl Add for Int32 {
+    fn add(self, other: Self) -> Self {
+        self + other
+    }
+}
+impl Add for Int64 {
+    fn add(self, other: Self) -> Self {
+        self + other
+    }
+}
+impl Add for UInt8 {
+    fn add(self, other: Self) -> Self {
+        self + other
+    }
+}
+impl Add for UInt16 {
+    fn add(self, other: Self) -> Self {
+        self + other
+    }
+}
+impl Add for UInt32 {
+    fn add(self, other: Self) -> Self {
+        self + other
+    }
+}
+impl Add for UInt64 {
+    fn add(self, other: Self) -> Self {
+        self + other
+    }
+}
+impl Add for Float32 {
+    fn add(self, other: Self) -> Self {
+        self + other
+    }
+}
+impl Add for Float64 {
+    fn add(self, other: Self) -> Self {
+        self + other
+    }
+}

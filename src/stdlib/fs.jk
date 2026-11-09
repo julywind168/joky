@@ -1,4 +1,21 @@
 //! Files, directories and I/O errors.
+//!
+//! File operations suspend and return typed errors. Use bounded reads for
+//! untrusted input; `write_all` reports how many bytes were written on failure.
+//! `File.close` consumes the file and reports close errors; scope exit also releases it.
+//! This example only inspects the current directory.
+//!
+//! ```joky
+//! import joky/fs
+//!
+//! fn main() @suspends {
+//!     let info = fs.metadata(".").unwrap()
+//!     match info.kind {
+//!         fs.FileKind.Directory => println("working directory is available")
+//!         _ => panic("Expected a directory")
+//!     }
+//! }
+//! ```
 
 // File capabilities are supplied explicitly by the embedding host.
 import joky/array.{type Array}
@@ -11,24 +28,37 @@ import joky/show.{type Show}
 
 const IO_CHUNK_SIZE: UInt64 = 65536
 
-pub enum ErrorKind { Unsupported, PermissionDenied, NotFound, AlreadyExists, InvalidInput, Busy, Closed, LimitExceeded, WriteZero, SystemFailure }
+pub enum ErrorKind {
+    Unsupported,
+    PermissionDenied,
+    NotFound,
+    AlreadyExists,
+    InvalidInput,
+    Busy,
+    Closed,
+    LimitExceeded,
+    WriteZero,
+    SystemFailure
+}
 pub struct IoError { pub kind: ErrorKind, pub message: String }
 pub struct WriteError { pub written: UInt64, pub error: IoError }
 pub enum ReadTextError { Io(IoError), Utf8(Utf8Error) }
 impl Show for ErrorKind {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str(match self {
-            Unsupported => "Unsupported"
-            PermissionDenied => "PermissionDenied"
-            NotFound => "NotFound"
-            AlreadyExists => "AlreadyExists"
-            InvalidInput => "InvalidInput"
-            Busy => "Busy"
-            Closed => "Closed"
-            LimitExceeded => "LimitExceeded"
-            WriteZero => "WriteZero"
-            SystemFailure => "SystemFailure"
-        })
+        output.push_str(
+            match self {
+                Unsupported => "Unsupported"
+                PermissionDenied => "PermissionDenied"
+                NotFound => "NotFound"
+                AlreadyExists => "AlreadyExists"
+                InvalidInput => "InvalidInput"
+                Busy => "Busy"
+                Closed => "Closed"
+                LimitExceeded => "LimitExceeded"
+                WriteZero => "WriteZero"
+                SystemFailure => "SystemFailure"
+            }
+        )
     }
 }
 impl Show for IoError {
@@ -44,30 +74,57 @@ impl Show for WriteError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str("write failed after ")
         self.written.show(output)
-        output.push_str(if self.written == 1 { " confirmed byte: " } else { " confirmed bytes: " })
+        output.push_str(
+            if self.written == 1 {
+                " confirmed byte: "
+            } else {
+                " confirmed bytes: "
+            }
+        )
         self.error.show(output)
     }
 }
 impl Show for ReadTextError {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        match self { Io(error) => error.show(output), Utf8(error) => error.show(output) }
+        match self {
+            Io(error) => error.show(output),
+            Utf8(error) => error.show(output)
+        }
     }
 }
 
-pub struct OpenOptions { pub read: Bool, pub write: Bool, pub append: Bool, pub create: Bool, pub create_new: Bool, pub truncate: Bool }
+pub struct OpenOptions {
+    pub read: Bool,
+    pub write: Bool,
+    pub append: Bool,
+    pub create: Bool,
+    pub create_new: Bool,
+    pub truncate: Bool
+}
 impl OpenOptions {
-    pub fn default() -> Self { OpenOptions { read: true, write: false, append: false, create: false, create_new: false, truncate: false } }
+    pub fn default() -> Self {
+        OpenOptions {
+            read: true,
+            write: false,
+            append: false,
+            create: false,
+            create_new: false,
+            truncate: false
+        }
+    }
 }
 pub enum SeekFrom { Start(UInt64), Current(Int64), End(Int64) }
 pub enum FileKind { Regular, Directory, Symlink, Other }
 impl Show for FileKind {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str(match self {
-            Regular => "regular file"
-            Directory => "directory"
-            Symlink => "symbolic link"
-            Other => "other"
-        })
+        output.push_str(
+            match self {
+                Regular => "regular file"
+                Directory => "directory"
+                Symlink => "symbolic link"
+                Other => "other"
+            }
+        )
     }
 }
 
@@ -84,7 +141,8 @@ extern fn __fs_read_dir(path: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_open(path: &String, flags: UInt64) @suspends -> fs.OutcomeOwner
 extern fn __fs_read(file: &mut fs.FileOwner, limit: UInt64) @suspends -> fs.OutcomeOwner
 extern fn __fs_write(file: &mut fs.FileOwner, bytes: &Slice<UInt8>) @suspends -> fs.OutcomeOwner
-extern fn __fs_seek(file: &mut fs.FileOwner, origin: UInt64, offset: UInt64) @suspends -> fs.OutcomeOwner
+extern fn __fs_seek(file: &mut fs.FileOwner, origin: UInt64, offset: UInt64) @suspends ->
+    fs.OutcomeOwner
 extern fn __fs_sync(file: &mut fs.FileOwner) @suspends -> fs.OutcomeOwner
 extern fn __fs_close(file: &mut fs.FileOwner) @suspends -> fs.OutcomeOwner
 extern fn __fs_code(result: &mut fs.OutcomeOwner) @suspends -> UInt64
@@ -92,68 +150,118 @@ extern fn __fs_message(result: &mut fs.OutcomeOwner) @suspends -> String
 extern fn __fs_file(result: &mut fs.OutcomeOwner) @suspends -> fs.FileOwner
 extern fn __fs_bytes(result: &mut fs.OutcomeOwner) @suspends -> Array<UInt8>
 extern fn __fs_count(result: &mut fs.OutcomeOwner) @suspends -> UInt64
+
 fn error_kind(code: UInt64) -> ErrorKind {
     match code {
-        1 => Unsupported, 2 => PermissionDenied, 3 => NotFound,
-        4 => AlreadyExists, 5 => InvalidInput, 6 => Busy,
-        7 => Closed, 8 => LimitExceeded, 9 => WriteZero, _ => SystemFailure
+        1 => Unsupported,
+        2 => PermissionDenied,
+        3 => NotFound,
+        4 => AlreadyExists,
+        5 => InvalidInput,
+        6 => Busy,
+        7 => Closed,
+        8 => LimitExceeded,
+        9 => WriteZero,
+        _ => SystemFailure
     }
 }
+
 fn error(result: &mut fs.OutcomeOwner, code: UInt64) @suspends -> IoError {
     IoError { kind: error_kind(code), message: __fs_message(result) }
 }
+
 pub fn open(path: &String, options: OpenOptions) @suspends -> Result<File, IoError> {
     var flags: UInt64 = 0
-    if options.read { flags = flags | 1 }
-    if options.write { flags = flags | 2 }
-    if options.append { flags = flags | 4 }
-    if options.create { flags = flags | 8 }
-    if options.create_new { flags = flags | 16 }
-    if options.truncate { flags = flags | 32 }
+    if options.read {
+        flags = flags | 1
+    }
+    if options.write {
+        flags = flags | 2
+    }
+    if options.append {
+        flags = flags | 4
+    }
+    if options.create {
+        flags = flags | 8
+    }
+    if options.create_new {
+        flags = flags | 16
+    }
+    if options.truncate {
+        flags = flags | 32
+    }
     var result = __fs_open(path, flags)
     check_status(&mut result)?
     Ok(File { owner: __fs_file(&mut result) })
 }
+
 fn check_status(result: &mut fs.OutcomeOwner) @suspends -> Result<Unit, IoError> {
     let code = __fs_code(result)
-    if code == 0 { Ok({}) } else { Err(error(result, code)) }
+    if code == 0 {
+        Ok({})
+    } else {
+        Err(error(result, code))
+    }
 }
+
 fn status(var result: fs.OutcomeOwner) @suspends -> Result<Unit, IoError> {
     check_status(&mut result)
 }
+
 pub fn rename(from: &String, to: &String) @suspends -> Result<Unit, IoError> {
     status(__fs_rename(from, to))
 }
+
 pub fn remove_file(path: &String) @suspends -> Result<Unit, IoError> {
     status(__fs_remove_file(path))
 }
-pub fn create_dir(path: &String) @suspends -> Result<Unit, IoError> { status(__fs_create_dir(path)) }
-pub fn remove_dir(path: &String) @suspends -> Result<Unit, IoError> { status(__fs_remove_dir(path)) }
+
+pub fn create_dir(path: &String) @suspends -> Result<Unit, IoError> {
+    status(__fs_create_dir(path))
+}
+
+pub fn remove_dir(path: &String) @suspends -> Result<Unit, IoError> {
+    status(__fs_remove_dir(path))
+}
+
 pub fn metadata(path: &String) @suspends -> Result<Metadata, IoError> {
     var result = __fs_metadata(path)
     check_status(&mut result)?
-    let kind: FileKind = match __fs_kind(&mut result) { 0 => Regular, 1 => Directory, 2 => Symlink, _ => Other }
+    let kind: FileKind = match __fs_kind(&mut result) {
+        0 => Regular,
+        1 => Directory,
+        2 => Symlink,
+        _ => Other
+    }
     Ok(Metadata { kind, size: __fs_count(&mut result) })
 }
+
 pub fn read_dir(path: &String) @suspends -> Result<Array<String>, IoError> {
     var result = __fs_read_dir(path)
     check_status(&mut result)?
     let names = String.from_utf8(__fs_bytes(&mut result))!
-    if names.is_empty() { Ok(Array.new::<String>()) } else { Ok(names.split("\0")) }
+    if names.is_empty() {
+        Ok(Array.new::<String>())
+    } else {
+        Ok(names.split("\0"))
+    }
 }
+
 // Acquire the host's exclusive stdin stream; normal file operations retain their contracts.
 pub fn stdin() @suspends -> Result<File, IoError> {
     var result = __io_stdin()
     check_status(&mut result)?
     Ok(File { owner: __fs_file(&mut result) })
 }
+
 impl File {
     // No content limit; task storage limits still apply.
     pub fn read_all(&mut self) @suspends -> Result<Array<UInt8>, IoError> {
         read_remaining(self, None)
     }
     // Read one byte beyond the content limit to distinguish exact EOF from overflow.
-    pub fn read_all_limited(&mut self, max_bytes: UInt64) @suspends -> Result<Array<UInt8>, IoError> {
+    pub fn read_all_limited(&mut self, max_bytes: UInt64) @suspends ->
+        Result<Array<UInt8>, IoError> {
         read_remaining(self, Some(max_bytes))
     }
     // Confirmed progress excludes any unknown effects of the failing request.
@@ -169,21 +277,33 @@ impl File {
         var chunk_size = IO_CHUNK_SIZE
         while written < length {
             let remaining = length - written
-            let size = if remaining < chunk_size { remaining } else { chunk_size }
+            let size = if remaining < chunk_size {
+                remaining
+            } else {
+                chunk_size
+            }
             let count = match self.write(bytes.slice(written, written + size)) {
                 Ok(count) => count
-                Err(error) => { return Err(WriteError { written: written, error: error }) }
+                Err(error) => {
+                    return Err(WriteError { written: written, error: error })
+                }
             }
             if count == 0 {
                 return Err(WriteError { written: written, error: IoError {
-                    kind: ErrorKind.WriteZero, message: "File write made no progress"
-                } })
+                            kind: ErrorKind.WriteZero,
+                            message: "File write made no progress"
+                        } })
             }
             written = written + count
-            if count < size { chunk_size = count }
-            else if chunk_size < IO_CHUNK_SIZE {
+            if count < size {
+                chunk_size = count
+            } else if chunk_size < IO_CHUNK_SIZE {
                 let next = chunk_size * 2
-                chunk_size = if next < IO_CHUNK_SIZE { next } else { IO_CHUNK_SIZE }
+                chunk_size = if next < IO_CHUNK_SIZE {
+                    next
+                } else {
+                    IO_CHUNK_SIZE
+                }
             }
         }
         Ok({})
@@ -191,7 +311,10 @@ impl File {
     pub fn read_text(&mut self) @suspends -> Result<String, ReadTextError> {
         decode_text(self.read_all())
     }
-    pub fn read_text_limited(&mut self, max_bytes: UInt64) @suspends -> Result<String, ReadTextError> {
+    pub fn read_text_limited(&mut self, max_bytes: UInt64) @suspends -> Result<
+        String,
+        ReadTextError
+    > {
         decode_text(self.read_all_limited(max_bytes))
     }
     pub fn write_text(&mut self, text: String) @suspends -> Result<Unit, WriteError> {
@@ -226,17 +349,36 @@ impl File {
     }
 }
 
-fn read_remaining(file: &mut File, max_bytes: Option<UInt64>) @suspends -> Result<Array<UInt8>, IoError> {
+fn read_remaining(file: &mut File, max_bytes: Option<UInt64>) @suspends -> Result<
+    Array<UInt8>,
+    IoError
+> {
     var output = Array.new::<UInt8>()
     while true {
-        let remaining = match max_bytes { Some(max) => max - output.len(), None => IO_CHUNK_SIZE }
-        let limit: UInt64 = if remaining == 0 { 1 } else {
-            if remaining < IO_CHUNK_SIZE { remaining } else { IO_CHUNK_SIZE }
+        let remaining = match max_bytes {
+            Some(max) => max - output.len(),
+            None => IO_CHUNK_SIZE
+        }
+        let limit: UInt64 = if remaining == 0 {
+            1
+        } else {
+            if remaining < IO_CHUNK_SIZE {
+                remaining
+            } else {
+                IO_CHUNK_SIZE
+            }
         }
         let chunk = file.read(limit)?
-        if chunk.is_empty() { return Ok(output) }
+        if chunk.is_empty() {
+            return Ok(output)
+        }
         if remaining == 0 {
-            return Err(IoError { kind: ErrorKind.LimitExceeded, message: "File content exceeds read_all_limited limit" })
+            return Err(
+                IoError {
+                    kind: ErrorKind.LimitExceeded,
+                    message: "File content exceeds read_all_limited limit"
+                }
+            )
         }
         let size = chunk.len()
         array.extend_bytes(&mut output, chunk.slice(0, size), 0, size)
@@ -244,6 +386,14 @@ fn read_remaining(file: &mut File, max_bytes: Option<UInt64>) @suspends -> Resul
 }
 
 fn decode_text(result: Result<Array<UInt8>, IoError>) -> Result<String, ReadTextError> {
-    let bytes = result.map_err(|error| { ReadTextError.Io(error) })?
-    String.from_utf8(bytes).map_err(|error| { ReadTextError.Utf8(error) })
+    let bytes = result.map_err(
+        |error| {
+            ReadTextError.Io(error)
+        }
+    )?
+    String.from_utf8(bytes).map_err(
+        |error| {
+            ReadTextError.Utf8(error)
+        }
+    )
 }

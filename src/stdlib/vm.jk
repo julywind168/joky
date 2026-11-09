@@ -1,4 +1,20 @@
 //! Embedded Joky virtual machines and scripts.
+//!
+//! A `Vm` owns an embedded compiler and module registry. Prefer typed
+//! `load_source`, `require` and `try_call` methods over the legacy status-code
+//! functions. Shared owners refer to the same registry; explicitly closing one
+//! closes all aliases. Typed script entries take one input and use `@suspends`.
+//!
+//! ```joky
+//! import joky/vm
+//!
+//! fn main() @suspends {
+//!     let engine = vm.Vm.interpreter()
+//!     let answer = engine.require::<Int32, Int32>("answer").unwrap()
+//!     engine.load_source(r"pub fn answer(value: Int32) @suspends -> Int32 { value * 2 }").unwrap()
+//!     assert_eq(answer.try_call(engine, 21).unwrap(), 42)
+//! }
+//! ```
 
 // A VM owns its registry entry; shared borrows allow calls during hot reload.
 import joky/show.{type Show}
@@ -16,75 +32,208 @@ extern fn __vm_print_error()
 pub type Function = vm.Function
 pub struct Vm { owner: vm.Owner }
 impl Vm {
-    pub fn new() -> Self { Vm { owner: __vm_create(0) } }
-    pub fn interpreter() -> Self { Vm { owner: __vm_create(1) } }
-    // Share the control identity; closing any owner closes all aliases.
-    pub fn share(&self) @suspends -> Self { Vm { owner: __vm_share(&self.owner) } }
-    pub fn close(self) -> Int32 { __vm_close(&self.owner) }
+    pub fn new() -> Self {
+        Vm { owner: __vm_create(0) }
+    }
+    pub fn interpreter() -> Self {
+        Vm { owner: __vm_create(1) }
+    }
+    /// Share the control identity; closing any owner closes all aliases.
+    pub fn share(&self) @suspends -> Self {
+        Vm { owner: __vm_share(&self.owner) }
+    }
+    pub fn close(self) -> Int32 {
+        __vm_close(&self.owner)
+    }
 }
-pub fn close(value: Vm) -> Int32 { value.close() }
-pub fn error_code() -> Int32 { __vm_error_code() }
-pub fn print_error() { __vm_print_error() }
+
+pub fn close(value: Vm) -> Int32 {
+    value.close()
+}
+
+pub fn error_code() -> Int32 {
+    __vm_error_code()
+}
+
+pub fn print_error() {
+    __vm_print_error()
+}
+
 extern fn __vm_domain_schema(owner: &vm.Owner) -> UInt64
-pub fn domain_schema(value: &Vm) -> UInt64 { __vm_domain_schema(&value.owner) }
-extern fn __vm_prepare_migration(owner: &vm.Owner, schema: UInt64, source: &String, method: &String) -> Int32
-pub fn prepare_migration(value: &Vm, schema: UInt64, source: &String, method: &String) -> Int32 { __vm_prepare_migration(&value.owner, schema, source, method) }
-extern fn __vm_begin_migration(owner: &vm.Owner, schema: UInt64, source: &String, start: &String, advance: &String) -> Int32
-pub fn begin_migration(value: &Vm, schema: UInt64, source: &String, start: &String, advance: &String) -> Int32 { __vm_begin_migration(&value.owner, schema, source, start, advance) }
+
+pub fn domain_schema(value: &Vm) -> UInt64 {
+    __vm_domain_schema(&value.owner)
+}
+
+extern fn __vm_prepare_migration(owner: &vm.Owner, schema: UInt64, source: &String, method: &String) ->
+    Int32
+
+pub fn prepare_migration(value: &Vm, schema: UInt64, source: &String, method: &String) -> Int32 {
+    __vm_prepare_migration(&value.owner, schema, source, method)
+}
+
+extern fn __vm_begin_migration(
+    owner: &vm.Owner,
+    schema: UInt64,
+    source: &String,
+    start: &String,
+    advance: &String
+) -> Int32
+
+pub fn begin_migration(
+    value: &Vm,
+    schema: UInt64,
+    source: &String,
+    start: &String,
+    advance: &String
+) -> Int32 {
+    __vm_begin_migration(&value.owner, schema, source, start, advance)
+}
+
 extern fn __vm_step_migration(owner: &vm.Owner, budget: UInt64) -> Int32
-pub fn step_migration(value: &Vm, budget: UInt64) -> Int32 { __vm_step_migration(&value.owner, budget) }
+
+pub fn step_migration(value: &Vm, budget: UInt64) -> Int32 {
+    __vm_step_migration(&value.owner, budget)
+}
+
 extern fn __vm_begin_migration_batch(owner: &vm.Owner, source: &String) -> Int32
-pub fn begin_migration_batch(value: &Vm, source: &String) -> Int32 { __vm_begin_migration_batch(&value.owner, source) }
+
+pub fn begin_migration_batch(value: &Vm, source: &String) -> Int32 {
+    __vm_begin_migration_batch(&value.owner, source)
+}
+
 extern fn __vm_stage_migration(owner: &vm.Owner, start: &String, advance: &String) -> Int32
-pub fn stage_migration(value: &Vm, start: &String, advance: &String) -> Int32 { __vm_stage_migration(&value.owner, start, advance) }
+
+pub fn stage_migration(value: &Vm, start: &String, advance: &String) -> Int32 {
+    __vm_stage_migration(&value.owner, start, advance)
+}
+
 extern fn __vm_publish_migration(owner: &vm.Owner) -> Int32
-pub fn publish_migration(value: &Vm) -> Int32 { __vm_publish_migration(&value.owner) }
+
+pub fn publish_migration(value: &Vm) -> Int32 {
+    __vm_publish_migration(&value.owner)
+}
+
 extern fn __vm_cancel_migration(owner: &vm.Owner) -> Int32
-pub fn cancel_migration(value: &Vm) -> Int32 { __vm_cancel_migration(&value.owner) }
+
+pub fn cancel_migration(value: &Vm) -> Int32 {
+    __vm_cancel_migration(&value.owner)
+}
+
 extern fn __vm_module_count(owner: &vm.Owner) -> Int32
-pub fn module_count(value: &Vm) -> Int32 { __vm_module_count(&value.owner) }
+
+pub fn module_count(value: &Vm) -> Int32 {
+    __vm_module_count(&value.owner)
+}
+
 extern fn __vm_print_modules(owner: &vm.Owner) -> Int32
-pub fn print_modules(value: &Vm) -> Int32 { __vm_print_modules(&value.owner) }
+
+pub fn print_modules(value: &Vm) -> Int32 {
+    __vm_print_modules(&value.owner)
+}
+
 extern fn __vm_publish_domain_code(owner: &vm.Owner) -> Int32
-pub fn publish_domain_code(value: &Vm) -> Int32 { __vm_publish_domain_code(&value.owner) }
+
+pub fn publish_domain_code(value: &Vm) -> Int32 {
+    __vm_publish_domain_code(&value.owner)
+}
+
 extern fn __vm_load_source(owner: &vm.Owner, source: &String) -> Int32
-pub fn load_source(value: &Vm, source: &String) -> Int32 { __vm_load_source(&value.owner, source) }
+
+pub fn load_source(value: &Vm, source: &String) -> Int32 {
+    __vm_load_source(&value.owner, source)
+}
+
 extern fn __vm_reload_source(owner: &vm.Owner, source: &String) -> Int32
-pub fn reload_source(value: &Vm, source: &String) -> Int32 { __vm_reload_source(&value.owner, source) }
+
+pub fn reload_source(value: &Vm, source: &String) -> Int32 {
+    __vm_reload_source(&value.owner, source)
+}
+
 extern fn __vm_register_int32_0(owner: &vm.Owner, name: &String, function: vm.Function) -> Int32
-pub fn register_int32_0(value: &Vm, name: &String, function: vm.Function) -> Int32 { __vm_register_int32_0(&value.owner, name, function) }
+
+pub fn register_int32_0(value: &Vm, name: &String, function: vm.Function) -> Int32 {
+    __vm_register_int32_0(&value.owner, name, function)
+}
+
 extern fn __vm_register_int32_1(owner: &vm.Owner, name: &String, function: vm.Function) -> Int32
-pub fn register_int32_1(value: &Vm, name: &String, function: vm.Function) -> Int32 { __vm_register_int32_1(&value.owner, name, function) }
+
+pub fn register_int32_1(value: &Vm, name: &String, function: vm.Function) -> Int32 {
+    __vm_register_int32_1(&value.owner, name, function)
+}
+
 extern fn __vm_register_int32_2(owner: &vm.Owner, name: &String, function: vm.Function) -> Int32
-pub fn register_int32_2(value: &Vm, name: &String, function: vm.Function) -> Int32 { __vm_register_int32_2(&value.owner, name, function) }
+
+pub fn register_int32_2(value: &Vm, name: &String, function: vm.Function) -> Int32 {
+    __vm_register_int32_2(&value.owner, name, function)
+}
+
 extern fn __vm_call_int32_0(owner: &vm.Owner, name: &String) -> Int32
-pub fn call_int32_0(value: &Vm, name: &String) -> Int32 { __vm_call_int32_0(&value.owner, name) }
+
+pub fn call_int32_0(value: &Vm, name: &String) -> Int32 {
+    __vm_call_int32_0(&value.owner, name)
+}
+
 extern fn __vm_call_int32_1(owner: &vm.Owner, name: &String, arg0: Int32) -> Int32
-pub fn call_int32_1(value: &Vm, name: &String, arg0: Int32) -> Int32 { __vm_call_int32_1(&value.owner, name, arg0) }
+
+pub fn call_int32_1(value: &Vm, name: &String, arg0: Int32) -> Int32 {
+    __vm_call_int32_1(&value.owner, name, arg0)
+}
+
 extern fn __vm_call_int32_2(owner: &vm.Owner, name: &String, arg0: Int32, arg1: Int32) -> Int32
-pub fn call_int32_2(value: &Vm, name: &String, arg0: Int32, arg1: Int32) -> Int32 { __vm_call_int32_2(&value.owner, name, arg0, arg1) }
+
+pub fn call_int32_2(value: &Vm, name: &String, arg0: Int32, arg1: Int32) -> Int32 {
+    __vm_call_int32_2(&value.owner, name, arg0, arg1)
+}
+
 extern fn __vm_call_float64_0(owner: &vm.Owner, name: &String) -> Float64
-pub fn call_float64_0(value: &Vm, name: &String) -> Float64 { __vm_call_float64_0(&value.owner, name) }
+
+pub fn call_float64_0(value: &Vm, name: &String) -> Float64 {
+    __vm_call_float64_0(&value.owner, name)
+}
+
 extern fn __vm_call_float64_1(owner: &vm.Owner, name: &String, arg0: Float64) -> Float64
-pub fn call_float64_1(value: &Vm, name: &String, arg0: Float64) -> Float64 { __vm_call_float64_1(&value.owner, name, arg0) }
-extern fn __vm_call_float64_2(owner: &vm.Owner, name: &String, arg0: Float64, arg1: Float64) -> Float64
-pub fn call_float64_2(value: &Vm, name: &String, arg0: Float64, arg1: Float64) -> Float64 { __vm_call_float64_2(&value.owner, name, arg0, arg1) }
+
+pub fn call_float64_1(value: &Vm, name: &String, arg0: Float64) -> Float64 {
+    __vm_call_float64_1(&value.owner, name, arg0)
+}
+
+extern fn __vm_call_float64_2(owner: &vm.Owner, name: &String, arg0: Float64, arg1: Float64) ->
+    Float64
+
+pub fn call_float64_2(value: &Vm, name: &String, arg0: Float64, arg1: Float64) -> Float64 {
+    __vm_call_float64_2(&value.owner, name, arg0, arg1)
+}
+
 struct Packet { storage: Buffer<UInt64> }
+
 #intrinsic("vm.schema")
 fn schema<T>() -> String
+
 #intrinsic("vm.pack")
 fn pack<T>(value: T) -> Packet
+
 #intrinsic("vm.unpack")
 fn unpack<T>(packet: &Packet) -> T
-extern fn __vm_call(owner: &vm.Owner, name: String, input_schema: String, result_schema: String, packet: &mut Buffer<UInt64>, checked: Bool) @suspends -> Int32
+
+extern fn __vm_call(
+    owner: &vm.Owner,
+    name: String,
+    input_schema: String,
+    result_schema: String,
+    packet: &mut Buffer<UInt64>,
+    checked: Bool
+) @suspends -> Int32
 pub enum CallError { Unavailable, Incompatible, Failed }
 impl Show for CallError {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str(match self {
-            Unavailable => "script entry unavailable"
-            Incompatible => "incompatible script entry"
-            Failed => "script call failed"
-        })
+        output.push_str(
+            match self {
+                Unavailable => "script entry unavailable"
+                Incompatible => "incompatible script entry"
+                Failed => "script call failed"
+            }
+        )
     }
 }
 
@@ -99,15 +248,32 @@ impl Vm {
 impl Vm {
     pub fn try_call<A, R>(&self, name: String, input: A) @suspends -> Result<R, CallError> {
         var packet = pack(input)
-        let status = __vm_call(&self.owner, name, schema::<A>(), schema::<R>(), &mut packet.storage, true)
-        if status == 0 { Ok(unpack::<R>(&packet)) }
-        else if status == 1 { Err(CallError.Unavailable) }
-        else if status == 2 { Err(CallError.Incompatible) }
-        else { Err(CallError.Failed) }
+        let status = __vm_call(
+            &self.owner,
+            name,
+            schema::<A>(),
+            schema::<R>(),
+            &mut packet.storage,
+            true
+        )
+        if status == 0 {
+            Ok(unpack::<R>(&packet))
+        } else if status == 1 {
+            Err(CallError.Unavailable)
+        } else if status == 2 {
+            Err(CallError.Incompatible)
+        } else {
+            Err(CallError.Failed)
+        }
     }
 }
 
-pub struct Diagnostic { pub message: String, pub has_span: Bool, pub start: UInt64, pub end: UInt64 }
+pub struct Diagnostic {
+    pub message: String,
+    pub has_span: Bool,
+    pub start: UInt64,
+    pub end: UInt64
+}
 impl Show for Diagnostic {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(&self.message)
@@ -121,18 +287,34 @@ impl Show for Diagnostic {
 }
 
 pub enum LoadErrorKind {
-    Io(fs.IoError), Utf8(Utf8Error), Compile(Diagnostic), Incompatible(Diagnostic),
-    Conflict(Diagnostic), Runtime(Diagnostic)
+    Io(fs.IoError),
+    Utf8(Utf8Error),
+    Compile(Diagnostic),
+    Incompatible(Diagnostic),
+    Conflict(Diagnostic),
+    Runtime(Diagnostic)
 }
 impl Show for LoadErrorKind {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
             Io(error) => error.show(output)
             Utf8(error) => error.show(output)
-            Compile(error) => { output.push_str("script compilation failed: "); error.show(output) }
-            Incompatible(error) => { output.push_str("incompatible script: "); error.show(output) }
-            Conflict(error) => { output.push_str("script publication conflict: "); error.show(output) }
-            Runtime(error) => { output.push_str("script runtime failure: "); error.show(output) }
+            Compile(error) => {
+                output.push_str("script compilation failed: ")
+                error.show(output)
+            }
+            Incompatible(error) => {
+                output.push_str("incompatible script: ")
+                error.show(output)
+            }
+            Conflict(error) => {
+                output.push_str("script publication conflict: ")
+                error.show(output)
+            }
+            Runtime(error) => {
+                output.push_str("script runtime failure: ")
+                error.show(output)
+            }
         }
     }
 }
@@ -140,21 +322,41 @@ impl Show for LoadErrorKind {
 pub struct LoadError { pub path: String, pub kind: LoadErrorKind }
 impl Show for LoadError {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        if !self.path.is_empty() { output.push_str(&self.path); output.push_str(": ") }
+        if !self.path.is_empty() {
+            output.push_str(&self.path)
+            output.push_str(": ")
+        }
         self.kind.show(output)
     }
 }
 
-extern fn __vm_source(owner: &vm.Owner, name: String, source: String, mode: UInt64, packet: &mut Buffer<UInt64>) @suspends -> String
+extern fn __vm_source(
+    owner: &vm.Owner,
+    name: String,
+    source: String,
+    mode: UInt64,
+    packet: &mut Buffer<UInt64>
+) @suspends -> String
 
-fn source_result(value: &Vm, path: String, source: String, mode: UInt64) @suspends -> Result<UInt64, LoadError> {
+fn source_result(value: &Vm, path: String, source: String, mode: UInt64) @suspends -> Result<
+    UInt64,
+    LoadError
+> {
     var packet = buffer.allocate::<UInt64>(5)
-    for _ in range(0, 5) { buffer.initialize_next(&mut packet, 0) }
+    for _ in range(0, 5) {
+        buffer.initialize_next(&mut packet, 0)
+    }
     let message = __vm_source(&value.owner, path.clone(), source, mode, &mut packet)
     let code = buffer.load(&packet, 0)
-    if code == 0 { return Ok(buffer.load(&packet, 4)) }
-    let diagnostic = Diagnostic { message: message, has_span: buffer.load(&packet, 3) != 0,
-        start: buffer.load(&packet, 1), end: buffer.load(&packet, 2) }
+    if code == 0 {
+        return Ok(buffer.load(&packet, 4))
+    }
+    let diagnostic = Diagnostic {
+        message: message,
+        has_span: buffer.load(&packet, 3) != 0,
+        start: buffer.load(&packet, 1),
+        end: buffer.load(&packet, 2)
+    }
     let kind = match code {
         1 => LoadErrorKind.Compile(diagnostic)
         2 => LoadErrorKind.Incompatible(diagnostic)
@@ -163,10 +365,13 @@ fn source_result(value: &Vm, path: String, source: String, mode: UInt64) @suspen
     }
     Err(LoadError { path: path, kind: kind })
 }
+
 fn file_text(path: String) @suspends -> Result<String, LoadError> {
     var file = match fs.open(&path, fs.OpenOptions.default()) {
         Ok(file) => file
-        Err(error) => { return Err(LoadError { path: path, kind: LoadErrorKind.Io(error) }) }
+        Err(error) => {
+            return Err(LoadError { path: path, kind: LoadErrorKind.Io(error) })
+        }
     }
     let read = file.read_text()
     // Close before compilation/publication, including read and decoding failures.
@@ -183,17 +388,37 @@ fn file_text(path: String) @suspends -> Result<String, LoadError> {
     }
     match closed {
         Ok(_) => {}
-        Err(error) => { return Err(LoadError { path: path, kind: LoadErrorKind.Io(error) }) }
+        Err(error) => {
+            return Err(LoadError { path: path, kind: LoadErrorKind.Io(error) })
+        }
     }
     Ok(source)
 }
+
 fn file_result(value: &Vm, path: String, publish: Bool) @suspends -> Result<UInt64, LoadError> {
-    let source = match file_text(path.clone()) { Ok(source) => source, Err(error) => return Err(error) }
-    source_result(value, path, source, if publish { 1 } else { 0 })
+    let source = match file_text(path.clone()) {
+        Ok(source) => source,
+        Err(error) => return Err(error)
+    }
+    source_result(
+        value,
+        path,
+        source,
+        if publish {
+            1
+        } else {
+            0
+        }
+    )
 }
+
 fn loaded(result: Result<UInt64, LoadError>) -> Result<Unit, LoadError> {
-    match result { Ok(_) => Ok({}), Err(error) => Err(error) }
+    match result {
+        Ok(_) => Ok({}),
+        Err(error) => Err(error)
+    }
 }
+
 impl Vm {
     pub fn load_source(&self, source: String) @suspends -> Result<Unit, LoadError> {
         loaded(source_result(self, "<source>", source, 0))
@@ -210,8 +435,8 @@ impl Vm {
 }
 
 impl Vm {
-    // Register all host contracts before the initial load. Future loads and
-    // publications validate the complete set before installing any code.
+    /// Register all host contracts before the initial load. Future loads and
+    /// publications validate the complete set before installing any code.
     pub fn require<A, R>(&self, name: String) @suspends -> Result<Entry<A, R>, LoadError> {
         let input = schema::<A>()
         let output = schema::<R>()
@@ -222,7 +447,10 @@ impl Vm {
         loaded(source_result(self, name, source, 3))
     }
     pub fn module_file(&self, name: String, path: String) @suspends -> Result<Unit, LoadError> {
-        let source = match file_text(path) { Ok(source) => source, Err(error) => return Err(error) }
+        let source = match file_text(path) {
+            Ok(source) => source,
+            Err(error) => return Err(error)
+        }
         self.module_source(name, source)
     }
 }
@@ -252,19 +480,21 @@ impl LoadError {
     }
 }
 
-// One owning session reserves the VM's migration slot until it is dropped.
+/// One owning session reserves the VM's migration slot until it is dropped.
 pub struct Migration { owner: vm.MigrationOwner }
 pub enum MigrationErrorKind { Compile, Incompatible, Conflict, Runtime, Busy, Unavailable }
 impl Show for MigrationErrorKind {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str(match self {
-            Compile => "migration compilation failed"
-            Incompatible => "incompatible migration"
-            Conflict => "migration conflict"
-            Runtime => "migration runtime failure"
-            Busy => "migration busy"
-            Unavailable => "migration unavailable"
-        })
+        output.push_str(
+            match self {
+                Compile => "migration compilation failed"
+                Incompatible => "incompatible migration"
+                Conflict => "migration conflict"
+                Runtime => "migration runtime failure"
+                Busy => "migration busy"
+                Unavailable => "migration unavailable"
+            }
+        )
     }
 }
 
@@ -272,13 +502,23 @@ pub struct MigrationError { pub kind: MigrationErrorKind, pub diagnostic: Diagno
 impl Show for MigrationError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         self.kind.show(output)
-        if !self.diagnostic.message.is_empty() { output.push_str(": "); self.diagnostic.show(output) }
+        if !self.diagnostic.message.is_empty() {
+            output.push_str(": ")
+            self.diagnostic.show(output)
+        }
     }
 }
 
 extern fn __vm_migration_open(owner: &vm.Owner) @suspends -> vm.MigrationOwner
-extern fn __vm_migration_command(owner: &mut vm.MigrationOwner, operation: UInt64, number: UInt64,
-    source: String, start: String, advance: String, packet: &mut Buffer<UInt64>) @suspends -> UInt64
+extern fn __vm_migration_command(
+    owner: &mut vm.MigrationOwner,
+    operation: UInt64,
+    number: UInt64,
+    source: String,
+    start: String,
+    advance: String,
+    packet: &mut Buffer<UInt64>
+) @suspends -> UInt64
 extern fn __vm_migration_diagnostic(owner: &mut vm.MigrationOwner) @suspends -> String
 
 impl Vm {
@@ -289,12 +529,30 @@ impl Vm {
     }
 }
 impl Migration {
-    fn command(&mut self, operation: UInt64, number: UInt64, source: String, start: String,
-        advance: String) @suspends -> Result<UInt64, MigrationError> {
+    fn command(
+        &mut self,
+        operation: UInt64,
+        number: UInt64,
+        source: String,
+        start: String,
+        advance: String
+    ) @suspends -> Result<UInt64, MigrationError> {
         var packet = buffer.allocate::<UInt64>(4)
-        for _ in range(0, 4) { buffer.initialize_next(&mut packet, 0) }
-        let status = __vm_migration_command(&mut self.owner, operation, number, source, start, advance, &mut packet)
-        if status == 0 { return Ok(buffer.load(&packet, 0)) }
+        for _ in range(0, 4) {
+            buffer.initialize_next(&mut packet, 0)
+        }
+        let status = __vm_migration_command(
+            &mut self.owner,
+            operation,
+            number,
+            source,
+            start,
+            advance,
+            &mut packet
+        )
+        if status == 0 {
+            return Ok(buffer.load(&packet, 0))
+        }
         let kind = match status {
             1 => MigrationErrorKind.Compile
             2 => MigrationErrorKind.Incompatible
@@ -304,19 +562,24 @@ impl Migration {
             _ => MigrationErrorKind.Runtime
         }
         Err(MigrationError { kind: kind, diagnostic: Diagnostic {
-            message: __vm_migration_diagnostic(&mut self.owner),
-            has_span: buffer.load(&packet, 3) != 0,
-            start: buffer.load(&packet, 1), end: buffer.load(&packet, 2)
-        } })
+                    message: __vm_migration_diagnostic(&mut self.owner),
+                    has_span: buffer.load(&packet, 3) != 0,
+                    start: buffer.load(&packet, 1),
+                    end: buffer.load(&packet, 2)
+                } })
     }
     pub fn schema(&mut self) @suspends -> Result<UInt64, MigrationError> {
         self.command(1, 0, "", "", "")
     }
-    pub fn prepare(&mut self, schema: UInt64, source: String, method: String) @suspends -> Result<Unit, MigrationError> {
+    pub fn prepare(&mut self, schema: UInt64, source: String, method: String) @suspends -> Result<
+        Unit,
+        MigrationError
+    > {
         self.command(2, schema, source, method, "")?
         Ok({})
     }
-    pub fn begin(&mut self, schema: UInt64, source: String, start: String, advance: String) @suspends -> Result<Unit, MigrationError> {
+    pub fn begin(&mut self, schema: UInt64, source: String, start: String, advance: String) @suspends ->
+        Result<Unit, MigrationError> {
         self.command(3, schema, source, start, advance)?
         Ok({})
     }
@@ -324,11 +587,14 @@ impl Migration {
         self.command(4, 0, source, "", "")?
         Ok({})
     }
-    pub fn stage(&mut self, start: String, advance: String) @suspends -> Result<Unit, MigrationError> {
+    pub fn stage(&mut self, start: String, advance: String) @suspends -> Result<
+        Unit,
+        MigrationError
+    > {
         self.command(5, 0, "", start, advance)?
         Ok({})
     }
-    // true means complete; budget is a hint to the synchronous migration callback.
+    /// true means complete; budget is a hint to the synchronous migration callback.
     pub fn step(&mut self, budget: UInt64) @suspends -> Result<Bool, MigrationError> {
         Ok(self.command(6, budget, "", "", "")? == 0)
     }

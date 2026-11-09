@@ -1,7 +1,20 @@
 //! Assertions and explicit task failure.
+//!
+//! `assert` and `panic` are in the default prelude and fail the current task.
+//! Use `Result` for expected failures that a caller should be able to handle.
+//!
+//! ```joky
+//! fn main() {
+//!     let count = 3
+//!     assert(count > 0, "count must be positive")
+//! }
+//! ```
 
 // The compiler binds this checked operation and preserves its call location.
+/// Fails the current task with `message` when `condition` is false.
 #intrinsic("check.assert")
 pub fn assert(condition: Bool, message: &String) @noescape
+
+/// Unconditionally fails the current task with `message`.
 #intrinsic("check.panic")
 pub fn panic(message: &String) @noescape

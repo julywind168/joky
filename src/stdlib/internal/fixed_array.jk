@@ -6,12 +6,16 @@ pub type Init<T, const N: UInt64> = T
 
 #intrinsic("fixed_array.begin")
 pub fn begin<T, const N: UInt64>() -> Init<T, N>
+
 #intrinsic("fixed_array.write_next")
 pub fn write_next<T, const N: UInt64>(token: &mut Init<T, N>, value: T)
+
 #intrinsic("fixed_array.finish")
 pub fn finish<T, const N: UInt64>(token: Init<T, N>) -> FixedArray<T, N>
+
 #intrinsic("fixed_array.load")
 pub fn load<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> T
+
 #intrinsic("fixed_array.store")
 pub fn store<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, value: T)
 
@@ -25,4 +29,5 @@ pub fn borrow_mut_ref<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: 
 pub fn slice<T, const N: UInt64>(values: &FixedArray<T, N>, start: UInt64, end: UInt64) -> &Slice<T>
 
 #intrinsic("fixed_array.slice_mut")
-pub fn slice_mut<T, const N: UInt64>(values: &mut FixedArray<T, N>, start: UInt64, end: UInt64) -> &mut Slice<T>
+pub fn slice_mut<T, const N: UInt64>(values: &mut FixedArray<T, N>, start: UInt64, end: UInt64) ->
+    &mut Slice<T>

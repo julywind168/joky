@@ -1,14 +1,38 @@
 //! Task scheduling and suspension.
+//!
+//! Task operations require a suspending context. `yield_now` cooperatively
+//! yields, and `sleep` waits for a duration. `timeout` races an operation against
+//! a deadline; if the deadline wins, the operation is cancelled and its owned
+//! resources are cleaned up.
+//!
+//! ```joky
+//! import joky/task
+//!
+//! fn main() @suspends {
+//!     task.yield_now()
+//!     let answer = task.timeout(
+//!         1s,
+//!         || {
+//!             42
+//!         }
+//!     ).unwrap()
+//!     assert_eq(answer, 42)
+//! }
+//! ```
 
 import joky/string.{type StringBuilder}
 import joky/show.{type Show}
-import joky/result.{ type Result, Ok, Err }
-import joky/time.{ type Duration, type Instant }
+import joky/result.{type Result, Ok, Err}
+import joky/time.{type Duration, type Instant}
 import joky/internal/time as clock
 
 extern fn __joky_public_task_yield_now() @suspends
 extern fn __joky_public_task_sleep_ns(nanoseconds: UInt64) @suspends
-pub fn yield_now() @suspends { __joky_public_task_yield_now() }
+
+/// Cooperatively yields execution to other runnable tasks.
+pub fn yield_now() @suspends {
+    __joky_public_task_yield_now()
+}
 
 // A timeout is distinct from the operation's own result or runtime failure.
 pub struct Timeout {}
@@ -18,12 +42,28 @@ impl Show for Timeout {
     }
 }
 
-pub fn sleep_until(deadline: Instant) @suspends { clock.sleep_until(deadline) }
-pub fn sleep(duration: Duration) @suspends { __joky_public_task_sleep_ns(duration.as_nanos()) }
-pub fn timeout<T, F: FnOnce() @suspends -> T>(duration: Duration, operation: F) @suspends -> Result<T, Timeout> {
+pub fn sleep_until(deadline: Instant) @suspends {
+    clock.sleep_until(deadline)
+}
+
+/// Waits for a nonnegative duration without blocking the executor thread.
+pub fn sleep(duration: Duration) @suspends {
+    __joky_public_task_sleep_ns(duration.as_nanos())
+}
+
+/// Runs an operation until completion or timeout. A winning timeout cancels the operation.
+pub fn timeout<T, F: FnOnce() @suspends -> T>(duration: Duration, operation: F) @suspends -> Result<
+    T,
+    Timeout
+> {
     race {
-        { Ok(operation()) }
-        { sleep(duration); Err(Timeout {}) }
+        {
+            Ok(operation())
+        }
+        {
+            sleep(duration)
+            Err(Timeout {})
+        }
     }
 }
 
@@ -31,27 +71,34 @@ pub fn timeout<T, F: FnOnce() @suspends -> T>(duration: Duration, operation: F) 
 pub enum Failure { Runtime, ResourceLimit, Host, Io, InvalidState, InvalidArgument, Other }
 impl Show for Failure {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str(match self {
-            Runtime => "runtime failure"
-            ResourceLimit => "resource limit"
-            Host => "host failure"
-            Io => "I/O failure"
-            InvalidState => "invalid state"
-            InvalidArgument => "invalid argument"
-            Other => "task failure"
-        })
+        output.push_str(
+            match self {
+                Runtime => "runtime failure"
+                ResourceLimit => "resource limit"
+                Host => "host failure"
+                Io => "I/O failure"
+                InvalidState => "invalid state"
+                InvalidArgument => "invalid argument"
+                Other => "task failure"
+            }
+        )
     }
 }
 
-fn __isolate_success<T>(value: T) -> Result<T, Failure> { Ok(value) }
+fn __isolate_success<T>(value: T) -> Result<T, Failure> {
+    Ok(value)
+}
+
 fn __isolate_failure<T>(code: UInt64) -> Result<T, Failure> {
-    Err(match code {
-        1 => Failure.Runtime
-        2 => Failure.ResourceLimit
-        3 => Failure.Host
-        4 => Failure.Io
-        5 => Failure.InvalidState
-        6 => Failure.InvalidArgument
-        _ => Failure.Other
-    })
+    Err(
+        match code {
+            1 => Failure.Runtime
+            2 => Failure.ResourceLimit
+            3 => Failure.Host
+            4 => Failure.Io
+            5 => Failure.InvalidState
+            6 => Failure.InvalidArgument
+            _ => Failure.Other
+        }
+    )
 }

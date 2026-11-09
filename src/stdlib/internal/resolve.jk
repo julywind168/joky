@@ -8,13 +8,15 @@ import joky/string
 pub enum ErrorKind { InvalidInput, Busy, NoAddresses, LimitExceeded, SystemFailure }
 impl Show for ErrorKind {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
-        output.push_str(match self {
-            InvalidInput => "invalid host name"
-            Busy => "resolver busy"
-            NoAddresses => "no addresses found"
-            LimitExceeded => "resolver limit exceeded"
-            SystemFailure => "name resolution failed"
-        })
+        output.push_str(
+            match self {
+                InvalidInput => "invalid host name"
+                Busy => "resolver busy"
+                NoAddresses => "no addresses found"
+                LimitExceeded => "resolver limit exceeded"
+                SystemFailure => "name resolution failed"
+            }
+        )
     }
 }
 
@@ -22,7 +24,10 @@ pub struct ResolveError { pub kind: ErrorKind, pub message: String }
 impl Show for ResolveError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         self.kind.show(output)
-        if !self.message.is_empty() { output.push_str(": "); output.push_str(&self.message) }
+        if !self.message.is_empty() {
+            output.push_str(": ")
+            output.push_str(&self.message)
+        }
     }
 }
 
@@ -38,18 +43,33 @@ fn word(bytes: &Array<UInt8>, offset: UInt64) -> UInt64 {
     }
     value
 }
-pub fn lookup<T>(host: &String, port: UInt16, address: fn(UInt64, UInt64, UInt64) -> T) @suspends -> Result<Array<T>, ResolveError> {
+
+pub fn lookup<T>(host: &String, port: UInt16, address: fn(UInt64, UInt64, UInt64) -> T) @suspends ->
+    Result<Array<T>, ResolveError> {
     var error: UInt64 = 0
     let bytes = __dns_lookup(host, port, &mut error)
     if error != 0 {
-        let kind = if error == 1 { ErrorKind.InvalidInput } else {
-            if error == 2 { ErrorKind.Busy } else {
-                if error == 3 { ErrorKind.NoAddresses } else {
-                    if error == 4 { ErrorKind.LimitExceeded } else { ErrorKind.SystemFailure }
+        let kind = if error == 1 {
+            ErrorKind.InvalidInput
+        } else {
+            if error == 2 {
+                ErrorKind.Busy
+            } else {
+                if error == 3 {
+                    ErrorKind.NoAddresses
+                } else {
+                    if error == 4 {
+                        ErrorKind.LimitExceeded
+                    } else {
+                        ErrorKind.SystemFailure
+                    }
                 }
             }
         }
-        let message = match String.from_utf8(bytes) { Ok(text) => text, Err(_) => "Name resolution failed" }
+        let message = match String.from_utf8(bytes) {
+            Ok(text) => text,
+            Err(_) => "Name resolution failed"
+        }
         return Err(ResolveError { kind: kind, message: message })
     }
     var addresses = Array.with_capacity::<T>(bytes.len() / 24)

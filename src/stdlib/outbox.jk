@@ -1,4 +1,20 @@
 //! Queued messages for asynchronous delivery.
+//!
+//! A mailbox owns a bounded queue; handles identify it without keeping it alive.
+//! `send` / `emit` stage messages inside `when` and publish them at commit.
+//! `seal` stops new admission but lets the receiver drain committed messages;
+//! `close` drops queued messages and wakes the receiver.
+//!
+//! ```joky
+//! import joky/outbox
+//!
+//! fn main() @suspends {
+//!     var mailbox = outbox.create(8, 4096)
+//!     let output = mailbox.handle()
+//!     output.seal()
+//!     assert(mailbox.receive().is_none(), "sealed empty mailbox is drained")
+//! }
+//! ```
 
 import joky/string.{type StringBuilder}
 import joky/show.{type Show}
@@ -6,73 +22,109 @@ import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 
-extern fn __outbox_create(messages:UInt64, bytes:UInt64) @suspends -> outbox.QueueOwner
-extern fn __outbox_create_disconnect(messages:UInt64, bytes:UInt64, control:UInt64) @suspends -> outbox.QueueOwner
-extern fn __outbox_handle(queue:&outbox.QueueOwner) @suspends -> UInt64
-extern fn __outbox_seal(handle:UInt64) @suspends
-extern fn __outbox_close(handle:UInt64) @suspends
-extern fn __outbox_batch(messages:UInt64, bytes:UInt64) @suspends -> outbox.BatchOwner
-extern fn __outbox_stage(batch:&mut outbox.BatchOwner, handle:UInt64, bytes:Array<UInt8>) @suspends -> Int32
+extern fn __outbox_create(messages: UInt64, bytes: UInt64) @suspends -> outbox.QueueOwner
+extern fn __outbox_create_disconnect(messages: UInt64, bytes: UInt64, control: UInt64) @suspends ->
+    outbox.QueueOwner
+extern fn __outbox_handle(queue: &outbox.QueueOwner) @suspends -> UInt64
+extern fn __outbox_seal(handle: UInt64) @suspends
+extern fn __outbox_close(handle: UInt64) @suspends
+extern fn __outbox_batch(messages: UInt64, bytes: UInt64) @suspends -> outbox.BatchOwner
+extern fn __outbox_stage(batch: &mut outbox.BatchOwner, handle: UInt64, bytes: Array<UInt8>) @suspends ->
+    Int32
 extern fn __outbox_receive_bytes(queue: &mut outbox.QueueOwner) @suspends -> (Bool, Array<UInt8>)
 
-pub struct Mailbox { storage:outbox.QueueOwner }
-// An executor-local, non-owning identity; safe to copy through Script contracts.
-pub struct Handle { identity:UInt64 }
+pub struct Mailbox { storage: outbox.QueueOwner }
+/// An executor-local, non-owning identity; safe to copy through Script contracts.
+pub struct Handle { identity: UInt64 }
 impl Handle {
-    // Stable identity for matching failed commit targets; it does not keep the queue alive.
-    pub fn identity(&self) -> UInt64 { self.identity }
-    // Stage a message in the active when operation.
-    pub fn send(&self, bytes:&Array<UInt8>) { __emit(self.identity, bytes) }
-    pub fn close(&self) @suspends { __outbox_close(self.identity) }
-    // Stop admission; retain committed messages until receive returns None.
-    pub fn seal(&self) @suspends { __outbox_seal(self.identity) }
+    /// Stable identity for matching failed commit targets; it does not keep the queue alive.
+    pub fn identity(&self) -> UInt64 {
+        self.identity
+    }
+    /// Stage a message in the active when operation.
+    pub fn send(&self, bytes: &Array<UInt8>) {
+        __emit(self.identity, bytes)
+    }
+    pub fn close(&self) @suspends {
+        __outbox_close(self.identity)
+    }
+    /// Stop admission; retain committed messages until receive returns None.
+    pub fn seal(&self) @suspends {
+        __outbox_seal(self.identity)
+    }
 }
 pub type Batch = outbox.BatchOwner
 pub enum StageError { Full, Closed }
 impl Show for StageError {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str(match self {
-            Full => "outbox full"
-            Closed => "outbox closed"
-        })
+        output.push_str(
+            match self {
+                Full => "outbox full"
+                Closed => "outbox closed"
+            }
+        )
     }
 }
 
-// Disconnect closes the independent Reject control mailbox after commit.
+/// Disconnect closes the independent Reject control mailbox after commit.
 pub enum Overflow { Reject, Disconnect(Handle) }
 
-pub fn create(messages:UInt64, bytes:UInt64) @suspends -> Mailbox {
-    Mailbox{storage:__outbox_create(messages,bytes)}
+pub fn create(messages: UInt64, bytes: UInt64) @suspends -> Mailbox {
+    Mailbox { storage: __outbox_create(messages, bytes) }
 }
-pub fn create_with_policy(messages:UInt64, bytes:UInt64, overflow:Overflow) @suspends -> Mailbox {
+
+pub fn create_with_policy(messages: UInt64, bytes: UInt64, overflow: Overflow) @suspends ->
+    Mailbox {
     match overflow {
         Reject => create(messages, bytes),
-        Disconnect(control) => Mailbox{storage:__outbox_create_disconnect(messages, bytes, control.identity)}
+        Disconnect(control) => Mailbox {
+            storage: __outbox_create_disconnect(messages, bytes, control.identity)
+        }
     }
 }
+
 impl Mailbox {
-    pub fn handle(&self) @suspends -> Handle { Handle{identity:__outbox_handle(&self.storage)} }
+    pub fn handle(&self) @suspends -> Handle {
+        Handle { identity: __outbox_handle(&self.storage) }
+    }
     pub fn receive(&mut self) @suspends -> Option<Array<UInt8>> {
         let (received, bytes) = __outbox_receive_bytes(&mut self.storage)
-        if received { Some(bytes) } else { None }
+        if received {
+            Some(bytes)
+        } else {
+            None
+        }
     }
 }
-// Closing drops queued messages and wakes the receiver. Identities are never reused.
-pub fn close(handle:Handle) @suspends { __outbox_close(handle.identity) }
-pub fn batch(messages:UInt64, bytes:UInt64) @suspends -> Batch {
-    __outbox_batch(messages,bytes)
+
+/// Closing drops queued messages and wakes the receiver. Identities are never reused.
+pub fn close(handle: Handle) @suspends {
+    __outbox_close(handle.identity)
 }
-// A failed stage poisons this batch, so ignoring the error cannot publish a prefix.
-pub fn stage(batch:&mut Batch, handle:Handle, bytes:Array<UInt8>) @suspends -> Result<Unit,StageError> {
-    let status=__outbox_stage(batch,handle.identity,bytes)
-    if status==0 { return Ok({}) }
-    if status==1 { return Err(StageError.Full) }
+
+pub fn batch(messages: UInt64, bytes: UInt64) @suspends -> Batch {
+    __outbox_batch(messages, bytes)
+}
+
+/// A failed stage poisons this batch, so ignoring the error cannot publish a prefix.
+pub fn stage(batch: &mut Batch, handle: Handle, bytes: Array<UInt8>) @suspends -> Result<
+    Unit,
+    StageError
+> {
+    let status = __outbox_stage(batch, handle.identity, bytes)
+    if status == 0 {
+        return Ok({})
+    }
+    if status == 1 {
+        return Err(StageError.Full)
+    }
     Err(StageError.Closed)
 }
 
 // Register bytes in the active when operation; target policy is applied at commit.
 #intrinsic("outbox.emit")
-fn __emit(token:UInt64,bytes:&Array<UInt8>)
-pub fn emit(handle:Handle,bytes:&Array<UInt8>) {
-    __emit(handle.identity,bytes)
+fn __emit(token: UInt64, bytes: &Array<UInt8>)
+
+pub fn emit(handle: Handle, bytes: &Array<UInt8>) {
+    __emit(handle.identity, bytes)
 }

@@ -59,6 +59,17 @@ public API documentation in `///` comments. Document every unsafe API's pointer,
 layout, lifetime, and threading requirements. Do not suppress warnings to hide
 unused implementation or ABI mistakes.
 
+For standard-library documentation, follow `src/stdlib/option.jk`: give each
+public module a runnable `joky` code block in its `//!` introduction and explain
+ownership, failure conditions and important bounds in `///` API comments.
+Prefer examples that work without external services. Examples use a
+Unit-returning `fn main()` and assertions; `joky/testing` examples use `#test`
+instead. Format both the source and extracted examples with `joky fmt` (the
+formatter preserves comment contents). The focused regression
+`cargo test --test cli doc_cli_standard_library_examples_execute` extracts these
+blocks, checks their formatting and runs each as a standalone program in JIT,
+interpreter and, on Unix, AOT. Test-runner examples run with `joky test` in both VM modes.
+
 Generated AOT and JIT code must use the same CPS runtime. Never substitute a
 handwritten frame layout for the opaque C frame. Record complete frame sizes
 when registering generated entries, and retain every reachable code owner while

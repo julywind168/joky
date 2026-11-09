@@ -1,4 +1,22 @@
 //! Types and functions imported automatically unless `--no-prelude` is used.
+//!
+//! Ordinary source files automatically receive common containers, `Option`,
+//! `Result`, numeric and string methods, printing and assertions. Additional
+//! modules still use explicit imports. With `--no-prelude`, declare all needed
+//! imports yourself.
+//!
+//! ```joky
+//! fn main() {
+//!     let values = [1, 2, 3]
+//!     let answer = values.get(1).map(
+//!         |value| {
+//!             value * 2
+//!         }
+//!     )
+//!     assert_eq(answer.unwrap(), 4)
+//!     println("Hello, Joky!")
+//! }
+//! ```
 
 // The default source imports. Dependencies declare their own imports.
 import joky/option.{type Option, Some, None}

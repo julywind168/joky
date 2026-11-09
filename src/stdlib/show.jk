@@ -1,4 +1,17 @@
 //! Text rendering with the `Show` trait.
+//!
+//! `Show` renders borrowed values into a `StringBuilder`; `to_text` returns an
+//! owned string. Printing and string interpolation use this trait. Derive `Show`
+//! for structural output, or implement it for an application-specific format.
+//!
+//! ```joky
+//! import joky/show
+//!
+//! fn main() {
+//!     let text = show.to_text([1, 2, 3])
+//!     assert_eq(text, "[1, 2, 3]")
+//! }
+//! ```
 
 import joky/string.{type StringBuilder, type Utf8Error, type Utf8ErrorCode}
 import joky/integer.{type ParseIntError}
@@ -9,7 +22,7 @@ import joky/slice
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 
-// Display writes into caller-owned storage without consuming its input.
+/// Display writes into caller-owned storage without consuming its input.
 pub trait Show {
     fn show(&self, output: &mut StringBuilder) @noescape
     fn to_text(&self) @noescape -> String {
@@ -18,44 +31,124 @@ pub trait Show {
         output.finish()
     }
 }
-pub fn append<T: Show>(value: &T, output: &mut StringBuilder) @noescape { value.show(output) }
-pub fn to_text<T: Show>(value: &T) @noescape -> String { Show.to_text(value) }
-impl Show for String { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(self) } }
-impl Show for Bool { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(if (*self) { "true" } else { "false" }) } }
-impl Show for Rune { fn show(&self, output: &mut StringBuilder) @noescape { output.push((*self)) } }
-impl Show for Unit { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(r"{}") } }
-impl Show for Int8 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(int64((*self)).to_string()) } }
-impl Show for Int16 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(int64((*self)).to_string()) } }
-impl Show for Int32 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(int64((*self)).to_string()) } }
-impl Show for Int64 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(int64((*self)).to_string()) } }
-impl Show for UInt8 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(uint64((*self)).to_string()) } }
-impl Show for UInt16 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(uint64((*self)).to_string()) } }
-impl Show for UInt32 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(uint64((*self)).to_string()) } }
-impl Show for UInt64 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(uint64((*self)).to_string()) } }
-impl Show for Float32 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str((*self).to_text()) } }
-impl Show for Float64 { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str((*self).to_text()) } }
+
+pub fn append<T: Show>(value: &T, output: &mut StringBuilder) @noescape {
+    value.show(output)
+}
+
+pub fn to_text<T: Show>(value: &T) @noescape -> String {
+    Show.to_text(value)
+}
+
+impl Show for String {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(self)
+    }
+}
+impl Show for Bool {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(
+            if (*self) {
+                "true"
+            } else {
+                "false"
+            }
+        )
+    }
+}
+impl Show for Rune {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push((*self))
+    }
+}
+impl Show for Unit {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(r"{}")
+    }
+}
+impl Show for Int8 {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(int64((*self)).to_string())
+    }
+}
+impl Show for Int16 {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(int64((*self)).to_string())
+    }
+}
+impl Show for Int32 {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(int64((*self)).to_string())
+    }
+}
+impl Show for Int64 {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(int64((*self)).to_string())
+    }
+}
+impl Show for UInt8 {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(uint64((*self)).to_string())
+    }
+}
+impl Show for UInt16 {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(uint64((*self)).to_string())
+    }
+}
+impl Show for UInt32 {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(uint64((*self)).to_string())
+    }
+}
+impl Show for UInt64 {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str(uint64((*self)).to_string())
+    }
+}
+impl Show for Float32 {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str((*self).to_text())
+    }
+}
+impl Show for Float64 {
+    fn show(&self, output: &mut StringBuilder) @noescape {
+        output.push_str((*self).to_text())
+    }
+}
 impl Show for ParseIntError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
-            InvalidSyntax(offset) => { output.push_str("invalid decimal integer at byte "); offset.show(output) }
-            OutOfRange(offset) => { output.push_str("integer out of range at byte "); offset.show(output) }
+            InvalidSyntax(offset) => {
+                output.push_str("invalid decimal integer at byte ")
+                offset.show(output)
+            }
+            OutOfRange(offset) => {
+                output.push_str("integer out of range at byte ")
+                offset.show(output)
+            }
         }
     }
 }
 impl Show for ParseFloatError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
-            InvalidSyntax(offset) => { output.push_str("invalid float syntax at byte "); offset.show(output) }
+            InvalidSyntax(offset) => {
+                output.push_str("invalid float syntax at byte ")
+                offset.show(output)
+            }
             OutOfRange => output.push_str("float out of range")
         }
     }
 }
 impl Show for Utf8Error {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str(match self.code {
-            InvalidSequence => "invalid UTF-8 sequence at byte "
-            UnexpectedEnd => "truncated UTF-8 sequence at byte "
-        })
+        output.push_str(
+            match self.code {
+                InvalidSequence => "invalid UTF-8 sequence at byte "
+                UnexpectedEnd => "truncated UTF-8 sequence at byte "
+            }
+        )
         self.offset.show(output)
     }
 }
@@ -64,7 +157,9 @@ impl<T: Show> Show for Array<T> {
         output.push('[')
         var index: UInt64 = 0
         while index < self.len() {
-            if index != 0 { output.push_str(", ") }
+            if index != 0 {
+                output.push_str(", ")
+            }
             Show.show(self.borrow_ref(index), output)
             index = index + 1
         }
@@ -74,16 +169,30 @@ impl<T: Show> Show for Array<T> {
 impl<T: Show> Show for Option<T> {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
-            Some(value) => { output.push_str("Some("); value.show(output); output.push(')') }
-            None => { output.push_str("None") }
+            Some(value) => {
+                output.push_str("Some(")
+                value.show(output)
+                output.push(')')
+            }
+            None => {
+                output.push_str("None")
+            }
         }
     }
 }
 impl<T: Show, E: Show> Show for Result<T, E> {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
-            Ok(value) => { output.push_str("Ok("); value.show(output); output.push(')') }
-            Err(error) => { output.push_str("Err("); error.show(output); output.push(')') }
+            Ok(value) => {
+                output.push_str("Ok(")
+                value.show(output)
+                output.push(')')
+            }
+            Err(error) => {
+                output.push_str("Err(")
+                error.show(output)
+                output.push(')')
+            }
         }
     }
 }
@@ -94,7 +203,9 @@ impl<K: Show, V: Show> Show for Map<K, V> {
         let values = self.values()
         var index: UInt64 = 0
         while index < self.len() {
-            if index != 0 { output.push_str(", ") }
+            if index != 0 {
+                output.push_str(", ")
+            }
             Show.show(slice.borrow_ref(keys, index), output)
             output.push_str(": ")
             Show.show(slice.borrow_ref(values, index), output)
@@ -106,9 +217,11 @@ impl<K: Show, V: Show> Show for Map<K, V> {
 
 impl Show for Utf8ErrorCode {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str(match self {
-            InvalidSequence => "invalid UTF-8 sequence"
-            UnexpectedEnd => "truncated UTF-8 sequence"
-        })
+        output.push_str(
+            match self {
+                InvalidSequence => "invalid UTF-8 sequence"
+                UnexpectedEnd => "truncated UTF-8 sequence"
+            }
+        )
     }
 }

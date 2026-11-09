@@ -1,4 +1,21 @@
 //! Durations and clocks.
+//!
+//! Use `Duration` for nonnegative spans, `Instant` for monotonic deadlines and
+//! `Timestamp` for UTC wall-clock time. Checked arithmetic returns `None` on
+//! range failure. Duration literals such as `250ms` need no explicit import;
+//! conversions to larger units discard fractional remainders.
+//!
+//! ```joky
+//! import joky/time
+//!
+//! fn main() {
+//!     let delay = 250ms
+//!     assert_eq(delay.as_millis(), uint64(250))
+//!     let start = time.Timestamp.parse("2026-01-01T00:00:00Z").unwrap()
+//!     let end = start.checked_add(1s).unwrap()
+//!     assert_eq(end.duration_since(start).unwrap().as_secs(), uint64(1))
+//! }
+//! ```
 
 // Re-export the shared nominal types without exposing clock operations.
 import joky/internal/time.{type Duration, type Instant, type Timestamp}

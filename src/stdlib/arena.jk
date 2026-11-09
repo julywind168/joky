@@ -1,14 +1,33 @@
 //! Explicit synchronous allocation regions.
+//!
+//! An arena owns a synchronous region of `Copy` values. References cannot outlive
+//! that region or cross a suspension point; use an owning container for such data.
+//!
+//! ```joky
+//! import joky/arena
+//!
+//! fn main() {
+//!     let region = arena.Arena.new()
+//!     let value = region.alloc(41)
+//!     *value += 1
+//!     assert_eq(*value, 42)
+//! }
+//! ```
 
 // Explicit, synchronous regions. Their capabilities cannot enter stored values.
 pub type Arena = arena.Arena
 
 impl Arena {
-    pub fn new() -> Self { new() }
-    pub fn alloc<T: Copy>(&self, value: T) -> &mut T { allocate(self, value) }
+    pub fn new() -> Self {
+        new()
+    }
+    pub fn alloc<T: Copy>(&self, value: T) -> &mut T {
+        allocate(self, value)
+    }
 }
 
 #intrinsic("arena.new")
 fn new() -> Arena
+
 #intrinsic("arena.alloc")
 fn allocate<T: Copy>(arena: &Arena, value: T) -> &mut T

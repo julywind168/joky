@@ -1,51 +1,143 @@
 //! Base64 encoding and decoding.
+//!
+//! The module functions use the standard alphabet with padding. Choose an
+//! `Encoding` explicitly for URL-safe or unpadded data. Decoding rejects invalid
+//! padding and noncanonical trailing bits rather than silently accepting them.
+//!
+//! ```joky
+//! import joky/base64
+//!
+//! fn main() {
+//!     let input = "hello"
+//!     let encoded = base64.encode((&input).bytes())
+//!     assert_eq(encoded, "aGVsbG8=")
+//!     let decoded = String.from_utf8(base64.decode(encoded).unwrap()).unwrap()
+//!     assert_eq(decoded, "hello")
+//! }
+//! ```
 
 import joky/show.{type Show}
-import joky/array.{ type Array }
-import joky/slice.{ type Slice }
+import joky/array.{type Array}
+import joky/slice.{type Slice}
 import joky/string
-import joky/result.{ type Result, Ok, Err }
+import joky/result.{type Result, Ok, Err}
 
-pub enum DecodeError { InvalidLength, InvalidByte(UInt64), InvalidPadding(UInt64), NonCanonical(UInt64) }
+pub enum DecodeError {
+    InvalidLength,
+    InvalidByte(UInt64),
+    InvalidPadding(UInt64),
+    NonCanonical(UInt64)
+}
 impl Show for DecodeError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         match self {
             InvalidLength => output.push_str("invalid base64 length")
-            InvalidByte(offset) => { output.push_str("invalid base64 character at byte "); offset.show(output) }
-            InvalidPadding(offset) => { output.push_str("invalid base64 padding at byte "); offset.show(output) }
-            NonCanonical(offset) => { output.push_str("non-canonical base64 at byte "); offset.show(output) }
+            InvalidByte(offset) => {
+                output.push_str("invalid base64 character at byte ")
+                offset.show(output)
+            }
+            InvalidPadding(offset) => {
+                output.push_str("invalid base64 padding at byte ")
+                offset.show(output)
+            }
+            NonCanonical(offset) => {
+                output.push_str("non-canonical base64 at byte ")
+                offset.show(output)
+            }
         }
     }
 }
 
 pub struct Encoding { url: Bool, padding: Bool }
-pub fn standard() -> Encoding { Encoding { url: false, padding: true } }
-pub fn standard_no_pad() -> Encoding { Encoding { url: false, padding: false } }
-pub fn url_safe() -> Encoding { Encoding { url: true, padding: true } }
-pub fn url_safe_no_pad() -> Encoding { Encoding { url: true, padding: false } }
-pub fn encode(bytes: &Slice<UInt8>) -> String { standard().encode(bytes) }
-pub fn decode(text: &String) -> Result<Array<UInt8>, DecodeError> { standard().decode(text) }
+
+pub fn standard() -> Encoding {
+    Encoding { url: false, padding: true }
+}
+
+pub fn standard_no_pad() -> Encoding {
+    Encoding { url: false, padding: false }
+}
+
+pub fn url_safe() -> Encoding {
+    Encoding { url: true, padding: true }
+}
+
+pub fn url_safe_no_pad() -> Encoding {
+    Encoding { url: true, padding: false }
+}
+
+/// Encodes bytes with the standard alphabet and padding.
+pub fn encode(bytes: &Slice<UInt8>) -> String {
+    standard().encode(bytes)
+}
+
+/// Decodes strictly, rejecting invalid padding and noncanonical trailing bits.
+pub fn decode(text: &String) -> Result<Array<UInt8>, DecodeError> {
+    standard().decode(text)
+}
 
 fn symbol(value: UInt8, url: Bool) -> UInt8 {
-    if value < 26 { 65 + value }
-    else if value < 52 { 97 + value - 26 }
-    else if value < 62 { 48 + value - 52 }
-    else if value == 62 { if url { 45 } else { 43 } }
-    else { if url { 95 } else { 47 } }
+    if value < 26 {
+        65 + value
+    } else if value < 52 {
+        97 + value - 26
+    } else if value < 62 {
+        48 + value - 52
+    } else if value == 62 {
+        if url {
+            45
+        } else {
+            43
+        }
+    } else {
+        if url {
+            95
+        } else {
+            47
+        }
+    }
 }
+
 fn sextet(byte: UInt8, url: Bool) -> UInt32 {
-    if byte >= 65 && byte <= 90 { uint32(byte - 65) }
-    else if byte >= 97 && byte <= 122 { uint32(byte - 97) + 26 }
-    else if byte >= 48 && byte <= 57 { uint32(byte - 48) + 52 }
-    else if byte == (if url { uint8(45) } else { uint8(43) }) { 62 }
-    else if byte == (if url { uint8(95) } else { uint8(47) }) { 63 }
-    else { 64 }
+    if byte >= 65 && byte <= 90 {
+        uint32(byte - 65)
+    } else if byte >= 97 && byte <= 122 {
+        uint32(byte - 97) + 26
+    } else if byte >= 48 && byte <= 57 {
+        uint32(byte - 48) + 52
+    } else if byte == (
+        if url {
+        uint8(45)
+    } else {
+        uint8(43)
+    }
+    ) {
+        62
+    } else if byte == (
+        if url {
+        uint8(95)
+    } else {
+        uint8(47)
+    }
+    ) {
+        63
+    } else {
+        64
+    }
 }
+
 impl Encoding {
+    /// Encodes bytes with this alphabet and padding policy.
     pub fn encode(self, bytes: &Slice<UInt8>) -> String {
         let length = slice.len(bytes)
         let tail = length % 3
-        let extra = if tail == 0 { uint64(0) } else if self.padding { uint64(4) } else { tail + 1 }
+        let extra = if tail == 0 {
+            uint64(0)
+        } else if self.padding {
+            uint64(4)
+        } else {
+            tail + 1
+        }
         // Divide before multiplying; live byte lengths cannot exceed isize::MAX.
         var output = Array.with_capacity::<UInt8>((length / 3) * 4 + extra)
         var accumulator: UInt32 = 0
@@ -60,10 +152,17 @@ impl Encoding {
             }
             i += 1
         }
-        if bits != 0 { output.push(symbol(uint8((accumulator << (6 - bits)) & 63), self.url)) }
-        if self.padding { while output.len() % 4 != 0 { output.push(61) } }
+        if bits != 0 {
+            output.push(symbol(uint8((accumulator << (6 - bits)) & 63), self.url))
+        }
+        if self.padding {
+            while output.len() % 4 != 0 {
+                output.push(61)
+            }
+        }
         string.from_utf8(output).unwrap()
     }
+    /// Decodes strictly, rejecting invalid padding and noncanonical trailing bits.
     pub fn decode(self, text: &String) -> Result<Array<UInt8>, DecodeError> {
         let bytes = text.bytes()
         let length = slice.len(bytes)
@@ -75,7 +174,9 @@ impl Encoding {
         if self.padding && length != 0 {
             if *slice.borrow_ref(bytes, length - 1) == 61 {
                 data_length -= 1
-                if *slice.borrow_ref(bytes, length - 2) == 61 { data_length -= 1 }
+                if *slice.borrow_ref(bytes, length - 2) == 61 {
+                    data_length -= 1
+                }
             }
         }
         var output = Array.with_capacity::<UInt8>((data_length / 4) * 3 + (data_length % 4) * 6 / 8)
@@ -86,7 +187,9 @@ impl Encoding {
             let byte = *slice.borrow_ref(bytes, i)
             let value = sextet(byte, self.url)
             if value == 64 {
-                if byte == 61 { return Err(DecodeError.InvalidPadding(i)) }
+                if byte == 61 {
+                    return Err(DecodeError.InvalidPadding(i))
+                }
                 return Err(DecodeError.InvalidByte(i))
             }
             accumulator = (accumulator << 6) | value

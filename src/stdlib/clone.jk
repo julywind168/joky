@@ -1,20 +1,92 @@
 //! The `Clone` trait for explicit duplication.
+//!
+//! Cloning is explicit: a clone of a `String` owns independent storage.
+//! Use a borrow when the caller only needs to inspect the original value.
+//! The `Clone` trait is in the default prelude.
+//!
+//! ```joky
+//! fn main() {
+//!     let original = "Joky"
+//!     let copied = original.clone()
+//!     assert_eq(original, copied)
+//!     println(original)
+//!     println(copied)
+//! }
+//! ```
 
 import joky/internal/text
 // Explicit independent copies; implementations retain no input borrow.
 
-pub trait Clone { fn clone(&self) @noescape -> Self }
-impl Clone for Int8 { fn clone(&self) -> Self { *self } }
-impl Clone for Int16 { fn clone(&self) -> Self { *self } }
-impl Clone for Int32 { fn clone(&self) -> Self { *self } }
-impl Clone for Int64 { fn clone(&self) -> Self { *self } }
-impl Clone for UInt8 { fn clone(&self) -> Self { *self } }
-impl Clone for UInt16 { fn clone(&self) -> Self { *self } }
-impl Clone for UInt32 { fn clone(&self) -> Self { *self } }
-impl Clone for UInt64 { fn clone(&self) -> Self { *self } }
-impl Clone for Float32 { fn clone(&self) -> Self { *self } }
-impl Clone for Float64 { fn clone(&self) -> Self { *self } }
-impl Clone for Bool { fn clone(&self) -> Self { *self } }
-impl Clone for Rune { fn clone(&self) -> Self { *self } }
-impl Clone for Unit { fn clone(&self) -> Self { *self } }
-impl Clone for String { fn clone(&self) -> Self { text.clone(self) } }
+pub trait Clone {
+    fn clone(&self) @noescape -> Self
+}
+impl Clone for Int8 {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for Int16 {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for Int32 {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for Int64 {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for UInt8 {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for UInt16 {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for UInt32 {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for UInt64 {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for Float32 {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for Float64 {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for Bool {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for Rune {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for Unit {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl Clone for String {
+    fn clone(&self) -> Self {
+        text.clone(self)
+    }
+}

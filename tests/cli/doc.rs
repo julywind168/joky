@@ -205,25 +205,78 @@ fn doc_cli_refuses_symlink_output_files() {
 }
 
 #[test]
-fn doc_cli_option_example_executes() {
+fn doc_cli_standard_library_examples_execute() {
     let work = Workspace::new();
-    let source = include_str!("../../src/stdlib/option.jk");
-    let example = source
-        .split_once("//! ```joky\n")
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/stdlib");
+    let mut paths: Vec<_> = fs::read_dir(root)
         .unwrap()
-        .1
-        .split_once("//! ```")
-        .unwrap()
-        .0;
-    let code = example
-        .lines()
-        .map(|line| line.strip_prefix("//! ").unwrap_or(""))
-        .collect::<Vec<_>>()
-        .join("\n");
-    work.write("doc_option.jk", &code);
-    let output = work.cli(&["run", "doc_option.jk"]);
-    success(&output);
-    assert_eq!(output.stdout, b"42\n");
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "jk"))
+        .collect();
+    paths.sort();
+    assert!(!paths.is_empty());
+    let mut programs = Vec::new();
+    let mut tests = Vec::new();
+    for path in paths {
+        let source = fs::read_to_string(&path).unwrap();
+        let mut count = 0;
+        for block in source.split("//! ```joky\n").skip(1) {
+            let (example, _) = block.split_once("//! ```").expect("unclosed doc example");
+            let code = example
+                .lines()
+                .map(|line| {
+                    line.strip_prefix("//! ").unwrap_or_else(|| {
+                        assert_eq!(line, "//!", "{}", path.display());
+                        ""
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
+            let file = format!(
+                "doc_{}_{count}.jk",
+                path.file_stem().unwrap().to_str().unwrap()
+            );
+            work.write(&format!("examples/{file}"), &code);
+            if code.contains("#test\n") {
+                tests.push((file, code));
+            } else {
+                programs.push((file, code));
+            }
+            count += 1;
+        }
+        assert!(
+            count > 0,
+            "{} needs a runnable module example",
+            path.display()
+        );
+    }
+    success(&work.cli(&["fmt", "examples", "--check"]));
+    // Compile the snippets as standalone programs, just as a reader copies them.
+    // Importing them into a batch can change trait and associated-type resolution.
+    for (file, code) in programs {
+        work.write(&file, &code);
+        let output = work.cli(&["run", &file]);
+        success(&output);
+        let interpreted = work.cli(&["run", &file, "--interpreter"]);
+        success(&interpreted);
+        assert_eq!(interpreted.stdout, output.stdout, "{file}: interpreter");
+        #[cfg(unix)]
+        {
+            success(&work.cli(&["build", &file]));
+            let native = std::process::Command::new(work.path().join(&file).with_extension(""))
+                .current_dir(work.path())
+                .output()
+                .unwrap();
+            success(&native);
+            assert_eq!(native.stdout, output.stdout, "{file}: AOT");
+        }
+    }
+    for (file, code) in tests {
+        work.write(&file, &code);
+        success(&work.cli(&["test", &file]));
+        success(&work.cli(&["test", &file, "--interpreter"]));
+    }
 }
 
 #[test]

@@ -1,4 +1,22 @@
 //! UTF-8 strings, Unicode scalar iteration and string building.
+//!
+//! Strings own valid UTF-8. Lengths and substring offsets count bytes, while
+//! `runes` iterates Unicode scalar values (not grapheme clusters). A substring
+//! must start and end on scalar boundaries. Use `StringBuilder` for repeated
+//! appends; `finish` transfers the completed string to the caller.
+//!
+//! ```joky
+//! import joky/string.{type StringBuilder}
+//!
+//! fn main() {
+//!     let text = "Hi, 世界"
+//!     assert_eq(text.byte_length(), uint64(10))
+//!     assert_eq(text.rune_count(), uint64(6))
+//!     var output = StringBuilder.from(text)
+//!     output.push('!')
+//!     assert_eq(output.finish(), "Hi, 世界!")
+//! }
+//! ```
 
 // Immutable UTF-8 owners. Only these trusted bridges can transfer validated bytes.
 import joky/internal/text as text_storage
@@ -11,12 +29,19 @@ import joky/result.{type Result, Ok, Err}
 import joky/check
 import joky/iter.{type SharedIterator}
 
-fn copy_text(text: &String) @noescape -> String { text_storage.clone(text) }
+fn copy_text(text: &String) @noescape -> String {
+    text_storage.clone(text)
+}
+
 #intrinsic("text.freeze_utf8")
 fn freeze_utf8(bytes: Array<UInt8>) -> String
+
 #intrinsic("text.into_bytes")
+/// Consumes the string and transfers ownership of its UTF-8 bytes.
 pub fn into_bytes(text: String) -> Array<UInt8>
+
 #intrinsic("text.bytes")
+/// Borrows the string as UTF-8 bytes without copying.
 pub fn bytes(text: &String) -> &Slice<UInt8>
 
 pub enum Utf8ErrorCode { InvalidSequence, UnexpectedEnd }
@@ -27,14 +52,36 @@ pub struct Utf8Error { pub code: Utf8ErrorCode, pub offset: UInt64 }
 fn decode(source: &Slice<UInt8>, offset: UInt64) -> Result<(Rune, UInt64), Utf8Error> {
     let length = slice.len(source)
     let first = uint32(buffer.slice_load(source, offset))
-    if first < 0x80 { return Ok((Rune.from_u32(first).unwrap_or('\0'), offset + 1)) }
-    let width: UInt64 = if first >= 0xc2 && first <= 0xdf { 2 } else {
-        if first >= 0xe0 && first <= 0xef { 3 } else {
-            if first >= 0xf0 && first <= 0xf4 { 4 } else { 0 }
+    if first < 0x80 {
+        return Ok((Rune.from_u32(first).unwrap_or('\0'), offset + 1))
+    }
+    let width: UInt64 = if first >= 0xc2 && first <= 0xdf {
+        2
+    } else {
+        if first >= 0xe0 && first <= 0xef {
+            3
+        } else {
+            if first >= 0xf0 && first <= 0xf4 {
+                4
+            } else {
+                0
+            }
         }
     }
-    if width == 0 { return Err(Utf8Error { code: Utf8ErrorCode.InvalidSequence, offset: offset }) }
-    var scalar = first & (if width == 2 { 0x1f } else { if width == 3 { 0x0f } else { 0x07 } })
+    if width == 0 {
+        return Err(Utf8Error { code: Utf8ErrorCode.InvalidSequence, offset: offset })
+    }
+    var scalar = first & (
+        if width == 2 {
+        0x1f
+    } else {
+        if width == 3 {
+            0x0f
+        } else {
+            0x07
+        }
+    }
+    )
     var index: UInt64 = 1
     while index < width {
         if index >= length - offset {
@@ -42,8 +89,9 @@ fn decode(source: &Slice<UInt8>, offset: UInt64) -> Result<(Rune, UInt64), Utf8E
         }
         let byte = uint32(buffer.slice_load(source, offset + index))
         if byte < 0x80 || byte > 0xbf || (index == 1 && (
-            (first == 0xe0 && byte < 0xa0) || (first == 0xed && byte > 0x9f) ||
-            (first == 0xf0 && byte < 0x90) || (first == 0xf4 && byte > 0x8f))) {
+                (first == 0xe0 && byte < 0xa0) || (first == 0xed && byte > 0x9f) ||
+                    (first == 0xf0 && byte < 0x90) || (first == 0xf4 && byte > 0x8f)
+            )) {
             return Err(Utf8Error { code: Utf8ErrorCode.InvalidSequence, offset: offset })
         }
         scalar = (scalar << 6) | (byte & 0x3f)
@@ -52,14 +100,20 @@ fn decode(source: &Slice<UInt8>, offset: UInt64) -> Result<(Rune, UInt64), Utf8E
     Ok((Rune.from_u32(scalar).unwrap_or('\0'), offset + width))
 }
 
+/// Consumes bytes and validates UTF-8. On failure, reports the starting byte offset
+/// of the first invalid or truncated sequence.
 pub fn from_utf8(input: Array<UInt8>) -> Result<String, Utf8Error> {
     let length = input.len()
     let source = input.slice(0, length)
     var offset = buffer.utf8_prefix(source)
     while offset < length {
         match decode(source, offset) {
-            Ok((_, next)) => { offset = next }
-            Err(error) => { return Err(error) }
+            Ok((_, next)) => {
+                offset = next
+            }
+            Err(error) => {
+                return Err(error)
+            }
         }
     }
     Ok(freeze_utf8(input))
@@ -69,10 +123,16 @@ fn boundary(source: &Slice<UInt8>, offset: UInt64) -> Bool {
     offset == slice.len(source) || (buffer.slice_load(source, offset) & 0xc0) != 0x80
 }
 
+/// Copies the half-open byte range `start..end`. Returns `None` for invalid bounds
+/// or offsets inside a UTF-8 sequence.
 pub fn substring(text: &String, start: UInt64, end: UInt64) -> Option<String> {
     let source = bytes(text)
-    if start > end || end > slice.len(source) { return None }
-    if !boundary(source, start) || !boundary(source, end) { return None }
+    if start > end || end > slice.len(source) {
+        return None
+    }
+    if !boundary(source, start) || !boundary(source, end) {
+        return None
+    }
     var output = Array.with_capacity::<UInt8>(end - start)
     array.extend_bytes(&mut output, source, start, end)
     Some(freeze_utf8(output))
@@ -87,31 +147,48 @@ pub fn next_rune(text: &String, offset: UInt64) -> Option<(Rune, UInt64)> {
     if !boundary(source, offset) {
         check.panic("String.next_rune offset is not a UTF-8 boundary")
     }
-    if offset == length { return None }
-    match decode(source, offset) { Ok(value) => Some(value), Err(_) => None }
+    if offset == length {
+        return None
+    }
+    match decode(source, offset) {
+        Ok(value) => Some(value),
+        Err(_) => None
+    }
 }
 
 pub struct Runes { source: &String, offset: UInt64 }
 
-pub fn runes(text: &String) -> Runes { Runes { source: text, offset: 0 } }
+pub fn runes(text: &String) -> Runes {
+    Runes { source: text, offset: 0 }
+}
 
 impl SharedIterator for Runes {
-    type Item = Rune
+    type Item
+    = Rune
     fn step(var self) -> (Self, Option<Rune>) {
         match next_rune(self.source, self.offset) {
-            Some((rune, next)) => { self.offset = next; (self, Some(rune)) }
+            Some((rune, next)) => {
+                self.offset = next
+                (self, Some(rune))
+            }
             None => (self, None)
         }
     }
 }
 
+/// Counts Unicode scalar values, not bytes or grapheme clusters.
 pub fn rune_count(text: &String) -> UInt64 {
     var offset: UInt64 = 0
     var count: UInt64 = 0
     while offset < byte_length(text) {
         match next_rune(text, offset) {
-            Some((_, next)) => { offset = next; count = count + 1 }
-            None => { return count }
+            Some((_, next)) => {
+                offset = next
+                count = count + 1
+            }
+            None => {
+                return count
+            }
         }
     }
     count
@@ -126,11 +203,17 @@ pub fn concat(left: &String, right: &String) -> String {
 
 fn add_join_length(current: UInt64, additional: UInt64) -> UInt64 {
     let limit = buffer.capacity_limit::<UInt8>()
-    if current > limit || additional > limit - current { limit + 1 } else { current + additional }
+    if current > limit || additional > limit - current {
+        limit + 1
+    } else {
+        current + additional
+    }
 }
 
 impl Array<String> {
-    pub fn join(&self, separator: &String) -> String { join(self, separator) }
+    pub fn join(&self, separator: &String) -> String {
+        join(self, separator)
+    }
 }
 
 pub fn join(parts: &Array<String>, separator: &String) -> String {
@@ -153,13 +236,16 @@ pub fn join(parts: &Array<String>, separator: &String) -> String {
     var builder = StringBuilder.with_capacity(total)
     index = 0
     while index < length {
-        if index != 0 { builder.push_str(separator) }
+        if index != 0 {
+            builder.push_str(separator)
+        }
         builder.push_str(parts.borrow_ref(index))
         index = index + 1
     }
     builder.finish()
 }
 
+/// Splits on an exact separator; an empty separator splits into Unicode scalars.
 pub fn split(text: &String, separator: &String) -> Array<String> {
     let source = bytes(text)
     let pattern = bytes(separator)
@@ -182,15 +268,21 @@ pub fn split(text: &String, separator: &String) -> Array<String> {
         if matches_at(source, pattern, index) {
             // A valid UTF-8 pattern cannot match at a continuation byte.
             match substring(text, start, index) {
-                Some(part) => { output.push(part) }
+                Some(part) => {
+                    output.push(part)
+                }
                 None => {}
             }
             index = index + width
             start = index
-        } else { index = index + 1 }
+        } else {
+            index = index + 1
+        }
     }
     match substring(text, start, length) {
-        Some(part) => { output.push(part) }
+        Some(part) => {
+            output.push(part)
+        }
         None => {}
     }
     output
@@ -205,13 +297,17 @@ pub fn lines(text: &String) -> Array<String> {
     while index < length {
         if buffer.slice_load(source, index) == 0x0a {
             var end = index
-            if end > start && buffer.slice_load(source, end - 1) == 0x0d { end -= 1 }
+            if end > start && buffer.slice_load(source, end - 1) == 0x0d {
+                end -= 1
+            }
             output.push(substring(text, start, end)!)
             start = index + 1
         }
         index += 1
     }
-    if start < length { output.push(substring(text, start, length)!) }
+    if start < length {
+        output.push(substring(text, start, length)!)
+    }
     output
 }
 
@@ -224,12 +320,16 @@ pub fn split_whitespace(text: &String) -> Array<String> {
     while offset < length {
         let (rune, next) = decode(source, offset)!
         if whitespace(rune) {
-            if start < offset { output.push(substring(text, start, offset)!) }
+            if start < offset {
+                output.push(substring(text, start, offset)!)
+            }
             start = next
         }
         offset = next
     }
-    if start < length { output.push(substring(text, start, length)!) }
+    if start < length {
+        output.push(substring(text, start, length)!)
+    }
     output
 }
 
@@ -242,7 +342,9 @@ fn decimal(value: UInt64, negative: Bool) -> String {
         remaining = quotient
     }
     digits.push(uint8(remaining) + 48)
-    if negative { digits.push(45) }
+    if negative {
+        digits.push(45)
+    }
     var index: UInt64 = 0
     let length = digits.len()
     while index < length / 2 {
@@ -254,20 +356,42 @@ fn decimal(value: UInt64, negative: Bool) -> String {
 
 fn signed_decimal(value: Int64) -> String {
     let negative = value < 0
-    let magnitude = if negative { uint64(-(value + 1)) + 1 } else { uint64(value) }
+    let magnitude = if negative {
+        uint64(-(value + 1)) + 1
+    } else {
+        uint64(value)
+    }
     decimal(magnitude, negative)
 }
 
-impl Int32 { pub fn to_string(self) -> String { signed_decimal(int64(self)) } }
-impl Int64 { pub fn to_string(self) -> String { signed_decimal(self) } }
-impl UInt32 { pub fn to_string(self) -> String { decimal(uint64(self), false) } }
-impl UInt64 { pub fn to_string(self) -> String { decimal(self, false) } }
+impl Int32 {
+    pub fn to_string(self) -> String {
+        signed_decimal(int64(self))
+    }
+}
+impl Int64 {
+    pub fn to_string(self) -> String {
+        signed_decimal(self)
+    }
+}
+impl UInt32 {
+    pub fn to_string(self) -> String {
+        decimal(uint64(self), false)
+    }
+}
+impl UInt64 {
+    pub fn to_string(self) -> String {
+        decimal(self, false)
+    }
+}
 
 // The array is private: successful operations only append complete UTF-8 scalars.
 pub struct StringBuilder { data: Array<UInt8> }
 
 impl StringBuilder {
-    pub fn new() -> Self { StringBuilder { data: Array.new::<UInt8>() } }
+    pub fn new() -> Self {
+        StringBuilder { data: Array.new::<UInt8>() }
+    }
     pub fn with_capacity(capacity: UInt64) -> Self {
         StringBuilder { data: Array.with_capacity::<UInt8>(capacity) }
     }
@@ -276,23 +400,52 @@ impl StringBuilder {
         builder.push_str(text)
         builder
     }
-    pub fn byte_length(&self) -> UInt64 { self.data.len() }
-    pub fn capacity(&self) -> UInt64 { self.data.capacity() }
-    pub fn reserve(&mut self, additional: UInt64) { self.data.reserve(additional) }
-    pub fn clear(&mut self) { self.data.clear() }
-    pub fn release(self) { self.data.release() }
-    pub fn finish(self) -> String { freeze_utf8(self.data) }
+    pub fn byte_length(&self) -> UInt64 {
+        self.data.len()
+    }
+    pub fn capacity(&self) -> UInt64 {
+        self.data.capacity()
+    }
+    pub fn reserve(&mut self, additional: UInt64) {
+        self.data.reserve(additional)
+    }
+    pub fn clear(&mut self) {
+        self.data.clear()
+    }
+    pub fn release(self) {
+        self.data.release()
+    }
+    /// Consumes the builder and transfers the completed UTF-8 string.
+    pub fn finish(self) -> String {
+        freeze_utf8(self.data)
+    }
     pub fn push(&mut self, rune: Rune) {
         let value = rune.to_u32()
-        let count: UInt64 = if value <= 0x7f { 1 } else {
-            if value <= 0x7ff { 2 } else { if value <= 0xffff { 3 } else { 4 } }
+        let count: UInt64 = if value <= 0x7f {
+            1
+        } else {
+            if value <= 0x7ff {
+                2
+            } else {
+                if value <= 0xffff {
+                    3
+                } else {
+                    4
+                }
+            }
         }
         // Reserve the whole scalar before publishing its first byte. Subsequent
         // pushes cannot grow the buffer or leave a successful partial encoding.
         self.data.reserve(count)
-        if count == 1 { self.data.push(uint8(value)) } else {
-            if count == 2 { self.data.push(uint8(0xc0 | (value >> 6))) } else {
-                if count == 3 { self.data.push(uint8(0xe0 | (value >> 12))) } else {
+        if count == 1 {
+            self.data.push(uint8(value))
+        } else {
+            if count == 2 {
+                self.data.push(uint8(0xc0 | (value >> 6)))
+            } else {
+                if count == 3 {
+                    self.data.push(uint8(0xe0 | (value >> 12)))
+                } else {
                     self.data.push(uint8(0xf0 | (value >> 18)))
                     self.data.push(uint8(0x80 | ((value >> 12) & 0x3f)))
                 }
@@ -301,6 +454,7 @@ impl StringBuilder {
             self.data.push(uint8(0x80 | (value & 0x3f)))
         }
     }
+    /// Appends borrowed UTF-8 text to the builder.
     pub fn push_str(&mut self, text: &String) {
         let source = bytes(text)
         let length = slice.len(source)
@@ -309,57 +463,144 @@ impl StringBuilder {
 }
 
 impl String {
-    pub fn from_utf8(input: Array<UInt8>) -> Result<String, Utf8Error> { from_utf8(input) }
-    pub fn bytes(&self) -> &Slice<UInt8> { bytes(self) }
-    pub fn into_bytes(self) -> Array<UInt8> { into_bytes(self) }
-    pub fn substring(&self, start: UInt64, end: UInt64) -> Option<String> { substring(self, start, end) }
-    pub fn next_rune(&self, offset: UInt64) -> Option<(Rune, UInt64)> { next_rune(self, offset) }
-    pub fn runes(&self) -> Runes { runes(self) }
-    pub fn rune_count(&self) -> UInt64 { rune_count(self) }
-    pub fn concat(&self, right: &String) -> String { concat(self, right) }
-    pub fn split(&self, separator: &String) -> Array<String> { split(self, separator) }
-    pub fn lines(&self) -> Array<String> { lines(self) }
-    pub fn split_whitespace(&self) -> Array<String> { split_whitespace(self) }
-    pub fn new() -> Self { new() }
-    pub fn clone(&self) -> Self { clone(self) }
-    pub fn release(self) { release(self) }
-    pub fn byte_length(&self) -> UInt64 { byte_length(self) }
-    pub fn is_empty(&self) -> Bool { is_empty(self) }
-    pub fn find(&self, needle: &String) -> Option<UInt64> { find(self, needle) }
-    pub fn starts_with(&self, prefix: &String) -> Bool { starts_with(self, prefix) }
-    pub fn ends_with(&self, suffix: &String) -> Bool { ends_with(self, suffix) }
-    pub fn contains(&self, needle: &String) -> Bool { contains(self, needle) }
-    pub fn split_once(&self, separator: &String) -> Option<(String, String)> { split_once(self, separator) }
-    pub fn strip_prefix(&self, prefix: &String) -> Option<String> { strip_prefix(self, prefix) }
-    pub fn strip_suffix(&self, suffix: &String) -> Option<String> { strip_suffix(self, suffix) }
-    pub fn trim(&self) -> String { trim(self) }
-    pub fn trim_start(&self) -> String { trim_start(self) }
-    pub fn trim_end(&self) -> String { trim_end(self) }
-    pub fn eq_ignore_ascii_case(&self, other: &String) -> Bool { eq_ignore_ascii_case(self, other) }
-    pub fn to_ascii_lowercase(&self) -> String { to_ascii_lowercase(self) }
-    pub fn to_ascii_uppercase(&self) -> String { to_ascii_uppercase(self) }
-    pub fn replace(&self, from: &String, to: &String) -> String { replace(self, from, to) }
+    /// Consumes bytes and validates UTF-8. On failure, reports the starting byte offset
+    /// of the first invalid or truncated sequence.
+    pub fn from_utf8(input: Array<UInt8>) -> Result<String, Utf8Error> {
+        from_utf8(input)
+    }
+    /// Borrows the string as UTF-8 bytes without copying.
+    pub fn bytes(&self) -> &Slice<UInt8> {
+        bytes(self)
+    }
+    /// Consumes the string and transfers ownership of its UTF-8 bytes.
+    pub fn into_bytes(self) -> Array<UInt8> {
+        into_bytes(self)
+    }
+    /// Copies the half-open byte range `start..end`. Returns `None` for invalid bounds
+    /// or offsets inside a UTF-8 sequence.
+    pub fn substring(&self, start: UInt64, end: UInt64) -> Option<String> {
+        substring(self, start, end)
+    }
+    pub fn next_rune(&self, offset: UInt64) -> Option<(Rune, UInt64)> {
+        next_rune(self, offset)
+    }
+    pub fn runes(&self) -> Runes {
+        runes(self)
+    }
+    /// Counts Unicode scalar values, not bytes or grapheme clusters.
+    pub fn rune_count(&self) -> UInt64 {
+        rune_count(self)
+    }
+    pub fn concat(&self, right: &String) -> String {
+        concat(self, right)
+    }
+    /// Splits on an exact separator; an empty separator splits into Unicode scalars.
+    pub fn split(&self, separator: &String) -> Array<String> {
+        split(self, separator)
+    }
+    pub fn lines(&self) -> Array<String> {
+        lines(self)
+    }
+    pub fn split_whitespace(&self) -> Array<String> {
+        split_whitespace(self)
+    }
+    pub fn new() -> Self {
+        new()
+    }
+    pub fn clone(&self) -> Self {
+        clone(self)
+    }
+    pub fn release(self) {
+        release(self)
+    }
+    pub fn byte_length(&self) -> UInt64 {
+        byte_length(self)
+    }
+    pub fn is_empty(&self) -> Bool {
+        is_empty(self)
+    }
+    pub fn find(&self, needle: &String) -> Option<UInt64> {
+        find(self, needle)
+    }
+    pub fn starts_with(&self, prefix: &String) -> Bool {
+        starts_with(self, prefix)
+    }
+    pub fn ends_with(&self, suffix: &String) -> Bool {
+        ends_with(self, suffix)
+    }
+    pub fn contains(&self, needle: &String) -> Bool {
+        contains(self, needle)
+    }
+    pub fn split_once(&self, separator: &String) -> Option<(String, String)> {
+        split_once(self, separator)
+    }
+    pub fn strip_prefix(&self, prefix: &String) -> Option<String> {
+        strip_prefix(self, prefix)
+    }
+    pub fn strip_suffix(&self, suffix: &String) -> Option<String> {
+        strip_suffix(self, suffix)
+    }
+    /// Copies the string with leading and trailing Unicode White_Space removed.
+    pub fn trim(&self) -> String {
+        trim(self)
+    }
+    pub fn trim_start(&self) -> String {
+        trim_start(self)
+    }
+    pub fn trim_end(&self) -> String {
+        trim_end(self)
+    }
+    pub fn eq_ignore_ascii_case(&self, other: &String) -> Bool {
+        eq_ignore_ascii_case(self, other)
+    }
+    pub fn to_ascii_lowercase(&self) -> String {
+        to_ascii_lowercase(self)
+    }
+    pub fn to_ascii_uppercase(&self) -> String {
+        to_ascii_uppercase(self)
+    }
+    pub fn replace(&self, from: &String, to: &String) -> String {
+        replace(self, from, to)
+    }
 }
 
-pub fn new() -> String { "" }
-pub fn clone(text: &String) -> String { copy_text(text) }
-pub fn release(text: String) { into_bytes(text).release() }
-pub fn byte_length(text: &String) -> UInt64 { slice.len(bytes(text)) }
-pub fn is_empty(text: &String) -> Bool { byte_length(text) == 0 }
+pub fn new() -> String {
+    ""
+}
+
+pub fn clone(text: &String) -> String {
+    copy_text(text)
+}
+
+pub fn release(text: String) {
+    into_bytes(text).release()
+}
+
+pub fn byte_length(text: &String) -> UInt64 {
+    slice.len(bytes(text))
+}
+
+pub fn is_empty(text: &String) -> Bool {
+    byte_length(text) == 0
+}
 
 fn matches_at(text: &Slice<UInt8>, other: &Slice<UInt8>, offset: UInt64) -> Bool {
     var index: UInt64 = 0
     while index < slice.len(other) {
-        if buffer.slice_load(text, offset + index) != buffer.slice_load(other, index) { return false }
+        if buffer.slice_load(text, offset + index) != buffer.slice_load(other, index) {
+            return false
+        }
         index = index + 1
     }
     true
 }
+
 pub fn starts_with(text: &String, prefix: &String) -> Bool {
     let text = bytes(text)
     let prefix = bytes(prefix)
     slice.len(prefix) <= slice.len(text) && matches_at(text, prefix, 0)
 }
+
 pub fn ends_with(text: &String, suffix: &String) -> Bool {
     let text = bytes(text)
     let suffix = bytes(suffix)
@@ -367,69 +608,108 @@ pub fn ends_with(text: &String, suffix: &String) -> Bool {
     let count = slice.len(suffix)
     count <= length && matches_at(text, suffix, length - count)
 }
+
 pub fn find(text: &String, needle: &String) -> Option<UInt64> {
     let text = bytes(text)
     let needle = bytes(needle)
     let length = slice.len(text)
     let count = slice.len(needle)
-    if count > length { return None }
+    if count > length {
+        return None
+    }
     if count == 1 {
         let offset = buffer.find_byte(text, buffer.slice_load(needle, 0), 0, length)
-        return if offset == length { None } else { Some(offset) }
+        return if offset == length {
+            None
+        } else {
+            Some(offset)
+        }
     }
     var offset: UInt64 = 0
     while offset <= length - count {
-        if matches_at(text, needle, offset) { return Some(offset) }
+        if matches_at(text, needle, offset) {
+            return Some(offset)
+        }
         offset = offset + 1
     }
     None
 }
 
-pub fn contains(text: &String, needle: &String) -> Bool { find(text, needle).is_some() }
+pub fn contains(text: &String, needle: &String) -> Bool {
+    find(text, needle).is_some()
+}
+
 pub fn split_once(text: &String, separator: &String) -> Option<(String, String)> {
     let offset = find(text, separator)?
-    Some((substring(text, 0, offset)!, substring(text, offset + byte_length(separator), byte_length(text))!))
+    Some(
+        (
+            substring(text, 0, offset)!,
+            substring(text, offset + byte_length(separator), byte_length(text))!
+        )
+    )
 }
+
 pub fn strip_prefix(text: &String, prefix: &String) -> Option<String> {
-    if starts_with(text, prefix) { substring(text, byte_length(prefix), byte_length(text)) } else { None }
+    if starts_with(text, prefix) {
+        substring(text, byte_length(prefix), byte_length(text))
+    } else {
+        None
+    }
 }
+
 pub fn strip_suffix(text: &String, suffix: &String) -> Option<String> {
-    if ends_with(text, suffix) { substring(text, 0, byte_length(text) - byte_length(suffix)) } else { None }
+    if ends_with(text, suffix) {
+        substring(text, 0, byte_length(text) - byte_length(suffix))
+    } else {
+        None
+    }
 }
 
 // Unicode White_Space; zero-width space and the byte order mark are not whitespace.
 fn whitespace(rune: Rune) -> Bool {
     let value = rune.to_u32()
     (value >= 0x09 && value <= 0x0d) || value == 0x20 || value == 0x85 ||
-    value == 0xa0 || value == 0x1680 || (value >= 0x2000 && value <= 0x200a) ||
-    value == 0x2028 || value == 0x2029 || value == 0x202f || value == 0x205f || value == 0x3000
+        value == 0xa0 || value == 0x1680 || (value >= 0x2000 && value <= 0x200a) ||
+        value == 0x2028 || value == 0x2029 || value == 0x202f || value == 0x205f || value == 0x3000
 }
+
 fn trim_start_offset(source: &Slice<UInt8>) -> UInt64 {
     var start: UInt64 = 0
     while start < slice.len(source) {
         let (rune, next) = decode(source, start)!
-        if !whitespace(rune) { break }
+        if !whitespace(rune) {
+            break
+        }
         start = next
     }
     start
 }
+
 fn trim_end_offset(source: &Slice<UInt8>, start: UInt64) -> UInt64 {
     var end = slice.len(source)
     while end > start {
         var offset = end - 1
-        while !boundary(source, offset) { offset -= 1 }
+        while !boundary(source, offset) {
+            offset -= 1
+        }
         let (rune, _) = decode(source, offset)!
-        if !whitespace(rune) { break }
+        if !whitespace(rune) {
+            break
+        }
         end = offset
     }
     end
 }
+
 pub fn trim_start(text: &String) -> String {
     substring(text, trim_start_offset(bytes(text)), byte_length(text))!
 }
+
 pub fn trim_end(text: &String) -> String {
     substring(text, 0, trim_end_offset(bytes(text), 0))!
 }
+
+/// Copies the string with leading and trailing Unicode White_Space removed.
 pub fn trim(text: &String) -> String {
     let source = bytes(text)
     let start = trim_start_offset(source)
@@ -437,20 +717,32 @@ pub fn trim(text: &String) -> String {
 }
 
 fn ascii_lower(byte: UInt8) -> UInt8 {
-    if byte >= 0x41 && byte <= 0x5a { byte + 0x20 } else { byte }
+    if byte >= 0x41 && byte <= 0x5a {
+        byte + 0x20
+    } else {
+        byte
+    }
 }
+
 pub fn eq_ignore_ascii_case(left: &String, right: &String) -> Bool {
     let left = bytes(left)
     let right = bytes(right)
     let length = slice.len(left)
-    if length != slice.len(right) { return false }
+    if length != slice.len(right) {
+        return false
+    }
     var index: UInt64 = 0
     while index < length {
-        if ascii_lower(buffer.slice_load(left, index)) != ascii_lower(buffer.slice_load(right, index)) { return false }
+        if ascii_lower(buffer.slice_load(left, index)) != ascii_lower(
+            buffer.slice_load(right, index)
+        ) {
+            return false
+        }
         index += 1
     }
     true
 }
+
 fn ascii_case(text: &String, lower: Bool) -> String {
     let source = bytes(text)
     let length = slice.len(source)
@@ -458,16 +750,30 @@ fn ascii_case(text: &String, lower: Bool) -> String {
     var index: UInt64 = 0
     while index < length {
         let byte = buffer.slice_load(source, index)
-        output.push(if lower { ascii_lower(byte) } else {
-            if byte >= 0x61 && byte <= 0x7a { byte - 0x20 } else { byte }
-        })
+        output.push(
+            if lower {
+                ascii_lower(byte)
+            } else {
+                if byte >= 0x61 && byte <= 0x7a {
+                    byte - 0x20
+                } else {
+                    byte
+                }
+            }
+        )
         index += 1
     }
     // ASCII case changes preserve every non-ASCII byte and UTF-8 boundary.
     freeze_utf8(output)
 }
-pub fn to_ascii_lowercase(text: &String) -> String { ascii_case(text, true) }
-pub fn to_ascii_uppercase(text: &String) -> String { ascii_case(text, false) }
+
+pub fn to_ascii_lowercase(text: &String) -> String {
+    ascii_case(text, true)
+}
+
+pub fn to_ascii_uppercase(text: &String) -> String {
+    ascii_case(text, false)
+}
 
 pub fn replace(text: &String, from: &String, to: &String) -> String {
     let source = bytes(text)
@@ -499,7 +805,9 @@ pub fn replace(text: &String, from: &String, to: &String) -> String {
                 array.extend_bytes(&mut output, replacement, 0, replacement_length)
                 index += width
                 start = index
-            } else { index += 1 }
+            } else {
+                index += 1
+            }
         }
         array.extend_bytes(&mut output, source, start, length)
     }

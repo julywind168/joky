@@ -1,4 +1,21 @@
 //! URL encoding and decoding.
+//!
+//! Encode individual URL components, not an entire URL. `decode_component`
+//! keeps `+` literal; `parse_query` treats it as a space and expects the query
+//! without a leading `?`. Query pairs preserve duplicates and input order.
+//!
+//! ```joky
+//! import joky/url
+//!
+//! fn main() {
+//!     assert_eq(url.encode_component("hello world"), "hello%20world")
+//!     let pairs = url.parse_query("name=Ada+Lovelace&tag=joky&tag=language").unwrap()
+//!     assert_eq(pairs.len(), uint64(3))
+//!     let pair = pairs.get_ref(0).unwrap()
+//!     assert_eq(pair.0, "name")
+//!     assert_eq(pair.1, "Ada Lovelace")
+//! }
+//! ```
 
 // UTF-8 URL components and form-style query pairs, without URL normalization.
 import joky/array.{type Array}
@@ -11,8 +28,14 @@ pub enum DecodeError { InvalidEscape(UInt64), Utf8(Utf8Error) }
 impl Show for DecodeError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
-            InvalidEscape(offset) => { output.push_str("invalid percent escape at byte "); offset.show(output) }
-            Utf8(error) => { output.push_str("invalid decoded URL component: "); error.show(output) }
+            InvalidEscape(offset) => {
+                output.push_str("invalid percent escape at byte ")
+                offset.show(output)
+            }
+            Utf8(error) => {
+                output.push_str("invalid decoded URL component: ")
+                error.show(output)
+            }
         }
     }
 }
@@ -21,20 +44,35 @@ fn unreserved(byte: UInt8) -> Bool {
     (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) ||
         (byte >= 48 && byte <= 57) || byte == 45 || byte == 46 || byte == 95 || byte == 126
 }
-fn digit(value: UInt8) -> UInt8 { if value < 10 { 48 + value } else { 65 + value - 10 } }
-fn nibble(byte: UInt8) -> UInt8 {
-    if byte >= 48 && byte <= 57 { byte - 48 }
-    else if byte >= 65 && byte <= 70 { byte - 65 + 10 }
-    else if byte >= 97 && byte <= 102 { byte - 97 + 10 }
-    else { 16 }
+
+fn digit(value: UInt8) -> UInt8 {
+    if value < 10 {
+        48 + value
+    } else {
+        65 + value - 10
+    }
 }
 
+fn nibble(byte: UInt8) -> UInt8 {
+    if byte >= 48 && byte <= 57 {
+        byte - 48
+    } else if byte >= 65 && byte <= 70 {
+        byte - 65 + 10
+    } else if byte >= 97 && byte <= 102 {
+        byte - 97 + 10
+    } else {
+        16
+    }
+}
+
+/// Percent-encodes UTF-8 bytes outside the unreserved ASCII set.
 pub fn encode_component(text: &String) -> String {
     var output = Array.with_capacity::<UInt8>(text.byte_length())
     for byte in text.bytes() {
         let value = *byte
-        if unreserved(value) { output.push(value) }
-        else {
+        if unreserved(value) {
+            output.push(value)
+        } else {
             output.push(37)
             output.push(digit(value >> 4))
             output.push(digit(value & 15))
@@ -43,32 +81,51 @@ pub fn encode_component(text: &String) -> String {
     String.from_utf8(output)!
 }
 
-fn decode_range(bytes: &Slice<UInt8>, start: UInt64, end: UInt64, plus_as_space: Bool) -> Result<String, DecodeError> {
+fn decode_range(bytes: &Slice<UInt8>, start: UInt64, end: UInt64, plus_as_space: Bool) -> Result<
+    String,
+    DecodeError
+> {
     var output = Array.with_capacity::<UInt8>(end - start)
     var index = start
     while index < end {
         let byte = bytes[index]
         if byte == 37 {
-            if end - index < 3 { return Err(InvalidEscape(index)) }
+            if end - index < 3 {
+                return Err(InvalidEscape(index))
+            }
             let high = nibble(bytes[index + 1])
             let low = nibble(bytes[index + 2])
-            if high == 16 || low == 16 { return Err(InvalidEscape(index)) }
+            if high == 16 || low == 16 {
+                return Err(InvalidEscape(index))
+            }
             output.push((high << 4) | low)
             index += 3
         } else {
-            output.push(if plus_as_space && byte == 43 { uint8(32) } else { byte })
+            output.push(
+                if plus_as_space && byte == 43 {
+                    uint8(32)
+                } else {
+                    byte
+                }
+            )
             index += 1
         }
     }
-    match String.from_utf8(output) { Ok(text) => Ok(text), Err(error) => Err(Utf8(error)) }
+    match String.from_utf8(output) {
+        Ok(text) => Ok(text),
+        Err(error) => Err(Utf8(error))
+    }
 }
 
+/// Decodes percent escapes and validates UTF-8; `+` remains a plus sign.
 pub fn decode_component(text: &String) -> Result<String, DecodeError> {
     decode_range(text.bytes(), 0, text.byte_length(), false)
 }
 
 // Input excludes the leading '?'. Split before decoding so escaped delimiters
 // stay inside their component. Empty segments are ignored; bare keys have empty values.
+/// Parses the query without `?`, preserving duplicate keys and order.
+/// Splits before decoding, treats `+` as space and gives bare keys an empty value.
 pub fn parse_query(query: &String) -> Result<Array<(String, String)>, DecodeError> {
     let bytes = query.bytes()
     let length = query.byte_length()
@@ -76,12 +133,20 @@ pub fn parse_query(query: &String) -> Result<Array<(String, String)>, DecodeErro
     var start: UInt64 = 0
     while start < length {
         var end = start
-        while end < length && bytes[end] != 38 { end += 1 }
+        while end < length && bytes[end] != 38 {
+            end += 1
+        }
         if end > start {
             var separator = start
-            while separator < end && bytes[separator] != 61 { separator += 1 }
+            while separator < end && bytes[separator] != 61 {
+                separator += 1
+            }
             let name = decode_range(bytes, start, separator, true)?
-            let value_start = if separator < end { separator + 1 } else { end }
+            let value_start = if separator < end {
+                separator + 1
+            } else {
+                end
+            }
             let value = decode_range(bytes, value_start, end, true)?
             pairs.push((name, value))
         }

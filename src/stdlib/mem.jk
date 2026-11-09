@@ -1,13 +1,33 @@
 //! Explicit replacement, swapping and dropping of values.
+//!
+//! `replace` returns the old value while installing a new one; `swap` exchanges
+//! two values without copying. `drop` consumes a value to end its ownership at a
+//! chosen point. Ordinary scope exit already drops owning values automatically.
+//!
+//! ```joky
+//! import joky/mem
+//!
+//! fn main() {
+//!     var current = "old"
+//!     let previous = mem.replace(&mut current, "new")
+//!     assert_eq(previous, "old")
+//!     assert_eq(current, "new")
+//!     mem.drop(previous)
+//! }
+//! ```
 
 // Checked whole-value operations, bound by trusted module identity.
 // Replace and swap lower at the call site without an escape boundary.
+/// Installs `next` and returns the previous value without cloning.
 #intrinsic("mem.replace")
 pub fn replace<T>(target: &mut T, next: T) -> T
+
+/// Exchanges two values without cloning or dropping either value.
 #intrinsic("mem.swap")
 pub fn swap<T>(left: &mut T, right: &mut T)
 
 // Consuming the argument ends its ownership at this function's scope exit.
 // Its trusted identity also permits borrow-only and callable type arguments.
+/// Consumes a value and runs its ordinary cleanup at this scope exit.
 #intrinsic("mem.drop")
 pub fn drop<T>(value: T)

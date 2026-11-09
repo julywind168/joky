@@ -1,4 +1,24 @@
 //! Coordinated application shutdown.
+//!
+//! Controllers share an explicit shutdown request; the first reason wins.
+//! `create` does not install process signal handlers. Opt in with `with_signals`
+//! or `subscribe_unix`, and retain the returned owner for the subscription's
+//! lifetime. Subscription failure is reported as `SignalError`.
+//!
+//! ```joky
+//! import joky/shutdown
+//!
+//! fn main() @suspends {
+//!     let stop = shutdown.create()
+//!     let worker = stop.share()
+//!     assert(stop.request(), "first request")
+//!     assert(worker.requested(), "request is shared")
+//!     match worker.wait() {
+//!         shutdown.Reason.Requested => println("shutdown requested")
+//!         _ => panic("Unexpected reason")
+//!     }
+//! }
+//! ```
 
 import joky/string.{type StringBuilder}
 import joky/show.{type Show}
@@ -10,27 +30,32 @@ extern fn __shutdown_share(owner: &shutdown.ControllerOwner) @suspends -> shutdo
 extern fn __shutdown_request(owner: &shutdown.ControllerOwner) @suspends -> UInt64
 extern fn __shutdown_reason(owner: &shutdown.ControllerOwner) @suspends -> UInt64
 extern fn __shutdown_wait(owner: &shutdown.ControllerOwner) @suspends -> UInt64
-extern fn __shutdown_subscribe(owner: &shutdown.ControllerOwner, error: &mut UInt64) @suspends -> shutdown.SignalsOwner
+extern fn __shutdown_subscribe(owner: &shutdown.ControllerOwner, error: &mut UInt64) @suspends ->
+    shutdown.SignalsOwner
 
 pub enum Reason { Requested, Interrupt, Terminate }
 impl Show for Reason {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str(match self {
-            Requested => "requested"
-            Interrupt => "interrupt"
-            Terminate => "terminate"
-        })
+        output.push_str(
+            match self {
+                Requested => "requested"
+                Interrupt => "interrupt"
+                Terminate => "terminate"
+            }
+        )
     }
 }
 
 pub enum SignalError { Unsupported, Busy, Unavailable }
 impl Show for SignalError {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str(match self {
-            Unsupported => "signals unsupported"
-            Busy => "signal subscription busy"
-            Unavailable => "signals unavailable"
-        })
+        output.push_str(
+            match self {
+                Unsupported => "signals unsupported"
+                Busy => "signal subscription busy"
+                Unavailable => "signals unavailable"
+            }
+        )
     }
 }
 
@@ -39,32 +64,72 @@ pub struct Signals { storage: shutdown.SignalsOwner }
 // Keep the subscription in the startup scope; shared controllers do not own it.
 pub struct SignalScope { controller: Controller, signals: Signals }
 impl SignalScope {
-    pub fn controller(&self) -> &Controller { &self.controller }
+    pub fn controller(&self) -> &Controller {
+        &self.controller
+    }
 }
+
+/// Creates a controller with a scoped Unix signal subscription; keep the scope alive.
 pub fn with_signals() @suspends -> Result<SignalScope, SignalError> {
     let controller = create()
     let signals = controller.subscribe_unix()?
     Ok(SignalScope { controller, signals })
 }
 
-pub fn create() @suspends -> Controller { Controller { storage: __shutdown_create() } }
-fn reason(code: UInt64) -> Reason {
-    if code == 2 { Reason.Interrupt } else if code == 3 { Reason.Terminate } else { Reason.Requested }
+/// Creates a controller without installing OS signal handlers.
+pub fn create() @suspends -> Controller {
+    Controller { storage: __shutdown_create() }
 }
+
+fn reason(code: UInt64) -> Reason {
+    if code == 2 {
+        Reason.Interrupt
+    } else if code == 3 {
+        Reason.Terminate
+    } else {
+        Reason.Requested
+    }
+}
+
 impl Controller {
-    pub fn share(&self) @suspends -> Controller { Controller { storage: __shutdown_share(&self.storage) } }
-    pub fn request(&self) @suspends -> Bool { __shutdown_request(&self.storage) != 0 }
-    pub fn requested(&self) @suspends -> Bool { __shutdown_reason(&self.storage) != 0 }
+    pub fn share(&self) @suspends -> Controller {
+        Controller { storage: __shutdown_share(&self.storage) }
+    }
+    /// Records `Requested` if shutdown has not begun; returns whether this call won.
+    pub fn request(&self) @suspends -> Bool {
+        __shutdown_request(&self.storage) != 0
+    }
+    /// Tests whether a shutdown reason has been recorded.
+    pub fn requested(&self) @suspends -> Bool {
+        __shutdown_reason(&self.storage) != 0
+    }
     pub fn reason(&self) @suspends -> Option<Reason> {
         let code = __shutdown_reason(&self.storage)
-        if code == 0 { None } else { Some(reason(code)) }
+        if code == 0 {
+            None
+        } else {
+            Some(reason(code))
+        }
     }
-    pub fn wait(&self) @suspends -> Reason { reason(__shutdown_wait(&self.storage)) }
+    /// Waits for shutdown and returns the first recorded reason.
+    pub fn wait(&self) @suspends -> Reason {
+        reason(__shutdown_wait(&self.storage))
+    }
     // Keep the returned owner alive for the full service lifetime.
     pub fn subscribe_unix(&self) @suspends -> Result<Signals, SignalError> {
         var error: UInt64 = 0
         let signals = Signals { storage: __shutdown_subscribe(&self.storage, &mut error) }
-        if error == 0 { return Ok(signals) }
-        Err(if error == 1 { SignalError.Unsupported } else if error == 2 { SignalError.Busy } else { SignalError.Unavailable })
+        if error == 0 {
+            return Ok(signals)
+        }
+        Err(
+            if error == 1 {
+                SignalError.Unsupported
+            } else if error == 2 {
+                SignalError.Busy
+            } else {
+                SignalError.Unavailable
+            }
+        )
     }
 }

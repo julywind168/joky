@@ -1,4 +1,17 @@
 //! Borrowed equality assertions with readable failure messages.
+//!
+//! `assert_eq` and `assert_ne` are in the default prelude. They borrow their
+//! arguments, evaluate them once and render values only if the assertion fails.
+//! Use them in ordinary programs or functions marked `#test`.
+//!
+//! ```joky
+//! fn main() {
+//!     let greeting = "Hello, Joky!"
+//!     assert_eq(greeting, "Hello, Joky!")
+//!     assert_ne(greeting, "")
+//!     println(greeting)
+//! }
+//! ```
 
 import joky/check
 import joky/eq.{type Eq}
@@ -17,11 +30,21 @@ fn quoted<T: Show>(value: &T) @noescape -> String {
             Some((rune, next)) => {
                 let scalar = rune.to_u32()
                 match rune {
-                    '"' => { output.push_str("\\\"") }
-                    '\\' => { output.push_str("\\\\") }
-                    '\n' => { output.push_str("\\n") }
-                    '\r' => { output.push_str("\\r") }
-                    '\t' => { output.push_str("\\t") }
+                    '"' => {
+                        output.push_str("\\\"")
+                    }
+                    '\\' => {
+                        output.push_str("\\\\")
+                    }
+                    '\n' => {
+                        output.push_str("\\n")
+                    }
+                    '\r' => {
+                        output.push_str("\\r")
+                    }
+                    '\t' => {
+                        output.push_str("\\t")
+                    }
                     _ => {
                         if scalar < 32 || scalar == 127 {
                             output.push_str("\\u")
@@ -29,12 +52,16 @@ fn quoted<T: Show>(value: &T) @noescape -> String {
                             output.push(hex_digit(scalar / 16))
                             output.push(hex_digit(scalar % 16))
                             output.push('}')
-                        } else { output.push(rune) }
+                        } else {
+                            output.push(rune)
+                        }
                     }
                 }
                 offset = next
             }
-            None => { break }
+            None => {
+                break
+            }
         }
     }
     output.push('"')
@@ -42,7 +69,13 @@ fn quoted<T: Show>(value: &T) @noescape -> String {
 }
 
 fn hex_digit(value: UInt32) -> Rune {
-    Rune.from_u32(if value < 10 { 48 + value } else { 87 + value }).unwrap_or('0')
+    Rune.from_u32(
+        if value < 10 {
+            48 + value
+        } else {
+            87 + value
+        }
+    ).unwrap_or('0')
 }
 
 /// Ordinary borrowed calls evaluate each argument once and render only on failure.
@@ -55,6 +88,8 @@ pub fn assert_eq<T: Eq + Show>(actual: &T, expected: &T) @noescape {
 /// Fails when the two borrowed values compare equal.
 pub fn assert_ne<T: Eq + Show>(actual: &T, expected: &T) @noescape {
     if Eq.eq(actual, expected) {
-        check.panic("assert_ne failed (values must differ)\n  actual: {quoted(actual)}\nexpected: {quoted(expected)}")
+        check.panic(
+            "assert_ne failed (values must differ)\n  actual: {quoted(actual)}\nexpected: {quoted(expected)}"
+        )
     }
 }

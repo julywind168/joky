@@ -1,4 +1,20 @@
 //! Borrowed contiguous views of elements.
+//!
+//! A slice borrows contiguous storage and cannot outlive its owner. Bounds are
+//! half-open (`start..end`). `get` copies a `Copy` element and returns `None` for
+//! an invalid index; `get_ref` borrows an element without copying.
+//!
+//! ```joky
+//! import joky/slice
+//!
+//! fn main() {
+//!     let values = [10, 20, 30, 40]
+//!     let middle = values.slice(1, 3)
+//!     assert_eq(slice.len(middle), uint64(2))
+//!     assert_eq(slice.get(middle, 0).unwrap(), 20)
+//!     assert(slice.get(middle, 2).is_none(), "outside the borrowed slice")
+//! }
+//! ```
 
 // Half-open borrowed ranges. Views cannot resize or own their storage.
 import joky/internal/buffer
@@ -10,38 +26,102 @@ pub type Slice<T> = buffer.Slice<T>
 
 // Only this standard definition may attach methods to the internal view type.
 impl<T> Slice<T> {
-    pub fn len(&self) -> UInt64 { len(self) }
-    pub fn is_empty(&self) -> Bool { is_empty(self) }
-    pub fn borrow_ref(&self, index: UInt64) -> &T { borrow_ref(self, index) }
-    pub fn get_ref(&self, index: UInt64) -> Option<&T> { get_ref(self, index) }
-    pub fn borrow_mut_ref(&mut self, index: UInt64) -> &mut T { borrow_mut_ref(self, index) }
-    pub fn slice(&self, start: UInt64, end: UInt64) -> &Slice<T> { slice(self, start, end) }
-    pub fn slice_mut(&mut self, start: UInt64, end: UInt64) -> &mut Slice<T> { slice_mut(self, start, end) }
+    pub fn len(&self) -> UInt64 {
+        len(self)
+    }
+    pub fn is_empty(&self) -> Bool {
+        is_empty(self)
+    }
+    pub fn borrow_ref(&self, index: UInt64) -> &T {
+        borrow_ref(self, index)
+    }
+    /// Borrows an element, or returns `None` for an out-of-bounds index.
+    pub fn get_ref(&self, index: UInt64) -> Option<&T> {
+        get_ref(self, index)
+    }
+    pub fn borrow_mut_ref(&mut self, index: UInt64) -> &mut T {
+        borrow_mut_ref(self, index)
+    }
+    pub fn slice(&self, start: UInt64, end: UInt64) -> &Slice<T> {
+        slice(self, start, end)
+    }
+    pub fn slice_mut(&mut self, start: UInt64, end: UInt64) -> &mut Slice<T> {
+        slice_mut(self, start, end)
+    }
 }
 impl<T: Copy> Slice<T> {
-    pub fn get(&self, index: UInt64) -> Option<T> { get(self, index) }
-    pub fn set(&mut self, index: UInt64, next: T) -> Bool { set(self, index, next) }
+    /// Copies an element, or returns `None` for an out-of-bounds index.
+    pub fn get(&self, index: UInt64) -> Option<T> {
+        get(self, index)
+    }
+    pub fn set(&mut self, index: UInt64, next: T) -> Bool {
+        set(self, index, next)
+    }
 }
 
-pub fn len<T>(values: &Slice<T>) -> UInt64 { buffer.slice_len(values) }
-pub fn is_empty<T>(values: &Slice<T>) -> Bool { len(values) == 0 }
+pub fn len<T>(values: &Slice<T>) -> UInt64 {
+    buffer.slice_len(values)
+}
+
+pub fn is_empty<T>(values: &Slice<T>) -> Bool {
+    len(values) == 0
+}
+
+/// Copies an element, or returns `None` for an out-of-bounds index.
 pub fn get<T: Copy>(values: &Slice<T>, index: UInt64) -> Option<T> {
-    if index < len(values) { Some(buffer.slice_load(values, index)) } else { None }
+    if index < len(values) {
+        Some(buffer.slice_load(values, index))
+    } else {
+        None
+    }
 }
+
 pub fn set<T: Copy>(values: &mut Slice<T>, index: UInt64, next: T) -> Bool {
-    if index < len(values) { buffer.slice_store(values, index, next); true } else { false }
+    if index < len(values) {
+        buffer.slice_store(values, index, next)
+        true
+    } else {
+        false
+    }
 }
-pub fn borrow<T: Copy>(values: &Slice<T>, index: UInt64) -> &Element<T> { buffer.slice_borrow(values, index) }
-pub fn borrow_mut<T: Copy>(values: &mut Slice<T>, index: UInt64) -> &mut Element<T> { buffer.slice_borrow_mut(values, index) }
-pub fn slice<T>(values: &Slice<T>, start: UInt64, end: UInt64) -> &Slice<T> { buffer.subslice(values, start, end) }
-pub fn slice_mut<T>(values: &mut Slice<T>, start: UInt64, end: UInt64) -> &mut Slice<T> { buffer.subslice_mut(values, start, end) }
 
-pub fn borrow_ref<T>(values: &Slice<T>, index: UInt64) -> &T { buffer.slice_borrow_ref(values, index) }
-pub fn borrow_mut_ref<T>(values: &mut Slice<T>, index: UInt64) -> &mut T { buffer.slice_borrow_mut_ref(values, index) }
+pub fn borrow<T: Copy>(values: &Slice<T>, index: UInt64) -> &Element<T> {
+    buffer.slice_borrow(values, index)
+}
 
-pub fn iter<T>(values: &Slice<T>) -> &Iter<T> { buffer.slice_iter(values) }
-pub fn iter_mut<T>(values: &mut Slice<T>) -> &mut Iter<T> { buffer.slice_iter_mut(values) }
+pub fn borrow_mut<T: Copy>(values: &mut Slice<T>, index: UInt64) -> &mut Element<T> {
+    buffer.slice_borrow_mut(values, index)
+}
 
+pub fn slice<T>(values: &Slice<T>, start: UInt64, end: UInt64) -> &Slice<T> {
+    buffer.subslice(values, start, end)
+}
+
+pub fn slice_mut<T>(values: &mut Slice<T>, start: UInt64, end: UInt64) -> &mut Slice<T> {
+    buffer.subslice_mut(values, start, end)
+}
+
+pub fn borrow_ref<T>(values: &Slice<T>, index: UInt64) -> &T {
+    buffer.slice_borrow_ref(values, index)
+}
+
+pub fn borrow_mut_ref<T>(values: &mut Slice<T>, index: UInt64) -> &mut T {
+    buffer.slice_borrow_mut_ref(values, index)
+}
+
+pub fn iter<T>(values: &Slice<T>) -> &Iter<T> {
+    buffer.slice_iter(values)
+}
+
+pub fn iter_mut<T>(values: &mut Slice<T>) -> &mut Iter<T> {
+    buffer.slice_iter_mut(values)
+}
+
+/// Borrows an element, or returns `None` for an out-of-bounds index.
 pub fn get_ref<T>(values: &Slice<T>, index: UInt64) -> Option<&T> {
-    if index < len(values) { Some(borrow_ref(values, index)) } else { None }
+    if index < len(values) {
+        Some(borrow_ref(values, index))
+    } else {
+        None
+    }
 }

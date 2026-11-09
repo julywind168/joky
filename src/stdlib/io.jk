@@ -1,4 +1,17 @@
 //! Standard input, standard output and standard error streams.
+//!
+//! `print`, `println`, `eprint` and `eprintln` are in the default prelude and
+//! borrow values implementing `Show`. Standard-input operations suspend; use
+//! `Stdin.read_line(limit)` for bounded input and handle `None` at end of input.
+//!
+//! ```joky
+//! fn main() {
+//!     let name = "Joky"
+//!     println("Hello, {name}!")
+//!     eprintln("This message goes to standard error")
+//!     println(name)
+//! }
+//! ```
 
 import joky/fs
 import joky/internal/buffer
@@ -16,6 +29,7 @@ pub fn print<T: Show>(value: &T) @noescape {
     let text = Show.to_text(value)
     __joky_write_stdout(&text);
 }
+
 /// Writes a `Show` value followed by a newline to standard output.
 pub fn println<T: Show>(value: &T) @noescape {
     var output = StringBuilder.new()
@@ -32,6 +46,7 @@ pub fn eprint<T: Show>(value: &T) @noescape {
     let text = Show.to_text(value)
     __joky_write_stderr(&text);
 }
+
 /// Writes a `Show` value followed by a newline to standard error.
 pub fn eprintln<T: Show>(value: &T) @noescape {
     var output = StringBuilder.new()
@@ -42,10 +57,14 @@ pub fn eprintln<T: Show>(value: &T) @noescape {
 }
 
 /// Flushes standard output.
-pub fn flush_stdout() { print("") }
-/// Flushes standard error.
-pub fn flush_stderr() { eprint("") }
+pub fn flush_stdout() {
+    print("")
+}
 
+/// Flushes standard error.
+pub fn flush_stderr() {
+    eprint("")
+}
 
 pub enum ReadError { Io(fs.IoError), Utf8(Utf8Error), InvalidLimit, LimitExceeded, Closed }
 impl Show for ReadError {
@@ -67,27 +86,55 @@ pub struct Stdin {
     eof: Bool,
     failed: Bool,
 }
+
 pub fn stdin() @suspends -> Result<Stdin, fs.IoError> {
-    Ok(Stdin { file: fs.stdin()?, buffer: Array.new::<UInt8>(), offset: 0, eof: false, failed: false })
+    Ok(
+        Stdin {
+            file: fs.stdin()?,
+            buffer: Array.new::<UInt8>(),
+            offset: 0,
+            eof: false,
+            failed: false
+        }
+    )
 }
+
 impl Stdin {
     fn fill(&mut self) @suspends -> Result<Bool, ReadError> {
-        if self.offset < self.buffer.len() { return Ok(true) }
-        if self.eof { return Ok(false) }
+        if self.offset < self.buffer.len() {
+            return Ok(true)
+        }
+        if self.eof {
+            return Ok(false)
+        }
         let next = match self.file.read(4096) {
             Ok(bytes) => bytes
-            Err(error) => { self.failed = true; return Err(ReadError.Io(error)) }
+            Err(error) => {
+                self.failed = true
+                return Err(ReadError.Io(error))
+            }
         }
         self.buffer = next
         self.offset = 0
         self.eof = self.buffer.is_empty()
         Ok(!self.eof)
     }
-    fn append_chunk(&mut self, output: &mut Array<UInt8>, line: Bool, limit: UInt64) -> Result<Bool, ReadError> {
+    fn append_chunk(&mut self, output: &mut Array<UInt8>, line: Bool, limit: UInt64) -> Result<
+        Bool,
+        ReadError
+    > {
         let end = self.buffer.len()
         let source = self.buffer.slice(0, end)
-        let at = if line { buffer.find_byte(source, 10, self.offset, end) } else { end }
-        let next = if at < end { at + 1 } else { end }
+        let at = if line {
+            buffer.find_byte(source, 10, self.offset, end)
+        } else {
+            end
+        }
+        let next = if at < end {
+            at + 1
+        } else {
+            end
+        }
         if next - self.offset > limit - output.len() {
             self.failed = true
             return Err(ReadError.LimitExceeded)
@@ -96,19 +143,35 @@ impl Stdin {
         self.offset = next
         Ok(at < end)
     }
-    fn collect(&mut self, line: Bool, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
-        if self.failed { return Err(ReadError.Closed) }
-        if limit == 0 || limit > 1048576 { return Err(ReadError.InvalidLimit) }
+    fn collect(&mut self, line: Bool, limit: UInt64) @suspends -> Result<
+        Option<Array<UInt8>>,
+        ReadError
+    > {
+        if self.failed {
+            return Err(ReadError.Closed)
+        }
+        if limit == 0 || limit > 1048576 {
+            return Err(ReadError.InvalidLimit)
+        }
         var bytes = Array.new::<UInt8>()
         while self.fill()? {
-            if self.append_chunk(&mut bytes, line, limit)? { return Ok(Some(bytes)) }
+            if self.append_chunk(&mut bytes, line, limit)? {
+                return Ok(Some(bytes))
+            }
         }
-        if bytes.is_empty() { Ok(None) } else { Ok(Some(bytes)) }
+        if bytes.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(bytes))
+        }
     }
     fn decode(&mut self, bytes: Array<UInt8>) -> Result<String, ReadError> {
         match String.from_utf8(bytes) {
             Ok(text) => Ok(text)
-            Err(error) => { self.failed = true; Err(ReadError.Utf8(error)) }
+            Err(error) => {
+                self.failed = true
+                Err(ReadError.Utf8(error))
+            }
         }
     }
     // LF/CRLF are removed; EOF after a nonempty final fragment returns that fragment.
@@ -116,21 +179,33 @@ impl Stdin {
     pub fn read_line(&mut self, limit: UInt64) @suspends -> Result<Option<String>, ReadError> {
         var bytes = match self.collect(true, limit)? {
             Some(bytes) => bytes
-            None => { return Ok(None) }
+            None => {
+                return Ok(None)
+            }
         }
         let size = bytes.len()
         if size > 0 && bytes.get(size - 1).unwrap_or(0) == 10 {
             bytes.truncate(size - 1)
-            if size > 1 && bytes.get(size - 2).unwrap_or(0) == 13 { bytes.truncate(size - 2) }
+            if size > 1 && bytes.get(size - 2).unwrap_or(0) == 13 {
+                bytes.truncate(size - 2)
+            }
         }
         Ok(Some(self.decode(bytes)?))
     }
-    pub fn read_bytes_limited(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, ReadError> {
-        Ok(match self.collect(false, limit)? { Some(bytes) => bytes, None => Array.new::<UInt8>() })
+    pub fn read_bytes_limited(&mut self, limit: UInt64) @suspends ->
+        Result<Array<UInt8>, ReadError> {
+        Ok(
+            match self.collect(false, limit)? {
+                Some(bytes) => bytes,
+                None => Array.new::<UInt8>()
+            }
+        )
     }
     pub fn read_text_limited(&mut self, limit: UInt64) @suspends -> Result<String, ReadError> {
         let bytes = self.read_bytes_limited(limit)?
         self.decode(bytes)
     }
-    pub fn close(self) @suspends -> Result<Unit, fs.IoError> { self.file.close() }
+    pub fn close(self) @suspends -> Result<Unit, fs.IoError> {
+        self.file.close()
+    }
 }

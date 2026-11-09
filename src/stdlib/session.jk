@@ -1,4 +1,24 @@
 //! Session state and lifecycle helpers.
+//!
+//! A connection owns outgoing and control mailboxes. Choose `Lines` or
+//! `LengthPrefixed` framing, implement `Handler`, then pass an accepted TCP stream
+//! to `run` or `run_draining`. A zero idle timeout disables the timeout.
+//! This example configures and closes the output without opening a socket.
+//!
+//! ```joky
+//! import joky/session
+//!
+//! fn main() @suspends {
+//!     let options = session.Options {
+//!         queue_messages: 16,
+//!         idle_timeout: 30s,
+//!         .. session.Options.default()
+//!     }
+//!     let connection = session.create(options)
+//!     connection.output().close()
+//!     assert_eq(session.Lines.default().max_bytes, uint64(4096))
+//! }
+//! ```
 
 import joky/shutdown
 import joky/outbox
@@ -7,7 +27,14 @@ import joky/task
 import joky/result.{type Result, Ok, Err}
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
-import joky/tcp.{type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter, type ReadError, type IoError}
+import joky/tcp.{
+    type TcpStream,
+    type BufferedTcp,
+    type BufferedTcpReader,
+    type TcpWriter,
+    type ReadError,
+    type IoError
+}
 
 pub struct Options {
     pub queue_messages: UInt64,
@@ -19,85 +46,139 @@ impl Options {
         Options { queue_messages: 64, queue_bytes: 65536, idle_timeout: 0ns }
     }
 }
-// Copyable output endpoint; send stages bytes in when, close stops the session.
+/// Copyable output endpoint; send stages bytes in when, close stops the session.
 pub type Output = outbox.Handle
-// A reader owns protocol state; each call returns one complete message or EOF.
-// Cancellation terminates the session, so a partially consumed read is never retried.
+/// A reader owns protocol state; each call returns one complete message or EOF.
+/// Cancellation terminates the session, so a partially consumed read is never retried.
 pub trait Reader {
     type Message
     type Error
-    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<Option<Self.Message>, Self.Error>
+    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<
+        Option<Self.Message>,
+        Self.Error
+    >
 }
 pub struct Lines { pub max_bytes: UInt64 }
 impl Lines {
-    pub fn default() -> Self { Lines { max_bytes: 4096 } }
+    pub fn default() -> Self {
+        Lines { max_bytes: 4096 }
+    }
 }
 impl Reader for Lines {
-    type Message = String
-    type Error = ReadError
-    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<Option<String>, ReadError> {
+    type Message
+    = String
+    type Error
+    = ReadError
+    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<
+        Option<String>,
+        ReadError
+    > {
         input.read_line(self.max_bytes)
     }
 }
-// Four-byte big-endian payload length, compatible with TcpWriter.write_message.
+/// Four-byte big-endian payload length, compatible with TcpWriter.write_message.
 pub struct LengthPrefixed { pub max_bytes: UInt64 }
 impl LengthPrefixed {
-    pub fn default() -> Self { LengthPrefixed { max_bytes: 65536 } }
+    pub fn default() -> Self {
+        LengthPrefixed { max_bytes: 65536 }
+    }
 }
 impl Reader for LengthPrefixed {
-    type Message = Array<UInt8>
-    type Error = ReadError
-    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<Option<Array<UInt8>>, ReadError> {
+    type Message
+    = Array<UInt8>
+    type Error
+    = ReadError
+    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<
+        Option<Array<UInt8>>,
+        ReadError
+    > {
         input.read_message(self.max_bytes)
     }
 }
-// One handler holds the shared service and per-connection context.
+/// One handler holds the shared service and per-connection context.
 pub trait Handler {
     type Message
     fn on_message(&self, message: Self.Message) @suspends @noescape -> Bool
     fn on_close(&self) @suspends @noescape
 }
 pub struct Connection { outgoing: outbox.Mailbox, control: outbox.Mailbox, options: Options }
+
 pub fn create(options: Options) @suspends -> Connection {
     let control = outbox.create(1, 0)
-    let outgoing = outbox.create_with_policy(options.queue_messages, options.queue_bytes, outbox.Overflow.Disconnect(control.handle()))
+    let outgoing = outbox.create_with_policy(
+        options.queue_messages,
+        options.queue_bytes,
+        outbox.Overflow.Disconnect(control.handle())
+    )
     Connection { outgoing: outgoing, control: control, options: options }
 }
+
 impl Connection {
-    pub fn output(&self) @suspends -> Output { self.outgoing.handle() }
-    pub fn stop_handle(&self) @suspends -> outbox.Handle { self.control.handle() }
+    pub fn output(&self) @suspends -> Output {
+        self.outgoing.handle()
+    }
+    pub fn stop_handle(&self) @suspends -> outbox.Handle {
+        self.control.handle()
+    }
 }
-// Typed exits are returned after on_close; structural cancellation does not return.
+/// Typed exits are returned after on_close; structural cancellation does not return.
 pub enum End { Eof, HandlerStopped, IdleTimeout, Shutdown, Stopped, OutputClosed }
 pub enum Error<E> { Read(E), Write(IoError), ReadAndWrite((E, IoError)) }
 
 enum Next<M, E> { Message(M), End(End), Failed(E) }
-fn read<R: Reader>(protocol: &mut R, input: &mut BufferedTcpReader) @suspends @noescape -> Next<R.Message, R.Error> {
+
+fn read<R: Reader>(protocol: &mut R, input: &mut BufferedTcpReader) @suspends @noescape -> Next<
+    R.Message,
+    R.Error
+> {
     match Reader.read(protocol, input) {
         Ok(Some(message)) => Next.Message(message),
         Ok(None) => Next.End(End.Eof),
         Err(error) => Next.Failed(error)
     }
 }
-fn timeout<M, E>(duration: Duration) @suspends -> Next<M, E> { task.sleep(duration); Next.End(End.IdleTimeout) }
-fn receive<R: Reader, H: Handler<Message = R.Message>>(handler: &H, var reader: BufferedTcpReader, var protocol: R, options: Options) @suspends @noescape -> Result<End, Error<R.Error>> {
+
+fn timeout<M, E>(duration: Duration) @suspends -> Next<M, E> {
+    task.sleep(duration)
+    Next.End(End.IdleTimeout)
+}
+
+fn receive<R: Reader, H: Handler<Message = R.Message>>(
+    handler: &H,
+    var reader: BufferedTcpReader,
+    var protocol: R,
+    options: Options
+) @suspends @noescape -> Result<End, Error<R.Error>> {
     while true {
-        let next = if options.idle_timeout.is_zero() { read(&mut protocol, &mut reader) }
-        else { race { read(&mut protocol, &mut reader), timeout::<R.Message, R.Error>(options.idle_timeout) } }
+        let next = if options.idle_timeout.is_zero() {
+            read(&mut protocol, &mut reader)
+        } else {
+            race {
+                read(&mut protocol, &mut reader),
+                timeout::<R.Message, R.Error>(options.idle_timeout)
+            }
+        }
         let message = match next {
             Next.Message(message) => message,
             Next.End(end) => return Ok(end),
             Next.Failed(error) => return Err(Error.Read(error))
         }
-        if !handler.on_message(message) { return Ok(End.HandlerStopped) }
+        if !handler.on_message(message) {
+            return Ok(End.HandlerStopped)
+        }
     }
 }
+
 fn send(queue: &mut outbox.Mailbox, var writer: TcpWriter) @suspends -> Result<Unit, IoError> {
     while true {
-        let bytes = match queue.receive() { Some(bytes) => bytes, None => return Ok({}) }
+        let bytes = match queue.receive() {
+            Some(bytes) => bytes,
+            None => return Ok({})
+        }
         writer.write_all(bytes)?
     }
 }
+
 fn finish<E>(received: Result<End, E>, sent: Result<Unit, IoError>) -> Result<End, Error<E>> {
     match (received, sent) {
         (Ok(end), Ok(_)) => Ok(end),
@@ -106,11 +187,23 @@ fn finish<E>(received: Result<End, E>, sent: Result<Unit, IoError>) -> Result<En
         (Err(read), Err(write)) => Err(Error.ReadAndWrite((read, write)))
     }
 }
-fn send_result<E>(queue: &mut outbox.Mailbox, writer: TcpWriter) @suspends -> Result<End, Error<E>> {
+
+fn send_result<E>(queue: &mut outbox.Mailbox, writer: TcpWriter) @suspends ->
+    Result<End, Error<E>> {
     finish(Ok(End.OutputClosed), send(queue, writer))
 }
-fn stop<E>(queue: &mut outbox.Mailbox) @suspends -> Result<End, Error<E>> { queue.receive(); Ok(End.Stopped) }
-pub fn run<R: Reader, H: Handler<Message = R.Message>>(connection: Connection, stream: TcpStream, protocol: R, handler: &H) @suspends @noescape -> Result<End, Error<R.Error>> {
+
+fn stop<E>(queue: &mut outbox.Mailbox) @suspends -> Result<End, Error<E>> {
+    queue.receive()
+    Ok(End.Stopped)
+}
+
+pub fn run<R: Reader, H: Handler<Message = R.Message>>(
+    connection: Connection,
+    stream: TcpStream,
+    protocol: R,
+    handler: &H
+) @suspends @noescape -> Result<End, Error<R.Error>> {
     var Connection { outgoing, control, options } = connection
     let (reader, writer) = BufferedTcp.new(stream).split()
     let outcome = race {
@@ -124,42 +217,96 @@ pub fn run<R: Reader, H: Handler<Message = R.Message>>(connection: Connection, s
 }
 
 // Shutdown only competes with reading, never with an admitted on_message callback.
-fn shutdown_read<M, E>(stop: &shutdown.Controller) @suspends -> Next<M, E> { stop.wait(); Next.End(End.Shutdown) }
-fn receive_until_shutdown<R: Reader, H: Handler<Message = R.Message>>(handler: &H, var reader: BufferedTcpReader, var protocol: R, options: Options, stop: &shutdown.Controller) @suspends @noescape -> Result<End, R.Error> {
+fn shutdown_read<M, E>(stop: &shutdown.Controller) @suspends -> Next<M, E> {
+    stop.wait()
+    Next.End(End.Shutdown)
+}
+
+fn receive_until_shutdown<R: Reader, H: Handler<Message = R.Message>>(
+    handler: &H,
+    var reader: BufferedTcpReader,
+    var protocol: R,
+    options: Options,
+    stop: &shutdown.Controller
+) @suspends @noescape -> Result<End, R.Error> {
     while !stop.requested() {
         let next = if options.idle_timeout.is_zero() {
-            race { shutdown_read::<R.Message, R.Error>(stop), read(&mut protocol, &mut reader) }
+            race {
+                shutdown_read::<R.Message, R.Error>(stop),
+                read(&mut protocol, &mut reader)
+            }
         } else {
-            race { shutdown_read::<R.Message, R.Error>(stop), read(&mut protocol, &mut reader), timeout::<R.Message, R.Error>(options.idle_timeout) }
+            race {
+                shutdown_read::<R.Message, R.Error>(stop),
+                read(&mut protocol, &mut reader),
+                timeout::<R.Message, R.Error>(options.idle_timeout)
+            }
         }
         let message = match next {
             Next.Message(message) => message,
             Next.End(end) => return Ok(end),
             Next.Failed(error) => return Err(error)
         }
-        if stop.requested() { return Ok(End.Shutdown) }
-        if !handler.on_message(message) { return Ok(End.HandlerStopped) }
+        if stop.requested() {
+            return Ok(End.Shutdown)
+        }
+        if !handler.on_message(message) {
+            return Ok(End.HandlerStopped)
+        }
     }
     Ok(End.Shutdown)
 }
-fn receive_draining<R: Reader, H: Handler<Message = R.Message>>(handler: &H, reader: BufferedTcpReader, protocol: R, options: Options, stop: &shutdown.Controller, output: Output) @suspends @noescape -> Result<End, R.Error> {
+
+fn receive_draining<R: Reader, H: Handler<Message = R.Message>>(
+    handler: &H,
+    reader: BufferedTcpReader,
+    protocol: R,
+    options: Options,
+    stop: &shutdown.Controller,
+    output: Output
+) @suspends @noescape -> Result<End, R.Error> {
     let outcome = receive_until_shutdown(handler, reader, protocol, options, stop)
     output.seal()
     outcome
 }
-fn send_draining(queue: &mut outbox.Mailbox, writer: TcpWriter, done: &shutdown.Controller) @suspends -> Result<Unit, IoError> {
+
+fn send_draining(queue: &mut outbox.Mailbox, writer: TcpWriter, done: &shutdown.Controller) @suspends ->
+    Result<Unit, IoError> {
     let outcome = send(queue, writer)
-    done.request();
+    done.request()
     outcome
 }
-fn output_closed<E>(done: &shutdown.Controller) @suspends -> Result<End, E> { done.wait(); Ok(End.OutputClosed) }
-fn receive_or_output_closed<R: Reader, H: Handler<Message = R.Message>>(handler: &H, reader: BufferedTcpReader, protocol: R, options: Options, stop: &shutdown.Controller, output: Output, done: &shutdown.Controller) @suspends @noescape -> Result<End, R.Error> {
+
+fn output_closed<E>(done: &shutdown.Controller) @suspends -> Result<End, E> {
+    done.wait()
+    Ok(End.OutputClosed)
+}
+
+fn receive_or_output_closed<R: Reader, H: Handler<Message = R.Message>>(
+    handler: &H,
+    reader: BufferedTcpReader,
+    protocol: R,
+    options: Options,
+    stop: &shutdown.Controller,
+    output: Output,
+    done: &shutdown.Controller
+) @suspends @noescape -> Result<End, R.Error> {
     race {
         receive_draining(handler, reader, protocol, options, stop, output)
         output_closed::<R.Error>(done)
     }
 }
-fn drain<R: Reader, H: Handler<Message = R.Message>>(handler: &H, reader: BufferedTcpReader, protocol: R, writer: TcpWriter, queue: &mut outbox.Mailbox, options: Options, stop: &shutdown.Controller, output: Output) @suspends @noescape -> Result<End, Error<R.Error>> {
+
+fn drain<R: Reader, H: Handler<Message = R.Message>>(
+    handler: &H,
+    reader: BufferedTcpReader,
+    protocol: R,
+    writer: TcpWriter,
+    queue: &mut outbox.Mailbox,
+    options: Options,
+    stop: &shutdown.Controller,
+    output: Output
+) @suspends @noescape -> Result<End, Error<R.Error>> {
     let done = shutdown.create()
     let (received, sent) = join {
         receive_or_output_closed(handler, reader, protocol, options, stop, output, &done)
@@ -169,7 +316,14 @@ fn drain<R: Reader, H: Handler<Message = R.Message>>(handler: &H, reader: Buffer
     // interrupts a pending read or callback, without racing away the write error.
     finish(received, sent)
 }
-pub fn run_draining<R: Reader, H: Handler<Message = R.Message>>(connection: Connection, stream: TcpStream, protocol: R, handler: &H, shutdown: &shutdown.Controller) @suspends @noescape -> Result<End, Error<R.Error>> {
+
+pub fn run_draining<R: Reader, H: Handler<Message = R.Message>>(
+    connection: Connection,
+    stream: TcpStream,
+    protocol: R,
+    handler: &H,
+    shutdown: &shutdown.Controller
+) @suspends @noescape -> Result<End, Error<R.Error>> {
     var Connection { outgoing, control, options } = connection
     let output = outgoing.handle()
     let (reader, writer) = BufferedTcp.new(stream).split()

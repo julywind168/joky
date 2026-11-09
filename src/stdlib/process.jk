@@ -1,4 +1,18 @@
 //! Program arguments, environment variables and the working directory.
+//!
+//! These functions read startup snapshots supplied by the CLI or embedding
+//! host. `env` distinguishes an absent variable (`Ok(None)`) from an access
+//! error. `env_or` supplies a fallback only for absence; host errors propagate.
+//!
+//! ```joky
+//! import joky/process
+//!
+//! fn main() @suspends {
+//!     let directory = process.current_dir().unwrap()
+//!     assert(!directory.is_empty(), "working directory is available")
+//!     println(directory)
+//! }
+//! ```
 
 // Startup snapshots supplied by the CLI or an explicit embedding capability.
 import joky/array.{type Array}
@@ -24,19 +38,28 @@ fn error(result: &mut fs.OutcomeOwner, code: UInt64) @suspends -> IoError {
     }
     IoError { kind, message: __fs_message(result) }
 }
+
 fn text(kind: UInt64, index: UInt64, key: &String) @suspends -> Result<String, IoError> {
     var result = __process_read(kind, index, key)
     let code = __fs_code(&mut result)
-    if code != 0 { return Err(error(&mut result, code)) }
+    if code != 0 {
+        return Err(error(&mut result, code))
+    }
     match String.from_utf8(__fs_bytes(&mut result)) {
         Ok(value) => Ok(value)
-        Err(_) => Err(IoError { kind: ErrorKind.InvalidInput, message: "Process value is not valid UTF-8" })
+        Err(_) => Err(
+            IoError { kind: ErrorKind.InvalidInput, message: "Process value is not valid UTF-8" }
+        )
     }
 }
+
+/// Returns the argument snapshot supplied by the host.
 pub fn args() @suspends -> Result<Array<String>, IoError> {
     var result = __process_read(0, 0, "")
     let code = __fs_code(&mut result)
-    if code != 0 { return Err(error(&mut result, code)) }
+    if code != 0 {
+        return Err(error(&mut result, code))
+    }
     let count = __fs_count(&mut result)
     var values = Array.with_capacity::<String>(count)
     var index: UInt64 = 0
@@ -46,14 +69,30 @@ pub fn args() @suspends -> Result<Array<String>, IoError> {
     }
     Ok(values)
 }
+
+/// Returns `Ok(None)` when the variable is absent; host access errors remain `Err`.
 pub fn env(name: &String) @suspends -> Result<Option<String>, IoError> {
     match text(2, 0, name) {
         Ok(value) => Ok(Some(value))
-        Err(error) => if error.kind == ErrorKind.NotFound { Ok(None) } else { Err(error) }
+        Err(error) => if error.kind == ErrorKind.NotFound {
+            Ok(None)
+        } else {
+            Err(error)
+        }
     }
 }
+
+/// Returns the variable or the eagerly evaluated fallback; propagates access errors.
 pub fn env_or(name: &String, fallback: String) @suspends -> Result<String, IoError> {
     Ok(env(name)?.unwrap_or(fallback))
 }
-pub fn current_dir() @suspends -> Result<String, IoError> { text(3, 0, "") }
-pub fn resolve_path(path: &String) @suspends -> Result<String, IoError> { text(4, 0, path) }
+
+/// Returns the host-supplied working directory.
+pub fn current_dir() @suspends -> Result<String, IoError> {
+    text(3, 0, "")
+}
+
+/// Resolves a path using the host-supplied working directory.
+pub fn resolve_path(path: &String) @suspends -> Result<String, IoError> {
+    text(4, 0, path)
+}

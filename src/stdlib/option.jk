@@ -1,8 +1,17 @@
 //! Optional values and transformations that preserve absence.
 //!
+//! An option owns either a value (`Some`) or no value (`None`). Transformations
+//! consume the option; queries such as `is_some` only borrow it. Use lazy
+//! fallbacks when computing a default is expensive or has side effects.
+//!
 //! ```joky
 //! fn main() {
-//!     let answer = Some(21).map(| n | { n * 2 })
+//!     let answer = Some(21).map(
+//!         |n| {
+//!             n * 2
+//!         }
+//!     )
+//!     assert_eq(answer.unwrap(), 42)
 //!     println(answer.unwrap())
 //! }
 //! ```
@@ -19,7 +28,9 @@ impl<T> Option<T> {
     pub fn unwrap(self) -> T {
         match self {
             Some(value) => value
-            None => { check.panic("Called Option.unwrap on None") }
+            None => {
+                check.panic("Called Option.unwrap on None")
+            }
         }
     }
 
@@ -27,69 +38,109 @@ impl<T> Option<T> {
     pub fn expect(self, message: &String) @noescape(message) -> T {
         match self {
             Some(value) => value
-            None => { check.panic(message) }
+            None => {
+                check.panic(message)
+            }
         }
     }
 
     /// Replaces this option with `None` and returns its previous value.
-    pub fn take(&mut self) -> Option<T> { mem.replace(self, None) }
+    pub fn take(&mut self) -> Option<T> {
+        mem.replace(self, None)
+    }
 
     /// Transforms the contained value; `None` skips the callback.
     pub fn map<U, F: FnOnce(T) -> U>(self, transform: F) -> Option<U> {
-        match self { None => None, Some(value) => Some(transform(value)) }
+        match self {
+            None => None,
+            Some(value) => Some(transform(value))
+        }
     }
 
     /// Calls a transformation that can itself return `None`.
     pub fn and_then<U, F: FnOnce(T) -> Option<U>>(self, transform: F) -> Option<U> {
-        match self { None => None, Some(value) => transform(value) }
+        match self {
+            None => None,
+            Some(value) => transform(value)
+        }
     }
 
     /// Transforms the value, or returns the eagerly evaluated fallback.
     pub fn map_or<U, F: FnOnce(T) -> U>(self, fallback: U, transform: F) @noescape(transform) -> U {
-        match self { Some(value) => transform(value), None => fallback }
+        match self {
+            Some(value) => transform(value),
+            None => fallback
+        }
     }
 
     /// Keeps the value only when the borrowed predicate returns true.
-    pub fn filter<F: FnOnce(&T) @noescape -> Bool>(self, predicate: F) @noescape(predicate) -> Self {
+    pub fn filter<F: FnOnce(&T) @noescape -> Bool>(self, predicate: F) @noescape(predicate) ->
+        Self {
         match self {
-            Some(value) => if predicate(&value) { Some(value) } else { None }
+            Some(value) => if predicate(&value) {
+                Some(value)
+            } else {
+                None
+            }
             None => None
         }
     }
 
     /// Tests the contained value, returning false for `None`.
-    pub fn is_some_and<F: FnOnce(&T) @noescape -> Bool>(self, predicate: F) @noescape(predicate) -> Bool {
-        match self { Some(value) => predicate(&value), None => false }
+    pub fn is_some_and<F: FnOnce(&T) @noescape -> Bool>(self, predicate: F) @noescape(predicate) ->
+        Bool {
+        match self {
+            Some(value) => predicate(&value),
+            None => false
+        }
     }
 
     /// Returns true when a value is present.
     pub fn is_some(&self) -> Bool {
-        match self { None => false, Some(_) => true }
+        match self {
+            None => false,
+            Some(_) => true
+        }
     }
 
     /// Returns true when no value is present.
     pub fn is_none(&self) -> Bool {
-        match self { None => true, Some(_) => false }
+        match self {
+            None => true,
+            Some(_) => false
+        }
     }
 
     /// Only the missing branch invokes the consuming callback.
     pub fn unwrap_or_else<F: FnOnce() -> T>(self, fallback: F) -> T {
-        match self { None => fallback(), Some(value) => value }
+        match self {
+            None => fallback(),
+            Some(value) => value
+        }
     }
 
     /// The fallback is evaluated even when this option already contains a value.
     pub fn unwrap_or(self, fallback: T) -> T {
-        match self { None => fallback, Some(value) => value }
+        match self {
+            None => fallback,
+            Some(value) => value
+        }
     }
 
     /// Returns the next option when this option contains a value.
     pub fn and<U>(self, next: Option<U>) -> Option<U> {
-        match self { None => None, Some(_) => next }
+        match self {
+            None => None,
+            Some(_) => next
+        }
     }
 
     /// Returns this option when present, otherwise the fallback.
     pub fn or(self, fallback: Self) -> Self {
-        match self { None => fallback, Some(value) => Some(value) }
+        match self {
+            None => fallback,
+            Some(value) => Some(value)
+        }
     }
 
     /// Both operands are evaluated before this ordinary by-value method call.
@@ -109,6 +160,9 @@ impl<T> Option<T> {
 impl<T> Option<Option<T>> {
     /// Removes one layer of optional wrapping.
     pub fn flatten(self) -> Option<T> {
-        match self { Some(value) => value, None => None }
+        match self {
+            Some(value) => value,
+            None => None
+        }
     }
 }

@@ -1,4 +1,18 @@
 //! Hostname resolution.
+//!
+//! `lookup` resolves a host and service port into TCP addresses and may suspend.
+//! Handle `ResolveError` when names cannot be resolved. This example uses a
+//! numeric loopback address, so it does not require a public DNS server.
+//!
+//! ```joky
+//! import joky/dns
+//!
+//! fn main() @suspends {
+//!     let addresses = dns.lookup("127.0.0.1", 8080).unwrap()
+//!     assert(!addresses.is_empty(), "loopback resolves")
+//!     assert_eq(addresses[0].port(), uint16(8080))
+//! }
+//! ```
 
 // System lookup facade. TCP and DNS share the same bounded resolver.
 import joky/internal/resolve.{type ErrorKind, type ResolveError}
@@ -16,6 +30,10 @@ fn address(high: UInt64, low: UInt64, endpoint: UInt64) -> tcp.Address {
     }
     address
 }
-pub fn lookup(host: &String, port: UInt16) @suspends -> result.Result<array.Array<tcp.Address>, ResolveError> {
+
+pub fn lookup(host: &String, port: UInt16) @suspends -> result.Result<
+    array.Array<tcp.Address>,
+    ResolveError
+> {
     resolve.lookup(host, port, address)
 }

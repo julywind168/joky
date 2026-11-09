@@ -1,54 +1,93 @@
 //! Admission control for bounded work.
+//!
+//! Keep the pool alive while its handles are in use. `try_acquire` returns
+//! `Full` immediately; `acquire` may wait, subject to the configured waiter limit.
+//! Dropping or releasing a permit returns capacity; closing the pool wakes waiters.
+//!
+//! ```joky
+//! import joky/admission
+//!
+//! fn main() @suspends {
+//!     let pool = admission.create(1, 4)
+//!     let permit = pool.handle().try_acquire().unwrap()
+//!     assert(pool.handle().try_acquire().is_err(), "capacity is occupied")
+//!     permit.release()
+//!     assert(pool.handle().try_acquire().is_ok(), "capacity is available again")
+//!     pool.close()
+//! }
+//! ```
 
 import joky/string.{type StringBuilder}
 import joky/show.{type Show}
 import joky/result.{type Result, Ok, Err}
 import joky/mem
 
-extern fn __domain_admission_create(capacity:UInt64, max_waiters:UInt64) @suspends -> admission.PoolOwner
-extern fn __domain_admission_handle(pool:&admission.PoolOwner) @suspends -> admission.Token
-extern fn __domain_admission_close(pool:&admission.PoolOwner) @suspends
-extern fn __domain_admission_try(handle:admission.Token) @suspends -> admission.PermitOwner
-extern fn __domain_admission_acquire(handle:admission.Token) @suspends -> admission.PermitOwner
-extern fn __domain_admission_status(permit:&admission.PermitOwner) @suspends -> Int32
+extern fn __domain_admission_create(capacity: UInt64, max_waiters: UInt64) @suspends ->
+    admission.PoolOwner
+extern fn __domain_admission_handle(pool: &admission.PoolOwner) @suspends -> admission.Token
+extern fn __domain_admission_close(pool: &admission.PoolOwner) @suspends
+extern fn __domain_admission_try(handle: admission.Token) @suspends -> admission.PermitOwner
+extern fn __domain_admission_acquire(handle: admission.Token) @suspends -> admission.PermitOwner
+extern fn __domain_admission_status(permit: &admission.PermitOwner) @suspends -> Int32
 
-pub struct Pool { storage:admission.PoolOwner }
-pub struct Handle { token:admission.Token }
-pub struct Permit { storage:admission.PermitOwner }
+pub struct Pool { storage: admission.PoolOwner }
+pub struct Handle { token: admission.Token }
+pub struct Permit { storage: admission.PermitOwner }
 pub enum AcquireError { Full, Closed, WaitLimit }
 impl Show for AcquireError {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str(match self {
-            Full => "admission full"
-            Closed => "admission closed"
-            WaitLimit => "admission wait limit exceeded"
-        })
+        output.push_str(
+            match self {
+                Full => "admission full"
+                Closed => "admission closed"
+                WaitLimit => "admission wait limit exceeded"
+            }
+        )
     }
 }
 
 // Pool ownership closes admission; handles neither own nor keep the pool open.
-pub fn create(capacity:UInt64, max_waiters:UInt64) @suspends -> Pool {
-    Pool{storage:__domain_admission_create(capacity,max_waiters)}
+/// Creates a pool with bounded active permits and queued waiters.
+pub fn create(capacity: UInt64, max_waiters: UInt64) @suspends -> Pool {
+    Pool { storage: __domain_admission_create(capacity, max_waiters) }
 }
+
 impl Pool {
-    pub fn handle(&self) @suspends -> Handle { Handle{token:__domain_admission_handle(&self.storage)} }
-    pub fn close(&self) @suspends { __domain_admission_close(&self.storage) }
+    pub fn handle(&self) @suspends -> Handle {
+        Handle { token: __domain_admission_handle(&self.storage) }
+    }
+    pub fn close(&self) @suspends {
+        __domain_admission_close(&self.storage)
+    }
 }
-fn outcome(storage:admission.PermitOwner) @suspends -> Result<Permit,AcquireError> {
-    let status=__domain_admission_status(&storage)
-    if status==0 { return Ok(Permit{storage:storage}) }
-    if status==1 { return Err(AcquireError.Full) }
-    if status==2 { return Err(AcquireError.Closed) }
+
+fn outcome(storage: admission.PermitOwner) @suspends -> Result<Permit, AcquireError> {
+    let status = __domain_admission_status(&storage)
+    if status == 0 {
+        return Ok(Permit { storage: storage })
+    }
+    if status == 1 {
+        return Err(AcquireError.Full)
+    }
+    if status == 2 {
+        return Err(AcquireError.Closed)
+    }
     Err(AcquireError.WaitLimit)
 }
+
 impl Handle {
-    pub fn try_acquire(self) @suspends -> Result<Permit,AcquireError> {
+    /// Returns a permit immediately, or reports `Full` / `Closed` without waiting.
+    pub fn try_acquire(self) @suspends -> Result<Permit, AcquireError> {
         outcome(__domain_admission_try(self.token))
     }
-    pub fn acquire(self) @suspends -> Result<Permit,AcquireError> {
+    /// Waits for capacity unless the pool is closed or its waiter limit is reached.
+    pub fn acquire(self) @suspends -> Result<Permit, AcquireError> {
         outcome(__domain_admission_acquire(self.token))
     }
 }
 impl Permit {
-    pub fn release(self) { mem.drop(self) }
+    /// Consumes the permit, returning its capacity to the pool.
+    pub fn release(self) {
+        mem.drop(self)
+    }
 }

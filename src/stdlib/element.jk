@@ -1,8 +1,28 @@
 //! Element access for container storage.
+//!
+//! `Element` is a storage view for `Copy` values. `read` and `write` operate
+//! through a borrow and do not own the underlying collection. In new application
+//! code, prefer indexing or `borrow_ref` / `borrow_mut_ref` when possible.
+//!
+//! ```joky
+//! import joky/element
+//!
+//! fn main() {
+//!     var values = [1, 2, 3]
+//!     element.write(values.borrow_mut(1), 20)
+//!     assert_eq(element.read(values.borrow(1)), 20)
+//! }
+//! ```
 
 // A borrow-only view of one initialized element, never an owning value.
 import joky/internal/buffer
 
 pub type Element<T> = buffer.Element<T>
-pub fn read<T: Copy>(value: &Element<T>) -> T { buffer.element_load(value) }
-pub fn write<T: Copy>(value: &mut Element<T>, next: T) { buffer.element_store(value, next) }
+
+pub fn read<T: Copy>(value: &Element<T>) -> T {
+    buffer.element_load(value)
+}
+
+pub fn write<T: Copy>(value: &mut Element<T>, next: T) {
+    buffer.element_store(value, next)
+}

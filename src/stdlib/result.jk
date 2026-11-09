@@ -1,105 +1,191 @@
 //! Success and error values with propagation and transformation methods.
+//!
+//! A `Result<T, E>` owns either a success value or an error. Use `?` to propagate
+//! errors, `map` / `and_then` to transform success, and `match` to recover.
+//! `unwrap` and `expect` fail the task on `Err`; reserve them for known invariants.
+//!
+//! ```joky
+//! fn doubled(input: &String) -> Result<Int32, String> {
+//!     let value = Int32.parse(input).map_err(
+//!         |error| {
+//!             "Expected a decimal integer"
+//!         }
+//!     )?
+//!     value.checked_mul(2).ok_or("Number is too large")
+//! }
+//!
+//! fn main() {
+//!     assert_eq(doubled("21").unwrap(), 42)
+//!     assert_eq(doubled("oops").unwrap_or(0), 0)
+//!     let accepted: Result<String, String> = Ok("first")
+//!     assert_eq(accepted.and(Ok("next")).unwrap(), "next")
+//! }
+//! ```
 
-// The standard fallible value. Either payload may own resources.
 import joky/option.{type Option, Some, None}
 import joky/check
 
+/// An owned success value (`Ok`) or error (`Err`).
 pub enum Result<T, E> { Ok(T), Err(E) }
 
 impl<T, E> Result<T, E> {
-    // An explicit assertion for callers that consider rejection a task failure.
+    /// An explicit assertion for callers that consider rejection a task failure.
     pub fn unwrap(self) -> T {
         match self {
             Ok(value) => value
-            Err(_) => { check.panic("Called Result.unwrap on Err") }
+            Err(_) => {
+                check.panic("Called Result.unwrap on Err")
+            }
         }
     }
 
+    /// Returns the success value, or fails the task with the supplied message.
     pub fn expect(self, message: &String) @noescape(message) -> T {
         match self {
             Ok(value) => value
-            Err(_) => { check.panic(message) }
+            Err(_) => {
+                check.panic(message)
+            }
         }
     }
 
+    /// Consumes this result and transforms its success value; an error skips the callback.
     pub fn map<U, F: FnOnce(T) -> U>(self, transform: F) -> Result<U, E> {
-        match self { Ok(value) => Ok(transform(value)), Err(error) => Err(error) }
-    }
-
-    pub fn map_or<U, F: FnOnce(T) -> U>(self, fallback: U, transform: F) @noescape(transform) -> U {
-        match self { Ok(value) => transform(value), Err(_) => fallback }
-    }
-
-    pub fn map_err<U, F: FnOnce(E) -> U>(self, transform: F) -> Result<T, U> {
-        match self { Ok(value) => Ok(value), Err(error) => Err(transform(error)) }
-    }
-
-    pub fn inspect_err<F: FnOnce(&E) @noescape -> Unit>(self, inspect: F) @noescape(inspect) -> Self {
         match self {
-            Ok(value) => Ok(value)
-            Err(error) => { inspect(&error); Err(error) }
-        }
-    }
-
-    pub fn and_then<U, F: FnOnce(T) -> Result<U, E>>(self, transform: F) -> Result<U, E> {
-        match self { Ok(value) => transform(value), Err(error) => Err(error) }
-    }
-
-    pub fn is_ok(&self) -> Bool {
-        match self { Ok(_) => true, Err(_) => false }
-    }
-
-    pub fn is_err(&self) -> Bool {
-        match self { Ok(_) => false, Err(_) => true }
-    }
-
-    // Only the error branch invokes the consuming callback.
-    pub fn unwrap_or_else<F: FnOnce(E) -> T>(self, fallback: F) -> T {
-        match self { Ok(value) => value, Err(error) => fallback(error) }
-    }
-
-    // The fallback is evaluated even when this result already contains a value.
-    pub fn unwrap_or(self, fallback: T) -> T {
-        match self { Ok(value) => value, Err(_) => fallback }
-    }
-
-    pub fn ok(self) -> Option<T> {
-        match self { Ok(value) => Some(value), Err(_) => None }
-    }
-
-    pub fn err(self) -> Option<E> {
-        match self { Ok(_) => None, Err(error) => Some(error) }
-    }
-
-    // The next result is evaluated eagerly; the receiver's error takes priority.
-    pub fn and<U>(self, next: Result<U, E>) -> Result<U, E> {
-        match self {
-            Ok(value) => next
+            Ok(value) => Ok(transform(value)),
             Err(error) => Err(error)
         }
     }
 
-    // Both arguments are evaluated; an existing success keeps its payload.
+    /// Transforms success, or returns the eagerly evaluated fallback.
+    pub fn map_or<U, F: FnOnce(T) -> U>(self, fallback: U, transform: F) @noescape(transform) -> U {
+        match self {
+            Ok(value) => transform(value),
+            Err(_) => fallback
+        }
+    }
+
+    /// Consumes this result and transforms only the error payload.
+    pub fn map_err<U, F: FnOnce(E) -> U>(self, transform: F) -> Result<T, U> {
+        match self {
+            Ok(value) => Ok(value),
+            Err(error) => Err(transform(error))
+        }
+    }
+
+    /// Borrows the error for inspection, then returns the original result unchanged.
+    pub fn inspect_err<F: FnOnce(&E) @noescape -> Unit>(self, inspect: F) @noescape(inspect) ->
+        Self {
+        match self {
+            Ok(value) => Ok(value)
+            Err(error) => {
+                inspect(&error)
+                Err(error)
+            }
+        }
+    }
+
+    /// Chains an operation that may fail with the same error type.
+    pub fn and_then<U, F: FnOnce(T) -> Result<U, E>>(self, transform: F) -> Result<U, E> {
+        match self {
+            Ok(value) => transform(value),
+            Err(error) => Err(error)
+        }
+    }
+
+    /// Tests for success without consuming either payload.
+    pub fn is_ok(&self) -> Bool {
+        match self {
+            Ok(_) => true,
+            Err(_) => false
+        }
+    }
+
+    /// Tests for failure without consuming either payload.
+    pub fn is_err(&self) -> Bool {
+        match self {
+            Ok(_) => false,
+            Err(_) => true
+        }
+    }
+
+    /// Only the error branch invokes the consuming callback.
+    pub fn unwrap_or_else<F: FnOnce(E) -> T>(self, fallback: F) -> T {
+        match self {
+            Ok(value) => value,
+            Err(error) => fallback(error)
+        }
+    }
+
+    /// The fallback is evaluated even when this result already contains a value.
+    pub fn unwrap_or(self, fallback: T) -> T {
+        match self {
+            Ok(value) => value,
+            Err(_) => fallback
+        }
+    }
+
+    /// Consumes this result, retaining success as `Some` and dropping any error.
+    pub fn ok(self) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(_) => None
+        }
+    }
+
+    /// Consumes this result, retaining the error as `Some` and dropping any success.
+    pub fn err(self) -> Option<E> {
+        match self {
+            Ok(_) => None,
+            Err(error) => Some(error)
+        }
+    }
+
+    /// The next result is evaluated eagerly; the receiver's error takes priority.
+    pub fn and<U>(self, next: Result<U, E>) -> Result<U, E> {
+        match self {
+            Ok(_) => next
+            Err(error) => Err(error)
+        }
+    }
+
+    /// Both arguments are evaluated; an existing success keeps its payload.
     pub fn or<F>(self, fallback: Result<T, F>) -> Result<T, F> {
-        match self { Ok(value) => Ok(value), Err(_) => fallback }
+        match self {
+            Ok(value) => Ok(value),
+            Err(_) => fallback
+        }
     }
 }
 
 impl<T, E> Result<Result<T, E>, E> {
+    /// Removes one nested `Result` layer, propagating either error.
     pub fn flatten(self) -> Result<T, E> {
-        match self { Ok(value) => value, Err(error) => Err(error) }
+        match self {
+            Ok(value) => value,
+            Err(error) => Err(error)
+        }
     }
 }
 
-// Option depends on this module's Result constructors, so these methods live
-// in the Result module and extend the standard Option type without a source
-// import cycle.
+// Keep fallible Option conversions here so Option does not need to import Result.
 impl<T> Option<T> {
+    /// Consumes the option, returning the eagerly evaluated error when it is `None`.
     pub fn ok_or<E>(self, error: E) -> Result<T, E> {
-        match self { Some(value) => Ok(value), None => Err(error) }
+        match self {
+            Some(value) => Ok(value),
+            None => Err(error)
+        }
     }
 
-    pub fn ok_or_else<E, F: FnOnce() -> E>(self, make_error: F) @noescape(make_error) -> Result<T, E> {
-        match self { Some(value) => Ok(value), None => Err(make_error()) }
+    /// Consumes the option and creates an error only when it is `None`.
+    pub fn ok_or_else<E, F: FnOnce() -> E>(self, make_error: F) @noescape(make_error) -> Result<
+        T,
+        E
+    > {
+        match self {
+            Some(value) => Ok(value),
+            None => Err(make_error())
+        }
     }
 }

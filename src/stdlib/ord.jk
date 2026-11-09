@@ -1,22 +1,89 @@
 //! Ordering and comparison.
+//!
+//! The sign of `cmp` defines a total order: negative, zero or positive.
+//! Do not depend on a particular magnitude. Arrays can sort values implementing
+//! `Ord`; use `sort_by` for an application-specific comparison.
+//!
+//! ```joky
+//! import joky/ord.{type Ord}
+//!
+//! fn main() {
+//!     var names = ["Lin", "Ada", "Sam"]
+//!     names.sort()
+//!     assert_eq(names.get_ref(0).unwrap(), "Ada")
+//!     assert(Ord.cmp("Ada", "Lin") < 0, "lexicographic order")
+//! }
+//! ```
 
 import joky/internal/text
 import joky/internal/buffer
 
-// The sign of cmp defines a total order; zero denotes equivalent keys.
-pub trait Ord { fn cmp(&self, other: &Self) @noescape -> Int32 }
+/// The sign of cmp defines a total order; zero denotes equivalent keys.
+pub trait Ord {
+    fn cmp(&self, other: &Self) @noescape -> Int32
+}
 
-fn signed_order(a: Int64, b: Int64) -> Int32 { if a < b { -1 } else if a > b { 1 } else { 0 } }
-impl Ord for Int8 { fn cmp(&self, other: &Self) @noescape -> Int32 { signed_order(int64(*self), int64(*other)) } }
-impl Ord for Int16 { fn cmp(&self, other: &Self) @noescape -> Int32 { signed_order(int64(*self), int64(*other)) } }
-impl Ord for Int32 { fn cmp(&self, other: &Self) @noescape -> Int32 { signed_order(int64(*self), int64(*other)) } }
-impl Ord for Int64 { fn cmp(&self, other: &Self) @noescape -> Int32 { signed_order(int64(*self), int64(*other)) } }
+fn signed_order(a: Int64, b: Int64) -> Int32 {
+    if a < b {
+        -1
+    } else if a > b {
+        1
+    } else {
+        0
+    }
+}
 
-fn unsigned_order(a: UInt64, b: UInt64) -> Int32 { if a < b { -1 } else if a > b { 1 } else { 0 } }
-impl Ord for UInt8 { fn cmp(&self, other: &Self) @noescape -> Int32 { unsigned_order(uint64(*self), uint64(*other)) } }
-impl Ord for UInt16 { fn cmp(&self, other: &Self) @noescape -> Int32 { unsigned_order(uint64(*self), uint64(*other)) } }
-impl Ord for UInt32 { fn cmp(&self, other: &Self) @noescape -> Int32 { unsigned_order(uint64(*self), uint64(*other)) } }
-impl Ord for UInt64 { fn cmp(&self, other: &Self) @noescape -> Int32 { unsigned_order(uint64(*self), uint64(*other)) } }
+impl Ord for Int8 {
+    fn cmp(&self, other: &Self) @noescape -> Int32 {
+        signed_order(int64(*self), int64(*other))
+    }
+}
+impl Ord for Int16 {
+    fn cmp(&self, other: &Self) @noescape -> Int32 {
+        signed_order(int64(*self), int64(*other))
+    }
+}
+impl Ord for Int32 {
+    fn cmp(&self, other: &Self) @noescape -> Int32 {
+        signed_order(int64(*self), int64(*other))
+    }
+}
+impl Ord for Int64 {
+    fn cmp(&self, other: &Self) @noescape -> Int32 {
+        signed_order(int64(*self), int64(*other))
+    }
+}
+
+fn unsigned_order(a: UInt64, b: UInt64) -> Int32 {
+    if a < b {
+        -1
+    } else if a > b {
+        1
+    } else {
+        0
+    }
+}
+
+impl Ord for UInt8 {
+    fn cmp(&self, other: &Self) @noescape -> Int32 {
+        unsigned_order(uint64(*self), uint64(*other))
+    }
+}
+impl Ord for UInt16 {
+    fn cmp(&self, other: &Self) @noescape -> Int32 {
+        unsigned_order(uint64(*self), uint64(*other))
+    }
+}
+impl Ord for UInt32 {
+    fn cmp(&self, other: &Self) @noescape -> Int32 {
+        unsigned_order(uint64(*self), uint64(*other))
+    }
+}
+impl Ord for UInt64 {
+    fn cmp(&self, other: &Self) @noescape -> Int32 {
+        unsigned_order(uint64(*self), uint64(*other))
+    }
+}
 
 impl Ord for String {
     fn cmp(&self, other: &Self) @noescape -> Int32 {
@@ -28,7 +95,13 @@ impl Ord for String {
         while index < n && index < m {
             let a = buffer.slice_load(left, index)
             let b = buffer.slice_load(right, index)
-            if a != b { return if a < b { -1 } else { 1 } }
+            if a != b {
+                return if a < b {
+                    -1
+                } else {
+                    1
+                }
+            }
             index += 1
         }
         unsigned_order(n, m)

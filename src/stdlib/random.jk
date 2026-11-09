@@ -1,35 +1,61 @@
 //! Random values and byte generation.
+//!
+//! Use `Rng.seeded` for repeatable simulations, sampling and tests. It is not
+//! cryptographically secure; use `secure_bytes` for secrets. `range` samples a
+//! half-open interval and returns `None` for empty or reversed bounds.
+//!
+//! ```joky
+//! import joky/random
+//!
+//! fn main() {
+//!     var first = random.Rng.seeded(42)
+//!     var second = random.Rng.seeded(42)
+//!     assert_eq(first.next_u64(), second.next_u64())
+//!     let die = first.range(1, 7).unwrap()
+//!     assert(die >= 1 && die <= 6, "six-sided die")
+//!     assert(first.range(3, 3).is_none(), "empty range")
+//! }
+//! ```
 
 import joky/string.{type StringBuilder}
 import joky/show.{type Show}
-import joky/array.{ type Array }
+import joky/array.{type Array}
 import joky/internal/buffer
-import joky/result.{ type Result, Ok, Err }
-import joky/option.{ type Option, Some, None }
+import joky/result.{type Result, Ok, Err}
+import joky/option.{type Option, Some, None}
 import joky/check
 
 pub enum RandomError { Unavailable }
 impl Show for RandomError {
     fn show(&self, output: &mut StringBuilder) @noescape {
-        output.push_str(match self {
-            Unavailable => "secure randomness unavailable"
-        })
+        output.push_str(
+            match self {
+                Unavailable => "secure randomness unavailable"
+            }
+        )
     }
 }
 
-// OS entropy only. No partially filled array escapes a failed request.
+/// OS entropy only. No partially filled array escapes a failed request.
 pub fn secure_bytes(length: UInt64) -> Result<Array<UInt8>, RandomError> {
     var bytes = Array.with_capacity::<UInt8>(length)
     var i: UInt64 = 0
-    while i < length { bytes.push(0); i += 1 }
-    if buffer.random_fill(bytes.slice_mut(0, length)) { Ok(bytes) }
-    else { Err(RandomError.Unavailable) }
+    while i < length {
+        bytes.push(0)
+        i += 1
+    }
+    if buffer.random_fill(bytes.slice_mut(0, length)) {
+        Ok(bytes)
+    } else {
+        Err(RandomError.Unavailable)
+    }
 }
 
-// xoshiro256++ 1.0, seeded by four consecutive SplitMix64 outputs.
-// Public-domain reference: https://prng.di.unimi.it/xoshiro256plusplus.c
-// This generator is reproducible, not cryptographically secure.
+/// xoshiro256++ 1.0, seeded by four consecutive SplitMix64 outputs.
+/// Public-domain reference: https://prng.di.unimi.it/xoshiro256plusplus.c
+/// This generator is reproducible, not cryptographically secure.
 pub struct Rng { a: UInt64, b: UInt64, c: UInt64, d: UInt64 }
+
 fn seed_word(state: &mut UInt64) -> UInt64 {
     *state = *state + 0x9e3779b97f4a7c15
     var word = *state
@@ -37,7 +63,11 @@ fn seed_word(state: &mut UInt64) -> UInt64 {
     word = (word ^ (word >> 27)) * 0x94d049bb133111eb
     word ^ (word >> 31)
 }
-fn rotate(word: UInt64, count: UInt64) -> UInt64 {(word << count) | (word >> (64 - count)) }
+
+fn rotate(word: UInt64, count: UInt64) -> UInt64 {
+    (word << count) | (word >> (64 - count))
+}
+
 impl Rng {
     pub fn seeded(var seed: UInt64) -> Rng {
         let a = seed_word(&mut seed)
@@ -57,20 +87,24 @@ impl Rng {
         self.d = rotate(self.d, 45)
         result
     }
-    // Empty or reversed half-open ranges do not consume generator state.
+    /// Empty or reversed half-open ranges do not consume generator state.
     pub fn range(&mut self, lower: UInt64, upper: UInt64) -> Option<UInt64> {
-        if lower >= upper { return None }
+        if lower >= upper {
+            return None
+        }
         let width = upper - lower
         // UInt64 arithmetic wraps: 2^64 mod width, without representing 2^64.
         let threshold = (0 - width) % width
         while true {
             let value = self.next_u64()
-            if value >= threshold { return Some(lower + value % width) }
+            if value >= threshold {
+                return Some(lower + value % width)
+            }
         }
     }
 }
 
-// Fisher-Yates exchanges whole elements, preserving owning payloads.
+/// Fisher-Yates exchanges whole elements, preserving owning payloads.
 pub fn shuffle<T>(rng: &mut Rng, values: &mut Array<T>) {
     var remaining = values.len()
     while remaining > 1 {

@@ -1,4 +1,20 @@
 //! HTTP request and response handling.
+//!
+//! Build responses with `text`, `empty` or typed `json`, then register handlers
+//! on a router and serve it with a TCP listener. Request bodies and connection
+//! lifetimes are bounded by the server's limits and options.
+//! Constructing the response below does not start a server.
+//!
+//! ```joky
+//! import joky/http
+//!
+//! fn main() {
+//!     let response = http
+//!         .text(http.Status.Ok, "Hello, Joky!")
+//!         .with_header("X-Example", "joky")
+//!     assert_eq(String.from_utf8(response.body).unwrap(), "Hello, Joky!")
+//! }
+//! ```
 
 // One HTTP/1.1 exchange per connection. Parse octets before decoding text.
 import joky/show.{type Show}
@@ -27,15 +43,28 @@ impl Show for DuplicateHeader {
 }
 pub struct RequestLog { pub request_id: uuid.Uuid, pub logger: log.Logger }
 impl RequestLog {
-    pub fn emit(&self, level: log.Level, event: String, var fields: Array<log.Field>) -> Result<log.Emission, log.LogError> {
-        if !self.logger.enabled(level) { return result.Ok(log.Emission.Filtered) }
+    pub fn emit(&self, level: log.Level, event: String, var fields: Array<log.Field>) -> Result<
+        log.Emission,
+        log.LogError
+    > {
+        if !self.logger.enabled(level) {
+            return result.Ok(log.Emission.Filtered)
+        }
         fields.push(log.field("request_id", self.request_id))
         self.logger.emit(level, event, fields)
     }
-    pub fn debug(&self, event: String, fields: Array<log.Field>) { self.emit(log.Level.Debug, event, fields); }
-    pub fn info(&self, event: String, fields: Array<log.Field>) { self.emit(log.Level.Info, event, fields); }
-    pub fn warn(&self, event: String, fields: Array<log.Field>) { self.emit(log.Level.Warn, event, fields); }
-    pub fn error(&self, event: String, fields: Array<log.Field>) { self.emit(log.Level.Error, event, fields); }
+    pub fn debug(&self, event: String, fields: Array<log.Field>) {
+        self.emit(log.Level.Debug, event, fields);
+    }
+    pub fn info(&self, event: String, fields: Array<log.Field>) {
+        self.emit(log.Level.Info, event, fields);
+    }
+    pub fn warn(&self, event: String, fields: Array<log.Field>) {
+        self.emit(log.Level.Warn, event, fields);
+    }
+    pub fn error(&self, event: String, fields: Array<log.Field>) {
+        self.emit(log.Level.Error, event, fields);
+    }
 }
 pub struct Request<C> {
     pub ctx: C,
@@ -52,15 +81,22 @@ impl<C> Request<C> {
     }
     pub fn header(&self, name: &String) @noescape(name) -> Option<&String> {
         for field in &self.headers {
-            if field.name.eq_ignore_ascii_case(name) { return Some(&field.value) }
+            if field.name.eq_ignore_ascii_case(name) {
+                return Some(&field.value)
+            }
         }
         None
     }
-    pub fn header_unique(&self, name: &String) @noescape(name) -> Result<Option<&String>, DuplicateHeader> {
+    pub fn header_unique(&self, name: &String) @noescape(name) -> Result<
+        Option<&String>,
+        DuplicateHeader
+    > {
         var found: Option<&String> = None
         for field in &self.headers {
             if field.name.eq_ignore_ascii_case(name) {
-                if found.is_some() { return Err(DuplicateHeader {}) }
+                if found.is_some() {
+                    return Err(DuplicateHeader {})
+                }
                 found = Some(&field.value)
             }
         }
@@ -69,7 +105,9 @@ impl<C> Request<C> {
     pub fn header_all(&self, name: &String) @noescape -> Array<String> {
         var values = Array.new::<String>()
         for field in &self.headers {
-            if field.name.eq_ignore_ascii_case(name) { values.push(field.value.clone()) }
+            if field.name.eq_ignore_ascii_case(name) {
+                values.push(field.value.clone())
+            }
         }
         values
     }
@@ -80,47 +118,82 @@ impl<C> Request<C> {
     }
     pub fn query_pairs(&self) -> Result<Array<(String, String)>, url.DecodeError> {
         match self.target.find("?") {
-            Some(offset) => url.parse_query(self.target.substring(offset + 1, self.target.byte_length())!)
+            Some(offset) => url.parse_query(
+                self.target.substring(offset + 1, self.target.byte_length())!
+            )
             None => result.Ok(Array.new::<(String, String)>())
         }
     }
 }
 pub struct FinalCode { value: UInt16 }
-pub enum Status { Ok, Created, Accepted, NoContent, MovedPermanently, Found, SeeOther, NotModified, TemporaryRedirect, PermanentRedirect, BadRequest, Unauthorized, Forbidden, NotFound, MethodNotAllowed, RequestTimeout, Conflict, ContentTooLarge, UnsupportedMediaType, UnprocessableContent, TooManyRequests, InternalServerError, NotImplemented, BadGateway, ServiceUnavailable, GatewayTimeout, Other(FinalCode) }
+pub enum Status {
+    Ok,
+    Created,
+    Accepted,
+    NoContent,
+    MovedPermanently,
+    Found,
+    SeeOther,
+    NotModified,
+    TemporaryRedirect,
+    PermanentRedirect,
+    BadRequest,
+    Unauthorized,
+    Forbidden,
+    NotFound,
+    MethodNotAllowed,
+    RequestTimeout,
+    Conflict,
+    ContentTooLarge,
+    UnsupportedMediaType,
+    UnprocessableContent,
+    TooManyRequests,
+    InternalServerError,
+    NotImplemented,
+    BadGateway,
+    ServiceUnavailable,
+    GatewayTimeout,
+    Other(FinalCode)
+}
 impl Status {
     pub fn from_code(code: UInt16) -> Option<Status> {
-        if code < 200 || code > 599 { return None }
-        Some(match code {
-            200 => Status.Ok
-            201 => Status.Created
-            202 => Status.Accepted
-            204 => Status.NoContent
-            301 => Status.MovedPermanently
-            302 => Status.Found
-            303 => Status.SeeOther
-            304 => Status.NotModified
-            307 => Status.TemporaryRedirect
-            308 => Status.PermanentRedirect
-            400 => Status.BadRequest
-            401 => Status.Unauthorized
-            403 => Status.Forbidden
-            404 => Status.NotFound
-            405 => Status.MethodNotAllowed
-            408 => Status.RequestTimeout
-            409 => Status.Conflict
-            413 => Status.ContentTooLarge
-            415 => Status.UnsupportedMediaType
-            422 => Status.UnprocessableContent
-            429 => Status.TooManyRequests
-            500 => Status.InternalServerError
-            501 => Status.NotImplemented
-            502 => Status.BadGateway
-            503 => Status.ServiceUnavailable
-            504 => Status.GatewayTimeout
-            _ => Other(FinalCode { value: code })
-        })
+        if code < 200 || code > 599 {
+            return None
+        }
+        Some(
+            match code {
+                200 => Status.Ok
+                201 => Status.Created
+                202 => Status.Accepted
+                204 => Status.NoContent
+                301 => Status.MovedPermanently
+                302 => Status.Found
+                303 => Status.SeeOther
+                304 => Status.NotModified
+                307 => Status.TemporaryRedirect
+                308 => Status.PermanentRedirect
+                400 => Status.BadRequest
+                401 => Status.Unauthorized
+                403 => Status.Forbidden
+                404 => Status.NotFound
+                405 => Status.MethodNotAllowed
+                408 => Status.RequestTimeout
+                409 => Status.Conflict
+                413 => Status.ContentTooLarge
+                415 => Status.UnsupportedMediaType
+                422 => Status.UnprocessableContent
+                429 => Status.TooManyRequests
+                500 => Status.InternalServerError
+                501 => Status.NotImplemented
+                502 => Status.BadGateway
+                503 => Status.ServiceUnavailable
+                504 => Status.GatewayTimeout
+                _ => Other(FinalCode { value: code })
+            }
+        )
     }
 }
+
 fn status_line(status: Status) -> (Int32, String) {
     match status {
         Status.Ok => (200, "OK")
@@ -152,30 +225,46 @@ fn status_line(status: Status) -> (Int32, String) {
         Other(code) => (int32(code.value), "")
     }
 }
+
 pub struct MediaType { value: String }
 pub enum ContentType { Text, Json, Bytes, Custom(MediaType) }
 impl ContentType {
     pub fn custom(value: String) -> Option<ContentType> {
-        if valid_media_type(&value) { Some(Custom(MediaType { value })) } else { None }
+        if valid_media_type(&value) {
+            Some(Custom(MediaType { value }))
+        } else {
+            None
+        }
     }
 }
-pub struct Response { pub status: Status, pub content_type: ContentType, pub headers: Array<Header>, pub body: Array<UInt8> }
+pub struct Response {
+    pub status: Status,
+    pub content_type: ContentType,
+    pub headers: Array<Header>,
+    pub body: Array<UInt8>
+}
 impl Response {
     pub fn with_header(var self, name: String, value: String) -> Self {
         self.headers.push(Header { name, value })
         self
     }
 }
+
 pub fn text(status: Status, body: String) -> Response {
     Response { status, content_type: ContentType.Text, headers: [], body: body.into_bytes() }
 }
+
 pub fn empty(status: Status) -> Response {
     Response { status, content_type: ContentType.Text, headers: [], body: [] }
 }
+
 pub fn json<T: ToJson>(status: Status, value: &T) @noescape -> Result<Response, typed.CodecError> {
     let body = typed.encode(value)?
-    result.Ok(Response { status, content_type: ContentType.Json, headers: [], body: body.into_bytes() })
+    result.Ok(
+        Response { status, content_type: ContentType.Json, headers: [], body: body.into_bytes() }
+    )
 }
+
 pub struct Options {
     pub logger: log.Logger,
     pub max_connections: UInt64,
@@ -184,16 +273,26 @@ pub struct Options {
     pub grace: Duration
 }
 impl Options {
-    pub fn default() -> Self { Options { logger: log.Logger.new(log.Level.Debug), max_connections: 128, read_timeout: 10s, write_timeout: 10s, grace: 5s } }
+    pub fn default() -> Self {
+        Options {
+            logger: log.Logger.new(log.Level.Debug),
+            max_connections: 128,
+            read_timeout: 10s,
+            write_timeout: 10s,
+            grace: 5s
+        }
+    }
 }
 pub enum ServeError { InvalidOptions, AcceptFailed, Deadline }
 impl Show for ServeError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
-        output.push_str(match self {
-            InvalidOptions => "invalid HTTP server options"
-            AcceptFailed => "HTTP accept failed"
-            Deadline => "HTTP shutdown deadline exceeded"
-        })
+        output.push_str(
+            match self {
+                InvalidOptions => "invalid HTTP server options"
+                AcceptFailed => "HTTP accept failed"
+                Deadline => "HTTP shutdown deadline exceeded"
+            }
+        )
     }
 }
 
@@ -205,46 +304,76 @@ enum ReadFailure { Bad, Network, HeadLimit, BodyLimit, Timeout, Stopped, Unsuppo
 // HTTP token characters: ASCII letters, digits and the permitted punctuation.
 fn token(b: UInt8) -> Bool {
     (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || (b >= 48 && b <= 57) ||
-    b == 33 || b == 35 || b == 36 || b == 37 || b == 38 || b == 39 || b == 42 ||
-    b == 43 || b == 45 || b == 46 || b == 94 || b == 95 || b == 96 || b == 124 || b == 126
+        b == 33 || b == 35 || b == 36 || b == 37 || b == 38 || b == 39 || b == 42 ||
+        b == 43 || b == 45 || b == 46 || b == 94 || b == 95 || b == 96 || b == 124 || b == 126
 }
+
 // ASCII type/subtype followed by optional token or quoted-string parameters.
 fn valid_media_type(value: &String) -> Bool {
     let bytes = value.bytes()
     let n = value.byte_length()
     var i: UInt64 = 0
-    while i < n && token(bytes[i]) { i += 1 }
-    if i == 0 || i == n || bytes[i] != 47 { return false }
+    while i < n && token(bytes[i]) {
+        i += 1
+    }
+    if i == 0 || i == n || bytes[i] != 47 {
+        return false
+    }
     i += 1
     let subtype = i
-    while i < n && token(bytes[i]) { i += 1 }
-    if i == subtype { return false }
-    while i < n {
-        while i < n && (bytes[i] == 32 || bytes[i] == 9) { i += 1 }
-        if i == n || bytes[i] != 59 { return false }
+    while i < n && token(bytes[i]) {
         i += 1
-        while i < n && (bytes[i] == 32 || bytes[i] == 9) { i += 1 }
+    }
+    if i == subtype {
+        return false
+    }
+    while i < n {
+        while i < n && (bytes[i] == 32 || bytes[i] == 9) {
+            i += 1
+        }
+        if i == n || bytes[i] != 59 {
+            return false
+        }
+        i += 1
+        while i < n && (bytes[i] == 32 || bytes[i] == 9) {
+            i += 1
+        }
         let name = i
-        while i < n && token(bytes[i]) { i += 1 }
-        if i == name || i == n || bytes[i] != 61 { return false }
+        while i < n && token(bytes[i]) {
+            i += 1
+        }
+        if i == name || i == n || bytes[i] != 61 {
+            return false
+        }
         i += 1
         if i < n && bytes[i] == 34 {
             i += 1
             while i < n && bytes[i] != 34 {
-                if bytes[i] == 92 { i += 1 }
-                if i == n || (bytes[i] < 32 && bytes[i] != 9) || bytes[i] > 126 { return false }
+                if bytes[i] == 92 {
+                    i += 1
+                }
+                if i == n || (bytes[i] < 32 && bytes[i] != 9) || bytes[i] > 126 {
+                    return false
+                }
                 i += 1
             }
-            if i == n { return false }
+            if i == n {
+                return false
+            }
             i += 1
         } else {
             let start = i
-            while i < n && token(bytes[i]) { i += 1 }
-            if i == start { return false }
+            while i < n && token(bytes[i]) {
+                i += 1
+            }
+            if i == start {
+                return false
+            }
         }
     }
     true
 }
+
 #derive(Eq)
 pub enum Method { Get, Head, Post, Put, Patch, Delete, Options }
 impl Show for Method {
@@ -254,8 +383,17 @@ impl Show for Method {
 }
 
 fn method_name(method: Method) -> String {
-    match method { Get => "GET", Head => "HEAD", Post => "POST", Put => "PUT", Patch => "PATCH", Delete => "DELETE", Method.Options => "OPTIONS" }
+    match method {
+        Get => "GET",
+        Head => "HEAD",
+        Post => "POST",
+        Put => "PUT",
+        Patch => "PATCH",
+        Delete => "DELETE",
+        Method.Options => "OPTIONS"
+    }
 }
+
 fn parse_method(value: &String) -> Option<Method> {
     match value {
         "GET" => Some(Method.Get)
@@ -268,85 +406,153 @@ fn parse_method(value: &String) -> Option<Method> {
         _ => None
     }
 }
+
 enum Wire { Plain(BufferedTcp), Secure(tls.TlsStream) }
 impl Wire {
     fn read_line_bytes(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, ReadFailure> {
         match self {
             Plain(io) => match io.read_until(10, limit) {
-                result.Ok(Some(bytes)) => result.Ok(bytes), Err(LimitExceeded) => Err(ReadFailure.HeadLimit), Err(Io(_)) => Err(ReadFailure.Network), _ => Err(ReadFailure.Bad)
+                result.Ok(Some(bytes)) => result.Ok(bytes),
+                Err(LimitExceeded) => Err(ReadFailure.HeadLimit),
+                Err(Io(_)) => Err(ReadFailure.Network),
+                _ => Err(ReadFailure.Bad)
             },
             Secure(io) => match io.read_until(10, limit) {
-                result.Ok(Some(bytes)) => result.Ok(bytes), Err(Limit) => Err(ReadFailure.HeadLimit), Err(Io(_)) => Err(ReadFailure.Network), _ => Err(ReadFailure.Bad)
+                result.Ok(Some(bytes)) => result.Ok(bytes),
+                Err(Limit) => Err(ReadFailure.HeadLimit),
+                Err(Io(_)) => Err(ReadFailure.Network),
+                _ => Err(ReadFailure.Bad)
             }
         }
     }
     fn read_body(&mut self, n: UInt64) @suspends -> Result<Array<UInt8>, ReadFailure> {
         match self {
-            Plain(io) => match io.read_exact(n) { result.Ok(Some(bytes)) => result.Ok(bytes), Err(Io(_)) => Err(ReadFailure.Network), _ => Err(ReadFailure.Bad) },
-            Secure(io) => match io.read_exact(n) { result.Ok(Some(bytes)) => result.Ok(bytes), Err(Io(_)) => Err(ReadFailure.Network), _ => Err(ReadFailure.Bad) }
+            Plain(io) => match io.read_exact(n) {
+                result.Ok(Some(bytes)) => result.Ok(bytes),
+                Err(Io(_)) => Err(ReadFailure.Network),
+                _ => Err(ReadFailure.Bad)
+            },
+            Secure(io) => match io.read_exact(n) {
+                result.Ok(Some(bytes)) => result.Ok(bytes),
+                Err(Io(_)) => Err(ReadFailure.Network),
+                _ => Err(ReadFailure.Bad)
+            }
         }
     }
     fn write(&mut self, bytes: Array<UInt8>) @suspends -> Bool {
-        match self { Plain(io) => io.write_all(bytes).is_ok(), Secure(io) => io.write_all(bytes).is_ok() }
+        match self {
+            Plain(io) => io.write_all(bytes).is_ok(),
+            Secure(io) => io.write_all(bytes).is_ok()
+        }
     }
     fn finish(self) @suspends -> Bool {
-        match self { Secure(io) => io.close().is_ok(), Plain(_) => true }
+        match self {
+            Secure(io) => io.close().is_ok(),
+            Plain(_) => true
+        }
     }
 }
+
 fn line(stream: &mut Wire, remaining: &mut UInt64) @suspends -> Result<Array<UInt8>, ReadFailure> {
-    if *remaining < 2 { return Err(ReadFailure.HeadLimit) }
+    if *remaining < 2 {
+        return Err(ReadFailure.HeadLimit)
+    }
     var bytes = stream.read_line_bytes(*remaining)?
     let n = bytes.len()
-    if n < 2 || bytes[n - 2] != 13 { return Err(ReadFailure.Bad) }
+    if n < 2 || bytes[n - 2] != 13 {
+        return Err(ReadFailure.Bad)
+    }
     *remaining = *remaining - n
     bytes.truncate(n - 2)
     result.Ok(bytes)
 }
+
 fn request_line(bytes: Array<UInt8>) -> Result<(Method, String), ReadFailure> {
-    for b in &bytes { if *b < 32 || *b > 126 { return Err(ReadFailure.Bad) } }
+    for b in &bytes {
+        if *b < 32 || *b > 126 {
+            return Err(ReadFailure.Bad)
+        }
+    }
     let text = String.from_utf8(bytes)!
-    let first = match text.find(" ") { Some(i) => i, None => return Err(ReadFailure.Bad) }
+    let first = match text.find(" ") {
+        Some(i) => i,
+        None => return Err(ReadFailure.Bad)
+    }
     let method = text.substring(0, first)!
-    if method.is_empty() { return Err(ReadFailure.Bad) }
-    for b in method.bytes() { if !token(*b) { return Err(ReadFailure.Bad) } }
+    if method.is_empty() {
+        return Err(ReadFailure.Bad)
+    }
+    for b in method.bytes() {
+        if !token(*b) {
+            return Err(ReadFailure.Bad)
+        }
+    }
     let rest = text.substring(first + 1, text.byte_length())!
-    let end = match rest.find(" ") { Some(i) => i, None => return Err(ReadFailure.Bad) }
-    if rest.substring(end + 1, rest.byte_length())! != "HTTP/1.1" { return Err(ReadFailure.Bad) }
+    let end = match rest.find(" ") {
+        Some(i) => i,
+        None => return Err(ReadFailure.Bad)
+    }
+    if rest.substring(end + 1, rest.byte_length())! != "HTTP/1.1" {
+        return Err(ReadFailure.Bad)
+    }
     let target = rest.substring(0, end)!
-    if !target.starts_with("/") || target.find("#").is_some() { return Err(ReadFailure.Bad) }
+    if !target.starts_with("/") || target.find("#").is_some() {
+        return Err(ReadFailure.Bad)
+    }
     let method = parse_method(&method).ok_or(ReadFailure.Unsupported)?
     result.Ok((method, target))
 }
+
 fn header(var bytes: Array<UInt8>) -> Result<Header, ReadFailure> {
     var i: UInt64 = 0
     while i < bytes.len() && bytes[i] != 58 {
         let b = bytes[i]
-        if !token(b) { return Err(ReadFailure.Bad) }
-        if b >= 65 && b <= 90 { bytes[i] = b + 32 }
+        if !token(b) {
+            return Err(ReadFailure.Bad)
+        }
+        if b >= 65 && b <= 90 {
+            bytes[i] = b + 32
+        }
         i += 1
     }
-    if i == 0 || i == bytes.len() { return Err(ReadFailure.Bad) }
+    if i == 0 || i == bytes.len() {
+        return Err(ReadFailure.Bad)
+    }
     var start = i + 1
     var end = bytes.len()
-    while start < end && (bytes[start] == 32 || bytes[start] == 9) { start += 1 }
-    while end > start && (bytes[end - 1] == 32 || bytes[end - 1] == 9) { end -= 1 }
+    while start < end && (bytes[start] == 32 || bytes[start] == 9) {
+        start += 1
+    }
+    while end > start && (bytes[end - 1] == 32 || bytes[end - 1] == 9) {
+        end -= 1
+    }
     for j in start .. end {
         let b = bytes[j]
-        if (b < 32 && b != 9) || b > 126 { return Err(ReadFailure.Bad) }
+        if (b < 32 && b != 9) || b > 126 {
+            return Err(ReadFailure.Bad)
+        }
     }
     let text = String.from_utf8(bytes)!
     result.Ok(Header { name: text.substring(0, i)!, value: text.substring(start, end)! })
 }
+
 fn content_length(value: &String) -> Result<UInt64, ReadFailure> {
-    if value.is_empty() { return Err(ReadFailure.Bad) }
+    if value.is_empty() {
+        return Err(ReadFailure.Bad)
+    }
     var n: UInt64 = 0
     for b in value.bytes() {
-        if *b < 48 || *b > 57 { return Err(ReadFailure.Bad) }
+        if *b < 48 || *b > 57 {
+            return Err(ReadFailure.Bad)
+        }
         n = n * 10 + uint64(*b - 48)
-        if n > BODY_LIMIT { return Err(ReadFailure.BodyLimit) }
+        if n > BODY_LIMIT {
+            return Err(ReadFailure.BodyLimit)
+        }
     }
     result.Ok(n)
 }
+
 // This subset accepts DNS-style hosts and IPv4 with an optional decimal port.
 fn valid_host(value: &String) -> Bool {
     var host_len: UInt64 = 0
@@ -355,19 +561,33 @@ fn valid_host(value: &String) -> Bool {
     var in_port = false
     for b in value.bytes() {
         if in_port {
-            if *b < 48 || *b > 57 { return false }
+            if *b < 48 || *b > 57 {
+                return false
+            }
             port = port * 10 + uint64(*b - 48)
-            if port > 65535 { return false }
+            if port > 65535 {
+                return false
+            }
             port_digits += 1
-        } else if *b == 58 { in_port = true }
-        else {
-            if !((*b >= 48 && *b <= 57) || (*b >= 65 && *b <= 90) || (*b >= 97 && *b <= 122) || *b == 45 || *b == 46) { return false }
+        } else if *b == 58 {
+            in_port = true
+        } else {
+            if !(
+                (*b >= 48 && *b <= 57) || (*b >= 65 && *b <= 90) || (*b >= 97 && *b <= 122) || *b ==
+                    45 || *b == 46
+            ) {
+                return false
+            }
             host_len += 1
         }
     }
     host_len > 0 && (!in_port || port_digits > 0)
 }
-fn read_request(stream: &mut Wire, context: RequestLog) @suspends -> Result<Request<Unit>, ReadFailure> {
+
+fn read_request(stream: &mut Wire, context: RequestLog) @suspends -> Result<
+    Request<Unit>,
+    ReadFailure
+> {
     var remaining = HEAD_LIMIT
     let (method, target) = request_line(line(stream, &mut remaining)?)?
     var headers: Array<Header> = []
@@ -375,52 +595,126 @@ fn read_request(stream: &mut Wire, context: RequestLog) @suspends -> Result<Requ
     var length: Option<UInt64> = None
     while true {
         let bytes = line(stream, &mut remaining)?
-        if bytes.is_empty() { break }
-        if headers.len() >= 64 { return Err(ReadFailure.HeadLimit) }
+        if bytes.is_empty() {
+            break
+        }
+        if headers.len() >= 64 {
+            return Err(ReadFailure.HeadLimit)
+        }
         let field = header(bytes)?
         if field.name == "host" {
-            if host || !valid_host(&field.value) { return Err(ReadFailure.Bad) }
+            if host || !valid_host(&field.value) {
+                return Err(ReadFailure.Bad)
+            }
             host = true
         } else if field.name == "content-length" {
-            if length.is_some() { return Err(ReadFailure.Bad) }
+            if length.is_some() {
+                return Err(ReadFailure.Bad)
+            }
             length = Some(content_length(&field.value)?)
-        } else if field.name == "transfer-encoding" { return Err(ReadFailure.Bad) }
-        else if field.name == "expect" { return Err(ReadFailure.Expectation) }
+        } else if field.name == "transfer-encoding" {
+            return Err(ReadFailure.Bad)
+        } else if field.name == "expect" {
+            return Err(ReadFailure.Expectation)
+        }
         headers.push(field)
     }
-    if !host { return Err(ReadFailure.Bad) }
+    if !host {
+        return Err(ReadFailure.Bad)
+    }
     let body = stream.read_body(length.unwrap_or(0))?
     result.Ok(Request { ctx: {}, log: context, request_id: context.request_id, method, target, headers, body })
 }
-fn read_timeout(timeout: Duration) @suspends -> Result<Request<Unit>, ReadFailure> { task.sleep(timeout); Err(ReadFailure.Timeout) }
+
+fn read_timeout(timeout: Duration) @suspends -> Result<Request<Unit>, ReadFailure> {
+    task.sleep(timeout)
+    Err(ReadFailure.Timeout)
+}
+
 enum WriteOutcome { Complete, Failed, TimedOut }
-fn response_prefix(code: Int32, reason: String, media: String, fields: Array<Header>, size: UInt64, context: RequestLog) -> Option<String> {
+
+fn response_prefix(
+    code: Int32,
+    reason: String,
+    media: String,
+    fields: Array<Header>,
+    size: UInt64,
+    context: RequestLog
+) -> Option<String> {
     let no_content = code == 204 || code == 304
-    if size > BODY_LIMIT || ((no_content || code == 205) && size != 0) { return None }
-    if media.byte_length() > HEAD_LIMIT || fields.len() > 60 { return None }
-    let framing = if no_content { "" } else { "Content-Length: {size}\r\n" }
+    if size > BODY_LIMIT || ((no_content || code == 205) && size != 0) {
+        return None
+    }
+    if media.byte_length() > HEAD_LIMIT || fields.len() > 60 {
+        return None
+    }
+    let framing = if no_content {
+        ""
+    } else {
+        "Content-Length: {size}\r\n"
+    }
     let id = context.request_id.to_text()
-    var prefix = string.StringBuilder.from("HTTP/1.1 {code} {reason}\r\nX-Request-Id: {id}\r\nContent-Type: {media}\r\n{framing}Connection: close\r\n")
+    var prefix = string.StringBuilder.from(
+        "HTTP/1.1 {code} {reason}\r\nX-Request-Id: {id}\r\nContent-Type: {media}\r\n{framing}Connection: close\r\n"
+    )
     for field in &fields {
-        if prefix.byte_length() + field.name.byte_length() + field.value.byte_length() + 6 > HEAD_LIMIT { return None }
+        if prefix.byte_length() + field.name.byte_length() + field.value.byte_length() + 6 >
+            HEAD_LIMIT {
+            return None
+        }
         let raw = "{field.name}: {field.value}"
-        let parsed = match header(raw.clone().into_bytes()) { result.Ok(h) => h, Err(_) => return None }
+        let parsed = match header(raw.clone().into_bytes()) {
+            result.Ok(h) => h,
+            Err(_) => return None
+        }
         if field.name.find(":").is_some() || reserved_field(&parsed.name) ||
-            parsed.name == "content-type" || parsed.name == "x-request-id" { return None }
+            parsed.name == "content-type" || parsed.name == "x-request-id" {
+            return None
+        }
         prefix.push_str(&raw)
         prefix.push_str("\r\n")
     }
-    if prefix.byte_length() + 2 > HEAD_LIMIT { return None }
+    if prefix.byte_length() + 2 > HEAD_LIMIT {
+        return None
+    }
     prefix.push_str("\r\n")
     Some(prefix.finish())
 }
-fn send(var stream: Wire, prefix: String, body: Array<UInt8>, head: Bool) @suspends -> WriteOutcome {
-    if !stream.write(prefix.into_bytes()) { return Failed }
-    if !head && !body.is_empty() && !stream.write(body) { return Failed }
-    if stream.finish() { Complete } else { Failed }
+
+fn send(var stream: Wire, prefix: String, body: Array<UInt8>, head: Bool) @suspends ->
+    WriteOutcome {
+    if !stream.write(prefix.into_bytes()) {
+        return Failed
+    }
+    if !head && !body.is_empty() && !stream.write(body) {
+        return Failed
+    }
+    if stream.finish() {
+        Complete
+    } else {
+        Failed
+    }
 }
-fn write_timeout(duration: Duration) @suspends -> WriteOutcome { task.sleep(duration); TimedOut }
-fn respond(io: Wire, context: RequestLog, read_duration: Option<Duration>, started: Option<time.Instant>, request_info: Option<(Method, String)>, var code: Int32, reason: String, media: String, headers: Array<Header>, var body: Array<UInt8>, head: Bool, timeout: Duration) @suspends {
+
+fn write_timeout(duration: Duration) @suspends -> WriteOutcome {
+    task.sleep(duration)
+    TimedOut
+}
+
+fn respond(
+    io: Wire,
+    context: RequestLog,
+    read_duration: Option<Duration>,
+    started: Option<time.Instant>,
+    request_info: Option<(Method, String)>,
+    var code: Int32,
+    reason: String,
+    media: String,
+    headers: Array<Header>,
+    var body: Array<UInt8>,
+    head: Bool,
+    timeout: Duration
+) @suspends {
     let prefix = match response_prefix(code, reason, media, headers, body.len(), context) {
         Some(prefix) => prefix,
         None => {
@@ -429,14 +723,27 @@ fn respond(io: Wire, context: RequestLog, read_duration: Option<Duration>, start
             response_prefix(code, "Internal Server Error", "text/plain", [], 0, context)!
         }
     }
-    let outcome = race { send(io, prefix, body, head), write_timeout(timeout) }
+    let outcome = race {
+        send(io, prefix, body, head),
+        write_timeout(timeout)
+    }
     let finished = time.Instant.now()
-    if !context.logger.enabled(log.Level.Info) { return }
-    let label = match outcome { Complete => "complete", Failed => "failed", TimedOut => "timeout" }
+    if !context.logger.enabled(log.Level.Info) {
+        return
+    }
+    let label = match outcome {
+        Complete => "complete",
+        Failed => "failed",
+        TimedOut => "timeout"
+    }
     var fields = [log.field("status", code), log.field("write_outcome", label)]
-    if let Some(duration) = read_duration { fields.push(log.field("read_duration_ms", duration.as_millis())) }
+    if let Some(duration) = read_duration {
+        fields.push(log.field("read_duration_ms", duration.as_millis()))
+    }
     if let Some(started) = started {
-        if let Some(duration) = finished.duration_since(started) { fields.push(log.field("duration_ms", duration.as_millis())) }
+        if let Some(duration) = finished.duration_since(started) {
+            fields.push(log.field("duration_ms", duration.as_millis()))
+        }
     }
     if let Some((method, path)) = request_info {
         fields.push(log.field("method", method_name(method)))
@@ -444,10 +751,19 @@ fn respond(io: Wire, context: RequestLog, read_duration: Option<Duration>, start
     }
     context.info("http.request_finished", fields)
 }
+
 fn secure(config: &tls.ServerConfig, stream: TcpStream) @suspends -> Option<Wire> {
-    match config.accept(stream) { result.Ok(io) => Some(Secure(io)), Err(_) => None }
+    match config.accept(stream) {
+        result.Ok(io) => Some(Secure(io)),
+        Err(_) => None
+    }
 }
-fn handshake_timeout(timeout: Duration) @suspends -> Option<Wire> { task.sleep(timeout); None }
+
+fn handshake_timeout(timeout: Duration) @suspends -> Option<Wire> {
+    task.sleep(timeout)
+    None
+}
+
 // Each admitted connection owns its service handle until the handler and write finish.
 pub trait Service {
     fn share(&self) @suspends -> Self
@@ -457,10 +773,12 @@ pub type Handler<C> = fn(Request<C>) @suspends -> Response
 pub enum RouteError { InvalidPath, DuplicateRoute }
 impl Show for RouteError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
-        output.push_str(match self {
-            InvalidPath => "invalid HTTP route path"
-            DuplicateRoute => "duplicate HTTP route"
-        })
+        output.push_str(
+            match self {
+                InvalidPath => "invalid HTTP route path"
+                DuplicateRoute => "duplicate HTTP route"
+            }
+        )
     }
 }
 // share runs on the accept loop. for_request runs on the matched request task.
@@ -470,9 +788,14 @@ pub trait ContextSource {
     fn for_request(&self) @suspends @noescape -> Self.Context
 }
 impl ContextSource for Unit {
-    type Context = Unit
-    fn share(&self) @suspends @noescape -> Self { {} }
-    fn for_request(&self) @suspends @noescape -> Unit { {} }
+    type Context
+    = Unit
+    fn share(&self) @suspends @noescape -> Self {
+        {}
+    }
+    fn for_request(&self) @suspends @noescape -> Unit {
+        {}
+    }
 }
 pub trait Application {
     type RequestContext
@@ -481,100 +804,207 @@ pub type StateHandler<A, C> = fn(domain.WriteHandle<A>, Request<C>) @suspends ->
 struct Route<H> { method: Method, path: String, handler: H }
 struct RouteTable<H> { entries: Array<Route<H>> }
 pub struct ContextRouter<S, C> { source: S, table: RouteTable<Handler<C>> }
-pub struct StateRouter<A, S, C> { app: domain.WriteHandle<A>, source: S, table: RouteTable<StateHandler<A, C>> }
+pub struct StateRouter<A, S, C> {
+    app: domain.WriteHandle<A>,
+    source: S,
+    table: RouteTable<StateHandler<A, C>>
+}
+
 pub fn with_context<S: ContextSource>(source: S) -> ContextRouter<S, S.Context> {
     ContextRouter { source, table: RouteTable { entries: [] } }
 }
-pub fn with_state<A: Application, S: ContextSource<Context = A.RequestContext>>(app: domain.WriteHandle<A>, source: S) -> StateRouter<A, S, A.RequestContext> {
+
+pub fn with_state<A: Application, S: ContextSource<Context = A.RequestContext>>(
+    app: domain.WriteHandle<A>,
+    source: S
+) -> StateRouter<A, S, A.RequestContext> {
     StateRouter { app, source, table: RouteTable { entries: [] } }
 }
+
 fn bind_context<C>(request: Request<Unit>, ctx: C) -> Request<C> {
     let Request { ctx: _, log, request_id, method, target, headers, body } = request
     Request { ctx, log, request_id, method, target, headers, body }
 }
+
 fn valid_route_path(path: &String) -> Bool {
-    if !path.starts_with("/") || path.byte_length() > ROUTE_PATH_LIMIT { return false }
+    if !path.starts_with("/") || path.byte_length() > ROUTE_PATH_LIMIT {
+        return false
+    }
     for byte in path.bytes() {
-        if *byte <= 32 || *byte > 126 || *byte == 63 || *byte == 35 { return false }
+        if *byte <= 32 || *byte > 126 || *byte == 63 || *byte == 35 {
+            return false
+        }
     }
     true
 }
+
 pub struct Router { inner: ContextRouter<Unit, Unit> }
 impl Router {
-    pub fn new() -> Self { Router { inner: with_context({}) } }
-    pub fn add(&mut self, method: Method, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.add(method, path, handler) }
-    pub fn get(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.get(path, handler) }
-    pub fn head(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.head(path, handler) }
-    pub fn post(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.post(path, handler) }
-    pub fn put(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.put(path, handler) }
-    pub fn patch(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.patch(path, handler) }
-    pub fn delete(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.delete(path, handler) }
-    pub fn options(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> { self.inner.options(path, handler) }
+    pub fn new() -> Self {
+        Router { inner: with_context({}) }
+    }
+    pub fn add(&mut self, method: Method, path: String, handler: Handler<Unit>) -> Result<
+        Unit,
+        RouteError
+    > {
+        self.inner.add(method, path, handler)
+    }
+    pub fn get(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
+        self.inner.get(path, handler)
+    }
+    pub fn head(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
+        self.inner.head(path, handler)
+    }
+    pub fn post(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
+        self.inner.post(path, handler)
+    }
+    pub fn put(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
+        self.inner.put(path, handler)
+    }
+    pub fn patch(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
+        self.inner.patch(path, handler)
+    }
+    pub fn delete(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
+        self.inner.delete(path, handler)
+    }
+    pub fn options(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
+        self.inner.options(path, handler)
+    }
 }
 impl Service for Router {
-    fn share(&self) @suspends -> Self { Router { inner: self.inner.share() } }
-    fn handle(&self, request: Request<Unit>) @suspends -> Response { self.inner.handle(request) }
+    fn share(&self) @suspends -> Self {
+        Router { inner: self.inner.share() }
+    }
+    fn handle(&self, request: Request<Unit>) @suspends -> Response {
+        self.inner.handle(request)
+    }
 }
 impl<H: Copy> RouteTable<H> {
     fn add(&mut self, method: Method, path: String, handler: H) -> Result<Unit, RouteError> {
-        if !valid_route_path(&path) { return Err(RouteError.InvalidPath) }
-        if self.find_handler(&path, method).is_some() { return Err(RouteError.DuplicateRoute) }
+        if !valid_route_path(&path) {
+            return Err(RouteError.InvalidPath)
+        }
+        if self.find_handler(&path, method).is_some() {
+            return Err(RouteError.DuplicateRoute)
+        }
         self.entries.push(Route { method, path, handler })
         result.Ok({})
     }
     fn find_handler(&self, path: &String, method: Method) @noescape -> Option<H> {
         for entry in &self.entries {
-            if entry.path == path && entry.method == method { return Some(entry.handler) }
+            if entry.path == path && entry.method == method {
+                return Some(entry.handler)
+            }
         }
         None
     }
     fn select(&self, path: &String, method: Method) @noescape -> Option<H> {
         let handler = self.find_handler(path, method)
-        if handler.is_none() && method == Method.Head { self.find_handler(path, Method.Get) } else { handler }
+        if handler.is_none() && method == Method.Head {
+            self.find_handler(path, Method.Get)
+        } else {
+            handler
+        }
     }
     fn allowed(&self, path: &String) @noescape -> String {
         var names: Array<String> = []
-        for method in [Method.Get, Method.Head, Method.Post, Method.Put, Method.Patch, Method.Delete, Method.Options] {
-            if self.select(path, method).is_some() { names.push(method_name(method)) }
+        for method in [
+            Method.Get,
+            Method.Head,
+            Method.Post,
+            Method.Put,
+            Method.Patch,
+            Method.Delete,
+            Method.Options
+        ] {
+            if self.select(path, method).is_some() {
+                names.push(method_name(method))
+            }
         }
         names.join(", ")
     }
     fn unmatched(&self, path: &String) @noescape -> Response {
         let allow = self.allowed(path)
-        if allow.is_empty() { text(Status.NotFound, "not found") } else {
+        if allow.is_empty() {
+            text(Status.NotFound, "not found")
+        } else {
             text(Status.MethodNotAllowed, "method not allowed").with_header("Allow", allow)
         }
     }
     fn copy_routes(&self) -> Self {
         var routes: Array<Route<H>> = []
         for entry in &self.entries {
-            routes.push(Route { method: entry.method, path: entry.path.clone(), handler: entry.handler })
+            routes.push(
+                Route { method: entry.method, path: entry.path.clone(), handler: entry.handler }
+            )
         }
         RouteTable { entries: routes }
     }
 }
 impl<S, C> ContextRouter<S, C> {
-    pub fn add(&mut self, method: Method, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.table.add(method, path, handler) }
-    pub fn get(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Get, path, handler) }
-    pub fn head(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Head, path, handler) }
-    pub fn post(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Post, path, handler) }
-    pub fn put(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Put, path, handler) }
-    pub fn patch(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Patch, path, handler) }
-    pub fn delete(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Delete, path, handler) }
-    pub fn options(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> { self.add(Method.Options, path, handler) }
+    pub fn add(&mut self, method: Method, path: String, handler: Handler<C>) -> Result<
+        Unit,
+        RouteError
+    > {
+        self.table.add(method, path, handler)
+    }
+    pub fn get(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
+        self.add(Method.Get, path, handler)
+    }
+    pub fn head(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
+        self.add(Method.Head, path, handler)
+    }
+    pub fn post(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
+        self.add(Method.Post, path, handler)
+    }
+    pub fn put(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
+        self.add(Method.Put, path, handler)
+    }
+    pub fn patch(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
+        self.add(Method.Patch, path, handler)
+    }
+    pub fn delete(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
+        self.add(Method.Delete, path, handler)
+    }
+    pub fn options(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
+        self.add(Method.Options, path, handler)
+    }
 }
 impl<A, S, C> StateRouter<A, S, C> {
-    pub fn add(&mut self, method: Method, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.table.add(method, path, handler) }
-    pub fn get(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Get, path, handler) }
-    pub fn head(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Head, path, handler) }
-    pub fn post(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Post, path, handler) }
-    pub fn put(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Put, path, handler) }
-    pub fn patch(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Patch, path, handler) }
-    pub fn delete(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Delete, path, handler) }
-    pub fn options(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> { self.add(Method.Options, path, handler) }
+    pub fn add(&mut self, method: Method, path: String, handler: StateHandler<A, C>) -> Result<
+        Unit,
+        RouteError
+    > {
+        self.table.add(method, path, handler)
+    }
+    pub fn get(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> {
+        self.add(Method.Get, path, handler)
+    }
+    pub fn head(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> {
+        self.add(Method.Head, path, handler)
+    }
+    pub fn post(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> {
+        self.add(Method.Post, path, handler)
+    }
+    pub fn put(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> {
+        self.add(Method.Put, path, handler)
+    }
+    pub fn patch(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> {
+        self.add(Method.Patch, path, handler)
+    }
+    pub fn delete(&mut self, path: String, handler: StateHandler<A, C>) ->
+        Result<Unit, RouteError> {
+        self.add(Method.Delete, path, handler)
+    }
+    pub fn options(&mut self, path: String, handler: StateHandler<A, C>) ->
+        Result<Unit, RouteError> {
+        self.add(Method.Options, path, handler)
+    }
 }
 impl<S: ContextSource<Context = C>, C> Service for ContextRouter<S, C> {
-    fn share(&self) @suspends -> Self { ContextRouter { source: self.source.share(), table: self.table.copy_routes() } }
+    fn share(&self) @suspends -> Self {
+        ContextRouter { source: self.source.share(), table: self.table.copy_routes() }
+    }
     fn handle(&self, request: Request<Unit>) @suspends -> Response {
         let path = request.path()
         if let Some(handler) = self.table.select(&path, request.method) {
@@ -583,8 +1013,14 @@ impl<S: ContextSource<Context = C>, C> Service for ContextRouter<S, C> {
         self.table.unmatched(&path)
     }
 }
-impl<A: Application<RequestContext = C>, S: ContextSource<Context = C>, C> Service for StateRouter<A, S, C> {
-    fn share(&self) @suspends -> Self { StateRouter { app: self.app, source: self.source.share(), table: self.table.copy_routes() } }
+impl<A: Application<RequestContext = C>, S: ContextSource<Context = C>, C> Service for StateRouter<
+    A,
+    S,
+    C
+> {
+    fn share(&self) @suspends -> Self {
+        StateRouter { app: self.app, source: self.source.share(), table: self.table.copy_routes() }
+    }
     fn handle(&self, request: Request<Unit>) @suspends -> Response {
         let path = request.path()
         if let Some(handler) = self.table.select(&path, request.method) {
@@ -595,94 +1031,249 @@ impl<A: Application<RequestContext = C>, S: ContextSource<Context = C>, C> Servi
 }
 struct FunctionService { callback: fn(Request<Unit>) @suspends -> Response }
 impl Service for FunctionService {
-    fn share(&self) @suspends -> Self { FunctionService { callback: self.callback } }
-    fn handle(&self, request: Request<Unit>) @suspends -> Response { let call = self.callback; call(request) }
+    fn share(&self) @suspends -> Self {
+        FunctionService { callback: self.callback }
+    }
+    fn handle(&self, request: Request<Unit>) @suspends -> Response {
+        let call = self.callback
+        call(request)
+    }
 }
-fn connection<S: Service>(config: Option<tls.ServerConfig>, stream: TcpStream, stop: shutdown.Controller, options: Options, service: S, _permit: admission.Permit) @suspends {
+
+fn connection<S: Service>(
+    config: Option<tls.ServerConfig>,
+    stream: TcpStream,
+    stop: shutdown.Controller,
+    options: Options,
+    service: S,
+    _permit: admission.Permit
+) @suspends {
     let stopping = &stop
     var io = match config {
         None => Plain(BufferedTcp.new(stream)),
-        Some(config) => match race { secure(&config, stream), { stopping.wait(); None }, handshake_timeout(options.read_timeout) } {
-            Some(wire) => wire, None => return
+        Some(config) => match race {
+            secure(&config, stream),
+            {
+                stopping.wait()
+                None
+            },
+            handshake_timeout(options.read_timeout)
+        } {
+            Some(wire) => wire,
+            None => return
         }
     }
     let context = RequestLog { request_id: uuid.v4()!, logger: options.logger }
     let read_started = time.Instant.now()
-    let input = race { read_request(&mut io, context), { stopping.wait(); Err(ReadFailure.Stopped) }, read_timeout(options.read_timeout) }
+    let input = race {
+        read_request(&mut io, context),
+        {
+            stopping.wait()
+            Err(ReadFailure.Stopped)
+        },
+        read_timeout(options.read_timeout)
+    }
     let read_finished = time.Instant.now()
     let read_duration = read_finished.duration_since(read_started)
     // This check admits a complete request. Shutdown lets its handler and write finish.
-    if stop.requested() { return }
+    if stop.requested() {
+        return
+    }
     match input {
         Err(reason) => {
             let (code, label) = match reason {
-                Bad => (400, "Bad Request"), HeadLimit => (431, "Request Header Fields Too Large"),
-                BodyLimit => (413, "Content Too Large"), Timeout => (408, "Request Timeout"),
-                Unsupported => (501, "Not Implemented"), Expectation => (417, "Expectation Failed"), Stopped => return, Network => return
+                Bad => (400, "Bad Request"),
+                HeadLimit => (431, "Request Header Fields Too Large"),
+                BodyLimit => (413, "Content Too Large"),
+                Timeout => (408, "Request Timeout"),
+                Unsupported => (501, "Not Implemented"),
+                Expectation => (417, "Expectation Failed"),
+                Stopped => return,
+                Network => return
             }
-            respond(io, context, read_duration, None, None, code, label, "text/plain", [], [], false, options.write_timeout)
+            respond(
+                io,
+                context,
+                read_duration,
+                None,
+                None,
+                code,
+                label,
+                "text/plain",
+                [],
+                [],
+                false,
+                options.write_timeout
+            )
         }
         result.Ok(request) => {
             let head = request.method == Method.Head
-            let request_info = if context.logger.enabled(log.Level.Info) { Some((request.method, request.path())) } else { None }
+            let request_info = if context.logger.enabled(log.Level.Info) {
+                Some((request.method, request.path()))
+            } else {
+                None
+            }
             let Response { status, content_type, headers, body } = service.handle(request)
             let (code, label) = status_line(status)
-            let media = match content_type { Text => "text/plain; charset=utf-8", Json => "application/json", Bytes => "application/octet-stream", Custom(media) => media.value }
-            respond(io, context, read_duration, Some(read_finished), request_info, code, label, media, headers, body, head, options.write_timeout)
+            let media = match content_type {
+                Text => "text/plain; charset=utf-8",
+                Json => "application/json",
+                Bytes => "application/octet-stream",
+                Custom(media) => media.value
+            }
+            respond(
+                io,
+                context,
+                read_duration,
+                Some(read_finished),
+                request_info,
+                code,
+                label,
+                media,
+                headers,
+                body,
+                head,
+                options.write_timeout
+            )
         }
     }
 }
-fn listen<S: Service>(config: Option<tls.ServerConfig>, var listener: TcpListener, stop: &shutdown.Controller, options: Options, service: S) @suspends -> Result<Unit, ServeError> {
+
+fn listen<S: Service>(
+    config: Option<tls.ServerConfig>,
+    var listener: TcpListener,
+    stop: &shutdown.Controller,
+    options: Options,
+    service: S
+) @suspends -> Result<Unit, ServeError> {
     let pool = admission.create(options.max_connections, 0)
     let clients = pool.handle()
     var failed = false
     scope {
         while !stop.requested() {
             let stream = match listener.accept_until(stop) {
-                result.Ok(Some(stream)) => stream, result.Ok(None) => break, Err(_) => { failed = true; break }
+                result.Ok(Some(stream)) => stream,
+                result.Ok(None) => break,
+                Err(_) => {
+                    failed = true
+                    break
+                }
             }
-            if stop.requested() { break }
-            let permit = match clients.try_acquire() { result.Ok(p) => p, Err(_) => continue }
+            if stop.requested() {
+                break
+            }
+            let permit = match clients.try_acquire() {
+                result.Ok(p) => p,
+                Err(_) => continue
+            }
             let shared = stop.share()
-            let transport = match &config { Some(config) => Some(config.share()), None => None }
+            let transport = match &config {
+                Some(config) => Some(config.share()),
+                None => None
+            }
             let worker = service.share()
-            branch { isolate { connection(transport, stream, shared, options, worker, permit) }; }
+            branch {
+                isolate {
+                    connection(transport, stream, shared, options, worker, permit)
+                };
+            }
         }
-        listener.close();
+        listener.close()
         stop.request();
     }
-    if failed { Err(ServeError.AcceptFailed) } else { result.Ok({}) }
-}
-fn deadline(stop: &shutdown.Controller, grace: Duration) @suspends -> Result<Unit, ServeError> {
-    stop.wait(); task.sleep(grace); Err(ServeError.Deadline)
-}
-fn run<S: Service>(config: Option<tls.ServerConfig>, listener: TcpListener, stop: &shutdown.Controller, options: Options, service: S) @suspends -> Result<Unit, ServeError> {
-    if options.max_connections == 0 || options.read_timeout.is_zero() || options.write_timeout.is_zero() { return Err(ServeError.InvalidOptions) }
-    race { listen(config, listener, stop, options, service), deadline(stop, options.grace) }
+    if failed {
+        Err(ServeError.AcceptFailed)
+    } else {
+        result.Ok({})
+    }
 }
 
-pub fn serve(listener: TcpListener, stop: &shutdown.Controller, options: Options, handler: fn(Request<Unit>) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
+fn deadline(stop: &shutdown.Controller, grace: Duration) @suspends -> Result<Unit, ServeError> {
+    stop.wait()
+    task.sleep(grace)
+    Err(ServeError.Deadline)
+}
+
+fn run<S: Service>(
+    config: Option<tls.ServerConfig>,
+    listener: TcpListener,
+    stop: &shutdown.Controller,
+    options: Options,
+    service: S
+) @suspends -> Result<Unit, ServeError> {
+    if options.max_connections == 0 || options.read_timeout.is_zero() || options
+        .write_timeout
+        .is_zero() {
+        return Err(ServeError.InvalidOptions)
+    }
+    race {
+        listen(config, listener, stop, options, service),
+        deadline(stop, options.grace)
+    }
+}
+
+pub fn serve(
+    listener: TcpListener,
+    stop: &shutdown.Controller,
+    options: Options,
+    handler: fn(Request<Unit>) @suspends -> Response
+) @suspends -> Result<Unit, ServeError> {
     serve_with(listener, stop, options, FunctionService { callback: handler })
 }
-pub fn serve_tls(listener: TcpListener, config: tls.ServerConfig, stop: &shutdown.Controller, options: Options, handler: fn(Request<Unit>) @suspends -> Response) @suspends -> Result<Unit, ServeError> {
+
+pub fn serve_tls(
+    listener: TcpListener,
+    config: tls.ServerConfig,
+    stop: &shutdown.Controller,
+    options: Options,
+    handler: fn(Request<Unit>) @suspends -> Response
+) @suspends -> Result<Unit, ServeError> {
     serve_tls_with(listener, config, stop, options, FunctionService { callback: handler })
 }
 
-pub fn serve_with<S: Service>(listener: TcpListener, stop: &shutdown.Controller, options: Options, service: S) @suspends -> Result<Unit, ServeError> {
+pub fn serve_with<S: Service>(
+    listener: TcpListener,
+    stop: &shutdown.Controller,
+    options: Options,
+    service: S
+) @suspends -> Result<Unit, ServeError> {
     run(None, listener, stop, options, service)
 }
-pub fn serve_tls_with<S: Service>(listener: TcpListener, config: tls.ServerConfig, stop: &shutdown.Controller, options: Options, service: S) @suspends -> Result<Unit, ServeError> {
+
+pub fn serve_tls_with<S: Service>(
+    listener: TcpListener,
+    config: tls.ServerConfig,
+    stop: &shutdown.Controller,
+    options: Options,
+    service: S
+) @suspends -> Result<Unit, ServeError> {
     run(Some(config), listener, stop, options, service)
 }
 
 // One origin per client. Each call opens a fresh connection and sends once.
-pub enum ClientError { InvalidRequest, Connect(tcp.EndpointError), Handshake(tls.TlsError), ConnectTimeout, ExchangeTimeout, Transport, InvalidResponse, SizeLimit, UnsupportedFraming }
+pub enum ClientError {
+    InvalidRequest,
+    Connect(tcp.EndpointError),
+    Handshake(tls.TlsError),
+    ConnectTimeout,
+    ExchangeTimeout,
+    Transport,
+    InvalidResponse,
+    SizeLimit,
+    UnsupportedFraming
+}
 impl Show for ClientError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         match self {
             InvalidRequest => output.push_str("invalid HTTP request")
-            Connect(error) => { output.push_str("HTTP connection failed: "); error.show(output) }
-            Handshake(error) => { output.push_str("HTTP TLS handshake failed: "); error.show(output) }
+            Connect(error) => {
+                output.push_str("HTTP connection failed: ")
+                error.show(output)
+            }
+            Handshake(error) => {
+                output.push_str("HTTP TLS handshake failed: ")
+                error.show(output)
+            }
             ConnectTimeout => output.push_str("HTTP connection timed out")
             ExchangeTimeout => output.push_str("HTTP exchange timed out")
             Transport => output.push_str("HTTP transport failed")
@@ -695,187 +1286,402 @@ impl Show for ClientError {
 
 pub struct ClientResponse { pub status: UInt16, pub headers: Array<Header>, pub body: Array<UInt8> }
 pub struct Client {
-    host: String, port: UInt16, config: Option<tls.ClientConfig>,
-    pub connect_timeout: Duration, pub exchange_timeout: Duration, pub max_body: UInt64
+    host: String,
+    port: UInt16,
+    config: Option<tls.ClientConfig>,
+    pub connect_timeout: Duration,
+    pub exchange_timeout: Duration,
+    pub max_body: UInt64
 }
-fn make_client(host: String, port: UInt16, config: Option<tls.ClientConfig>) -> Result<Client, ClientError> {
-    if port == 0 || host.byte_length() > 253 || host.find(":").is_some() || !valid_host(&host) { return Err(InvalidRequest) }
-    result.Ok(Client { host, port, config, connect_timeout: 10s, exchange_timeout: 10s, max_body: BODY_LIMIT })
+
+fn make_client(host: String, port: UInt16, config: Option<tls.ClientConfig>) -> Result<
+    Client,
+    ClientError
+> {
+    if port == 0 || host.byte_length() > 253 || host.find(":").is_some() || !valid_host(&host) {
+        return Err(InvalidRequest)
+    }
+    result.Ok(
+        Client {
+            host,
+            port,
+            config,
+            connect_timeout: 10s,
+            exchange_timeout: 10s,
+            max_body: BODY_LIMIT
+        }
+    )
 }
+
 impl Client {
-    pub fn http(host: String, port: UInt16) -> Result<Self, ClientError> { make_client(host, port, None) }
-    pub fn https(host: String, port: UInt16, config: tls.ClientConfig) -> Result<Self, ClientError> { make_client(host, port, Some(config)) }
+    pub fn http(host: String, port: UInt16) -> Result<Self, ClientError> {
+        make_client(host, port, None)
+    }
+    pub fn https(host: String, port: UInt16, config: tls.ClientConfig) ->
+        Result<Self, ClientError> {
+        make_client(host, port, Some(config))
+    }
     fn open(&self) @suspends -> Result<Wire, ClientError> {
-        let socket = match tcp.connect(&self.host, self.port) { result.Ok(s) => s, Err(e) => return Err(Connect(e)) }
+        let socket = match tcp.connect(&self.host, self.port) {
+            result.Ok(s) => s,
+            Err(e) => return Err(Connect(e))
+        }
         match &self.config {
             None => result.Ok(Plain(BufferedTcp.new(socket))),
-            Some(config) => match config.connect(socket, &self.host) { result.Ok(s) => result.Ok(Secure(s)), Err(e) => Err(Handshake(e)) }
+            Some(config) => match config.connect(socket, &self.host) {
+                result.Ok(s) => result.Ok(Secure(s)),
+                Err(e) => Err(Handshake(e))
+            }
         }
     }
     pub fn get(&self, target: String) @suspends -> Result<ClientResponse, ClientError> {
         self.request(Method.Get, target, [], [])
     }
-    pub fn post_json(&self, target: String, json: String) @suspends -> Result<ClientResponse, ClientError> {
-        self.request(Method.Post, target, [Header { name: "Content-Type", value: "application/json" }], json.into_bytes())
+    pub fn post_json(&self, target: String, json: String) @suspends -> Result<
+        ClientResponse,
+        ClientError
+    > {
+        self.request(
+            Method.Post,
+            target,
+            [Header { name: "Content-Type", value: "application/json" }],
+            json.into_bytes()
+        )
     }
-    pub fn request(&self, method: Method, target: String, headers: Array<Header>, body: Array<UInt8>) @suspends -> Result<ClientResponse, ClientError> {
-        if self.connect_timeout.is_zero() || self.exchange_timeout.is_zero() || self.max_body > BODY_LIMIT { return Err(InvalidRequest) }
+    pub fn request(
+        &self,
+        method: Method,
+        target: String,
+        headers: Array<Header>,
+        body: Array<UInt8>
+    ) @suspends -> Result<ClientResponse, ClientError> {
+        if self.connect_timeout.is_zero() || self.exchange_timeout.is_zero() || self.max_body >
+            BODY_LIMIT {
+            return Err(InvalidRequest)
+        }
         let head = client_head(self.host.clone(), self.port, method, target, headers, body.len())?
-        let wire = match race { self.open(), connect_deadline(self.connect_timeout) } { result.Ok(io) => io, Err(e) => return Err(e) }
-        let head_only = match method { Head => true, _ => false }
-        race { exchange(wire, head, body, self.max_body, head_only), exchange_deadline(self.exchange_timeout) }
+        let wire = match race {
+            self.open(),
+            connect_deadline(self.connect_timeout)
+        } {
+            result.Ok(io) => io,
+            Err(e) => return Err(e)
+        }
+        let head_only = match method {
+            Head => true,
+            _ => false
+        }
+        race {
+            exchange(wire, head, body, self.max_body, head_only),
+            exchange_deadline(self.exchange_timeout)
+        }
     }
 }
-fn connect_deadline(timeout: Duration) @suspends -> Result<Wire, ClientError> { task.sleep(timeout); Err(ConnectTimeout) }
-fn exchange_deadline(timeout: Duration) @suspends -> Result<ClientResponse, ClientError> { task.sleep(timeout); Err(ExchangeTimeout) }
+
+fn connect_deadline(timeout: Duration) @suspends -> Result<Wire, ClientError> {
+    task.sleep(timeout)
+    Err(ConnectTimeout)
+}
+
+fn exchange_deadline(timeout: Duration) @suspends -> Result<ClientResponse, ClientError> {
+    task.sleep(timeout)
+    Err(ExchangeTimeout)
+}
+
 fn reserved_field(name: &String) -> Bool {
-    name == "host" || name == "content-length" || name == "connection" || name == "transfer-encoding" ||
+    name == "host" || name == "content-length" || name == "connection" || name ==
+        "transfer-encoding" ||
         name == "expect" || name == "trailer" || name == "upgrade"
 }
+
 fn outgoing_field(field: &Header, seen_type: &mut Bool) -> Result<String, ClientError> {
     // Validate precisely the bytes that will be sent before opening a socket.
     let raw = "{field.name}: {field.value}"
-    let checked = match header(raw.clone().into_bytes()) { result.Ok(h) => h, Err(_) => return Err(InvalidRequest) }
-    if field.name.find(":").is_some() || reserved_field(&checked.name) { return Err(InvalidRequest) }
+    let checked = match header(raw.clone().into_bytes()) {
+        result.Ok(h) => h,
+        Err(_) => return Err(InvalidRequest)
+    }
+    if field.name.find(":").is_some() || reserved_field(&checked.name) {
+        return Err(InvalidRequest)
+    }
     if checked.name == "content-type" {
-        if *seen_type || !valid_media_type(&checked.value) { return Err(InvalidRequest) }
+        if *seen_type || !valid_media_type(&checked.value) {
+            return Err(InvalidRequest)
+        }
         *seen_type = true
     }
     result.Ok(raw)
 }
-fn client_head(host: String, port: UInt16, method: Method, target: String, headers: Array<Header>, size: UInt64) -> Result<String, ClientError> {
-    if !target.starts_with("/") || target.find("#").is_some() { return Err(InvalidRequest) }
-    if target.byte_length() > HEAD_LIMIT || size > BODY_LIMIT || headers.len() > 60 { return Err(SizeLimit) }
-    for b in target.bytes() { if *b <= 32 || *b > 126 { return Err(InvalidRequest) } }
+
+fn client_head(
+    host: String,
+    port: UInt16,
+    method: Method,
+    target: String,
+    headers: Array<Header>,
+    size: UInt64
+) -> Result<String, ClientError> {
+    if !target.starts_with("/") || target.find("#").is_some() {
+        return Err(InvalidRequest)
+    }
+    if target.byte_length() > HEAD_LIMIT || size > BODY_LIMIT || headers.len() > 60 {
+        return Err(SizeLimit)
+    }
+    for b in target.bytes() {
+        if *b <= 32 || *b > 126 {
+            return Err(InvalidRequest)
+        }
+    }
     let verb = method_name(method)
     var head = "{verb} {target} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n"
     let send_length = match method {
-        Get => false, Head => false, Delete => size != 0, _ => true
+        Get => false,
+        Head => false,
+        Delete => size != 0,
+        _ => true
     }
-    if send_length { head = "{head}Content-Length: {size}\r\n" }
-    else if size != 0 { return Err(InvalidRequest) }
+    if send_length {
+        head = "{head}Content-Length: {size}\r\n"
+    } else if size != 0 {
+        return Err(InvalidRequest)
+    }
     var seen_type = false
     var total = head.byte_length() + 2
     var builder = string.StringBuilder.new()
     builder.push_str(&head)
     for field in &headers {
         total += field.name.byte_length() + field.value.byte_length() + 4
-        if total > HEAD_LIMIT { return Err(SizeLimit) }
+        if total > HEAD_LIMIT {
+            return Err(SizeLimit)
+        }
         let raw = outgoing_field(field, &mut seen_type)?
         builder.push_str(&raw)
         builder.push_str("\r\n")
     }
-    if total > HEAD_LIMIT { return Err(SizeLimit) }
+    if total > HEAD_LIMIT {
+        return Err(SizeLimit)
+    }
     builder.push_str("\r\n")
     result.Ok(builder.finish())
 }
-fn response_line(stream: &mut Wire, budget: &mut UInt64) @suspends -> Result<Array<UInt8>, ClientError> {
-    match line(stream, budget) { result.Ok(bytes) => result.Ok(bytes), Err(HeadLimit) => Err(SizeLimit), Err(Network) => Err(Transport), _ => Err(InvalidResponse) }
+
+fn response_line(stream: &mut Wire, budget: &mut UInt64) @suspends -> Result<
+    Array<UInt8>,
+    ClientError
+> {
+    match line(stream, budget) {
+        result.Ok(bytes) => result.Ok(bytes),
+        Err(HeadLimit) => Err(SizeLimit),
+        Err(Network) => Err(Transport),
+        _ => Err(InvalidResponse)
+    }
 }
+
 fn status_code(bytes: &Array<UInt8>) -> Result<UInt16, ClientError> {
-    if bytes.len() < 13 || bytes[12] != 32 { return Err(InvalidResponse) }
+    if bytes.len() < 13 || bytes[12] != 32 {
+        return Err(InvalidResponse)
+    }
     let version = "HTTP/1.1 ".into_bytes()
-    for i in uint64(0) .. 9 { if bytes[i] != version[i] { return Err(InvalidResponse) } }
+    for i in uint64(0) .. 9 {
+        if bytes[i] != version[i] {
+            return Err(InvalidResponse)
+        }
+    }
     var code: UInt16 = 0
     for i in uint64(9) .. 12 {
         let b = bytes[i]
-        if b < 48 || b > 57 { return Err(InvalidResponse) }
+        if b < 48 || b > 57 {
+            return Err(InvalidResponse)
+        }
         code = code * 10 + uint16(b - 48)
     }
-    for i in 13 .. bytes.len() { if bytes[i] < 32 && bytes[i] != 9 || bytes[i] == 127 { return Err(InvalidResponse) } }
-    if code < 100 || code > 599 { return Err(InvalidResponse) }
+    for i in 13 .. bytes.len() {
+        if bytes[i] < 32 && bytes[i] != 9 || bytes[i] == 127 {
+            return Err(InvalidResponse)
+        }
+    }
+    if code < 100 || code > 599 {
+        return Err(InvalidResponse)
+    }
     result.Ok(code)
 }
+
 fn exact_body(io: &mut Wire, n: UInt64) @suspends -> Result<Array<UInt8>, ClientError> {
-    match io.read_body(n) { result.Ok(bytes) => result.Ok(bytes), Err(Network) => Err(Transport), Err(_) => Err(InvalidResponse) }
+    match io.read_body(n) {
+        result.Ok(bytes) => result.Ok(bytes),
+        Err(Network) => Err(Transport),
+        Err(_) => Err(InvalidResponse)
+    }
 }
+
 fn chunked_body(io: &mut Wire, limit: UInt64) @suspends -> Result<Array<UInt8>, ClientError> {
     var body: Array<UInt8> = []
     var metadata = HEAD_LIMIT
     while true {
         let digits = response_line(io, &mut metadata)?
-        if digits.is_empty() { return Err(InvalidResponse) }
+        if digits.is_empty() {
+            return Err(InvalidResponse)
+        }
         var n: UInt64 = 0
         for b in &digits {
-            let digit = if *b >= 48 && *b <= 57 { *b - 48 }
-                else if *b >= 65 && *b <= 70 { *b - 55 }
-                else if *b >= 97 && *b <= 102 { *b - 87 }
-                else if *b == 59 { return Err(UnsupportedFraming) }
-                else { return Err(InvalidResponse) }
+            let digit = if *b >= 48 && *b <= 57 {
+                *b - 48
+            } else if *b >= 65 && *b <= 70 {
+                *b - 55
+            } else if *b >= 97 && *b <= 102 {
+                *b - 87
+            } else if *b == 59 {
+                return Err(UnsupportedFraming)
+            } else {
+                return Err(InvalidResponse)
+            }
             n = n * 16 + uint64(digit)
-            if n > limit - body.len() { return Err(SizeLimit) }
+            if n > limit - body.len() {
+                return Err(SizeLimit)
+            }
         }
         if n == 0 {
-            if !response_line(io, &mut metadata)?.is_empty() { return Err(UnsupportedFraming) }
+            if !response_line(io, &mut metadata)?.is_empty() {
+                return Err(UnsupportedFraming)
+            }
             return result.Ok(body)
         }
         let chunk = exact_body(io, n)?
         array.extend_bytes(&mut body, chunk.slice(0, n), 0, n)
-        if !response_line(io, &mut metadata)?.is_empty() { return Err(InvalidResponse) }
+        if !response_line(io, &mut metadata)?.is_empty() {
+            return Err(InvalidResponse)
+        }
     }
 }
+
 fn eof_body(io: &mut Wire, limit: UInt64) @suspends -> Result<Array<UInt8>, ClientError> {
     var body: Array<UInt8> = []
     while true {
         let left = limit - body.len()
-        let n = if left >= 16384 { 16384 } else { left + 1 }
-        let part = match io {
-            Plain(s) => match s.read(n) { result.Ok(b) => b, Err(_) => return Err(Transport) },
-            Secure(s) => match s.read(n) { result.Ok(b) => b, Err(_) => return Err(Transport) }
+        let n = if left >= 16384 {
+            16384
+        } else {
+            left + 1
         }
-        if part.is_empty() { return result.Ok(body) }
-        if part.len() > left { return Err(SizeLimit) }
+        let part = match io {
+            Plain(s) => match s.read(n) {
+                result.Ok(b) => b,
+                Err(_) => return Err(Transport)
+            },
+            Secure(s) => match s.read(n) {
+                result.Ok(b) => b,
+                Err(_) => return Err(Transport)
+            }
+        }
+        if part.is_empty() {
+            return result.Ok(body)
+        }
+        if part.len() > left {
+            return Err(SizeLimit)
+        }
         array.extend_bytes(&mut body, part.slice(0, part.len()), 0, part.len())
     }
 }
+
 enum BodyMode { ToEof, Fixed(UInt64), Chunks }
 struct ReplyHead { status: UInt16, fields: Array<Header>, mode: BodyMode }
-fn response_mode(previous: BodyMode, field: &Header, status: UInt16, head_only: Bool) -> Result<BodyMode, ClientError> {
-    if field.name != "content-length" && field.name != "transfer-encoding" { return result.Ok(previous) }
-    if status < 200 || status == 204 { return Err(InvalidResponse) }
-    match previous { ToEof => {}, _ => return Err(InvalidResponse) }
+
+fn response_mode(previous: BodyMode, field: &Header, status: UInt16, head_only: Bool) -> Result<
+    BodyMode,
+    ClientError
+> {
+    if field.name != "content-length" && field.name != "transfer-encoding" {
+        return result.Ok(previous)
+    }
+    if status < 200 || status == 204 {
+        return Err(InvalidResponse)
+    }
+    match previous {
+        ToEof => {},
+        _ => return Err(InvalidResponse)
+    }
     if field.name == "content-length" {
         if head_only || status == 304 {
-            if field.value.is_empty() { return Err(InvalidResponse) }
-            for b in field.value.bytes() { if *b < 48 || *b > 57 { return Err(InvalidResponse) } }
+            if field.value.is_empty() {
+                return Err(InvalidResponse)
+            }
+            for b in field.value.bytes() {
+                if *b < 48 || *b > 57 {
+                    return Err(InvalidResponse)
+                }
+            }
             return result.Ok(Fixed(0))
         }
         return match content_length(&field.value) {
-            result.Ok(n) => result.Ok(Fixed(n)), Err(BodyLimit) => Err(SizeLimit), _ => Err(InvalidResponse)
+            result.Ok(n) => result.Ok(Fixed(n)),
+            Err(BodyLimit) => Err(SizeLimit),
+            _ => Err(InvalidResponse)
         }
     }
     let encoding = field.value.bytes()
     let expected = "chunked".into_bytes()
-    if field.value.byte_length() != 7 { return Err(UnsupportedFraming) }
-    for i in uint64(0) .. 7 { if (encoding[i] | 32) != expected[i] { return Err(UnsupportedFraming) } }
+    if field.value.byte_length() != 7 {
+        return Err(UnsupportedFraming)
+    }
+    for i in uint64(0) .. 7 {
+        if (encoding[i] | 32) != expected[i] {
+            return Err(UnsupportedFraming)
+        }
+    }
     result.Ok(Chunks)
 }
-fn reply_head(io: &mut Wire, budget: &mut UInt64, head_only: Bool) @suspends -> Result<ReplyHead, ClientError> {
+
+fn reply_head(io: &mut Wire, budget: &mut UInt64, head_only: Bool) @suspends -> Result<
+    ReplyHead,
+    ClientError
+> {
     let first = response_line(io, budget)?
     let status = status_code(&first)?
-    if status == 101 { return Err(UnsupportedFraming) }
+    if status == 101 {
+        return Err(UnsupportedFraming)
+    }
     var fields: Array<Header> = []
     var mode = BodyMode.ToEof
     while true {
         let bytes = response_line(io, budget)?
-        if bytes.is_empty() { break }
-        if fields.len() >= 64 { return Err(SizeLimit) }
-        let field = match header(bytes) { result.Ok(h) => h, Err(_) => return Err(InvalidResponse) }
+        if bytes.is_empty() {
+            break
+        }
+        if fields.len() >= 64 {
+            return Err(SizeLimit)
+        }
+        let field = match header(bytes) {
+            result.Ok(h) => h,
+            Err(_) => return Err(InvalidResponse)
+        }
         mode = response_mode(mode, &field, status, head_only)?
         fields.push(field)
     }
     result.Ok(ReplyHead { status, fields, mode })
 }
-fn exchange(var io: Wire, head: String, body: Array<UInt8>, limit: UInt64, head_only: Bool) @suspends -> Result<ClientResponse, ClientError> {
-    if !io.write(head.into_bytes()) || !io.write(body) { return Err(Transport) }
+
+fn exchange(var io: Wire, head: String, body: Array<UInt8>, limit: UInt64, head_only: Bool) @suspends ->
+    Result<ClientResponse, ClientError> {
+    if !io.write(head.into_bytes()) || !io.write(body) {
+        return Err(Transport)
+    }
     var budget = HEAD_LIMIT
     while true {
         let ReplyHead { status, fields, mode } = reply_head(&mut io, &mut budget, head_only)?
-        if status < 200 { continue }
-        let data: Array<UInt8> = if head_only || status == 204 || status == 304 { [] } else {
+        if status < 200 {
+            continue
+        }
+        let data: Array<UInt8> = if head_only || status == 204 || status == 304 {
+            []
+        } else {
             match mode {
                 Chunks => chunked_body(&mut io, limit)?,
-                Fixed(n) => { if n > limit { return Err(SizeLimit) }; exact_body(&mut io, n)? },
+                Fixed(n) => {
+                    if n > limit {
+                        return Err(SizeLimit)
+                    };
+                    exact_body(&mut io, n)?
+                },
                 ToEof => eof_body(&mut io, limit)?
             }
         }

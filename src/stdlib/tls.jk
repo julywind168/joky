@@ -1,4 +1,18 @@
 //! TLS connections and configuration.
+//!
+//! A client configuration chooses trust roots; `connect` also needs a TCP
+//! stream and the server name to verify. A server configuration requires a
+//! certificate chain and private key. Handshake and stream operations suspend
+//! and return `TlsError`. This example prepares trust roots without connecting.
+//!
+//! ```joky
+//! import joky/tls
+//!
+//! fn main() @suspends {
+//!     let config = tls.ClientConfig.web_roots()
+//!     assert(config.is_ok(), "built-in trust roots are available")
+//! }
+//! ```
 
 // The record engine never owns the socket. All network waits use the TCP reactor.
 import joky/string.{type StringBuilder}
@@ -8,19 +22,36 @@ import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 import joky/tcp.{type TcpStream, type IoError}
 
-extern fn __tls_client_config(bundled: UInt64, pem: Array<UInt8>, error: &mut UInt64) @suspends -> tls.ClientOwner
-extern fn __tls_server_config(chain: Array<UInt8>, key: Array<UInt8>, error: &mut UInt64) @suspends -> tls.ServerOwner
+extern fn __tls_client_config(bundled: UInt64, pem: Array<UInt8>, error: &mut UInt64) @suspends ->
+    tls.ClientOwner
+extern fn __tls_server_config(chain: Array<UInt8>, key: Array<UInt8>, error: &mut UInt64) @suspends ->
+    tls.ServerOwner
 extern fn __tls_server_share(config: &tls.ServerOwner) @suspends -> tls.ServerOwner
-extern fn __tls_client(config: &tls.ClientOwner, name: &String, error: &mut UInt64) @suspends -> tls.SessionOwner
+extern fn __tls_client(config: &tls.ClientOwner, name: &String, error: &mut UInt64) @suspends ->
+    tls.SessionOwner
 extern fn __tls_server(config: &tls.ServerOwner, error: &mut UInt64) @suspends -> tls.SessionOwner
 extern fn __tls_feed(session: &mut tls.SessionOwner, bytes: Array<UInt8>) @suspends -> UInt64
 extern fn __tls_drain(session: &mut tls.SessionOwner) @suspends -> Array<UInt8>
-extern fn __tls_read(session: &mut tls.SessionOwner, limit: UInt64, delimiter: UInt64, error: &mut UInt64) @suspends -> Array<UInt8>
+extern fn __tls_read(
+    session: &mut tls.SessionOwner,
+    limit: UInt64,
+    delimiter: UInt64,
+    error: &mut UInt64
+) @suspends -> Array<UInt8>
 extern fn __tls_write(session: &mut tls.SessionOwner, bytes: Array<UInt8>) @suspends -> UInt64
 extern fn __tls_handshaking(session: &mut tls.SessionOwner) @suspends -> UInt64
 extern fn __tls_notify(session: &mut tls.SessionOwner) @suspends -> UInt64
 
-pub enum TlsError { InvalidConfig, InvalidName, Certificate, Protocol, Limit, Io(IoError), UnexpectedEof, Unusable }
+pub enum TlsError {
+    InvalidConfig,
+    InvalidName,
+    Certificate,
+    Protocol,
+    Limit,
+    Io(IoError),
+    UnexpectedEof,
+    Unusable
+}
 impl Show for TlsError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
@@ -41,115 +72,216 @@ pub struct ServerConfig { storage: tls.ServerOwner }
 pub struct TlsStream { socket: TcpStream, session: tls.SessionOwner, usable: Bool }
 const RECORD: UInt64 = 16384
 const MAX_IO: UInt64 = 1048576
+
 fn failure(code: UInt64) -> TlsError {
-    if code == 1 { InvalidConfig } else if code == 2 { InvalidName } else if code == 3 { Certificate }
-    else if code == 5 { Limit } else { Protocol }
+    if code == 1 {
+        InvalidConfig
+    } else if code == 2 {
+        InvalidName
+    } else if code == 3 {
+        Certificate
+    } else if code == 5 {
+        Limit
+    } else {
+        Protocol
+    }
 }
+
 fn client_config(bundled: UInt64, pem: Array<UInt8>) @suspends -> Result<ClientConfig, TlsError> {
     var error: UInt64 = 0
     let config = ClientConfig { storage: __tls_client_config(bundled, pem, &mut error) }
-    if error == 0 { Ok(config) } else { Err(failure(error)) }
+    if error == 0 {
+        Ok(config)
+    } else {
+        Err(failure(error))
+    }
 }
+
 impl ClientConfig {
-    pub fn web_roots() @suspends -> Result<Self, TlsError> { client_config(1, []) }
-    pub fn from_ca_pem(pem: Array<UInt8>) @suspends -> Result<Self, TlsError> { client_config(0, pem) }
-    pub fn connect(&self, socket: TcpStream, server_name: &String) @suspends -> Result<TlsStream, TlsError> {
+    pub fn web_roots() @suspends -> Result<Self, TlsError> {
+        client_config(1, [])
+    }
+    pub fn from_ca_pem(pem: Array<UInt8>) @suspends -> Result<Self, TlsError> {
+        client_config(0, pem)
+    }
+    pub fn connect(&self, socket: TcpStream, server_name: &String) @suspends -> Result<
+        TlsStream,
+        TlsError
+    > {
         var error: UInt64 = 0
         let session = __tls_client(&self.storage, server_name, &mut error)
-        if error != 0 { return Err(failure(error)) }
+        if error != 0 {
+            return Err(failure(error))
+        }
         handshake(socket, session)
     }
 }
 impl ServerConfig {
-    pub fn share(&self) @suspends -> Self { ServerConfig { storage: __tls_server_share(&self.storage) } }
+    pub fn share(&self) @suspends -> Self {
+        ServerConfig { storage: __tls_server_share(&self.storage) }
+    }
     pub fn from_pem(chain: Array<UInt8>, key: Array<UInt8>) @suspends -> Result<Self, TlsError> {
         var error: UInt64 = 0
         let config = ServerConfig { storage: __tls_server_config(chain, key, &mut error) }
-        if error == 0 { Ok(config) } else { Err(failure(error)) }
+        if error == 0 {
+            Ok(config)
+        } else {
+            Err(failure(error))
+        }
     }
     pub fn accept(&self, socket: TcpStream) @suspends -> Result<TlsStream, TlsError> {
         var error: UInt64 = 0
         let session = __tls_server(&self.storage, &mut error)
-        if error != 0 { return Err(failure(error)) }
+        if error != 0 {
+            return Err(failure(error))
+        }
         handshake(socket, session)
     }
 }
-fn handshake(socket: TcpStream, session: tls.SessionOwner) @suspends -> Result<TlsStream, TlsError> {
+
+fn handshake(socket: TcpStream, session: tls.SessionOwner) @suspends ->
+    Result<TlsStream, TlsError> {
     var stream = TlsStream { socket, session, usable: true }
     while true {
         stream.flush()?
-        if __tls_handshaking(&mut stream.session) == 0 { return Ok(stream) }
+        if __tls_handshaking(&mut stream.session) == 0 {
+            return Ok(stream)
+        }
         stream.receive_records()?
     }
 }
+
 impl TlsStream {
     fn flush(&mut self) @suspends -> Result<Unit, TlsError> {
         while true {
             let bytes = __tls_drain(&mut self.session)
-            if bytes.is_empty() { return Ok({}) }
-            if let Err(error) = self.socket.write_all(bytes) { return Err(Io(error)) }
+            if bytes.is_empty() {
+                return Ok({})
+            }
+            if let Err(error) = self.socket.write_all(bytes) {
+                return Err(Io(error))
+            }
         }
     }
     fn receive_records(&mut self) @suspends -> Result<Unit, TlsError> {
-        let bytes = match self.socket.read(RECORD) { Ok(bytes) => bytes, Err(error) => return Err(Io(error)) }
-        if bytes.is_empty() { return Err(UnexpectedEof) }
+        let bytes = match self.socket.read(RECORD) {
+            Ok(bytes) => bytes,
+            Err(error) => return Err(Io(error))
+        }
+        if bytes.is_empty() {
+            return Err(UnexpectedEof)
+        }
         let code = __tls_feed(&mut self.session, bytes)
-        if code != 0 { return Err(failure(code)) }
+        if code != 0 {
+            return Err(failure(code))
+        }
         Ok({})
     }
-    fn read_part(&mut self, limit: UInt64, delimiter: UInt64) @suspends -> Result<Array<UInt8>, TlsError> {
+    fn read_part(&mut self, limit: UInt64, delimiter: UInt64) @suspends -> Result<
+        Array<UInt8>,
+        TlsError
+    > {
         while true {
             self.flush()?
             var error: UInt64 = 0
-            let bytes = __tls_read(&mut self.session, if limit < RECORD { limit } else { RECORD }, delimiter, &mut error)
-            if error == 0 { return Ok(bytes) }
-            if error != 9 { return Err(failure(error)) }
+            let bytes = __tls_read(
+                &mut self.session,
+                if limit < RECORD {
+                    limit
+                } else {
+                    RECORD
+                },
+                delimiter,
+                &mut error
+            )
+            if error == 0 {
+                return Ok(bytes)
+            }
+            if error != 9 {
+                return Err(failure(error))
+            }
             self.receive_records()?
         }
     }
     pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, TlsError> {
-        if !self.usable { return Err(Unusable) }
-        if limit == 0 || limit > MAX_IO { return Err(Limit) }
+        if !self.usable {
+            return Err(Unusable)
+        }
+        if limit == 0 || limit > MAX_IO {
+            return Err(Limit)
+        }
         self.usable = false
         let bytes = self.read_part(limit, 256)?
         self.usable = true
         Ok(bytes)
     }
-    fn frame(&mut self, limit: UInt64, delimiter: UInt64) @suspends -> Result<Option<Array<UInt8>>, TlsError> {
-        if !self.usable { return Err(Unusable) }
-        if limit > MAX_IO || (limit == 0 && delimiter < 256) { return Err(Limit) }
+    fn frame(&mut self, limit: UInt64, delimiter: UInt64) @suspends -> Result<
+        Option<Array<UInt8>>,
+        TlsError
+    > {
+        if !self.usable {
+            return Err(Unusable)
+        }
+        if limit > MAX_IO || (limit == 0 && delimiter < 256) {
+            return Err(Limit)
+        }
         self.usable = false
         var result: Array<UInt8> = []
         while result.len() < limit {
             let part = self.read_part(limit - result.len(), delimiter)?
             let n = part.len()
             if n == 0 {
-                if !result.is_empty() { return Err(UnexpectedEof) }
+                if !result.is_empty() {
+                    return Err(UnexpectedEof)
+                }
                 self.usable = true
                 return Ok(None)
             }
             let found = uint64(part[n - 1]) == delimiter
             array.extend_bytes(&mut result, part.slice(0, n), 0, n)
-            if found { break }
-            if result.len() == limit && delimiter < 256 { self.usable = true; return Err(Limit) }
+            if found {
+                break
+            }
+            if result.len() == limit && delimiter < 256 {
+                self.usable = true
+                return Err(Limit)
+            }
         }
         self.usable = true
         Ok(Some(result))
     }
-    pub fn read_exact(&mut self, length: UInt64) @suspends -> Result<Option<Array<UInt8>>, TlsError> { self.frame(length, 256) }
-    pub fn read_until(&mut self, delimiter: UInt8, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, TlsError> { self.frame(limit, uint64(delimiter)) }
+    pub fn read_exact(&mut self, length: UInt64) @suspends ->
+        Result<Option<Array<UInt8>>, TlsError> {
+        self.frame(length, 256)
+    }
+    pub fn read_until(&mut self, delimiter: UInt8, limit: UInt64) @suspends -> Result<
+        Option<Array<UInt8>>,
+        TlsError
+    > {
+        self.frame(limit, uint64(delimiter))
+    }
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, TlsError> {
-        if !self.usable { return Err(Unusable) }
+        if !self.usable {
+            return Err(Unusable)
+        }
         let length = bytes.len()
-        if length > MAX_IO { return Err(Limit) }
+        if length > MAX_IO {
+            return Err(Limit)
+        }
         self.usable = false
         var offset: UInt64 = 0
         while offset < length {
-            let end = if length - offset > RECORD { offset + RECORD } else { length }
+            let end = if length - offset > RECORD {
+                offset + RECORD
+            } else {
+                length
+            }
             var chunk: Array<UInt8> = []
             array.extend_bytes(&mut chunk, bytes.slice(0, length), offset, end)
             let code = __tls_write(&mut self.session, chunk)
-            if code != 0 { return Err(failure(code)) }
+            if code != 0 {
+                return Err(failure(code))
+            }
             self.flush()?
             offset = end
         }
@@ -157,8 +289,10 @@ impl TlsStream {
         Ok({})
     }
     pub fn close(var self) @suspends -> Result<Unit, TlsError> {
-        if !self.usable { return Err(Unusable) }
-        __tls_notify(&mut self.session);
+        if !self.usable {
+            return Err(Unusable)
+        }
+        __tls_notify(&mut self.session)
         self.flush()?
         Ok({})
     }
