@@ -1,5 +1,38 @@
 # Contributing to Joky
 
+## Reporting problems and asking questions
+
+You can report installation failures, language bugs, confusing diagnostics, editor
+issues or feature requests without knowing the compiler implementation or sending
+a patch. Chinese and English reports are welcome.
+
+Start with the [reporting guide](SUPPORT.md) or the
+[GitHub issue templates](https://github.com/julywind168/joky/issues/new/choose).
+Include the Joky version and source commit when available, platform and
+installation method, minimal source/project files, exact commands, and expected
+versus actual output. If reduction is difficult, describe the known conditions
+first; a complete fix is not a prerequisite for reporting.
+
+See the [compatibility policy](docs/compatibility.md) before upgrading and the
+[changelog](CHANGELOG.md) for user-visible changes. Response times, release dates
+and maintenance of old releases are not guaranteed.
+
+## Proposing changes
+
+For a substantial change, describe the user problem and proposed behavior in an
+Issue before investing in a large patch. PRs should explain the resulting behavior
+and the checks actually run. Changes to syntax, public APIs, CLI defaults or
+minimum toolchains need a changelog entry; include migration instructions for
+breaking changes and update affected examples and reference documentation.
+
+The [CLI smoke workflow](https://github.com/julywind168/joky/actions/workflows/ci.yml)
+reports basic Debug toolchain behavior for its configured platforms. Link the run
+for the relevant commit when citing results; a green smoke job does not imply
+full tests or release acceptance. Do not mark configured-but-unrun platforms as
+verified. The remaining sections are intended for compiler contributors.
+
+## Code conventions and validation
+
 Use English for identifiers, source comments, diagnostics, test names, and
 executable output. Chinese is welcome in project documentation and discussion.
 Use `joky` for the package, CLI and Rust crate, `libjoky.a` for the static library,
@@ -55,7 +88,7 @@ dependencies on the same release series and commit Cargo.lock updates together.
 Choose validation by the actual impact of the change, following
 [AGENTS.md](AGENTS.md#按改动范围验证). A commit or stage completion alone does not
 require the full suite; mixed changes use the broader applicable scope.
-During private development, use Debug by default. Use Release only for explicitly
+During ordinary development, use Debug by default. Use Release only for explicitly
 requested release acceptance, performance measurements, or optimization-specific
 issues, and explain why it is needed. Ordinary stage completion is not release acceptance.
 

@@ -42,10 +42,17 @@ joky build hello.jk -o hello
 Linux 可安装发行版的 C 编译器和链接工具。缺少 runtime 时请恢复完整目录，或用
 `JOKY_RUNTIME` 指向同版本 `libjoky.a`。`joky: command not found` 时检查 PATH 并重开终端。
 
-升级时解压到新目录，完成自检后更新 PATH；保留旧目录即可回退。
+升级前先看[更新记录](../CHANGELOG.md)与[兼容政策](compatibility.md)，尤其是源码、CLI 与嵌入 API 的迁移事项。
+升级时解压到新目录，完成自检后更新 PATH／编辑器路径；CLI、runtime 与头文件一起更新，保留旧目录即可回退。
 卸载时删除专用安装目录并移除对应 PATH 设置，不要删除整个 `~/.local`。
+安装失败可通过[问题反馈入口](../SUPPORT.md)提交版本、平台与完整错误。
 
 ## 维护者：生成与验证发行包
+
+日常平台证据来自 [CLI smoke](https://github.com/julywind168/joky/actions/workflows/ci.yml)：
+macOS arm64 和 Linux x86_64 以 Debug 完整安装工具链，在仓库外执行初始化、检查、格式化与三后端冒烟流程，
+保留环境日志与 job summary。该工作流不运行全量测试，也不代替下面的 Release 打包与发布验收。
+相同的有限检查可对已安装工具链调用 `scripts/smoke-toolchain.sh /absolute/path/to/joky`。
 
 VS Code 扩展单独分发为 `joky-<version>.vsix`，安装步骤见[扩展说明](../editors/vscode/README.md)。
 **VS Code extension** 工作流在相关 push / PR 和手动运行时打包并保存 `joky-vscode` artifact；

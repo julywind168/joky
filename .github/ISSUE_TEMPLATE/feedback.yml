@@ -1,0 +1,20 @@
+name: 使用问题或功能建议 / Question or feature request
+description: 描述使用中的困惑、诊断改进或希望解决的问题。
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你在尝试做什么 / What are you trying to do?
+      description: 描述目标和遇到的困难；有示例、报错或现有方案时可一起贴出。
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 相关版本 / Relevant version
+      description: 如适用，附 Joky 版本、源码提交、系统或编辑器版本。
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 期待的体验 / Desired experience
+      description: 可以描述理想行为、替代方案，或希望文档补充什么；不需要先设计实现。

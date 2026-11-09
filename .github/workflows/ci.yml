@@ -1,0 +1,83 @@
+name: CLI smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cli-smoke:
+    name: Debug CLI / ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 2
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Record environment
+        id: environment
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p target/ci-logs
+          {
+            printf 'Commit: %s\n' "$GITHUB_SHA"
+            uname -sm
+            rustc -vV
+            cargo --version
+            cc --version
+          } | tee target/ci-logs/environment.txt
+          test "$(rustc -vV | sed -n 's/^host: //p')" = "$EXPECTED_TARGET"
+          printf 'rust=%s\n' "$(rustc --version | cut -d ' ' -f 2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug
+          key: cli-smoke-${{ runner.os }}-${{ runner.arch }}-${{ steps.environment.outputs.rust }}-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install matching Debug CLI, runtime and headers
+        run: ./scripts/install.sh --debug "$RUNNER_TEMP/joky-toolchain" 2>&1 | tee target/ci-logs/build.txt
+      - name: Exercise installed toolchain
+        id: smoke
+        run: ./scripts/smoke-toolchain.sh "$RUNNER_TEMP/joky-toolchain/bin/joky" 2>&1 | tee target/ci-logs/smoke.txt
+      - name: Publish verification summary
+        if: always()
+        env:
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          {
+            printf '# CLI smoke verification\n\n'
+            printf -- '- Commit: `%s`\n' "$GITHUB_SHA"
+            printf -- '- Runner: `%s / %s`\n' "$RUNNER_OS" "$RUNNER_ARCH"
+            printf -- '- Profile: Debug\n- Smoke outcome: %s\n\n' "${SMOKE_OUTCOME:-not run}"
+            printf 'Scope: installed CLI/runtime, init, check, fmt, help, JIT, interpreter, AOT and missing-source diagnostics.\n\n'
+            printf 'Full tests, stress tests, performance and Release acceptance are outside this workflow.\n\n'
+            if [ -f target/ci-logs/environment.txt ]; then
+              printf '```text\n'
+              cat target/ci-logs/environment.txt
+              printf '```\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cli-smoke-${{ matrix.target }}
+          path: target/ci-logs/
+          if-no-files-found: ignore

@@ -9,6 +9,9 @@
 - [入门教程：从单文件到第一个项目](getting-started.md)
 - [命令行使用](cli.md)
 - [发行包安装与打包](distribution.md)
+- [使用帮助与问题反馈](../SUPPORT.md)
+- [版本兼容与升级政策](compatibility.md)
+- [更新记录](../CHANGELOG.md)
 
 - [语言与内置模块](language.md)
 - [生成离线标准库文档](language.md#标准库文档)

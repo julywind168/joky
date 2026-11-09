@@ -1,5 +1,7 @@
 # Joky
 
+[![CLI smoke](https://github.com/julywind168/joky/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/julywind168/joky/actions/workflows/ci.yml)
+
 Joky 是一门用 Rust 实现的静态类型语言，适合语言实现、脚本嵌入和运行时实验。
 同一份代码可以通过 JIT 或字节码解释器运行，也可以编译成原生程序；
 支持所有权与借用、可挂起任务，以及 Rust / C 宿主嵌入。
@@ -18,7 +20,8 @@ fn main() @suspends {
 
 [入门教程](docs/getting-started.md) · [语言参考](docs/language.md) ·
 [命令行指南](docs/cli.md) · [文档索引](docs/README.md) ·
-[源码仓库](https://github.com/julywind168/joky)
+[源码仓库](https://github.com/julywind168/joky) · [问题反馈](SUPPORT.md) ·
+[更新记录](CHANGELOG.md) · [兼容与升级](docs/compatibility.md)
 
 ## 快速开始
 
@@ -60,11 +63,16 @@ joky build examples/hello.jk -o /tmp/joky-hello
 构建时按 `JOKY_RUNTIME`、CLI 旁的 `libjoky.a`、安装目录 `lib/joky/libjoky.a` 的顺序查找。
 生成的程序运行时不再需要源码、CLI 或 archive。
 
-| 平台 | 当前状态 |
+| 平台 | 可核实的验证入口与范围 |
 | --- | --- |
-| macOS arm64 | 主要开发验证平台；已有 Debug、Release、stress 与 Godot 集成验证记录 |
-| Linux | 有原生链接验证；发行包需要在对应架构与系统环境单独验证 |
-| macOS x86_64 / Windows | 尚未完成发行验证；不作为首版已验证安装路径 |
+| macOS arm64 | `macos-15`：CLI smoke CI 的 Debug 安装与基本流程；具体提交是否通过以对应 job 为准 |
+| Linux x86_64 | `ubuntu-24.04`：相同的 Debug CLI smoke 范围；具体提交是否通过以对应 job 为准 |
+| macOS x86_64 / Linux arm64 / Windows | 尚未配置对应 CLI smoke job，也未作为首版已验证发行平台 |
+
+[查看平台 CI](https://github.com/julywind168/joky/actions/workflows/ci.yml)的 job summary 与日志，
+可核对提交、Rust 版本、实际架构、C 编译器，以及初始化／检查／格式化／JIT／解释器／AOT 的结果。
+badge 显示 `main` 最近状态；工作流尚未运行、失败或跳过时，不代表该提交已通过。
+这项检查不等同于全量测试、压力检查或 Release 发行验收，发行包另看对应 Release 的证据。
 
 macOS 可用 Xcode Command Line Tools 提供 `cc`；Linux 需要发行版的 C 编译器和链接工具。
 当前开发工具链为 Rust 1.99.0；`rust-version` 声明最低版本 1.97，最低版本兼容性需另行验证。
@@ -86,6 +94,7 @@ VS Code 用户可安装 [Joky 扩展](editors/vscode/README.md)：下载 VSIX �
 | 嵌入 Rust / C | [架构与 ABI](docs/architecture.md)、[Rust 示例](examples/embedding.rs)、[C VM 示例](examples/vm_runtime.c) |
 | 尝试有状态服务 | [聊天室](examples/chat/README.md)、[HTTP 服务](examples/http_server.jk) |
 | 参与开发 | [贡献规范](CONTRIBUTING.md)与[文档索引](docs/README.md) |
+| 报告错误或准备升级 | [反馈与最小复现](SUPPORT.md)、[兼容政策](docs/compatibility.md)和[更新记录](CHANGELOG.md) |
 
 常用命令：
 

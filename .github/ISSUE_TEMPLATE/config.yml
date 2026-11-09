@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 使用帮助与反馈说明 / Help and reporting guide
+    url: https://github.com/julywind168/joky/blob/main/SUPPORT.md
+    about: 不确定如何描述问题时，先看版本、最小复现与日志的收集方式。
+  - name: 升级与兼容政策 / Upgrade policy
+    url: https://github.com/julywind168/joky/blob/main/docs/compatibility.md
+    about: 查看升级可能影响的源码、工具链、嵌入 API 与原生产物。

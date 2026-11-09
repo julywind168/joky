@@ -1,0 +1,50 @@
+name: 错误报告 / Bug report
+description: 报告安装、编译、执行、编辑器或诊断问题；不确定分类也可以提交。
+body:
+  - type: markdown
+    attributes:
+      value: |
+        中文和英文均可。不要求先修复问题，无法精简时也可以说明复现条件。
+        请提供源码和错误文字；项目问题请附最小 joky.toml、目录结构及必要的依赖文件。
+  - type: input
+    id: version
+    attributes:
+      label: Joky 版本与源码提交 / Version and commit
+      description: 粘贴 joky --version；从源码构建时另附 git rev-parse HEAD。多个开发提交可能显示相同版本。
+      placeholder: joky 0.1.0; commit ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 系统与安装方式 / Environment
+      description: 系统版本、CPU 架构、发行包或源码安装；相关时附 Rust、cc、VS Code／扩展版本。
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: 发生在哪种执行方式 / Execution mode
+      options:
+        - 不确定 / Unsure
+        - 静态检查 / check
+        - 默认 JIT / run
+        - 解释器 / run --interpreter
+        - 原生构建或程序 / build or native executable
+        - 安装、编辑器或其他 / Installation, editor or other
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 最小复现 / Reproduction
+      description: 贴出文件内容、完整命令与执行目录。尚未找到稳定复现时，请说明已知条件。
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: 预期与实际结果 / Expected and actual behavior
+      description: 附完整错误文字、退出码、复现频率；如已比较其他后端，也请说明结果。
+      render: text
+    validations:
+      required: true
