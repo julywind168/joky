@@ -2,12 +2,54 @@
 use super::{lock, Reason, Shutdown, SignalError};
 use signal_hook::{
     consts::{SIGINT, SIGTERM},
-    iterator::{Handle, Signals},
+    iterator::{
+        backend::{PollResult, SignalDelivery, SignalIterator},
+        exfiltrator::SignalOnly,
+        Handle,
+    },
 };
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex, OnceLock,
+use std::{
+    io::{self, Read},
+    os::unix::net::UnixStream,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock,
+    },
 };
+
+type Delivery = SignalDelivery<UnixStream, SignalOnly>;
+
+struct SignalPipe {
+    // Fields drop in declaration order: unregister and drain signal callbacks
+    // before releasing the final read descriptor. Handle::close only sets the
+    // closed flag and writes a wake byte; it does not unregister callbacks.
+    handle: Handle,
+    _read: UnixStream,
+}
+impl SignalPipe {
+    fn new() -> io::Result<(Delivery, Self)> {
+        let (read, write) = UnixStream::pair()?;
+        let keep_read = read.try_clone()?;
+        let delivery = SignalDelivery::with_pipe(read, write, SignalOnly, [SIGINT, SIGTERM])?;
+        let handle = delivery.handle();
+        Ok((
+            delivery,
+            Self {
+                handle,
+                _read: keep_read,
+            },
+        ))
+    }
+}
+
+fn wait_readable(read: &mut UnixStream) -> io::Result<bool> {
+    loop {
+        match read.read(&mut [0]) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => return result.map(|count| count != 0),
+        }
+    }
+}
 
 struct Registry {
     active: usize,
@@ -61,7 +103,7 @@ impl Drop for Active {
 /// After the last subscription is dropped, SIGINT/SIGTERM have default
 /// termination behavior. The signal-hook multiplexer is not uninstalled.
 pub struct Subscription {
-    handle: Handle,
+    pipe: SignalPipe,
     thread: Option<std::thread::JoinHandle<()>>,
     active: Option<Active>,
 }
@@ -72,10 +114,9 @@ impl Subscription {
         if state.slots >= 8 {
             return Err(SignalError::Busy);
         }
-        let mut signals = Signals::new([SIGINT, SIGTERM]).map_err(|_| SignalError::Unavailable)?;
-        let handle = signals.handle();
+        let (delivery, pipe) = SignalPipe::new().map_err(|_| SignalError::Unavailable)?;
         // Publication is serialized with final unsubscription. Signals received
-        // after this point are latched by Signals even before the thread starts.
+        // after this point are latched by delivery even before the thread starts.
         state.active += 1;
         state.slots += 1;
         state.inactive.store(false, Ordering::SeqCst);
@@ -85,17 +126,25 @@ impl Subscription {
             .name("joky-signals".into())
             .stack_size(256 * 1024)
             .spawn(move || {
-                for signal in &mut signals {
-                    shutdown.request(if signal == SIGINT {
-                        Reason::Interrupt
-                    } else {
-                        Reason::Terminate
-                    });
+                let mut signals = SignalIterator::new(delivery);
+                loop {
+                    match signals.poll_signal(&mut wait_readable) {
+                        PollResult::Signal(signal) => {
+                            shutdown.request(if signal == SIGINT {
+                                Reason::Interrupt
+                            } else {
+                                Reason::Terminate
+                            });
+                        }
+                        PollResult::Closed => break,
+                        PollResult::Pending => continue,
+                        PollResult::Err(error) => panic!("Signal pipe read failed: {error}"),
+                    }
                 }
             })
             .map_err(|_| SignalError::Unavailable)?;
         Ok(Self {
-            handle,
+            pipe,
             thread: Some(thread),
             active: Some(active),
         })
@@ -108,7 +157,9 @@ impl Drop for Subscription {
         if let Some(active) = &mut active {
             active.deactivate();
         }
-        self.handle.close();
+        // The worker can observe closed before close() writes its wake byte.
+        // Keep a second read descriptor alive across close, join and unregister.
+        self.pipe.handle.close();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -117,3 +168,6 @@ impl Drop for Subscription {
         drop(active);
     }
 }
+
+#[cfg(test)]
+mod tests;
