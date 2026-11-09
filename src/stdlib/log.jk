@@ -93,10 +93,12 @@ impl Logger {
     pub fn enabled(&self, level: Level) -> Bool {
         rank(level) >= rank(self.minimum)
     }
-    pub fn emit(&self, level: Level, event: String, fields: Array<Field>) -> Result<
-        Emission,
-        LogError
-    > {
+    pub fn emit(
+        &self,
+        level: Level,
+        event: String,
+        fields: Array<Field>
+    ) -> Result<Emission, LogError> {
         if !self.enabled(level) {
             return Ok(Filtered)
         }

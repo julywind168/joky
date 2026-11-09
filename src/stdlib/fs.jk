@@ -141,8 +141,11 @@ extern fn __fs_read_dir(path: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_open(path: &String, flags: UInt64) @suspends -> fs.OutcomeOwner
 extern fn __fs_read(file: &mut fs.FileOwner, limit: UInt64) @suspends -> fs.OutcomeOwner
 extern fn __fs_write(file: &mut fs.FileOwner, bytes: &Slice<UInt8>) @suspends -> fs.OutcomeOwner
-extern fn __fs_seek(file: &mut fs.FileOwner, origin: UInt64, offset: UInt64) @suspends ->
-    fs.OutcomeOwner
+extern fn __fs_seek(
+    file: &mut fs.FileOwner,
+    origin: UInt64,
+    offset: UInt64
+) @suspends -> fs.OutcomeOwner
 extern fn __fs_sync(file: &mut fs.FileOwner) @suspends -> fs.OutcomeOwner
 extern fn __fs_close(file: &mut fs.FileOwner) @suspends -> fs.OutcomeOwner
 extern fn __fs_code(result: &mut fs.OutcomeOwner) @suspends -> UInt64
@@ -260,8 +263,10 @@ impl File {
         read_remaining(self, None)
     }
     // Read one byte beyond the content limit to distinguish exact EOF from overflow.
-    pub fn read_all_limited(&mut self, max_bytes: UInt64) @suspends ->
-        Result<Array<UInt8>, IoError> {
+    pub fn read_all_limited(
+        &mut self,
+        max_bytes: UInt64
+    ) @suspends -> Result<Array<UInt8>, IoError> {
         read_remaining(self, Some(max_bytes))
     }
     // Confirmed progress excludes any unknown effects of the failing request.
@@ -311,10 +316,10 @@ impl File {
     pub fn read_text(&mut self) @suspends -> Result<String, ReadTextError> {
         decode_text(self.read_all())
     }
-    pub fn read_text_limited(&mut self, max_bytes: UInt64) @suspends -> Result<
-        String,
-        ReadTextError
-    > {
+    pub fn read_text_limited(
+        &mut self,
+        max_bytes: UInt64
+    ) @suspends -> Result<String, ReadTextError> {
         decode_text(self.read_all_limited(max_bytes))
     }
     pub fn write_text(&mut self, text: String) @suspends -> Result<Unit, WriteError> {
@@ -349,10 +354,10 @@ impl File {
     }
 }
 
-fn read_remaining(file: &mut File, max_bytes: Option<UInt64>) @suspends -> Result<
-    Array<UInt8>,
-    IoError
-> {
+fn read_remaining(
+    file: &mut File,
+    max_bytes: Option<UInt64>
+) @suspends -> Result<Array<UInt8>, IoError> {
     var output = Array.new::<UInt8>()
     while true {
         let remaining = match max_bytes {

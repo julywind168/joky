@@ -74,8 +74,10 @@ impl<T> Option<T> {
     }
 
     /// Keeps the value only when the borrowed predicate returns true.
-    pub fn filter<F: FnOnce(&T) @noescape -> Bool>(self, predicate: F) @noescape(predicate) ->
-        Self {
+    pub fn filter<F: FnOnce(&T) @noescape -> Bool>(
+        self,
+        predicate: F
+    ) @noescape(predicate) -> Self {
         match self {
             Some(value) => if predicate(&value) {
                 Some(value)
@@ -87,8 +89,10 @@ impl<T> Option<T> {
     }
 
     /// Tests the contained value, returning false for `None`.
-    pub fn is_some_and<F: FnOnce(&T) @noescape -> Bool>(self, predicate: F) @noescape(predicate) ->
-        Bool {
+    pub fn is_some_and<F: FnOnce(&T) @noescape -> Bool>(
+        self,
+        predicate: F
+    ) @noescape(predicate) -> Bool {
         match self {
             Some(value) => predicate(&value),
             None => false

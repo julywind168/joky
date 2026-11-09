@@ -53,10 +53,10 @@ pub type Output = outbox.Handle
 pub trait Reader {
     type Message
     type Error
-    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<
-        Option<Self.Message>,
-        Self.Error
-    >
+    fn read(
+        &mut self,
+        input: &mut BufferedTcpReader
+    ) @suspends @noescape -> Result<Option<Self.Message>, Self.Error>
 }
 pub struct Lines { pub max_bytes: UInt64 }
 impl Lines {
@@ -69,10 +69,10 @@ impl Reader for Lines {
     = String
     type Error
     = ReadError
-    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<
-        Option<String>,
-        ReadError
-    > {
+    fn read(
+        &mut self,
+        input: &mut BufferedTcpReader
+    ) @suspends @noescape -> Result<Option<String>, ReadError> {
         input.read_line(self.max_bytes)
     }
 }
@@ -88,10 +88,10 @@ impl Reader for LengthPrefixed {
     = Array<UInt8>
     type Error
     = ReadError
-    fn read(&mut self, input: &mut BufferedTcpReader) @suspends @noescape -> Result<
-        Option<Array<UInt8>>,
-        ReadError
-    > {
+    fn read(
+        &mut self,
+        input: &mut BufferedTcpReader
+    ) @suspends @noescape -> Result<Option<Array<UInt8>>, ReadError> {
         input.read_message(self.max_bytes)
     }
 }
@@ -127,10 +127,10 @@ pub enum Error<E> { Read(E), Write(IoError), ReadAndWrite((E, IoError)) }
 
 enum Next<M, E> { Message(M), End(End), Failed(E) }
 
-fn read<R: Reader>(protocol: &mut R, input: &mut BufferedTcpReader) @suspends @noescape -> Next<
-    R.Message,
-    R.Error
-> {
+fn read<R: Reader>(
+    protocol: &mut R,
+    input: &mut BufferedTcpReader
+) @suspends @noescape -> Next<R.Message, R.Error> {
     match Reader.read(protocol, input) {
         Ok(Some(message)) => Next.Message(message),
         Ok(None) => Next.End(End.Eof),
@@ -188,8 +188,10 @@ fn finish<E>(received: Result<End, E>, sent: Result<Unit, IoError>) -> Result<En
     }
 }
 
-fn send_result<E>(queue: &mut outbox.Mailbox, writer: TcpWriter) @suspends ->
-    Result<End, Error<E>> {
+fn send_result<E>(
+    queue: &mut outbox.Mailbox,
+    writer: TcpWriter
+) @suspends -> Result<End, Error<E>> {
     finish(Ok(End.OutputClosed), send(queue, writer))
 }
 
@@ -270,8 +272,11 @@ fn receive_draining<R: Reader, H: Handler<Message = R.Message>>(
     outcome
 }
 
-fn send_draining(queue: &mut outbox.Mailbox, writer: TcpWriter, done: &shutdown.Controller) @suspends ->
-    Result<Unit, IoError> {
+fn send_draining(
+    queue: &mut outbox.Mailbox,
+    writer: TcpWriter,
+    done: &shutdown.Controller
+) @suspends -> Result<Unit, IoError> {
     let outcome = send(queue, writer)
     done.request()
     outcome

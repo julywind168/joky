@@ -116,13 +116,19 @@ pub fn borrow_mut_ref<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: 
     fixed_array.borrow_mut_ref(values, index)
 }
 
-pub fn slice<T, const N: UInt64>(values: &FixedArray<T, N>, start: UInt64, end: UInt64) ->
-    &Slice<T> {
+pub fn slice<T, const N: UInt64>(
+    values: &FixedArray<T, N>,
+    start: UInt64,
+    end: UInt64
+) -> &Slice<T> {
     fixed_array.slice(values, start, end)
 }
 
-pub fn slice_mut<T, const N: UInt64>(values: &mut FixedArray<T, N>, start: UInt64, end: UInt64) ->
-    &mut Slice<T> {
+pub fn slice_mut<T, const N: UInt64>(
+    values: &mut FixedArray<T, N>,
+    start: UInt64,
+    end: UInt64
+) -> &mut Slice<T> {
     fixed_array.slice_mut(values, start, end)
 }
 

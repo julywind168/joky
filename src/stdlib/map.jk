@@ -291,9 +291,11 @@ pub fn reserve<K, V>(table: &mut Map<K, V>, additional: UInt64) {
 }
 
 // A full traversal terminates even with adversarial protocol implementations.
-fn find<K: Eq + Hash, V>(table: &Map<K, V>, key: &K, cached_hash: UInt64) @noescape -> Option<
-    UInt64
-> {
+fn find<K: Eq + Hash, V>(
+    table: &Map<K, V>,
+    key: &K,
+    cached_hash: UInt64
+) @noescape -> Option<UInt64> {
     let count = table.buckets.len()
     if count == 0 {
         return None
@@ -333,8 +335,10 @@ pub fn borrow<K: Eq + Hash, V: Copy>(table: &Map<K, V>, key: &K) @noescape(key) 
     table.values.borrow(i)
 }
 
-pub fn borrow_mut<K: Eq + Hash, V: Copy>(table: &mut Map<K, V>, key: &K) @noescape(key) ->
-    &mut Element<V> {
+pub fn borrow_mut<K: Eq + Hash, V: Copy>(
+    table: &mut Map<K, V>,
+    key: &K
+) @noescape(key) -> &mut Element<V> {
     let i = require_entry(table, key)
     table.values.borrow_mut(i)
 }

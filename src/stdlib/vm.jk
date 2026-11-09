@@ -65,8 +65,12 @@ pub fn domain_schema(value: &Vm) -> UInt64 {
     __vm_domain_schema(&value.owner)
 }
 
-extern fn __vm_prepare_migration(owner: &vm.Owner, schema: UInt64, source: &String, method: &String) ->
-    Int32
+extern fn __vm_prepare_migration(
+    owner: &vm.Owner,
+    schema: UInt64,
+    source: &String,
+    method: &String
+) -> Int32
 
 pub fn prepare_migration(value: &Vm, schema: UInt64, source: &String, method: &String) -> Int32 {
     __vm_prepare_migration(&value.owner, schema, source, method)
@@ -198,8 +202,12 @@ pub fn call_float64_1(value: &Vm, name: &String, arg0: Float64) -> Float64 {
     __vm_call_float64_1(&value.owner, name, arg0)
 }
 
-extern fn __vm_call_float64_2(owner: &vm.Owner, name: &String, arg0: Float64, arg1: Float64) ->
-    Float64
+extern fn __vm_call_float64_2(
+    owner: &vm.Owner,
+    name: &String,
+    arg0: Float64,
+    arg1: Float64
+) -> Float64
 
 pub fn call_float64_2(value: &Vm, name: &String, arg0: Float64, arg1: Float64) -> Float64 {
     __vm_call_float64_2(&value.owner, name, arg0, arg1)
@@ -338,10 +346,12 @@ extern fn __vm_source(
     packet: &mut Buffer<UInt64>
 ) @suspends -> String
 
-fn source_result(value: &Vm, path: String, source: String, mode: UInt64) @suspends -> Result<
-    UInt64,
-    LoadError
-> {
+fn source_result(
+    value: &Vm,
+    path: String,
+    source: String,
+    mode: UInt64
+) @suspends -> Result<UInt64, LoadError> {
     var packet = buffer.allocate::<UInt64>(5)
     for _ in range(0, 5) {
         buffer.initialize_next(&mut packet, 0)
@@ -571,15 +581,22 @@ impl Migration {
     pub fn schema(&mut self) @suspends -> Result<UInt64, MigrationError> {
         self.command(1, 0, "", "", "")
     }
-    pub fn prepare(&mut self, schema: UInt64, source: String, method: String) @suspends -> Result<
-        Unit,
-        MigrationError
-    > {
+    pub fn prepare(
+        &mut self,
+        schema: UInt64,
+        source: String,
+        method: String
+    ) @suspends -> Result<Unit, MigrationError> {
         self.command(2, schema, source, method, "")?
         Ok({})
     }
-    pub fn begin(&mut self, schema: UInt64, source: String, start: String, advance: String) @suspends ->
-        Result<Unit, MigrationError> {
+    pub fn begin(
+        &mut self,
+        schema: UInt64,
+        source: String,
+        start: String,
+        advance: String
+    ) @suspends -> Result<Unit, MigrationError> {
         self.command(3, schema, source, start, advance)?
         Ok({})
     }
@@ -587,10 +604,11 @@ impl Migration {
         self.command(4, 0, source, "", "")?
         Ok({})
     }
-    pub fn stage(&mut self, start: String, advance: String) @suspends -> Result<
-        Unit,
-        MigrationError
-    > {
+    pub fn stage(
+        &mut self,
+        start: String,
+        advance: String
+    ) @suspends -> Result<Unit, MigrationError> {
         self.command(5, 0, "", start, advance)?
         Ok({})
     }

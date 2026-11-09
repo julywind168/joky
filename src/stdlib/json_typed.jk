@@ -279,8 +279,12 @@ impl Context {
             _ => Err(self.error(MappingErrorKind.ExpectedObject))
         }
     }
-    pub fn put_field<T: ToJson>(&mut self, fields: &mut Map<String, Value>, name: String, value: &T) @noescape ->
-        Result<Unit, MappingError> {
+    pub fn put_field<T: ToJson>(
+        &mut self,
+        fields: &mut Map<String, Value>,
+        name: String,
+        value: &T
+    ) @noescape -> Result<Unit, MappingError> {
         array.push(&mut self.path, PathSegment.Field(name))
         let invalid = match array.borrow_ref(&self.path, array.len(&self.path) - 1) {
             Field(name) => {
@@ -316,8 +320,11 @@ impl Context {
         array.take_last(&mut self.path)
         result
     }
-    pub fn take_field<T: FromJson>(&mut self, fields: &mut Map<String, Value>, name: String) @noescape ->
-        Result<T, MappingError> {
+    pub fn take_field<T: FromJson>(
+        &mut self,
+        fields: &mut Map<String, Value>,
+        name: String
+    ) @noescape -> Result<T, MappingError> {
         array.push(&mut self.path, PathSegment.Field(name))
         let value = match array.borrow_ref(&self.path, array.len(&self.path) - 1) {
             Field(name) => map.remove(fields, name)
@@ -384,10 +391,10 @@ pub fn encode<T: ToJson>(value: &T) @noescape -> Result<String, CodecError> {
     encode_with_options(value, Options.default())
 }
 
-pub fn encode_with_options<T: ToJson>(value: &T, options: Options) @noescape -> Result<
-    String,
-    CodecError
-> {
+pub fn encode_with_options<T: ToJson>(
+    value: &T,
+    options: Options
+) @noescape -> Result<String, CodecError> {
     var context = context(options)
     if !options.limits.is_valid() {
         return Err(CodecError.Mapping(context.error(MappingErrorKind.InvalidLimits)))
@@ -409,10 +416,10 @@ pub fn decode<T: FromJson>(text: &String) @noescape -> Result<T, CodecError> {
     decode_with_options::<T>(text, Options.default())
 }
 
-pub fn decode_with_options<T: FromJson>(text: &String, options: Options) @noescape -> Result<
-    T,
-    CodecError
-> {
+pub fn decode_with_options<T: FromJson>(
+    text: &String,
+    options: Options
+) @noescape -> Result<T, CodecError> {
     let value = match json.decode_with_limits(text, options.limits) {
         Ok(value) => value,
         Err(error) => {
@@ -430,8 +437,10 @@ pub fn decode_bytes<T: FromJson>(bytes: &Array<UInt8>) @noescape -> Result<T, Co
     decode_bytes_with_options::<T>(bytes, Options.default())
 }
 
-pub fn decode_bytes_with_options<T: FromJson>(bytes: &Array<UInt8>, options: Options) @noescape ->
-    Result<T, CodecError> {
+pub fn decode_bytes_with_options<T: FromJson>(
+    bytes: &Array<UInt8>,
+    options: Options
+) @noescape -> Result<T, CodecError> {
     let value = match json.decode_bytes_with_limits(bytes, options.limits) {
         Ok(value) => value,
         Err(error) => {

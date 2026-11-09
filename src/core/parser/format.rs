@@ -12,7 +12,8 @@ use syntax::Syntax;
 /// Format valid syntax without resolving imports, checking types or running code.
 /// Nonempty blocks expand, expression continuations indent, and syntax roles
 /// distinguish operators from generic, import and closure punctuation.
-/// Long lists and expressions use a soft 100-character width. Standalone
+/// Long lists and expressions use a soft 100-character width. Function signatures
+/// wrap parameters before splitting return types. Standalone
 /// `// fmt: off` / `// fmt: on` comments preserve complete source regions.
 pub fn format(source: &str) -> Result<String, Diagnostic> {
     let syntax = Syntax::parse(source)?;

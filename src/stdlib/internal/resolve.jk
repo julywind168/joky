@@ -44,8 +44,11 @@ fn word(bytes: &Array<UInt8>, offset: UInt64) -> UInt64 {
     value
 }
 
-pub fn lookup<T>(host: &String, port: UInt16, address: fn(UInt64, UInt64, UInt64) -> T) @suspends ->
-    Result<Array<T>, ResolveError> {
+pub fn lookup<T>(
+    host: &String,
+    port: UInt16,
+    address: fn(UInt64, UInt64, UInt64) -> T
+) @suspends -> Result<Array<T>, ResolveError> {
     var error: UInt64 = 0
     let bytes = __dns_lookup(host, port, &mut error)
     if error != 0 {

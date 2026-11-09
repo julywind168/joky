@@ -26,6 +26,9 @@ pub(super) struct Wrap<'a> {
     groups: Vec<Option<Group>>,
     protected: Vec<bool>,
     forced: Vec<bool>,
+    flat_gaps: Vec<bool>,
+    signature_tails: Vec<Option<usize>>,
+    return_widths: Vec<Option<usize>>,
     broken_chains: BTreeSet<usize>,
     pub changed: bool,
 }
@@ -36,15 +39,47 @@ impl<'a> Wrap<'a> {
         let mut widths = vec![0usize; pieces.len() + 1];
         let mut barriers = vec![0usize; pieces.len() + 1];
         let mut stack: Vec<usize> = Vec::new();
-        let mut protected = Vec::with_capacity(pieces.len());
+        let protected: Vec<_> = pieces
+            .iter()
+            .map(|piece| {
+                let start = piece.end - piece.text.len();
+                let region = skipped.partition_point(|range| range.end <= start);
+                skipped
+                    .get(region)
+                    .is_some_and(|range| range.contains(&start))
+            })
+            .collect();
+        let mut token_pieces = vec![pieces.len(); syntax.tokens.len()];
+        for (i, piece) in pieces.iter().enumerate() {
+            if let Some(token) = piece.token {
+                token_pieces[token] = i;
+            }
+        }
+        let mut flat_gaps = vec![false; pieces.len()];
+        let mut signatures = Vec::new();
+        for signature in &syntax.signatures {
+            let open = token_pieces[signature.parameters];
+            let close = token_pieces[syntax.pairs[signature.parameters].unwrap()];
+            let end = token_pieces[signature.end - 1] + 1;
+            // Reflow old return-type layouts, but never join across comments or
+            // disabled regions. Parameter layout remains independently preserved.
+            if pieces[close + 1..end]
+                .iter()
+                .enumerate()
+                .all(|(offset, piece)| {
+                    piece.token.is_some()
+                        && !protected[close + 1 + offset]
+                        && !piece.text.contains(['\r', '\n'])
+                })
+            {
+                flat_gaps[close + 1..end].fill(true);
+                signatures.push((signature, open, close, end));
+            }
+        }
         let mut broken_chains = BTreeSet::new();
         for (i, piece) in pieces.iter().enumerate() {
-            let start = piece.end - piece.text.len();
-            let region = skipped.partition_point(|range| range.end <= start);
-            let skipped = skipped
-                .get(region)
-                .is_some_and(|range| range.contains(&start));
-            protected.push(skipped);
+            let skipped = protected[i];
+            let line_break = !flat_gaps[i] && piece.gap.contains(['\r', '\n']);
             let space = i > 0 && space_between(syntax, &pieces[i - 1], piece);
             widths[i + 1] = widths[i] + piece.text.chars().count() + usize::from(space);
             let role = piece.token.map_or(Role::Normal, |t| syntax.roles[t]);
@@ -54,8 +89,8 @@ impl<'a> Wrap<'a> {
             );
             barriers[i + 1] = barriers[i]
                 + usize::from(skipped || block || piece.text.contains(['\r', '\n']))
-                + usize::from(piece.gap.contains(['\r', '\n']));
-            if piece.gap.contains(['\r', '\n']) {
+                + usize::from(line_break);
+            if line_break {
                 if let Some(&open) = stack.last() {
                     if let Some(group) = &mut groups[open] {
                         group.multiline = true;
@@ -94,7 +129,9 @@ impl<'a> Wrap<'a> {
                     if let Some(group) = &mut groups[open] {
                         group.end = i;
                         // The opening token's preceding gap is outside the group.
-                        let own_barrier = usize::from(pieces[open].gap.contains(['\r', '\n']));
+                        let own_barrier = usize::from(
+                            !flat_gaps[open] && pieces[open].gap.contains(['\r', '\n']),
+                        );
                         group.width = (barriers[i + 1] - barriers[open] == own_barrier).then_some(
                             widths[i + 1]
                                 - widths[open]
@@ -110,12 +147,28 @@ impl<'a> Wrap<'a> {
                 stack.push(i);
             }
         }
+        let mut signature_tails = vec![None; pieces.len()];
+        let mut return_widths = vec![None; pieces.len()];
+        for (signature, open, close, end) in signatures {
+            let body = usize::from(signature.body) * 2; // Space and opening brace.
+            signature_tails[open] = Some(widths[end] - widths[close + 1] + body);
+            if let Some(result) = signature.result {
+                let result = token_pieces[result];
+                return_widths[result] = Some(
+                    widths[end] - widths[result] + body
+                        - usize::from(space_between(syntax, &pieces[result - 1], &pieces[result])),
+                );
+            }
+        }
         Self {
             syntax,
             pieces,
             groups,
             protected,
             forced: vec![false; pieces.len()],
+            flat_gaps,
+            signature_tails,
+            return_widths,
             broken_chains,
             changed: false,
         }
@@ -128,7 +181,10 @@ impl<'a> Wrap<'a> {
         self.forced[i]
             || self.groups[i].as_ref().is_some_and(|group| {
                 group.end > i + 1
-                    && (group.multiline || group.width.is_some_and(|width| column + width > WIDTH))
+                    && (group.multiline
+                        || group.width.is_some_and(|width| {
+                            column + width + self.signature_tails[i].unwrap_or(0) > WIDTH
+                        }))
             })
     }
 
@@ -139,9 +195,18 @@ impl<'a> Wrap<'a> {
         }
     }
 
-    pub fn break_before(&mut self, i: usize, column: usize) -> bool {
+    pub fn preserves_gap(&self, i: usize) -> bool {
+        !self.flat_gaps[i]
+    }
+
+    pub fn break_before(&mut self, i: usize, column: usize, continuation_column: usize) -> bool {
         if i == 0 || self.protected[i] {
             return false;
+        }
+        // Once parameters have wrapped, keep a return type intact on a fresh
+        // continuation line when it fits there; only larger types split inside.
+        if let Some(width) = self.return_widths[i] {
+            return column + width > WIDTH && continuation_column + width <= WIDTH;
         }
         let token = self.pieces[i].token;
         let previous = self.pieces[i - 1].token;
@@ -173,7 +238,7 @@ impl<'a> Wrap<'a> {
                 return None;
             }
             if i > start {
-                if piece.gap.contains(['\r', '\n'])
+                if (!self.flat_gaps[i] && piece.gap.contains(['\r', '\n']))
                     || piece.token.is_some_and(|t| self.syntax.chain[t])
                     || self.pieces[i - 1].token.is_some_and(|t| {
                         after_operator(&self.syntax.tokens[t].kind, self.syntax.roles[t])

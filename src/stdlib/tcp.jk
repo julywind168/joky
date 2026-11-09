@@ -429,10 +429,10 @@ impl BufferedTcp {
         self.buffer.is_eof()
     }
     // A received prefix may be lost on cancellation; end the protocol connection.
-    fn read_frame(&mut self, var progress: ReadProgress) @suspends -> Result<
-        Option<Array<UInt8>>,
-        ReadError
-    > {
+    fn read_frame(
+        &mut self,
+        var progress: ReadProgress
+    ) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         if progress.is_complete() {
             return Ok(progress.finish(ReadStatus.Done))
         }
@@ -461,17 +461,18 @@ impl BufferedTcp {
             }
         )
     }
-    pub fn read_exact(&mut self, length: UInt64) @suspends -> Result<
-        Option<Array<UInt8>>,
-        ReadError
-    > {
+    pub fn read_exact(
+        &mut self,
+        length: UInt64
+    ) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         let progress = ReadProgress.new(ReadMode.Exact, length)?
         self.read_frame(progress)
     }
-    pub fn read_until(&mut self, delimiter: UInt8, limit: UInt64) @suspends -> Result<
-        Option<Array<UInt8>>,
-        ReadError
-    > {
+    pub fn read_until(
+        &mut self,
+        delimiter: UInt8,
+        limit: UInt64
+    ) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         let progress = ReadProgress.new(ReadMode.Until(delimiter), limit)?
         self.read_frame(progress)
     }
@@ -485,10 +486,10 @@ impl BufferedTcp {
         Ok(Some(decode_line(bytes)?))
     }
     // Truncation counts all consumed bytes in the message, including its header.
-    pub fn read_message(&mut self, limit: UInt64) @suspends -> Result<
-        Option<Array<UInt8>>,
-        ReadError
-    > {
+    pub fn read_message(
+        &mut self,
+        limit: UInt64
+    ) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         if limit > 1048576 {
             return Err(ReadError.InvalidLimit)
         }
@@ -518,10 +519,11 @@ impl BufferedTcp {
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, IoError> {
         self.stream.write_all(bytes)
     }
-    pub fn write_message(&mut self, bytes: Array<UInt8>, limit: UInt64) @suspends -> Result<
-        Unit,
-        IoError
-    > {
+    pub fn write_message(
+        &mut self,
+        bytes: Array<UInt8>,
+        limit: UInt64
+    ) @suspends -> Result<Unit, IoError> {
         let (bytes, length) = byte_length(bytes)
         if limit > 1048576 || length > limit {
             return Err(IoError { code: 9 })
@@ -560,10 +562,10 @@ impl BufferedTcpReader {
         self.buffer.is_eof()
     }
     // A received prefix may be lost on cancellation; end the protocol connection.
-    fn read_frame(&mut self, var progress: ReadProgress) @suspends -> Result<
-        Option<Array<UInt8>>,
-        ReadError
-    > {
+    fn read_frame(
+        &mut self,
+        var progress: ReadProgress
+    ) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         if progress.is_complete() {
             return Ok(progress.finish(ReadStatus.Done))
         }
@@ -592,17 +594,18 @@ impl BufferedTcpReader {
             }
         )
     }
-    pub fn read_exact(&mut self, length: UInt64) @suspends -> Result<
-        Option<Array<UInt8>>,
-        ReadError
-    > {
+    pub fn read_exact(
+        &mut self,
+        length: UInt64
+    ) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         let progress = ReadProgress.new(ReadMode.Exact, length)?
         self.read_frame(progress)
     }
-    pub fn read_until(&mut self, delimiter: UInt8, limit: UInt64) @suspends -> Result<
-        Option<Array<UInt8>>,
-        ReadError
-    > {
+    pub fn read_until(
+        &mut self,
+        delimiter: UInt8,
+        limit: UInt64
+    ) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         let progress = ReadProgress.new(ReadMode.Until(delimiter), limit)?
         self.read_frame(progress)
     }
@@ -616,10 +619,10 @@ impl BufferedTcpReader {
         Ok(Some(decode_line(bytes)?))
     }
     // Truncation counts all consumed bytes in the message, including its header.
-    pub fn read_message(&mut self, limit: UInt64) @suspends -> Result<
-        Option<Array<UInt8>>,
-        ReadError
-    > {
+    pub fn read_message(
+        &mut self,
+        limit: UInt64
+    ) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         if limit > 1048576 {
             return Err(ReadError.InvalidLimit)
         }
@@ -687,18 +690,37 @@ fn message_header(length: UInt64) -> Array<UInt8> {
     header
 }
 
-extern fn __tcp_bind(high: UInt64, low: UInt64, endpoint: UInt64, error: &mut UInt64) @suspends ->
-    tcp.ListenerOwner
-extern fn __tcp_connect(high: UInt64, low: UInt64, endpoint: UInt64, error: &mut UInt64) @suspends ->
-    tcp.StreamOwner
-extern fn __tcp_accept(listener: &mut tcp.ListenerOwner, error: &mut UInt64) @suspends ->
-    tcp.StreamOwner
-extern fn __tcp_read(stream: &mut tcp.StreamOwner, limit: UInt64, error: &mut UInt64) @suspends ->
-    Array<UInt8>
-extern fn __tcp_write_all(stream: &mut tcp.StreamOwner, bytes: Array<UInt8>, error: &mut UInt64) @suspends ->
-    UInt64
-extern fn __tcp_write(stream: &mut tcp.StreamOwner, bytes: &Slice<UInt8>, error: &mut UInt64) @suspends ->
-    UInt64
+extern fn __tcp_bind(
+    high: UInt64,
+    low: UInt64,
+    endpoint: UInt64,
+    error: &mut UInt64
+) @suspends -> tcp.ListenerOwner
+extern fn __tcp_connect(
+    high: UInt64,
+    low: UInt64,
+    endpoint: UInt64,
+    error: &mut UInt64
+) @suspends -> tcp.StreamOwner
+extern fn __tcp_accept(
+    listener: &mut tcp.ListenerOwner,
+    error: &mut UInt64
+) @suspends -> tcp.StreamOwner
+extern fn __tcp_read(
+    stream: &mut tcp.StreamOwner,
+    limit: UInt64,
+    error: &mut UInt64
+) @suspends -> Array<UInt8>
+extern fn __tcp_write_all(
+    stream: &mut tcp.StreamOwner,
+    bytes: Array<UInt8>,
+    error: &mut UInt64
+) @suspends -> UInt64
+extern fn __tcp_write(
+    stream: &mut tcp.StreamOwner,
+    bytes: &Slice<UInt8>,
+    error: &mut UInt64
+) @suspends -> UInt64
 extern fn __tcp_stream_addr(
     stream: &mut tcp.StreamOwner,
     peer: UInt64,
@@ -718,15 +740,21 @@ extern fn __tcp_close_listener(listener: &mut tcp.ListenerOwner) @suspends -> UI
 
 extern fn __tcp_split_reader(stream: &mut tcp.StreamOwner) @suspends -> tcp.ReaderOwner
 extern fn __tcp_split_writer(stream: &mut tcp.StreamOwner) @suspends -> tcp.WriterOwner
-extern fn __tcp_read_half(reader: &mut tcp.ReaderOwner, limit: UInt64, error: &mut UInt64) @suspends ->
-    Array<UInt8>
+extern fn __tcp_read_half(
+    reader: &mut tcp.ReaderOwner,
+    limit: UInt64,
+    error: &mut UInt64
+) @suspends -> Array<UInt8>
 extern fn __tcp_write_all_half(
     writer: &mut tcp.WriterOwner,
     bytes: Array<UInt8>,
     error: &mut UInt64
 ) @suspends -> UInt64
-extern fn __tcp_write_half(writer: &mut tcp.WriterOwner, bytes: &Slice<UInt8>, error: &mut UInt64) @suspends ->
-    UInt64
+extern fn __tcp_write_half(
+    writer: &mut tcp.WriterOwner,
+    bytes: &Slice<UInt8>,
+    error: &mut UInt64
+) @suspends -> UInt64
 extern fn __tcp_reader_addr(
     reader: &mut tcp.ReaderOwner,
     peer: UInt64,
@@ -876,10 +904,11 @@ impl TcpWriter {
         status(error)
     }
 
-    pub fn write_message(&mut self, bytes: Array<UInt8>, limit: UInt64) @suspends -> Result<
-        Unit,
-        IoError
-    > {
+    pub fn write_message(
+        &mut self,
+        bytes: Array<UInt8>,
+        limit: UInt64
+    ) @suspends -> Result<Unit, IoError> {
         let (bytes, length) = byte_length(bytes)
         if limit > 1048576 || length > limit {
             return Err(IoError { code: 9 })
@@ -945,10 +974,10 @@ impl TcpListener {
             Err(IoError { code: error })
         }
     }
-    pub fn accept_until(&mut self, stop: &shutdown.Controller) @suspends -> Result<
-        Option<TcpStream>,
-        IoError
-    > {
+    pub fn accept_until(
+        &mut self,
+        stop: &shutdown.Controller
+    ) @suspends -> Result<Option<TcpStream>, IoError> {
         if stop.requested() {
             return Ok(None)
         }

@@ -20,7 +20,15 @@ pub(super) struct Syntax {
     pub chain_root: Vec<Option<usize>>,
     pub top_level: Vec<(Range<usize>, bool)>,
     pub separators: Vec<Separator>,
+    pub signatures: Vec<Signature>,
     shape: Shape,
+}
+
+pub(super) struct Signature {
+    pub parameters: usize,
+    pub result: Option<usize>,
+    pub end: usize,
+    pub body: bool,
 }
 
 pub(super) struct Separator {
@@ -76,6 +84,7 @@ impl Syntax {
             chain_root: vec![None; tokens.len()],
             top_level: Vec::new(),
             separators: Vec::new(),
+            signatures: Vec::new(),
             tokens,
             roles,
             shape: Shape::default(),
@@ -349,6 +358,9 @@ impl Syntax {
 
     fn declaration(&mut self, kind: &'static str, span: Span, parts: impl Iterator<Item = Span>) {
         let range = self.range(span);
+        if matches!(kind, "function" | "extern" | "trait method") {
+            self.signature(range.clone());
+        }
         if !range.is_empty() {
             self.break_after[range.end - 1] = true;
         }
@@ -356,6 +368,38 @@ impl Syntax {
             kind,
             range,
             parts: parts.map(|span| self.range(span)).collect(),
+        });
+    }
+
+    fn signature(&mut self, range: Range<usize>) {
+        let Some(function) = range
+            .clone()
+            .find(|&i| self.tokens[i].kind == TokenKind::Fn)
+        else {
+            return;
+        };
+        let mut i = function + 1;
+        // Skip generic bounds, including their callable parameter lists.
+        while i < range.end && self.tokens[i].kind != TokenKind::LParen {
+            i = self.pairs[i].filter(|&close| close > i).unwrap_or(i) + 1;
+        }
+        let Some(close) = self.pairs.get(i).copied().flatten() else {
+            return;
+        };
+        let parameters = i;
+        let mut result = None;
+        i = close + 1;
+        while i < range.end && !matches!(self.tokens[i].kind, TokenKind::LBrace | TokenKind::Semi) {
+            if self.tokens[i].kind == TokenKind::Arrow && result.is_none() {
+                result = Some(i + 1);
+            }
+            i = self.pairs[i].filter(|&close| close > i).unwrap_or(i) + 1;
+        }
+        self.signatures.push(Signature {
+            parameters,
+            result,
+            end: i,
+            body: i < range.end && self.tokens[i].kind == TokenKind::LBrace,
         });
     }
 

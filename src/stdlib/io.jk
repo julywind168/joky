@@ -119,10 +119,12 @@ impl Stdin {
         self.eof = self.buffer.is_empty()
         Ok(!self.eof)
     }
-    fn append_chunk(&mut self, output: &mut Array<UInt8>, line: Bool, limit: UInt64) -> Result<
-        Bool,
-        ReadError
-    > {
+    fn append_chunk(
+        &mut self,
+        output: &mut Array<UInt8>,
+        line: Bool,
+        limit: UInt64
+    ) -> Result<Bool, ReadError> {
         let end = self.buffer.len()
         let source = self.buffer.slice(0, end)
         let at = if line {
@@ -143,10 +145,11 @@ impl Stdin {
         self.offset = next
         Ok(at < end)
     }
-    fn collect(&mut self, line: Bool, limit: UInt64) @suspends -> Result<
-        Option<Array<UInt8>>,
-        ReadError
-    > {
+    fn collect(
+        &mut self,
+        line: Bool,
+        limit: UInt64
+    ) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         if self.failed {
             return Err(ReadError.Closed)
         }
@@ -192,8 +195,10 @@ impl Stdin {
         }
         Ok(Some(self.decode(bytes)?))
     }
-    pub fn read_bytes_limited(&mut self, limit: UInt64) @suspends ->
-        Result<Array<UInt8>, ReadError> {
+    pub fn read_bytes_limited(
+        &mut self,
+        limit: UInt64
+    ) @suspends -> Result<Array<UInt8>, ReadError> {
         Ok(
             match self.collect(false, limit)? {
                 Some(bytes) => bytes,

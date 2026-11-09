@@ -30,8 +30,10 @@ extern fn __shutdown_share(owner: &shutdown.ControllerOwner) @suspends -> shutdo
 extern fn __shutdown_request(owner: &shutdown.ControllerOwner) @suspends -> UInt64
 extern fn __shutdown_reason(owner: &shutdown.ControllerOwner) @suspends -> UInt64
 extern fn __shutdown_wait(owner: &shutdown.ControllerOwner) @suspends -> UInt64
-extern fn __shutdown_subscribe(owner: &shutdown.ControllerOwner, error: &mut UInt64) @suspends ->
-    shutdown.SignalsOwner
+extern fn __shutdown_subscribe(
+    owner: &shutdown.ControllerOwner,
+    error: &mut UInt64
+) @suspends -> shutdown.SignalsOwner
 
 pub enum Reason { Requested, Interrupt, Terminate }
 impl Show for Reason {

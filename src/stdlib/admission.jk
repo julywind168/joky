@@ -22,8 +22,10 @@ import joky/show.{type Show}
 import joky/result.{type Result, Ok, Err}
 import joky/mem
 
-extern fn __domain_admission_create(capacity: UInt64, max_waiters: UInt64) @suspends ->
-    admission.PoolOwner
+extern fn __domain_admission_create(
+    capacity: UInt64,
+    max_waiters: UInt64
+) @suspends -> admission.PoolOwner
 extern fn __domain_admission_handle(pool: &admission.PoolOwner) @suspends -> admission.Token
 extern fn __domain_admission_close(pool: &admission.PoolOwner) @suspends
 extern fn __domain_admission_try(handle: admission.Token) @suspends -> admission.PermitOwner

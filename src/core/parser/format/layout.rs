@@ -84,7 +84,7 @@ fn render_once(
             if blank_before[index] {
                 output.push_str(ending);
                 output.push_str(ending);
-            } else {
+            } else if wrap.preserves_gap(index) {
                 copy_line_breaks(piece.gap, &mut output, if block_edge { 1 } else { 2 });
             }
             if output.ends_with(['\r', '\n']) {
@@ -98,7 +98,7 @@ fn render_once(
         let space = index > 0 && space_between(syntax, &pieces[index - 1], piece);
         let width_break = !trailing_comment
             && !attached_separator
-            && wrap.break_before(index, column + usize::from(space));
+            && wrap.break_before(index, column + usize::from(space), (line_indent + 1) * 4);
         // A width break inside an inline group makes that whole group vertical.
         // Re-render from the original pieces; each retry forces a new group, so
         // this converges without reparsing or guessing a fixed iteration count.

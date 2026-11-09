@@ -43,10 +43,12 @@ impl Show for DuplicateHeader {
 }
 pub struct RequestLog { pub request_id: uuid.Uuid, pub logger: log.Logger }
 impl RequestLog {
-    pub fn emit(&self, level: log.Level, event: String, var fields: Array<log.Field>) -> Result<
-        log.Emission,
-        log.LogError
-    > {
+    pub fn emit(
+        &self,
+        level: log.Level,
+        event: String,
+        var fields: Array<log.Field>
+    ) -> Result<log.Emission, log.LogError> {
         if !self.logger.enabled(level) {
             return result.Ok(log.Emission.Filtered)
         }
@@ -87,10 +89,10 @@ impl<C> Request<C> {
         }
         None
     }
-    pub fn header_unique(&self, name: &String) @noescape(name) -> Result<
-        Option<&String>,
-        DuplicateHeader
-    > {
+    pub fn header_unique(
+        &self,
+        name: &String
+    ) @noescape(name) -> Result<Option<&String>, DuplicateHeader> {
         var found: Option<&String> = None
         for field in &self.headers {
             if field.name.eq_ignore_ascii_case(name) {
@@ -584,10 +586,10 @@ fn valid_host(value: &String) -> Bool {
     host_len > 0 && (!in_port || port_digits > 0)
 }
 
-fn read_request(stream: &mut Wire, context: RequestLog) @suspends -> Result<
-    Request<Unit>,
-    ReadFailure
-> {
+fn read_request(
+    stream: &mut Wire,
+    context: RequestLog
+) @suspends -> Result<Request<Unit>, ReadFailure> {
     var remaining = HEAD_LIMIT
     let (method, target) = request_line(line(stream, &mut remaining)?)?
     var headers: Array<Header> = []
@@ -681,8 +683,12 @@ fn response_prefix(
     Some(prefix.finish())
 }
 
-fn send(var stream: Wire, prefix: String, body: Array<UInt8>, head: Bool) @suspends ->
-    WriteOutcome {
+fn send(
+    var stream: Wire,
+    prefix: String,
+    body: Array<UInt8>,
+    head: Bool
+) @suspends -> WriteOutcome {
     if !stream.write(prefix.into_bytes()) {
         return Failed
     }
@@ -843,10 +849,12 @@ impl Router {
     pub fn new() -> Self {
         Router { inner: with_context({}) }
     }
-    pub fn add(&mut self, method: Method, path: String, handler: Handler<Unit>) -> Result<
-        Unit,
-        RouteError
-    > {
+    pub fn add(
+        &mut self,
+        method: Method,
+        path: String,
+        handler: Handler<Unit>
+    ) -> Result<Unit, RouteError> {
         self.inner.add(method, path, handler)
     }
     pub fn get(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
@@ -942,10 +950,12 @@ impl<H: Copy> RouteTable<H> {
     }
 }
 impl<S, C> ContextRouter<S, C> {
-    pub fn add(&mut self, method: Method, path: String, handler: Handler<C>) -> Result<
-        Unit,
-        RouteError
-    > {
+    pub fn add(
+        &mut self,
+        method: Method,
+        path: String,
+        handler: Handler<C>
+    ) -> Result<Unit, RouteError> {
         self.table.add(method, path, handler)
     }
     pub fn get(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
@@ -971,10 +981,12 @@ impl<S, C> ContextRouter<S, C> {
     }
 }
 impl<A, S, C> StateRouter<A, S, C> {
-    pub fn add(&mut self, method: Method, path: String, handler: StateHandler<A, C>) -> Result<
-        Unit,
-        RouteError
-    > {
+    pub fn add(
+        &mut self,
+        method: Method,
+        path: String,
+        handler: StateHandler<A, C>
+    ) -> Result<Unit, RouteError> {
         self.table.add(method, path, handler)
     }
     pub fn get(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> {
@@ -992,12 +1004,18 @@ impl<A, S, C> StateRouter<A, S, C> {
     pub fn patch(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> {
         self.add(Method.Patch, path, handler)
     }
-    pub fn delete(&mut self, path: String, handler: StateHandler<A, C>) ->
-        Result<Unit, RouteError> {
+    pub fn delete(
+        &mut self,
+        path: String,
+        handler: StateHandler<A, C>
+    ) -> Result<Unit, RouteError> {
         self.add(Method.Delete, path, handler)
     }
-    pub fn options(&mut self, path: String, handler: StateHandler<A, C>) ->
-        Result<Unit, RouteError> {
+    pub fn options(
+        &mut self,
+        path: String,
+        handler: StateHandler<A, C>
+    ) -> Result<Unit, RouteError> {
         self.add(Method.Options, path, handler)
     }
 }
@@ -1294,10 +1312,11 @@ pub struct Client {
     pub max_body: UInt64
 }
 
-fn make_client(host: String, port: UInt16, config: Option<tls.ClientConfig>) -> Result<
-    Client,
-    ClientError
-> {
+fn make_client(
+    host: String,
+    port: UInt16,
+    config: Option<tls.ClientConfig>
+) -> Result<Client, ClientError> {
     if port == 0 || host.byte_length() > 253 || host.find(":").is_some() || !valid_host(&host) {
         return Err(InvalidRequest)
     }
@@ -1317,8 +1336,11 @@ impl Client {
     pub fn http(host: String, port: UInt16) -> Result<Self, ClientError> {
         make_client(host, port, None)
     }
-    pub fn https(host: String, port: UInt16, config: tls.ClientConfig) ->
-        Result<Self, ClientError> {
+    pub fn https(
+        host: String,
+        port: UInt16,
+        config: tls.ClientConfig
+    ) -> Result<Self, ClientError> {
         make_client(host, port, Some(config))
     }
     fn open(&self) @suspends -> Result<Wire, ClientError> {
@@ -1337,10 +1359,11 @@ impl Client {
     pub fn get(&self, target: String) @suspends -> Result<ClientResponse, ClientError> {
         self.request(Method.Get, target, [], [])
     }
-    pub fn post_json(&self, target: String, json: String) @suspends -> Result<
-        ClientResponse,
-        ClientError
-    > {
+    pub fn post_json(
+        &self,
+        target: String,
+        json: String
+    ) @suspends -> Result<ClientResponse, ClientError> {
         self.request(
             Method.Post,
             target,
@@ -1465,10 +1488,10 @@ fn client_head(
     result.Ok(builder.finish())
 }
 
-fn response_line(stream: &mut Wire, budget: &mut UInt64) @suspends -> Result<
-    Array<UInt8>,
-    ClientError
-> {
+fn response_line(
+    stream: &mut Wire,
+    budget: &mut UInt64
+) @suspends -> Result<Array<UInt8>, ClientError> {
     match line(stream, budget) {
         result.Ok(bytes) => result.Ok(bytes),
         Err(HeadLimit) => Err(SizeLimit),
@@ -1586,10 +1609,12 @@ fn eof_body(io: &mut Wire, limit: UInt64) @suspends -> Result<Array<UInt8>, Clie
 enum BodyMode { ToEof, Fixed(UInt64), Chunks }
 struct ReplyHead { status: UInt16, fields: Array<Header>, mode: BodyMode }
 
-fn response_mode(previous: BodyMode, field: &Header, status: UInt16, head_only: Bool) -> Result<
-    BodyMode,
-    ClientError
-> {
+fn response_mode(
+    previous: BodyMode,
+    field: &Header,
+    status: UInt16,
+    head_only: Bool
+) -> Result<BodyMode, ClientError> {
     if field.name != "content-length" && field.name != "transfer-encoding" {
         return result.Ok(previous)
     }
@@ -1631,10 +1656,11 @@ fn response_mode(previous: BodyMode, field: &Header, status: UInt16, head_only: 
     result.Ok(Chunks)
 }
 
-fn reply_head(io: &mut Wire, budget: &mut UInt64, head_only: Bool) @suspends -> Result<
-    ReplyHead,
-    ClientError
-> {
+fn reply_head(
+    io: &mut Wire,
+    budget: &mut UInt64,
+    head_only: Bool
+) @suspends -> Result<ReplyHead, ClientError> {
     let first = response_line(io, budget)?
     let status = status_code(&first)?
     if status == 101 {
@@ -1660,8 +1686,13 @@ fn reply_head(io: &mut Wire, budget: &mut UInt64, head_only: Bool) @suspends -> 
     result.Ok(ReplyHead { status, fields, mode })
 }
 
-fn exchange(var io: Wire, head: String, body: Array<UInt8>, limit: UInt64, head_only: Bool) @suspends ->
-    Result<ClientResponse, ClientError> {
+fn exchange(
+    var io: Wire,
+    head: String,
+    body: Array<UInt8>,
+    limit: UInt64,
+    head_only: Bool
+) @suspends -> Result<ClientResponse, ClientError> {
     if !io.write(head.into_bytes()) || !io.write(body) {
         return Err(Transport)
     }

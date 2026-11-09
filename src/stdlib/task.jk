@@ -52,10 +52,10 @@ pub fn sleep(duration: Duration) @suspends {
 }
 
 /// Runs an operation until completion or timeout. A winning timeout cancels the operation.
-pub fn timeout<T, F: FnOnce() @suspends -> T>(duration: Duration, operation: F) @suspends -> Result<
-    T,
-    Timeout
-> {
+pub fn timeout<T, F: FnOnce() @suspends -> T>(
+    duration: Duration,
+    operation: F
+) @suspends -> Result<T, Timeout> {
     race {
         {
             Ok(operation())

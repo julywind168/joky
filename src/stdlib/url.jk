@@ -81,10 +81,12 @@ pub fn encode_component(text: &String) -> String {
     String.from_utf8(output)!
 }
 
-fn decode_range(bytes: &Slice<UInt8>, start: UInt64, end: UInt64, plus_as_space: Bool) -> Result<
-    String,
-    DecodeError
-> {
+fn decode_range(
+    bytes: &Slice<UInt8>,
+    start: UInt64,
+    end: UInt64,
+    plus_as_space: Bool
+) -> Result<String, DecodeError> {
     var output = Array.with_capacity::<UInt8>(end - start)
     var index = start
     while index < end {

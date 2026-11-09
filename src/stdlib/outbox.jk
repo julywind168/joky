@@ -23,14 +23,20 @@ import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 
 extern fn __outbox_create(messages: UInt64, bytes: UInt64) @suspends -> outbox.QueueOwner
-extern fn __outbox_create_disconnect(messages: UInt64, bytes: UInt64, control: UInt64) @suspends ->
-    outbox.QueueOwner
+extern fn __outbox_create_disconnect(
+    messages: UInt64,
+    bytes: UInt64,
+    control: UInt64
+) @suspends -> outbox.QueueOwner
 extern fn __outbox_handle(queue: &outbox.QueueOwner) @suspends -> UInt64
 extern fn __outbox_seal(handle: UInt64) @suspends
 extern fn __outbox_close(handle: UInt64) @suspends
 extern fn __outbox_batch(messages: UInt64, bytes: UInt64) @suspends -> outbox.BatchOwner
-extern fn __outbox_stage(batch: &mut outbox.BatchOwner, handle: UInt64, bytes: Array<UInt8>) @suspends ->
-    Int32
+extern fn __outbox_stage(
+    batch: &mut outbox.BatchOwner,
+    handle: UInt64,
+    bytes: Array<UInt8>
+) @suspends -> Int32
 extern fn __outbox_receive_bytes(queue: &mut outbox.QueueOwner) @suspends -> (Bool, Array<UInt8>)
 
 pub struct Mailbox { storage: outbox.QueueOwner }
@@ -73,8 +79,11 @@ pub fn create(messages: UInt64, bytes: UInt64) @suspends -> Mailbox {
     Mailbox { storage: __outbox_create(messages, bytes) }
 }
 
-pub fn create_with_policy(messages: UInt64, bytes: UInt64, overflow: Overflow) @suspends ->
-    Mailbox {
+pub fn create_with_policy(
+    messages: UInt64,
+    bytes: UInt64,
+    overflow: Overflow
+) @suspends -> Mailbox {
     match overflow {
         Reject => create(messages, bytes),
         Disconnect(control) => Mailbox {
@@ -107,10 +116,11 @@ pub fn batch(messages: UInt64, bytes: UInt64) @suspends -> Batch {
 }
 
 /// A failed stage poisons this batch, so ignoring the error cannot publish a prefix.
-pub fn stage(batch: &mut Batch, handle: Handle, bytes: Array<UInt8>) @suspends -> Result<
-    Unit,
-    StageError
-> {
+pub fn stage(
+    batch: &mut Batch,
+    handle: Handle,
+    bytes: Array<UInt8>
+) @suspends -> Result<Unit, StageError> {
     let status = __outbox_stage(batch, handle.identity, bytes)
     if status == 0 {
         return Ok({})

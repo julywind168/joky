@@ -22,13 +22,22 @@ import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 import joky/tcp.{type TcpStream, type IoError}
 
-extern fn __tls_client_config(bundled: UInt64, pem: Array<UInt8>, error: &mut UInt64) @suspends ->
-    tls.ClientOwner
-extern fn __tls_server_config(chain: Array<UInt8>, key: Array<UInt8>, error: &mut UInt64) @suspends ->
-    tls.ServerOwner
+extern fn __tls_client_config(
+    bundled: UInt64,
+    pem: Array<UInt8>,
+    error: &mut UInt64
+) @suspends -> tls.ClientOwner
+extern fn __tls_server_config(
+    chain: Array<UInt8>,
+    key: Array<UInt8>,
+    error: &mut UInt64
+) @suspends -> tls.ServerOwner
 extern fn __tls_server_share(config: &tls.ServerOwner) @suspends -> tls.ServerOwner
-extern fn __tls_client(config: &tls.ClientOwner, name: &String, error: &mut UInt64) @suspends ->
-    tls.SessionOwner
+extern fn __tls_client(
+    config: &tls.ClientOwner,
+    name: &String,
+    error: &mut UInt64
+) @suspends -> tls.SessionOwner
 extern fn __tls_server(config: &tls.ServerOwner, error: &mut UInt64) @suspends -> tls.SessionOwner
 extern fn __tls_feed(session: &mut tls.SessionOwner, bytes: Array<UInt8>) @suspends -> UInt64
 extern fn __tls_drain(session: &mut tls.SessionOwner) @suspends -> Array<UInt8>
@@ -104,10 +113,11 @@ impl ClientConfig {
     pub fn from_ca_pem(pem: Array<UInt8>) @suspends -> Result<Self, TlsError> {
         client_config(0, pem)
     }
-    pub fn connect(&self, socket: TcpStream, server_name: &String) @suspends -> Result<
-        TlsStream,
-        TlsError
-    > {
+    pub fn connect(
+        &self,
+        socket: TcpStream,
+        server_name: &String
+    ) @suspends -> Result<TlsStream, TlsError> {
         var error: UInt64 = 0
         let session = __tls_client(&self.storage, server_name, &mut error)
         if error != 0 {
@@ -139,8 +149,10 @@ impl ServerConfig {
     }
 }
 
-fn handshake(socket: TcpStream, session: tls.SessionOwner) @suspends ->
-    Result<TlsStream, TlsError> {
+fn handshake(
+    socket: TcpStream,
+    session: tls.SessionOwner
+) @suspends -> Result<TlsStream, TlsError> {
     var stream = TlsStream { socket, session, usable: true }
     while true {
         stream.flush()?
@@ -177,10 +189,11 @@ impl TlsStream {
         }
         Ok({})
     }
-    fn read_part(&mut self, limit: UInt64, delimiter: UInt64) @suspends -> Result<
-        Array<UInt8>,
-        TlsError
-    > {
+    fn read_part(
+        &mut self,
+        limit: UInt64,
+        delimiter: UInt64
+    ) @suspends -> Result<Array<UInt8>, TlsError> {
         while true {
             self.flush()?
             var error: UInt64 = 0
@@ -215,10 +228,11 @@ impl TlsStream {
         self.usable = true
         Ok(bytes)
     }
-    fn frame(&mut self, limit: UInt64, delimiter: UInt64) @suspends -> Result<
-        Option<Array<UInt8>>,
-        TlsError
-    > {
+    fn frame(
+        &mut self,
+        limit: UInt64,
+        delimiter: UInt64
+    ) @suspends -> Result<Option<Array<UInt8>>, TlsError> {
         if !self.usable {
             return Err(Unusable)
         }
@@ -250,14 +264,17 @@ impl TlsStream {
         self.usable = true
         Ok(Some(result))
     }
-    pub fn read_exact(&mut self, length: UInt64) @suspends ->
-        Result<Option<Array<UInt8>>, TlsError> {
+    pub fn read_exact(
+        &mut self,
+        length: UInt64
+    ) @suspends -> Result<Option<Array<UInt8>>, TlsError> {
         self.frame(length, 256)
     }
-    pub fn read_until(&mut self, delimiter: UInt8, limit: UInt64) @suspends -> Result<
-        Option<Array<UInt8>>,
-        TlsError
-    > {
+    pub fn read_until(
+        &mut self,
+        delimiter: UInt8,
+        limit: UInt64
+    ) @suspends -> Result<Option<Array<UInt8>>, TlsError> {
         self.frame(limit, uint64(delimiter))
     }
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, TlsError> {

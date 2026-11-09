@@ -22,10 +22,11 @@ import joky/internal/buffer
 pub enum ParseIntError { InvalidSyntax(UInt64), OutOfRange(UInt64) }
 
 // Return the checked value's bit pattern so Int64.MIN never needs a positive Int64.
-fn parse_decimal(input: &String, maximum: UInt64, signed: Bool) -> result.Result<
-    UInt64,
-    ParseIntError
-> {
+fn parse_decimal(
+    input: &String,
+    maximum: UInt64,
+    signed: Bool
+) -> result.Result<UInt64, ParseIntError> {
     let bytes = text.bytes(input)
     let length = buffer.slice_len(bytes)
     if length == 0 {

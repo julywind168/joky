@@ -152,7 +152,7 @@ fn format_indents_expression_continuations_and_method_chains() {
     );
     assert_format(
         "fn f()->\nInt32{if 10>\n2{call()}\n42}\n",
-        "fn f() ->\n    Int32 {\n    if 10 >\n        2 {\n        call()\n    }\n    42\n}\n",
+        "fn f() -> Int32 {\n    if 10 >\n        2 {\n        call()\n    }\n    42\n}\n",
     );
 }
 
@@ -230,6 +230,90 @@ fn format_wraps_long_lists_records_and_signatures() {
             line.chars().count()
         );
     }
+    assert_eq!(format(&output).unwrap(), output);
+}
+
+#[test]
+fn format_wraps_parameters_before_short_return_types() {
+    let expected = concat!(
+        "impl Request {\n",
+        "    pub fn header_unique(\n",
+        "        &self,\n",
+        "        name: &String\n",
+        "    ) @noescape(name) -> Result<Option<&String>, DuplicateHeader> {\n",
+        "        None\n",
+        "    }\n",
+        "}\n",
+    );
+    for signature in [
+        "pub fn header_unique(&self, name: &String) @noescape(name) -> Result<Option<&String>, DuplicateHeader>",
+        "pub fn header_unique(&self, name: &String) @noescape(name) -> Result<\nOption<&String>,\nDuplicateHeader\n>",
+        "pub fn header_unique(&self, name: &String) @noescape(name) ->\nResult<Option<&String>, DuplicateHeader>",
+    ] {
+        assert_format(&format!("impl Request {{ {signature} {{ None }} }}"), expected);
+    }
+    assert_format(
+        "fn short(value: Int32) -> Result<\nInt32,\nError\n> { Ok(value) }",
+        "fn short(value: Int32) -> Result<Int32, Error> {\n    Ok(value)\n}\n",
+    );
+}
+
+#[test]
+fn format_plans_generic_trait_and_extern_signatures() {
+    for source in [
+        "fn transform<T, F: FnOnce(T) -> T>(transform: F, value: T) @noescape(transform) -> Result<Option<T>, TransformationError> { None }",
+        "trait Headers { fn find_unique_named_header(&self, name: &String) @noescape(name) -> Result<Option<&String>, DuplicateHeader> }",
+        "extern fn find_unique_named_header(source: &String, name: &String) @suspends -> Result<Option<String>, DuplicateHeader>",
+    ] {
+        let output = format(source).unwrap();
+        assert!(output.contains("(\n"), "{output}");
+        assert!(!output.contains("Result<\n"), "{output}");
+        assert_eq!(format(&output).unwrap(), output);
+        assert!(output.lines().all(|line| line.chars().count() <= 100), "{output}");
+    }
+}
+
+#[test]
+fn format_splits_only_return_types_that_cannot_fit_a_continuation() {
+    let output = format(
+        "fn a_very_long_function_name_that_leaves_little_space_for_its_return_type() -> Result<Option<String>, DuplicateHeader> { None }",
+    ).unwrap();
+    assert!(
+        output.contains("->\n    Result<Option<String>, DuplicateHeader> {"),
+        "{output}"
+    );
+    assert_eq!(format(&output).unwrap(), output);
+    let output = format(
+        "fn elaborate(value: Int32) -> Result<AnExtremelyLongSuccessTypeNameThatCannotFitBesideTheErrorType, AnEquallyLongErrorTypeNameThatRequiresAnotherLine> { None }",
+    ).unwrap();
+    assert!(output.contains("fn elaborate(\n"), "{output}");
+    assert!(output.contains("Result<\n"), "{output}");
+    assert!(
+        output.lines().all(|line| line.chars().count() <= 100),
+        "{output}"
+    );
+    assert_eq!(format(&output).unwrap(), output);
+}
+
+#[test]
+fn format_preserves_signature_comments_and_disabled_layouts() {
+    let source = concat!(
+        "fn short(value: Int32) -> Result<\n",
+        "// Keep the error explanation with its type.\n",
+        "Int32, Error> { Ok(value) }\n",
+        "// fmt: off\n",
+        "fn disabled(value:Int32)->Result<\nInt32,Error\n>{Ok(value)}\n",
+        "// fmt: on\n",
+    );
+    let output = format(source).unwrap();
+    assert!(
+        output.contains("Result<\n    // Keep the error explanation with its type.\n"),
+        "{output}"
+    );
+    assert!(
+        output.contains("fn disabled(value:Int32)->Result<\nInt32,Error\n>{Ok(value)}"),
+        "{output}"
+    );
     assert_eq!(format(&output).unwrap(), output);
 }
 

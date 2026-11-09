@@ -144,11 +144,10 @@ impl<I: Iterator, J: Iterator> Iterator for Zip<I, J> {
 
 pub struct Map<I, T, F> { source: I, transform: F, done: Bool }
 
-pub fn map<I: IntoIterator, T, F: FnMut(I.IntoIter.Item) -> T>(input: I, transform: F) -> Map<
-    I.IntoIter,
-    T,
-    F
-> {
+pub fn map<I: IntoIterator, T, F: FnMut(I.IntoIter.Item) -> T>(
+    input: I,
+    transform: F
+) -> Map<I.IntoIter, T, F> {
     Map { source: IntoIterator.into_iter(input), transform, done: false }
 }
 
@@ -171,8 +170,10 @@ impl<I: Iterator, T, F: FnMut(I.Item) -> T> Iterator for Map<I, T, F> {
 
 pub struct Filter<I, F> { source: I, predicate: F, done: Bool }
 
-pub fn filter<I: IntoIterator, F: FnMut(&I.IntoIter.Item) -> Bool>(input: I, predicate: F) ->
-    Filter<I.IntoIter, F> {
+pub fn filter<I: IntoIterator, F: FnMut(&I.IntoIter.Item) -> Bool>(
+    input: I,
+    predicate: F
+) -> Filter<I.IntoIter, F> {
     Filter { source: IntoIterator.into_iter(input), predicate, done: false }
 }
 
@@ -451,8 +452,10 @@ impl<I: Copy + SharedIterator> SharedIterator for SharedTake<I> {
 
 pub struct SharedZip<I: Copy, J: Copy> { left: I, right: J, done: Bool }
 
-pub fn zip_shared<I: Copy + SharedIterator, J: Copy + SharedIterator>(left: I, right: J) ->
-    SharedZip<I, J> {
+pub fn zip_shared<I: Copy + SharedIterator, J: Copy + SharedIterator>(
+    left: I,
+    right: J
+) -> SharedZip<I, J> {
     SharedZip { left, right, done: false }
 }
 
@@ -562,9 +565,11 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
     pub fn count(self) -> UInt64 {
         count_shared(self.source)
     }
-    pub fn fold<A, F: FnMut(A, T) @noescape -> A>(self, var initial: A, var combine: F) @noescape(
-        combine
-    ) -> A {
+    pub fn fold<A, F: FnMut(A, T) @noescape -> A>(
+        self,
+        var initial: A,
+        var combine: F
+    ) @noescape(combine) -> A {
         types.require_reference_free::<A>()
         var source = self.source
         while true {
@@ -583,21 +588,23 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
     pub fn take(self, count: UInt64) -> SharedPipeline<SharedTake<I>, T> {
         SharedPipeline { source: take_shared(self.source, count) }
     }
-    pub fn filter<F: Copy + Fn(T) @noescape -> Bool>(self, predicate: F) -> SharedPipeline<
-        SharedSelect<I, T, F>,
-        T
-    > {
+    pub fn filter<F: Copy + Fn(T) @noescape -> Bool>(
+        self,
+        predicate: F
+    ) -> SharedPipeline<SharedSelect<I, T, F>, T> {
         SharedPipeline { source: SharedSelect { source: self.source, predicate, done: false } }
     }
-    pub fn map<U: Copy, F: Copy + Fn(T) @noescape -> U>(self, transform: F) -> SharedPipeline<
-        SharedMap<I, T, U, F>,
-        U
-    > {
+    pub fn map<U: Copy, F: Copy + Fn(T) @noescape -> U>(
+        self,
+        transform: F
+    ) -> SharedPipeline<SharedMap<I, T, U, F>, U> {
         types.require_plain_copy::<U>()
         SharedPipeline { source: SharedMap { source: self.source, transform, done: false } }
     }
-    pub fn zip<J: Copy + SharedIterator<Item = U>, U: Copy>(self, other: SharedPipeline<J, U>) ->
-        SharedPipeline<SharedZip<I, J>, (T, U)> {
+    pub fn zip<J: Copy + SharedIterator<Item = U>, U: Copy>(
+        self,
+        other: SharedPipeline<J, U>
+    ) -> SharedPipeline<SharedZip<I, J>, (T, U)> {
         SharedPipeline { source: zip_shared(self.source, other.source) }
     }
 }
@@ -675,10 +682,9 @@ impl<T> ExclusivePlan for ExclusiveAll<T> {
 }
 pub struct ExclusivePipeline<P: Copy, T> { cursor: &mut Iter<T>, plan: P }
 
-pub fn exclusive<S: ExclusiveSource>(source: &mut S) -> ExclusivePipeline<
-    ExclusiveAll<S.Item>,
-    S.Item
-> {
+pub fn exclusive<S: ExclusiveSource>(
+    source: &mut S
+) -> ExclusivePipeline<ExclusiveAll<S.Item>, S.Item> {
     ExclusivePipeline { cursor: ExclusiveSource.exclusive_cursor(source), plan: ExclusiveAll {} }
 }
 
@@ -687,10 +693,10 @@ impl<P: Copy + ExclusivePlan<Item = T>, T> ExclusivePipeline<P, T> {
         let ExclusivePipeline { cursor, plan } = self
         ExclusivePipeline { cursor, plan: ExclusiveTake { source: plan, remaining: count } }
     }
-    pub fn filter(self, predicate: fn(&T) @noescape -> Bool) -> ExclusivePipeline<
-        ExclusiveFilter<P, T>,
-        T
-    > {
+    pub fn filter(
+        self,
+        predicate: fn(&T) @noescape -> Bool
+    ) -> ExclusivePipeline<ExclusiveFilter<P, T>, T> {
         let ExclusivePipeline { cursor, plan } = self
         ExclusivePipeline { cursor, plan: ExclusiveFilter { source: plan, predicate, done: false } }
     }
@@ -701,15 +707,16 @@ impl<P: Copy + ExclusivePlan<Item = T>, T> ExclusivePipeline<P, T> {
     }
 }
 
-pub fn exclusive_parts<P: Copy + ExclusivePlan<Item = T>, T>(input: ExclusivePipeline<P, T>) -> (
-    &mut Iter<T>,
-    P
-) {
+pub fn exclusive_parts<P: Copy + ExclusivePlan<Item = T>, T>(
+    input: ExclusivePipeline<P, T>
+) -> (&mut Iter<T>, P) {
     input.into_parts()
 }
 
-pub fn advance_exclusive<P: Copy + ExclusivePlan>(plan: &mut P, cursor: &Iter<P.Item>) @noescape ->
-    Bool {
+pub fn advance_exclusive<P: Copy + ExclusivePlan>(
+    plan: &mut P,
+    cursor: &Iter<P.Item>
+) @noescape -> Bool {
     types.require_plain_copy::<P>()
     ExclusivePlan.advance(plan, cursor)
 }

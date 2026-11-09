@@ -28,12 +28,19 @@ import joky/uuid
 import joky/json
 import joky/json/typed
 
-extern fn __pg_connect(url: &String, max_connections: UInt64, acquire_timeout_nanos: UInt64) @suspends ->
-    postgres.Owner
+extern fn __pg_connect(
+    url: &String,
+    max_connections: UInt64,
+    acquire_timeout_nanos: UInt64
+) @suspends -> postgres.Owner
 extern fn __pg_share(owner: &postgres.Owner) @suspends -> postgres.Owner
 extern fn __pg_begin(owner: &postgres.Owner) @suspends -> postgres.Owner
-extern fn __pg_run(owner: &postgres.Owner, query: UInt64, sql: &String, params: Array<UInt8>) @suspends ->
-    postgres.Owner
+extern fn __pg_run(
+    owner: &postgres.Owner,
+    query: UInt64,
+    sql: &String,
+    params: Array<UInt8>
+) @suspends -> postgres.Owner
 extern fn __pg_finish(owner: &postgres.Owner, commit: UInt64) @suspends -> postgres.Owner
 extern fn __pg_status(owner: &postgres.Owner) @suspends -> UInt64
 extern fn __pg_count(owner: &postgres.Owner) @suspends -> UInt64
@@ -496,10 +503,10 @@ impl Row {
     pub fn get_text(&self, name: &String) @noescape(name) -> Result<Option<&String>, ColumnError> {
         get_text(self, self.column_index(name)?)
     }
-    pub fn get_bytes(&self, name: &String) @noescape(name) -> Result<
-        Option<&Array<UInt8>>,
-        ColumnError
-    > {
+    pub fn get_bytes(
+        &self,
+        name: &String
+    ) @noescape(name) -> Result<Option<&Array<UInt8>>, ColumnError> {
         get_bytes(self, self.column_index(name)?)
     }
 }
@@ -782,10 +789,10 @@ fn text_blob(out: &mut Array<UInt8>, tag: UInt8, text: &String) -> Result<Unit, 
     Ok({})
 }
 
-fn encode_text_array(data: &mut Array<UInt8>, values: &Array<Option<String>>) -> Result<
-    Unit,
-    DbError
-> {
+fn encode_text_array(
+    data: &mut Array<UInt8>,
+    values: &Array<Option<String>>
+) -> Result<Unit, DbError> {
     if values.len() > 65536 || data.len() + 5 > 1048576 {
         return Err(LimitExceeded)
     }
@@ -803,8 +810,10 @@ fn encode_text_array(data: &mut Array<UInt8>, values: &Array<Option<String>>) ->
     Ok({})
 }
 
-fn encode_int_array(data: &mut Array<UInt8>, values: &Array<Option<Int64>>) ->
-    Result<Unit, DbError> {
+fn encode_int_array(
+    data: &mut Array<UInt8>,
+    values: &Array<Option<Int64>>
+) -> Result<Unit, DbError> {
     if values.len() > 65536 || data.len() + 5 > 1048576 {
         return Err(LimitExceeded)
     }
@@ -1001,10 +1010,11 @@ fn rows(data: Array<UInt8>) -> Array<Row> {
     result
 }
 
-fn run(owner: &postgres.Owner, mode: UInt64, query: Query) @suspends -> Result<
-    postgres.Owner,
-    DbError
-> {
+fn run(
+    owner: &postgres.Owner,
+    mode: UInt64,
+    query: Query
+) @suspends -> Result<postgres.Owner, DbError> {
     let Query { text, parameters } = query
     let result = __pg_run(owner, mode, &text, encode(parameters)?)
     check_status(&result)?

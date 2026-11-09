@@ -224,8 +224,12 @@ fn finish_scalar<R: Copy>(
 }
 
 #intrinsic("domain.finish_current_scalar")
-fn finish_current_scalar<R: Copy>(name: String, input: UInt64, write: Bool, query: Bool) @suspends ->
-    Result<R, DomainAccessError> {
+fn finish_current_scalar<R: Copy>(
+    name: String,
+    input: UInt64,
+    write: Bool,
+    query: Bool
+) @suspends -> Result<R, DomainAccessError> {
     let (status, bits) = if query {
         __domain_query_scalar(name, input)
     } else if write {
@@ -252,22 +256,27 @@ pub fn read<S, R>(operation: fn(&S) -> R) @suspends -> Result<R, DomainAccessErr
 }
 
 #intrinsic("domain.query")
-pub fn query<S, A, R>(operation: fn(&S, A) -> R, input: A) @suspends ->
-    Result<R, DomainAccessError> {
+pub fn query<S, A, R>(
+    operation: fn(&S, A) -> R,
+    input: A
+) @suspends -> Result<R, DomainAccessError> {
     finish_current_value::<A, R>("", input)
 }
 
 #intrinsic("domain.write")
-pub fn write<S, A, R>(operation: fn(&mut S, A) -> R, input: A) @suspends -> Result<
-    R,
-    DomainAccessError
-> {
+pub fn write<S, A, R>(
+    operation: fn(&mut S, A) -> R,
+    input: A
+) @suspends -> Result<R, DomainAccessError> {
     finish_current_value::<A, R>("", input)
 }
 
 extern fn __domain_module() -> domain.Module
-extern fn __domain_create(module: domain.Module, name: String, input: UInt64) @suspends ->
-    domain.StateOwner
+extern fn __domain_create(
+    module: domain.Module,
+    name: String,
+    input: UInt64
+) @suspends -> domain.StateOwner
 extern fn __domain_handle(owner: &domain.StateOwner) @suspends -> domain.Handle
 
 #intrinsic("domain.readonly")
@@ -280,8 +289,11 @@ extern fn __domain_request(
     name: String,
     input: UInt64
 ) @suspends -> (Int32, UInt64)
-extern fn __domain_read_at(module: domain.Module, handle: domain.Handle, name: String) @suspends ->
-    (Int32, UInt64)
+extern fn __domain_read_at(
+    module: domain.Module,
+    handle: domain.Handle,
+    name: String
+) @suspends -> (Int32, UInt64)
 extern fn __domain_query_at(
     module: domain.Module,
     handle: domain.Handle,
@@ -294,11 +306,17 @@ extern fn __domain_write_at(
     name: String,
     input: UInt64
 ) @suspends -> (Int32, UInt64)
-extern fn __domain_snapshot(module: domain.Module, handle: domain.Handle, name: String) @suspends ->
-    domain.SnapshotOwner
+extern fn __domain_snapshot(
+    module: domain.Module,
+    handle: domain.Handle,
+    name: String
+) @suspends -> domain.SnapshotOwner
 extern fn __domain_snapshot_value(snapshot: &domain.SnapshotOwner) @suspends -> UInt64
-extern fn __domain_snapshot_values(module: domain.Module, handle: domain.Handle, name: String) @suspends ->
-    domain.SnapshotOwner
+extern fn __domain_snapshot_values(
+    module: domain.Module,
+    handle: domain.Handle,
+    name: String
+) @suspends -> domain.SnapshotOwner
 extern fn __domain_snapshot_read_values(
     snapshot: &domain.SnapshotOwner,
     packet: &mut Buffer<UInt64>
@@ -358,10 +376,10 @@ impl<S, R> Snapshot<S, R> {
 }
 
 #intrinsic("domain.snapshot_from")
-pub fn snapshot_from<S, R>(handle: ReadHandle<S>, projection: fn(&S) -> R) @suspends -> Snapshot<
-    S,
-    R
-> {
+pub fn snapshot_from<S, R>(
+    handle: ReadHandle<S>,
+    projection: fn(&S) -> R
+) @suspends -> Snapshot<S, R> {
     Snapshot::<S, R> { storage: __domain_snapshot(module(), handle.token, "") }
 }
 
@@ -404,8 +422,11 @@ pub fn create<S, A>(constructor: fn(A) -> S, input: A) @suspends -> Owner<S> {
     finish_create::<S, A>(module(), "", input)
 }
 
-extern fn __domain_create_values(module: domain.Module, name: String, packet: &Buffer<UInt64>) @suspends ->
-    domain.StateOwner
+extern fn __domain_create_values(
+    module: domain.Module,
+    name: String,
+    packet: &Buffer<UInt64>
+) @suspends -> domain.StateOwner
 
 #intrinsic("domain.finish_create")
 fn finish_create<S, A>(module: domain.Module, name: String, input: A) @suspends -> Owner<S> {
@@ -414,28 +435,38 @@ fn finish_create<S, A>(module: domain.Module, name: String, input: A) @suspends 
 }
 
 #intrinsic("domain.read_from")
-pub fn read_from<S, R>(handle: ReadHandle<S>, operation: fn(&S) -> R) @suspends -> Result<
-    R,
-    DomainAccessError
-> {
+pub fn read_from<S, R>(
+    handle: ReadHandle<S>,
+    operation: fn(&S) -> R
+) @suspends -> Result<R, DomainAccessError> {
     finish_value::<Unit, R>(module(), handle.token, handle.token, 1, "", {})
 }
 
 #intrinsic("domain.query_from")
-pub fn query_from<S, A, R>(handle: ReadHandle<S>, operation: fn(&S, A) -> R, input: A) @suspends ->
-    Result<R, DomainAccessError> {
+pub fn query_from<S, A, R>(
+    handle: ReadHandle<S>,
+    operation: fn(&S, A) -> R,
+    input: A
+) @suspends -> Result<R, DomainAccessError> {
     finish_value::<A, R>(module(), handle.token, handle.token, 1, "", input)
 }
 
 #intrinsic("domain.write_to")
-pub fn write_to<S, A, R>(handle: WriteHandle<S>, operation: fn(&mut S, A) -> R, input: A) @suspends ->
-    Result<R, DomainAccessError> {
+pub fn write_to<S, A, R>(
+    handle: WriteHandle<S>,
+    operation: fn(&mut S, A) -> R,
+    input: A
+) @suspends -> Result<R, DomainAccessError> {
     finish_value::<A, R>(module(), handle.token, handle.token, 1, "", input)
 }
 
 #intrinsic("domain.finish_request")
-fn finish_request<R: Copy>(module: domain.Module, token: domain.Handle, name: String, input: UInt64) @suspends ->
-    Result<R, RequestError> {
+fn finish_request<R: Copy>(
+    module: domain.Module,
+    token: domain.Handle,
+    name: String,
+    input: UInt64
+) @suspends -> Result<R, RequestError> {
     let (status, bits) = __domain_request(module, token, name, input)
     if status == 0 {
         return Ok(unpack::<R>(bits))
@@ -466,8 +497,12 @@ extern fn __domain_request_values(
 ) @suspends -> Int32
 
 #intrinsic("domain.finish_request_value")
-fn finish_request_value<A, R>(module: domain.Module, token: domain.Handle, name: String, input: A) @suspends ->
-    Result<R, RequestError> {
+fn finish_request_value<A, R>(
+    module: domain.Module,
+    token: domain.Handle,
+    name: String,
+    input: A
+) @suspends -> Result<R, RequestError> {
     var packet = pack_value(input)
     let status = __domain_request_values(module, token, name, &mut packet.storage)
     if status == 0 {
@@ -492,14 +527,20 @@ fn finish_request_value<A, R>(module: domain.Module, token: domain.Handle, name:
 }
 
 #intrinsic("domain.request")
-pub fn request<S, A, R>(handle: WriteHandle<S>, operation: fn(A) @suspends -> R, input: A) @suspends ->
-    Result<R, RequestError> {
+pub fn request<S, A, R>(
+    handle: WriteHandle<S>,
+    operation: fn(A) @suspends -> R,
+    input: A
+) @suspends -> Result<R, RequestError> {
     finish_request_value::<A, R>(module(), handle.token, "", input)
 }
 
 #intrinsic("domain.request_read")
-pub fn request_read<S, A, R>(handle: ReadHandle<S>, operation: fn(A) @suspends -> R, input: A) @suspends ->
-    Result<R, RequestError> {
+pub fn request_read<S, A, R>(
+    handle: ReadHandle<S>,
+    operation: fn(A) @suspends -> R,
+    input: A
+) @suspends -> Result<R, RequestError> {
     finish_request_value::<A, R>(module(), handle.token, "", input)
 }
 
@@ -518,8 +559,10 @@ extern fn __domain_candidate_at_values(
     name: String,
     input: &Buffer<UInt64>
 ) @suspends -> domain.CandidateOwner
-extern fn __domain_commit(handle: domain.Handle, candidate: &mut domain.CandidateOwner) @suspends ->
-    domain.CommitOwner
+extern fn __domain_commit(
+    handle: domain.Handle,
+    candidate: &mut domain.CandidateOwner
+) @suspends -> domain.CommitOwner
 extern fn __domain_commit_wait(receipt: &mut domain.CommitOwner) @suspends -> Int32
 extern fn __domain_commit_failed_outbox(receipt: &domain.CommitOwner) @suspends -> UInt64
 extern fn __domain_commit_revision(receipt: &domain.CommitOwner) @suspends -> UInt64
@@ -656,8 +699,11 @@ pub fn commit_to<S>(handle: WriteHandle<S>, candidate: Candidate<S>) @suspends -
     CommitReceipt { storage: __domain_commit(handle.token, &mut storage) }
 }
 
-pub fn commit_before<S>(handle: WriteHandle<S>, candidate: Candidate<S>, deadline: &CommitDeadline) @suspends ->
-    CommitReceipt {
+pub fn commit_before<S>(
+    handle: WriteHandle<S>,
+    candidate: Candidate<S>,
+    deadline: &CommitDeadline
+) @suspends -> CommitReceipt {
     var storage = candidate.storage
     CommitReceipt { storage: __domain_commit_before(handle.token, &mut storage, &deadline.storage) }
 }
@@ -696,8 +742,11 @@ extern fn __domain_pair(
 ) @suspends -> (Int32, UInt64)
 
 #intrinsic("domain.read_pair")
-pub fn read_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, operation: fn(&S, &T) -> R) @suspends ->
-    Result<R, DomainAccessError> {
+pub fn read_pair<S, T, R>(
+    first: ReadHandle<S>,
+    second: ReadHandle<T>,
+    operation: fn(&S, &T) -> R
+) @suspends -> Result<R, DomainAccessError> {
     finish_value::<Unit, R>(module(), first.token, second.token, 2, "", {})
 }
 
@@ -887,8 +936,9 @@ impl PairCommitReceipt {
 // A bounded read set captures independent hook-free owning roots in one executor turn.
 extern fn __domain_access_set() @suspends -> domain.AccessSetOwner
 extern fn __domain_access_include(set: &mut domain.AccessSetOwner, handle: domain.Handle) @suspends
-extern fn __domain_snapshot_set(set: &mut domain.AccessSetOwner) @suspends ->
-    domain.SnapshotSetOwner
+extern fn __domain_snapshot_set(
+    set: &mut domain.AccessSetOwner
+) @suspends -> domain.SnapshotSetOwner
 extern fn __domain_set_read(
     module: domain.Module,
     snapshot: &domain.SnapshotSetOwner,
@@ -929,8 +979,10 @@ extern fn __domain_commit_set_before(
     set: &mut domain.CandidateSetOwner,
     deadline: &domain.DeadlineOwner
 ) @suspends -> domain.CommitOwner
-extern fn __domain_set_revision_checked(receipt: &domain.CommitOwner, handle: domain.Handle) @suspends ->
-    (Int32, UInt64)
+extern fn __domain_set_revision_checked(
+    receipt: &domain.CommitOwner,
+    handle: domain.Handle
+) @suspends -> (Int32, UInt64)
 pub struct AccessSet { storage: domain.AccessSetOwner }
 pub struct SnapshotSet { storage: domain.SnapshotSetOwner }
 pub struct CandidateSet { storage: domain.CandidateSetOwner }
@@ -977,8 +1029,11 @@ fn finish_snapshot_read<A, R>(
 }
 
 #intrinsic("domain.read_snapshot")
-pub fn read_snapshot<S, R>(snapshot: &SnapshotSet, handle: ReadHandle<S>, projection: fn(&S) -> R) @suspends ->
-    R {
+pub fn read_snapshot<S, R>(
+    snapshot: &SnapshotSet,
+    handle: ReadHandle<S>,
+    projection: fn(&S) -> R
+) @suspends -> R {
     finish_snapshot_read::<Unit, R>(module(), &snapshot.storage, handle.token, "", {})
 }
 
@@ -1156,8 +1211,10 @@ pub fn commit_set(set: CandidateSet) @suspends -> SetCommitReceipt {
     SetCommitReceipt { storage: __domain_commit_set(&mut storage) }
 }
 
-pub fn commit_set_before(set: CandidateSet, deadline: &CommitDeadline) @suspends ->
-    SetCommitReceipt {
+pub fn commit_set_before(
+    set: CandidateSet,
+    deadline: &CommitDeadline
+) @suspends -> SetCommitReceipt {
     var storage = set.storage
     SetCommitReceipt { storage: __domain_commit_set_before(&mut storage, &deadline.storage) }
 }
@@ -1170,10 +1227,10 @@ impl SetCommitReceipt {
         }
         Err(commit_error(status))
     }
-    pub fn revision<S>(&self, handle: ReadHandle<S>) @suspends -> Result<
-        Option<UInt64>,
-        RevisionError
-    > {
+    pub fn revision<S>(
+        &self,
+        handle: ReadHandle<S>
+    ) @suspends -> Result<Option<UInt64>, RevisionError> {
         set_revision(self, handle.token)
     }
     pub fn failed_outbox(&self) @suspends -> Option<UInt64> {
@@ -1192,10 +1249,10 @@ impl SetCommitReceipt {
     }
 }
 
-fn set_revision(receipt: &SetCommitReceipt, handle: domain.Handle) @suspends -> Result<
-    Option<UInt64>,
-    RevisionError
-> {
+fn set_revision(
+    receipt: &SetCommitReceipt,
+    handle: domain.Handle
+) @suspends -> Result<Option<UInt64>, RevisionError> {
     let (status, value) = __domain_set_revision_checked(&receipt.storage, handle)
     if status == 0 {
         return Ok(Some(value))
@@ -1213,7 +1270,10 @@ fn set_revision(receipt: &SetCommitReceipt, handle: domain.Handle) @suspends -> 
 }
 
 // Attaching consumes the batch. Only candidate commits can publish its messages.
-extern fn __outbox_attach(candidate: &mut domain.CandidateOwner, batch: &mut outbox.BatchOwner) @suspends
+extern fn __outbox_attach(
+    candidate: &mut domain.CandidateOwner,
+    batch: &mut outbox.BatchOwner
+) @suspends
 extern fn __outbox_attach_pair(
     candidate: &mut domain.CandidatePairOwner,
     batch: &mut outbox.BatchOwner
@@ -1245,18 +1305,27 @@ impl CandidateSet {
 extern fn __directory_create(capacity: UInt64) @suspends -> domain.DirectoryOwner
 extern fn __directory_handle(owner: &domain.DirectoryOwner) @suspends -> UInt64
 extern fn __directory_close(directory: UInt64) @suspends
-extern fn __directory_insert(directory: UInt64, key: UInt64, target: domain.Handle) @suspends ->
-    Int32
-extern fn __directory_insert_owned(directory: UInt64, key: UInt64, target: &mut domain.StateOwner) @suspends ->
-    Int32
+extern fn __directory_insert(
+    directory: UInt64,
+    key: UInt64,
+    target: domain.Handle
+) @suspends -> Int32
+extern fn __directory_insert_owned(
+    directory: UInt64,
+    key: UInt64,
+    target: &mut domain.StateOwner
+) @suspends -> Int32
 extern fn __directory_replace(
     directory: UInt64,
     key: UInt64,
     expected: domain.Handle,
     target: domain.Handle
 ) @suspends -> Int32
-extern fn __directory_remove(directory: UInt64, key: UInt64, expected: domain.Handle) @suspends ->
-    Bool
+extern fn __directory_remove(
+    directory: UInt64,
+    key: UInt64,
+    expected: domain.Handle
+) @suspends -> Bool
 extern fn __directory_lookup(
     module: domain.Module,
     directory: UInt64,
@@ -1323,31 +1392,42 @@ fn directory_status(status: Int32) -> Result<Unit, DirectoryError> {
 impl DirectoryHandle {
     // Consumes the owner on every outcome; a failed insertion closes its state.
     // Successful insertion transfers close responsibility to the directory.
-    pub fn insert_owned<S>(self, key: UInt64, target: Owner<S>) @suspends -> Result<
-        Unit,
-        DirectoryError
-    > {
+    pub fn insert_owned<S>(
+        self,
+        key: UInt64,
+        target: Owner<S>
+    ) @suspends -> Result<Unit, DirectoryError> {
         var value = target.value
         directory_status(__directory_insert_owned(self.identity, key, &mut value))
     }
-    pub fn insert<S>(self, key: UInt64, target: WriteHandle<S>) @suspends -> Result<
-        Unit,
-        DirectoryError
-    > {
+    pub fn insert<S>(
+        self,
+        key: UInt64,
+        target: WriteHandle<S>
+    ) @suspends -> Result<Unit, DirectoryError> {
         directory_status(__directory_insert(self.identity, key, target.token))
     }
-    pub fn insert_read<S>(self, key: UInt64, target: ReadHandle<S>) @suspends -> Result<
-        Unit,
-        DirectoryError
-    > {
+    pub fn insert_read<S>(
+        self,
+        key: UInt64,
+        target: ReadHandle<S>
+    ) @suspends -> Result<Unit, DirectoryError> {
         directory_status(__directory_insert(self.identity, key, target.token))
     }
-    pub fn replace<S, T>(self, key: UInt64, expected: ReadHandle<S>, target: WriteHandle<T>) @suspends ->
-        Result<Unit, DirectoryError> {
+    pub fn replace<S, T>(
+        self,
+        key: UInt64,
+        expected: ReadHandle<S>,
+        target: WriteHandle<T>
+    ) @suspends -> Result<Unit, DirectoryError> {
         directory_status(__directory_replace(self.identity, key, expected.token, target.token))
     }
-    pub fn replace_read<S, T>(self, key: UInt64, expected: ReadHandle<S>, target: ReadHandle<T>) @suspends ->
-        Result<Unit, DirectoryError> {
+    pub fn replace_read<S, T>(
+        self,
+        key: UInt64,
+        expected: ReadHandle<S>,
+        target: ReadHandle<T>
+    ) @suspends -> Result<Unit, DirectoryError> {
         directory_status(__directory_replace(self.identity, key, expected.token, target.token))
     }
     // Comparing identity prevents stale connection cleanup from deleting a new route.
@@ -1368,13 +1448,19 @@ pub fn lookup<S>(directory: DirectoryHandle, key: UInt64) @suspends -> Option<Re
     finish_lookup::<S>(module(), directory.identity, key, lookup_type::<S>())
 }
 
-pub fn lookup_write<S>(directory: DirectoryHandle, key: UInt64) @suspends ->
-    Option<WriteHandle<S>> {
+pub fn lookup_write<S>(
+    directory: DirectoryHandle,
+    key: UInt64
+) @suspends -> Option<WriteHandle<S>> {
     finish_lookup_write::<S>(module(), directory.identity, key, lookup_type::<S>())
 }
 
-fn finish_lookup<S>(module: domain.Module, directory: UInt64, key: UInt64, operation: String) @suspends ->
-    Option<ReadHandle<S>> {
+fn finish_lookup<S>(
+    module: domain.Module,
+    directory: UInt64,
+    key: UInt64,
+    operation: String
+) @suspends -> Option<ReadHandle<S>> {
     let token = __directory_lookup(module, directory, key, operation, false)
     if __directory_found(token) {
         Some(ReadHandle::<S> { token: token })
@@ -1383,8 +1469,12 @@ fn finish_lookup<S>(module: domain.Module, directory: UInt64, key: UInt64, opera
     }
 }
 
-fn finish_lookup_write<S>(module: domain.Module, directory: UInt64, key: UInt64, operation: String) @suspends ->
-    Option<WriteHandle<S>> {
+fn finish_lookup_write<S>(
+    module: domain.Module,
+    directory: UInt64,
+    key: UInt64,
+    operation: String
+) @suspends -> Option<WriteHandle<S>> {
     let token = __directory_lookup(module, directory, key, operation, true)
     if __directory_found(token) {
         Some(WriteHandle::<S> { token: token })
@@ -1619,8 +1709,12 @@ extern fn __domain_when(
 ) @suspends -> (Int32, UInt64)
 
 #intrinsic("domain.finish_when")
-fn finish_when<H, A, R>(module: domain.Module, name: String, handles: H, input: A) @suspends ->
-    Result<R, DomainAccessError> {
+fn finish_when<H, A, R>(
+    module: domain.Module,
+    name: String,
+    handles: H,
+    input: A
+) @suspends -> Result<R, DomainAccessError> {
     let access = pack_value(handles)
     var packet = pack_value(input)
     let (status, target) = __domain_when(module, name, &access.storage, &mut packet.storage)
@@ -1644,8 +1738,12 @@ extern fn __domain_when_paths(
 ) @suspends -> (Int32, UInt64)
 
 #intrinsic("domain.finish_paths")
-fn finish_paths<H, A, R>(module: domain.Module, name: String, handles: H, input: A) @suspends ->
-    Result<R, DomainAccessError> {
+fn finish_paths<H, A, R>(
+    module: domain.Module,
+    name: String,
+    handles: H,
+    input: A
+) @suspends -> Result<R, DomainAccessError> {
     let access = pack_value(handles)
     var packet = pack_value(input)
     let (status, target) = __domain_when_paths(module, name, &access.storage, &mut packet.storage)
@@ -1680,18 +1778,26 @@ extern fn __directory_lookup_named(
     operation: String,
     writable: Bool
 ) @suspends -> domain.Handle
-extern fn __directory_insert_named(directory: UInt64, key: &String, target: domain.Handle) @suspends ->
-    Int32
+extern fn __directory_insert_named(
+    directory: UInt64,
+    key: &String,
+    target: domain.Handle
+) @suspends -> Int32
 extern fn __directory_insert_owned_named(
     directory: UInt64,
     key: &String,
     target: &mut domain.StateOwner
 ) @suspends -> Int32
-extern fn __directory_remove_named(directory: UInt64, key: &String, expected: domain.Handle) @suspends ->
-    Bool
+extern fn __directory_remove_named(
+    directory: UInt64,
+    key: &String,
+    expected: domain.Handle
+) @suspends -> Bool
 
-pub fn lookup_named<S>(directory: DirectoryHandle, key: &String) @suspends ->
-    Option<ReadHandle<S>> {
+pub fn lookup_named<S>(
+    directory: DirectoryHandle,
+    key: &String
+) @suspends -> Option<ReadHandle<S>> {
     let token = __directory_lookup_named(
         module(),
         directory.identity,
@@ -1706,9 +1812,10 @@ pub fn lookup_named<S>(directory: DirectoryHandle, key: &String) @suspends ->
     }
 }
 
-pub fn lookup_named_write<S>(directory: DirectoryHandle, key: &String) @suspends -> Option<
-    WriteHandle<S>
-> {
+pub fn lookup_named_write<S>(
+    directory: DirectoryHandle,
+    key: &String
+) @suspends -> Option<WriteHandle<S>> {
     let token = __directory_lookup_named(
         module(),
         directory.identity,
@@ -1724,16 +1831,18 @@ pub fn lookup_named_write<S>(directory: DirectoryHandle, key: &String) @suspends
 }
 
 impl DirectoryHandle {
-    pub fn insert_named<S>(self, key: &String, target: WriteHandle<S>) @suspends -> Result<
-        Unit,
-        DirectoryError
-    > {
+    pub fn insert_named<S>(
+        self,
+        key: &String,
+        target: WriteHandle<S>
+    ) @suspends -> Result<Unit, DirectoryError> {
         directory_status(__directory_insert_named(self.identity, key, target.token))
     }
-    pub fn insert_owned_named<S>(self, key: &String, target: Owner<S>) @suspends -> Result<
-        Unit,
-        DirectoryError
-    > {
+    pub fn insert_owned_named<S>(
+        self,
+        key: &String,
+        target: Owner<S>
+    ) @suspends -> Result<Unit, DirectoryError> {
         var value = target.value
         directory_status(__directory_insert_owned_named(self.identity, key, &mut value))
     }
@@ -1750,14 +1859,21 @@ extern fn __directory_remove_named_if(
 ) @suspends -> UInt64
 
 #intrinsic("domain.remove_named_if")
-pub fn remove_named_if<S>(directory: DirectoryHandle, key: &String, predicate: fn(&S) -> Bool) @suspends ->
-    Result<Bool, DomainAccessError> {
+pub fn remove_named_if<S>(
+    directory: DirectoryHandle,
+    key: &String,
+    predicate: fn(&S) -> Bool
+) @suspends -> Result<Bool, DomainAccessError> {
     Err(DomainAccessError.InvalidAccess)
 }
 
 #intrinsic("domain.finish_remove_named_if")
-fn finish_remove_named_if(module: domain.Module, directory: UInt64, key: &String, predicate: String) @suspends ->
-    Result<Bool, DomainAccessError> {
+fn finish_remove_named_if(
+    module: domain.Module,
+    directory: UInt64,
+    key: &String,
+    predicate: String
+) @suspends -> Result<Bool, DomainAccessError> {
     let result = __directory_remove_named_if(module, directory, key, predicate)
     let status = unpack::<Int32>(result & 0xffffffff)
     if status != 0 {

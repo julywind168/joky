@@ -142,10 +142,11 @@ fn validate(text: &String) -> Result<Unit, NumberError> {
 }
 
 // Shared range validator: offsets are absolute bytes in the supplied input.
-fn validate_number(bytes: &slice.Slice<UInt8>, start: UInt64, length: UInt64) -> Result<
-    Unit,
-    NumberError
-> {
+fn validate_number(
+    bytes: &slice.Slice<UInt8>,
+    start: UInt64,
+    length: UInt64
+) -> Result<Unit, NumberError> {
     var index = start
     if index < length && byte_at(bytes, index) == 45 {
         index = index + 1
@@ -353,10 +354,11 @@ fn number_end(byte: UInt8) -> Bool {
     whitespace(byte) || byte == 44 || byte == 93 || byte == 125
 }
 
-fn read_number(input: &slice.Slice<UInt8>, start: UInt64, limit: UInt64) -> Result<
-    (Number, UInt64),
-    DecodeError
-> {
+fn read_number(
+    input: &slice.Slice<UInt8>,
+    start: UInt64,
+    limit: UInt64
+) -> Result<(Number, UInt64), DecodeError> {
     let bytes = input
     var end = start
     while end < slice.len(input) && !number_end(byte_at(bytes, end)) {
@@ -373,10 +375,11 @@ fn read_number(input: &slice.Slice<UInt8>, start: UInt64, limit: UInt64) -> Resu
     Ok((Number { text: String.from_utf8(text)! }, end))
 }
 
-fn literal(input: &slice.Slice<UInt8>, start: UInt64, expected: &String) -> Result<
-    UInt64,
-    DecodeError
-> {
+fn literal(
+    input: &slice.Slice<UInt8>,
+    start: UInt64,
+    expected: &String
+) -> Result<UInt64, DecodeError> {
     let source = input
     let token = expected.bytes()
     var index: UInt64 = 0
@@ -405,10 +408,11 @@ fn hex_digit(byte: UInt8) -> UInt32 {
     16
 }
 
-fn hex_quad(input: &slice.Slice<UInt8>, start: UInt64, escape: UInt64) -> Result<
-    UInt32,
-    DecodeError
-> {
+fn hex_quad(
+    input: &slice.Slice<UInt8>,
+    start: UInt64,
+    escape: UInt64
+) -> Result<UInt32, DecodeError> {
     let bytes = input
     var scalar: UInt32 = 0
     var index: UInt64 = 0
@@ -476,10 +480,11 @@ fn read_utf8_scalar(input: &slice.Slice<UInt8>, offset: UInt64) -> (UInt32, UInt
     (scalar, offset + width)
 }
 
-fn read_string(input: &slice.Slice<UInt8>, start: UInt64, limit: UInt64) -> Result<
-    (String, UInt64),
-    DecodeError
-> {
+fn read_string(
+    input: &slice.Slice<UInt8>,
+    start: UInt64,
+    limit: UInt64
+) -> Result<(String, UInt64), DecodeError> {
     let bytes = input
     let length = slice.len(input)
     var offset = start + 1
@@ -615,8 +620,12 @@ fn attach(frame: &mut DecodeFrame, child: Value, offset: UInt64) -> Result<UInt3
     }
 }
 
-fn read_key(input: &slice.Slice<UInt8>, start: UInt64, limit: UInt64, frame: &mut DecodeFrame) ->
-    Result<UInt64, DecodeError> {
+fn read_key(
+    input: &slice.Slice<UInt8>,
+    start: UInt64,
+    limit: UInt64,
+    frame: &mut DecodeFrame
+) -> Result<UInt64, DecodeError> {
     let (name, next) = read_string(input, start, limit)?
     match frame {
         Fields((fields, key)) => {
@@ -632,10 +641,11 @@ fn read_key(input: &slice.Slice<UInt8>, start: UInt64, limit: UInt64, frame: &mu
     Ok(next)
 }
 
-fn read_scalar(input: &slice.Slice<UInt8>, start: UInt64, limits: Limits) -> Result<
-    (Value, UInt64),
-    DecodeError
-> {
+fn read_scalar(
+    input: &slice.Slice<UInt8>,
+    start: UInt64,
+    limits: Limits
+) -> Result<(Value, UInt64), DecodeError> {
     let byte = byte_at(input, start)
     if byte == 34 {
         match read_string(input, start, limits.max_string_bytes) {
@@ -813,10 +823,10 @@ pub fn decode_with_limits(input: &String, limits: Limits) -> Result<Value, Decod
     decode_validated_bytes(input.bytes(), limits)
 }
 
-fn decode_validated_bytes(input: &slice.Slice<UInt8>, limits: Limits) @noescape -> Result<
-    Value,
-    DecodeError
-> {
+fn decode_validated_bytes(
+    input: &slice.Slice<UInt8>,
+    limits: Limits
+) @noescape -> Result<Value, DecodeError> {
     var decoder = Decoder {
         stack: array.Array.new::<DecodeFrame>(),
         result: Value.Null,
@@ -838,10 +848,10 @@ pub fn decode_bytes(input: &array.Array<UInt8>) @noescape -> Result<Value, Decod
     decode_bytes_with_limits(input, Limits.default())
 }
 
-pub fn decode_bytes_with_limits(input: &array.Array<UInt8>, limits: Limits) @noescape -> Result<
-    Value,
-    DecodeError
-> {
+pub fn decode_bytes_with_limits(
+    input: &array.Array<UInt8>,
+    limits: Limits
+) @noescape -> Result<Value, DecodeError> {
     if !valid_limits(limits) {
         return Err(decode_error(DecodeErrorKind.InvalidLimits, 0))
     }
