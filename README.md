@@ -28,7 +28,7 @@ fn main() @suspends {
 已安装 Joky 时，将上面的代码保存为 `hello.jk`，执行 `joky run hello.jk`。
 预期依次输出 `Hello, Joky!` 和 `Ready.`。
 
-首次从源码试用，需要 Rust 1.97+ 和系统 C 工具链（用于 Rust 依赖的构建）：
+首次从源码试用，需要 Rust 1.99.0+ 和系统 C 工具链（用于 Rust 依赖的构建）：
 
 ```sh
 git clone https://github.com/julywind168/joky.git
@@ -75,7 +75,7 @@ badge 显示 `main` 最近状态；工作流尚未运行、失败或跳过时，
 这项检查不等同于全量测试、压力检查或 Release 发行验收，发行包另看对应 Release 的证据。
 
 macOS 可用 Xcode Command Line Tools 提供 `cc`；Linux 需要发行版的 C 编译器和链接工具。
-当前开发工具链为 Rust 1.99.0；`rust-version` 声明最低版本 1.97，最低版本兼容性需另行验证。
+最低构建工具链为 Rust 1.99.0，与当前实际开发版本一致；CLI smoke 和发行打包 CI 均固定使用 1.99.0。
 
 预编译包发布后可从 [Releases](https://github.com/julywind168/joky/releases) 获取；
 没有适合平台的附件时使用上述源码路径，不要只拷贝 `joky` 二进制。

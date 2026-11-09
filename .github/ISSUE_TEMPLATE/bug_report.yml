@@ -10,7 +10,7 @@ body:
     id: version
     attributes:
       label: Joky 版本与源码提交 / Version and commit
-      description: 粘贴 joky --version；从源码构建时另附 git rev-parse HEAD。多个开发提交可能显示相同版本。
+      description: 粘贴 joky --version --verbose；旧版不支持时贴 --version，源码构建另附 git rev-parse HEAD。
       placeholder: joky 0.1.0; commit ...
     validations:
       required: true

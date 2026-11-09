@@ -2,7 +2,7 @@
 name = "joky-stdlib-bootstrap"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.97"
+rust-version = "1.99"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/julywind168/joky"
 publish = false

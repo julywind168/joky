@@ -16,7 +16,7 @@ Linux x86_64 为 `x86_64-unknown-linux-gnu`；Linux 包不是静态 musl 包，
 
 ```sh
 export PATH="$HOME/.local/opt/joky/bin:$PATH"
-joky --version
+joky --version --verbose
 ```
 
 不要只移动 `bin/joky`：AOT 链接需要旁边安装布局中的 `lib/joky/libjoky.a`。

@@ -35,6 +35,7 @@ Usage:
   joky fmt [--check] --stdin
   joky --help
   joky --version
+  joky --version --verbose
 
 Commands:
   init             Create a minimal application with joky.toml and src/main.jk
@@ -59,7 +60,7 @@ Options:
   -v, --verbose       Show run startup progress and timings even when stderr is redirected
   -o, --output <path>  Output executable, project bundle, or doc directory
   -h, --help           Show this help
-  -V, --version        Show the version
+  -V, --version        Show the version; add --verbose for build details
 
 Use joky <command> --help or joky help <command> for command-specific usage.
 Without an input, check/test/run/build/fmt/explain-parallel find the nearest joky.toml in the current directory or its parents.
@@ -83,7 +84,9 @@ Use @suspends on main for cooperative tasks; import joky/task for yield_now and 
 enum Command {
     Help(&'static str),
     Init(init::Options),
-    Version,
+    Version {
+        verbose: bool,
+    },
     Doc(doc::Options),
     Test(testing::Options),
     Format(format::Options),
@@ -137,10 +140,19 @@ impl Command {
             return init::parse(args);
         }
         if command == "--version" || command == "-V" {
+            let verbose = match args.next() {
+                None => false,
+                Some(arg) if arg == "--verbose" || arg == "-v" => true,
+                Some(_) => {
+                    return Err(cli_argument_error(
+                        "Unexpected arguments after --version; use 'joky --version --verbose'",
+                    ))
+                }
+            };
             if args.next().is_some() {
                 return Err(cli_argument_error("Unexpected arguments after --version"));
             }
-            return Ok(Self::Version);
+            return Ok(Self::Version { verbose });
         }
         if command == "doc" {
             return doc::parse(args);
@@ -317,8 +329,18 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
             println!("{text}");
             return 0;
         }
-        Command::Version => {
+        Command::Version { verbose } => {
             println!("joky {}", env!("CARGO_PKG_VERSION"));
+            if *verbose {
+                println!("commit: {}", env!("JOKY_BUILD_COMMIT"));
+                println!("source-state: {}", env!("JOKY_BUILD_SOURCE_STATE"));
+                println!("target: {}", env!("JOKY_BUILD_TARGET"));
+                println!("profile: {}", env!("JOKY_BUILD_PROFILE"));
+                println!("opt-level: {}", env!("JOKY_BUILD_OPT_LEVEL"));
+                println!("debug-assertions: {}", cfg!(debug_assertions));
+                println!("rustc: {}", env!("JOKY_BUILD_RUSTC"));
+                println!("minimum-rust: {}", env!("CARGO_PKG_RUST_VERSION"));
+            }
             return 0;
         }
         Command::Init(options) => return init::execute(options),

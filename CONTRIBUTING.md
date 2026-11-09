@@ -33,6 +33,10 @@ verified. The remaining sections are intended for compiler contributors.
 
 ## Code conventions and validation
 
+The minimum Rust version is 1.99.0, matching the current development toolchain.
+CLI smoke and distribution workflows use this exact version. When changing the
+minimum, update all workspace manifests, these workflows, and installation docs.
+
 Use English for identifiers, source comments, diagnostics, test names, and
 executable output. Chinese is welcome in project documentation and discussion.
 Use `joky` for the package, CLI and Rust crate, `libjoky.a` for the static library,

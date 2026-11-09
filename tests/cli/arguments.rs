@@ -15,6 +15,31 @@ fn help_version_and_argument_errors_are_user_facing() {
         String::from_utf8_lossy(&output.stdout),
         format!("joky {}\n", env!("CARGO_PKG_VERSION"))
     );
+    let detailed = work
+        .command()
+        .args(["--version", "--verbose"])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    success(&detailed);
+    assert!(detailed.stderr.is_empty());
+    let text = String::from_utf8_lossy(&detailed.stdout);
+    assert!(text.starts_with(&String::from_utf8_lossy(&output.stdout).into_owned()));
+    for expected in [
+        format!("commit: {}", env!("JOKY_BUILD_COMMIT")),
+        format!("target: {}", env!("JOKY_BUILD_TARGET")),
+        format!("profile: {}", env!("JOKY_BUILD_PROFILE")),
+        format!("rustc: {}", env!("JOKY_BUILD_RUSTC")),
+        format!("minimum-rust: {}", env!("CARGO_PKG_RUST_VERSION")),
+    ] {
+        assert!(text.contains(&expected), "{text}");
+    }
+    let short = work.cli(&["-V", "-v"]);
+    success(&short);
+    assert_eq!(short.stdout, detailed.stdout);
+    for args in [vec!["--version", "extra"], vec!["--version", "-v", "-v"]] {
+        failure(&work.cli(&args), "Unexpected arguments");
+    }
     for (args, message) in [
         (vec!["unknown"], "Unknown command"),
         (vec!["run"], "Missing source file"),

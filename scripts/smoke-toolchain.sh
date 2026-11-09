@@ -20,7 +20,7 @@ unset JOKY_RUNTIME JOKY_TASK_WORKERS
 task_work=$(mktemp -d "${TMPDIR:-/tmp}/joky-smoke.XXXXXX")
 trap 'rm -rf "$task_work"' EXIT HUP INT TERM
 cd "$task_work"
-"$task_cli" --version
+"$task_cli" --version --verbose
 "$task_cli" init 'hello project' --name hello
 "$task_cli" check 'hello project'
 "$task_cli" fmt --check 'hello project'

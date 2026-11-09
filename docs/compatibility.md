@@ -52,5 +52,6 @@ Rust 版本、目标架构、系统 C 编译器和检查结果。
 
 工作流未运行、失败或跳过时，不能把该提交对应的平台写成“已通过”。
 README badge 显示 `main` 的最近运行状态，PR、tag 与其他提交应查看各自运行记录。
-最低 Rust 版本以 `Cargo.toml` 的 `rust-version` 声明为准；只通过当前 stable 的 CI 不等于已验证最低版本。
+最低 Rust 版本为 **1.99.0**，与当前实际开发工具链一致；工作区各包均声明 `rust-version = "1.99"`。
+CLI smoke 与发行包工作流固定使用 1.99.0，避免 CI 跟随 stable 漂移；平台验证状态仍以具体运行结果为准。
 发行包验证另见 **Build distributions** 工作流和具体 Release 附件说明。

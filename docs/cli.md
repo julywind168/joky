@@ -5,6 +5,12 @@
 
 ## 创建项目与查看帮助
 
+`joky --version` 输出简短版本；`joky --version --verbose`（也可用 `-V -v`）输出构建提交、
+源码状态、目标平台、Cargo 构建模式、优化等级、Debug 断言状态、rustc 与最低 Rust 版本。
+这些信息在编译时写入，安装后不依赖 Git 或 Rust。源码包没有 Git 信息时，提交与源码状态显示 `unknown`。
+`source-state` 只检查编译器、工具、头文件、内嵌站点及构建配置等源码输入；文档或测试的独立改动不使它变为 `modified`。
+构建模式沿用 Cargo 的 `debug`／`release` 分类，自定义 profile 的实际优化与断言配置应结合对应字段判断。
+
 ```sh
 joky init hello
 joky run hello

@@ -9,8 +9,9 @@
 
 最有帮助的信息是：
 
-- `joky --version` 输出；从源码构建时，再附 `git rev-parse HEAD` 的提交号。
-  开发中的多个提交可能使用相同版本号，仅有 `0.1.0` 无法精确定位。
+- `joky --version --verbose` 的完整输出，包含构建提交、源码状态、目标平台、构建模式和 rustc 版本。
+  旧版若不支持详细输出，提供 `joky --version`，从源码构建时再附 `git rev-parse HEAD`。
+  开发中的多个提交可能使用相同版本号，仅有 `0.1.0` 无法精确定位；源码状态为 `modified` 时请附复现所需改动。
 - 操作系统、版本、CPU 架构，以及安装方式（发行包／源码／VS Code 扩展）。
   源码构建失败时附 `rustc -vV`；原生链接失败时附 `cc --version`。
 - 最小 `.jk` 源码、完整执行命令、预期结果和实际结果，以及是否每次都会发生。
@@ -29,7 +30,7 @@
 也可以直接复制下列提纲到普通 Issue，替换占位内容：
 
 ```text
-Joky 版本／源码提交：
+Joky 详细版本（joky --version --verbose；旧版可用 --version）：
 系统与 CPU 架构：
 安装方式／编辑器版本（如适用）：
 执行方式（check / JIT / interpreter / build / 不确定）：
