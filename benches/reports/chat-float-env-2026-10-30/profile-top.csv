@@ -1,5 +1,0 @@
-version,rooms,total_thread_samples,__joky_float_env_reset,__joky_float_env_enter,__joky_float_env_restore,__psynch_mutexwait
-before,1,44421,3416,352,152,1008
-before,4,43069,3134,319,155,2217
-after,1,45604,871,721,483,1925
-after,4,45175,771,643,379,2855

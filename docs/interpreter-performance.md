@@ -18,9 +18,10 @@ P95 是批次平均值分布的 nearest-rank 百分位，不是单次调用的 P
 ## 初始基线
 
 最早三后端实测基于 `fae2f81`，每组 30 样本、目标批次 50 ms；
-[完整报告](../benches/baselines/2026-09-27-apple-m1-pro/report.md)、
-[统计汇总](../benches/baselines/2026-09-27-apple-m1-pro/summary.csv) 和
-[810 条原始样本](../benches/baselines/2026-09-27-apple-m1-pro/samples.csv) 随代码保存。
+[完整报告](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/baselines/2026-09-27-apple-m1-pro/report.md)、
+[统计汇总](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/baselines/2026-09-27-apple-m1-pro/summary.csv) 和
+[810 条原始样本](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/baselines/2026-09-27-apple-m1-pro/samples.csv) 已归档到清理前的 Git 版本，
+恢复方法见[历史基准归档](../benches/reports/README.md)。
 
 | 内核 | AOT | JIT | Interpreter |
 | --- | ---: | ---: | ---: |

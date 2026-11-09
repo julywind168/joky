@@ -1,5 +1,7 @@
 # Chat：控制桥整段复制与 outbox Vec 移交（2026-10-30）
 
+> 原始样本、构建元数据与一次性分析脚本已归档到 Git 历史；明细链接指向固定快照，恢复方法见[归档说明](README.md)。
+
 在 outbox 单次接收基础上，先将控制桥的单字节循环改为整段复制，再将出站队列的 Vec
 直接移交给控制回复。三版交替测量显示，本轮 **64 字节广播吞吐中位数提高约 1.5%～6.3%**，
 每条广播服务端 CPU 成本下降约 2%～6%；单客户端请求回显延迟基本不变。
@@ -39,10 +41,10 @@ Parallel 的接收路径由 `队列 Vec → 控制端 Buffer → 回复 Vec → 
 | bulk | `76ab329` 加整段复制补丁，`target/benchmarks/chat-byte-transfer/bulk` |
 | moved | `76ab329` 加本轮完整改动，`target/benchmarks/chat-byte-transfer/moved` |
 
-三份构建记录：[before](chat-byte-transfer-2026-10-30/before-build.json)、
-[bulk](chat-byte-transfer-2026-10-30/bulk-build.json)、[moved](chat-byte-transfer-2026-10-30/moved-build.json)。
-中间版本的[整段复制补丁](chat-byte-transfer-2026-10-30/bulk.patch.gz)解压后可应用于独立的 `76ab329` checkout 复建。
-[产物哈希](chat-byte-transfer-2026-10-30/artifact-hashes.json)包含代码、补丁、二进制和测量文件身份。
+三份构建记录：[before](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-byte-transfer-2026-10-30/before-build.json)、
+[bulk](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-byte-transfer-2026-10-30/bulk-build.json)、[moved](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-byte-transfer-2026-10-30/moved-build.json)。
+中间版本的[整段复制补丁](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-byte-transfer-2026-10-30/bulk.patch.gz)解压后可应用于独立的 `76ab329` checkout 复建。
+[产物哈希](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-byte-transfer-2026-10-30/artifact-hashes.json)包含代码、补丁、二进制和测量文件身份。
 
 - 第一步完成后先跑 before／bulk 各四配置，共 8 个预备样本。结果不一致，未据此定论。
   这组保留在 `probe-before`／`probe-bulk`，不进入下面的三轮中位数。
@@ -130,7 +132,7 @@ python3 benches/chat-workers.py run \
 补充组改为 `--workers 4 --rooms 1 --clients 16 --payload-bytes 1024 --messages 100`。输出目录须尚不存在。
 新阶段的原版、bulk 和 moved 必须来自相应实现，不能只切换运行参数。
 
-[54 个正式样本](chat-byte-transfer-2026-10-30/samples.csv)、
-[环境与 argv](chat-byte-transfer-2026-10-30/environments.json)保存紧凑记录。
+[54 个正式样本](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-byte-transfer-2026-10-30/samples.csv)、
+[环境与 argv](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-byte-transfer-2026-10-30/environments.json)保存紧凑记录。
 完整源码快照、补丁、逐消息延迟、日志和二进制在 `target/benchmarks/chat-byte-transfer/`，
 原版产物仍在 `target/benchmarks/chat-outbox-receive/build`。大体积原始延迟和二进制不提交。

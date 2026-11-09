@@ -1,5 +1,7 @@
 # Chat 预算退款优化（2026-10-31）
 
+> 原始样本、构建元数据与一次性分析脚本已归档到 Git 历史；明细链接指向固定快照，恢复方法见[归档说明](README.md)。
+
 本轮针对共享任务预算的退款争锁：保留多预算收费准入锁，把独占 lease 的退款改为原子减法。
 缩减额度、零额退款和额度不变不再进入准入锁。此处的预算是 `runtime::parallel::TaskBudget`，
 不包含所有本地 Arena／持久域预算；没有改变 chat 业务、控制桥协议、载荷布局或代码生成优化设置。
@@ -37,9 +39,9 @@ Release 只用于本次性能测量；行为测试使用默认 test profile。
 - 编译、启动、join、预热、余额核对与 shutdown 不计时。正式计时期间没有构建、测试或 profiler。
   每个样本验证完整广播接收、发送者顺序、最终余额和退出状态；这是固定闭环负载，不能视为最大服务容量。
 
-[原版构建](chat-budget-2026-10-31/before-build.json)、[新版构建](chat-budget-2026-10-31/after-build.json)、
-[环境与命令](chat-budget-2026-10-31/environments.json)、[30 个正式样本](chat-budget-2026-10-31/samples.csv)、
-[原始产物哈希](chat-budget-2026-10-31/artifact-hashes.json)。完整二进制、逐消息延迟和日志保存在
+[原版构建](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/before-build.json)、[新版构建](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/after-build.json)、
+[环境与命令](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/environments.json)、[30 个正式样本](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/samples.csv)、
+[原始产物哈希](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/artifact-hashes.json)。完整二进制、逐消息延迟和日志保存在
 `target/benchmarks/chat-budget/`；原版生产二进制仍在 `target/benchmarks/chat-byte-transfer/moved/`，不提交这些大文件。
 
 ## 性能结果
@@ -102,16 +104,16 @@ macOS `sample PID 5 1`，4 worker、16 客户端、64 字节正文，分别采 1
 新版退款互斥等待消失，收费仍有争锁；样本计数不是调用次数、CPU 时间或每条请求开销，
 不能把等待样本下降比例当作吞吐收益。JIT 业务仍有未符号化地址，采样无法完整归因所有工作。
 
-[原版单房间调用树](chat-budget-2026-10-31/profile-before-1.txt.gz)、
-[原版四房间调用树](chat-budget-2026-10-31/profile-before-4.txt.gz)、
-[新版单房间调用树](chat-budget-2026-10-31/profile-after-1.txt.gz)、
-[新版四房间调用树](chat-budget-2026-10-31/profile-after-4.txt.gz)、
-[逐线程归组明细](chat-budget-2026-10-31/profile-mutex.csv)。
+[原版单房间调用树](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/profile-before-1.txt.gz)、
+[原版四房间调用树](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/profile-before-4.txt.gz)、
+[新版单房间调用树](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/profile-after-1.txt.gz)、
+[新版四房间调用树](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/profile-after-4.txt.gz)、
+[逐线程归组明细](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/profile-mutex.csv)。
 新版四房间另有 `Arena::Budget::charge`／`refund` 的互斥等待样本 474／371，
 适合作为下一阶段候选；本轮没有修改它们，也不据此预估未来收益。
 
-两版符号构建有独立身份：[原版](chat-budget-2026-10-31/before-profile-build.json)、
-[新版](chat-budget-2026-10-31/after-profile-build.json)。
+两版符号构建有独立身份：[原版](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/before-profile-build.json)、
+[新版](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/after-profile-build.json)。
 
 ## 后续研究：Arena 共享预算
 
@@ -154,9 +156,9 @@ python3 benches/chat-workers.py prepare \
   --output target/benchmarks/chat-budget/after
 ```
 
-输出目录须尚不存在。符号构建沿用[符号 wrapper](chat-workers-2026-10-30/profile-cc.py)，将其放到 PATH 首位的目录下并命名为 `cc`。
-将本报告附带的 [compare.py](chat-budget-2026-10-31/compare.py)、
-[profile.py](chat-budget-2026-10-31/profile.py)、[summarize-profile.py](chat-budget-2026-10-31/summarize-profile.py)
+输出目录须尚不存在。符号构建沿用[符号 wrapper](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-workers-2026-10-30/profile-cc.py)，将其放到 PATH 首位的目录下并命名为 `cc`。
+将历史归档的 [compare.py](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/compare.py)、
+[profile.py](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/profile.py)、[summarize-profile.py](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-budget-2026-10-31/summarize-profile.py)
 复制到 `target/benchmarks/chat-budget/` 后，从仓库根目录执行；脚本所需两版生产／符号构建路径见其源码。
 采样命令为 `python3 target/benchmarks/chat-budget/profile.py before`／`after`，
 正式对照为 `python3 target/benchmarks/chat-budget/compare.py`。必须先结束所有构建、测试及采样，再执行正式计时。

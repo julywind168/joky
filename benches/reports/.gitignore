@@ -1,0 +1,5 @@
+# Keep Markdown conclusions; put raw measurements and analysis tools in target/.
+*
+!*/
+!*.md
+!.gitignore

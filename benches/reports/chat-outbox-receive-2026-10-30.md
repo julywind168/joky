@@ -1,5 +1,7 @@
 # Chat：outbox 单次接收优化（2026-10-30）
 
+> 原始样本、构建元数据与一次性分析脚本已归档到 Git 历史；明细链接指向固定快照，恢复方法见[归档说明](README.md)。
+
 将标准库 Mailbox.receive 的领取消息、查询关闭、提取字节三次控制操作，合并为一次接收。
 本机三轮交替测量中，4 worker 的单房间广播吞吐提高 **37.2%**，四房间提高 **26.7%**；
 1 worker 提高约 **3.7%～15.5%**。单客户端请求到回显 P50 从 **0.621 ms 降到 0.569 ms**。
@@ -41,10 +43,10 @@ Apple M1 Pro（6P + 2E）、16 GiB、macOS 26.6.2 arm64、Rust 1.99.0、Python 3
 工具及运行时为 Release，Joky 生成代码仍为原默认设置；AOT host 加内嵌 JIT 脚本。
 
 - 旧产物复用 `target/benchmarks/chat-float-env/build`，实现对应 `c1dc65f`；
-  [原始构建身份](chat-outbox-receive-2026-10-30/before-build.json)保留 `7f6fc74` 加浮点环境补丁的记录。
+  [原始构建身份](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-outbox-receive-2026-10-30/before-build.json)保留 `7f6fc74` 加浮点环境补丁的记录。
 - 新产物基于 `58ad67a` 加本次补丁，保存于 `target/benchmarks/chat-outbox-receive/build`；
-  [构建身份](chat-outbox-receive-2026-10-30/after-build.json)保留工具、运行时、二进制与应用资源哈希。
-  [产物哈希](chat-outbox-receive-2026-10-30/artifact-hashes.json)另记录修改的代码和补丁。
+  [构建身份](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-outbox-receive-2026-10-30/after-build.json)保留工具、运行时、二进制与应用资源哈希。
+  [产物哈希](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-outbox-receive-2026-10-30/artifact-hashes.json)另记录修改的代码和补丁。
 - 使用同一个 [chat-workers.py](../chat-workers.py)，16 客户端、64 字节正文，1 房间各 16 人／4 房间各 4 人。
   每连接等待自己的广播全部送达后发送下一条；每连接预热 25 条，每批计时 250 条，完整批次重复到至少 3 秒。
 - 聚焦 1／4 worker，本阶段不重复 2 worker 矩阵。单客户端另测 1 房间、1 worker，每批 5000 条，至少 3 秒。
@@ -110,6 +112,6 @@ python3 benches/chat-workers.py run \
 按方法中的版本和配置顺序交替运行；单客户端改为 `--workers 1 --rooms 1 --clients 1 --messages 5000`。
 每个输出目录必须尚不存在。旧版须复用原产物或从旧实现构建，不能只切换计时参数充当旧版。
 
-[30 个样本](chat-outbox-receive-2026-10-30/samples.csv)、[环境与 argv](chat-outbox-receive-2026-10-30/environments.json)
+[30 个样本](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-outbox-receive-2026-10-30/samples.csv)、[环境与 argv](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-outbox-receive-2026-10-30/environments.json)
 保存紧凑记录。完整二进制、源码快照、补丁、逐消息延迟及服务日志在 `target/benchmarks/chat-outbox-receive/`；
 旧二进制仍在 `target/benchmarks/chat-float-env/build`。大体积二进制和逐消息延迟不提交。

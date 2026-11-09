@@ -1,5 +1,7 @@
 # Chat 共享分配索引优化（2026-10-30）
 
+> 原始样本、构建元数据与一次性分析脚本已归档到 Git 历史；明细链接指向固定快照，恢复方法见[归档说明](README.md)。
+
 本机三轮交替对照中，共享分配索引与锁外释放使固定 chat 负载的广播吞吐提高到旧版的
 **1.88～3.65 倍**，每条广播的服务端 CPU 时间下降约 **45%～52%**。
 单客户端请求到回显的 P50 从 **1.143 ms 降至 0.794 ms**。
@@ -31,9 +33,9 @@ macOS 26.6.2 arm64、Rust 1.99.0、Apple clang 21.0.0。
 旧版复用 `target/benchmarks/chat-workers/build-20261030` 的已保存产物，代码基线为 `a9bfcde`。
 `a9bfcde..3847d6f` 只新增基准和文档，没有运行时变更。
 新版基于 `3847d6f` 加本次 `storage.rs` 改动；构建时工作树为 dirty。
-[旧版](chat-storage-index-2026-10-30/before-build.json)、
-[新版](chat-storage-index-2026-10-30/after-build.json)元数据保存工具、静态运行时、应用和资源的 SHA-256；
-[产物哈希](chat-storage-index-2026-10-30/artifact-hashes.json)另含构建时运行时补丁与源码哈希。
+[旧版](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-storage-index-2026-10-30/before-build.json)、
+[新版](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-storage-index-2026-10-30/after-build.json)元数据保存工具、静态运行时、应用和资源的 SHA-256；
+[产物哈希](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-storage-index-2026-10-30/artifact-hashes.json)另含构建时运行时补丁与源码哈希。
 不能用测量时的 HEAD 代替旧版产物身份。
 
 所有构建及正确性检查完成后才开始计时，期间不并行编译、测试或采样。
@@ -101,12 +103,12 @@ P50 下降约 30%，吞吐提高约 42%。仍包含协议解析、脚本调用�
 `-S,-x`，保留其他参数，与首轮基线使用相同 wrapper。4 worker、16 客户端、1／4 房间，
 每连接改为 2000 条，保证新版在 5 秒采样期间仍有测量流量；采样间隔 1 ms。
 这两个受采样干扰的运行均不进入上面的吞吐表。符号版有独立的
-[构建身份](chat-storage-index-2026-10-30/profile-build.json)。
+[构建身份](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-storage-index-2026-10-30/profile-build.json)。
 
 旧版采样复用首轮报告的同运行时产物；新版完整调用树见
-[单房间](chat-storage-index-2026-10-30/profile-room-1.txt.gz)、
-[四房间](chat-storage-index-2026-10-30/profile-room-4.txt.gz)，
-[逐线程统计](chat-storage-index-2026-10-30/profile-mutex.csv)包含两版原始计数。
+[单房间](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-storage-index-2026-10-30/profile-room-1.txt.gz)、
+[四房间](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-storage-index-2026-10-30/profile-room-4.txt.gz)，
+[逐线程统计](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-storage-index-2026-10-30/profile-mutex.csv)包含两版原始计数。
 
 | 房间 | 旧分配路径互斥等待样本 | 新分配路径互斥等待样本 | 旧 worker/control 互斥等待占栈样本 | 新占比 |
 | --- | --- | --- | --- | --- |
@@ -135,8 +137,8 @@ P50 下降约 30%，吞吐提高约 42%。仍包含协议解析、脚本调用�
 - 36 个并发矩阵样本和 6 个单客户端样本均完成协议、余额及退出校验，没有剔除失败或慢样本。
 
 完整样本与参数保存在 `target/benchmarks/chat-storage-index/`，包括逐消息延迟、日志、构建源码、资源和运行器快照；
-紧凑数据见 [42 个样本](chat-storage-index-2026-10-30/samples.csv)及
-[每轮环境与 argv](chat-storage-index-2026-10-30/environments.json)。
+紧凑数据见 [42 个样本](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-storage-index-2026-10-30/samples.csv)及
+[每轮环境与 argv](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-storage-index-2026-10-30/environments.json)。
 
 ```sh
 cargo build --release --bin joky --lib

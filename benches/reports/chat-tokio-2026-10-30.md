@@ -1,5 +1,7 @@
 # Chat：Joky 与 Rust/Tokio 应用对照（2026-10-30）
 
+> 原始样本、构建元数据与一次性分析脚本已归档到 Git 历史；明细链接指向固定快照，恢复方法见[归档说明](README.md)。
+
 新增独立的 [Rust/Tokio chat](../chat-tokio/README.md)，用相同客户端执行同协议、同扣费和广播业务。
 本机三轮交替测量中，Tokio 的观测吞吐为 Joky 的 **14.2～23.5 倍**；单客户端请求到回显的
 P50 为 **0.0505 ms 对 0.653 ms**。这说明当前 Joky chat 还有明显的执行成本优化空间，
@@ -39,11 +41,11 @@ Rust 的专用实现避免了通用机制的开销。差距不能全部归因于
 - Apple M1 Pro（6P + 2E）、16 GiB、macOS 26.6.2 arm64、Rust 1.99.0、Python 3.14.6。
   Tokio **1.54.1** 由独立 Cargo.lock 固定，不改变编译器的依赖。
 - Joky 复用上一阶段 `target/benchmarks/chat-float-env/build`，实现对应 `c1dc65f`。
-  原构建身份为 `7f6fc74` 加浮点环境优化补丁；[构建记录](chat-tokio-2026-10-30/joky-build.json)
+  原构建身份为 `7f6fc74` 加浮点环境优化补丁；[构建记录](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-tokio-2026-10-30/joky-build.json)
   保留原始身份，不能将本次计时的 Git HEAD 当成它的构建提交。
   工具／静态运行时为 Release，Joky 生成代码采用默认设置。
 - Tokio 用 Release、opt-level=3、thin LTO、codegen-units=1 构建后快照，
-  [构建记录](chat-tokio-2026-10-30/tokio-build.json)包含源码、Cargo.lock 和二进制 SHA-256。
+  [构建记录](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-tokio-2026-10-30/tokio-build.json)包含源码、Cargo.lock 和二进制 SHA-256。
   worker=1 仍使用 multi-thread runtime；主线程运行 accept/admin，连接任务在 worker 上执行。
   两版的 worker 数相同，但控制／驱动等额外线程拓扑不同。
 - 共用 [chat-workers.py](../chat-workers.py)。16 客户端、1 房间各 16 人／4 房间各 4 人、
@@ -130,7 +132,7 @@ python3 benches/chat-workers.py run \
 单客户端改为 `--workers 1 --rooms 1 --clients 1 --messages 5000`。各输出目录必须尚不存在。
 新编译的 Joky 要使用本次版本才能复现本次实现；以后 HEAD 的结果属于新的比较。
 
-[42 个样本](chat-tokio-2026-10-30/samples.csv)、[环境与实际 argv](chat-tokio-2026-10-30/environments.json)、
-[产物哈希](chat-tokio-2026-10-30/artifact-hashes.json)保存紧凑数据。
+[42 个样本](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-tokio-2026-10-30/samples.csv)、[环境与实际 argv](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-tokio-2026-10-30/environments.json)、
+[产物哈希](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-tokio-2026-10-30/artifact-hashes.json)保存紧凑数据。
 完整源码快照、二进制、逐消息延迟和服务日志位于 `target/benchmarks/chat-tokio/`；
 Joky 原产物保留在 `target/benchmarks/chat-float-env/build`。大体积原始延迟和二进制不提交。

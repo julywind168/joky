@@ -1,5 +1,7 @@
 # Chat 浮点环境调用边界优化（2026-10-30）
 
+> 原始样本、构建元数据与一次性分析脚本已归档到 Git 历史；明细链接指向固定快照，恢复方法见[归档说明](README.md)。
+
 在上一阶段共享分配索引优化的基础上，本次省去 18 个受审计运行时 helper 返回后的浮点环境重置。
 本机三轮交替对照中，各配置广播吞吐中位数提高约 **7%～40%**，每条广播 CPU 时间下降约 **9%～24%**。
 单客户端请求到回显 P50 从 **0.818 ms 降到 0.585 ms**。多 worker 的收益比单 worker 小，仍有共享路径限制。
@@ -38,8 +40,8 @@ Joky 生成代码采用默认设置。应用是 AOT host + JIT 业务脚本，Pa
 - 旧版复用 `target/benchmarks/chat-storage-index/build`，对应上一阶段 `7f6fc74` 的实现。
   该产物的原始构建记录是 `3847d6f` 加当时的存储优化补丁，不能把运行时 HEAD 当作其构建身份。
 - 新版基于 `7f6fc74` 加本次 native 后端改动，构建时工作树为 dirty。
-  [旧版身份](chat-float-env-2026-10-30/before-build.json)、[新版身份](chat-float-env-2026-10-30/after-build.json)
-  包含工具、静态运行时、应用和资源 SHA-256；[产物哈希](chat-float-env-2026-10-30/artifact-hashes.json)
+  [旧版身份](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-float-env-2026-10-30/before-build.json)、[新版身份](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-float-env-2026-10-30/after-build.json)
+  包含工具、静态运行时、应用和资源 SHA-256；[产物哈希](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-float-env-2026-10-30/artifact-hashes.json)
   另保存编译器补丁及两份实现文件的哈希。
 - 所有构建和检查结束后串行计时，期间没有编译、测试或采样。
   三轮旧／新顺序是旧→新、新→旧、旧→新；worker 顺序为 `1,2,4`、`2,4,1`、`4,1,2`，
@@ -87,7 +89,7 @@ RSS 包含编译器、运行时与 allocator 缓存，仅每 250 ms 采样，不
 
 正式计时结束后另用保留符号的产物采样，4 worker、16 客户端、1／4 房间，每连接 2000 条，
 预热 25 条；进入测量流量后以 1 ms 间隔采 5 秒。链接只去掉 `-S,-x`，与上一阶段 wrapper 一致；
-符号版的[独立构建身份](chat-float-env-2026-10-30/profile-build.json)已保存。
+符号版的[独立构建身份](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-float-env-2026-10-30/profile-build.json)已保存。
 这两个受采样干扰的运行不进入吞吐表。旧采样复用上一阶段同参数产物。
 
 | 房间 | 旧 reset 栈顶样本 | 新 reset 栈顶样本 | 旧全部线程栈样本 | 新全部线程栈样本 |
@@ -95,21 +97,21 @@ RSS 包含编译器、运行时与 allocator 缓存，仅每 250 ms 采样，不
 | 1 | 3416 | 871 | 44421 | 45604 |
 | 4 | 3134 | 771 | 43069 | 45175 |
 
-完整调用树：[单房间](chat-float-env-2026-10-30/profile-room-1.txt.gz)、
-[四房间](chat-float-env-2026-10-30/profile-room-4.txt.gz)；
-[栈顶计数](chat-float-env-2026-10-30/profile-top.csv)另含 enter、restore 与互斥等待。
+完整调用树：[单房间](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-float-env-2026-10-30/profile-room-1.txt.gz)、
+[四房间](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-float-env-2026-10-30/profile-room-4.txt.gz)；
+[栈顶计数](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-float-env-2026-10-30/profile-top.csv)另含 enter、restore 与互斥等待。
 这说明 reset 热点减少；样本数不是调用次数、CPU 时间或每条请求的开销，不能把它的下降比例当作吞吐收益。
 
 新采样中，`__psynch_mutexwait` 共 1925／2855 个栈顶样本。
 按最近的 Joky 上层函数归组，`Lease::resize` 为 578／900，`Lease::drop` 为 444／842，
 合计占互斥等待约 53%／61%；另外还有本地 Arena Budget、调度及 I/O 等等待。
-[分组明细](chat-float-env-2026-10-30/profile-mutex.csv)保留原始符号和计数，不把条件变量休眠当作有效工作。
+[分组明细](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-float-env-2026-10-30/profile-mutex.csv)保留原始符号和计数，不把条件变量休眠当作有效工作。
 下一阶段优先评估共享预算的收费／退款锁，同时保留多预算原子准入和唯一退款契约。
 入口／出口 Guard 仍有成本，但本次不据此删除宿主隔离，也没有继续修改预算协议。
 
 ## 复现与原始记录
 
-[42 个样本](chat-float-env-2026-10-30/samples.csv)、[环境和每次 argv](chat-float-env-2026-10-30/environments.json)
+[42 个样本](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-float-env-2026-10-30/samples.csv)、[环境和每次 argv](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-float-env-2026-10-30/environments.json)
 保留紧凑数据。完整逐消息延迟、服务日志、源码副本、构建日志和二进制位于
 `target/benchmarks/chat-float-env/`，未提交大体积逐消息文件和二进制。
 

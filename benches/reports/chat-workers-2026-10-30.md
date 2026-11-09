@@ -1,5 +1,7 @@
 # Chat worker 扩展基线（2026-10-30）
 
+> 原始样本、构建元数据与一次性分析脚本已归档到 Git 历史；明细链接指向固定快照，恢复方法见[归档说明](README.md)。
+
 本记录测量 `a9bfcde` 的后续工作树。
 准确构建提交、二进制身份以随附的测量元数据为准；本次仅增加运行器和文档，未改变编译器、运行时及仓库中的 chat 源码。
 
@@ -47,8 +49,8 @@
 这些值逐样本用 CPU 秒数除以完成广播数再取中位数；4 worker 相比 1 worker 分别增加约 54%／43%。
 客户端平均仅占约 0.10～0.16 个核，没有 CPU 饱和证据；这仍不能将闭环负载当作容量上限。
 
-紧凑原始数据：[run1 每样本](chat-workers-2026-10-30/run1-samples.csv)、[run2 每样本](chat-workers-2026-10-30/run2-samples.csv)、
-[构建身份](chat-workers-2026-10-30/build.json)、[原始产物哈希](chat-workers-2026-10-30/artifact-hashes.json)。
+紧凑原始数据：[run1 每样本](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-workers-2026-10-30/run1-samples.csv)、[run2 每样本](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-workers-2026-10-30/run2-samples.csv)、
+[构建身份](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-workers-2026-10-30/build.json)、[原始产物哈希](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-workers-2026-10-30/artifact-hashes.json)。
 完整逐消息原始数据保留在下述本机输出目录，未舍弃慢样本或失败样本。
 提交的 CSV 副本仅将换行规范为 LF；产物哈希对应 target 目录中的原始输出。
 
@@ -86,12 +88,12 @@ build 目录保留原始构建日志、修改后的源码、打包应用、Cargo
 最初直接采样正式二进制只能看到系统函数与匿名地址，因为 AOT Release 链接会剥离符号。
 因此另建仅供分析的符号版：复用相同 Rust 工具、静态运行时和所有 `.jk` 文件，
 仅从链接参数中去掉 `-S,-x`，保留 `-dead_strip,-no_exported_symbols`。
-未重编译 Rust、未更改生产链接选项；符号版具有自己的[构建身份](chat-workers-2026-10-30/profile-build.json)。
+未重编译 Rust、未更改生产链接选项；符号版具有自己的[构建身份](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-workers-2026-10-30/profile-build.json)。
 **全部受采样干扰的运行均不进入上面的吞吐表；也不将两个不同产物按地址直接对应。**
 
-完整符号版调用树：[单房间](chat-workers-2026-10-30/profile-room-1.txt.gz)、
-[多房间](chat-workers-2026-10-30/profile-room-4.txt.gz)。以下是调用树中
-`__psynch_mutexwait` 按上层函数归组的结果；[每线程计数](chat-workers-2026-10-30/profile-mutex.csv)保留明细。
+完整符号版调用树：[单房间](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-workers-2026-10-30/profile-room-1.txt.gz)、
+[多房间](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-workers-2026-10-30/profile-room-4.txt.gz)。以下是调用树中
+`__psynch_mutexwait` 按上层函数归组的结果；[每线程计数](https://github.com/julywind168/joky/blob/f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6/benches/reports/chat-workers-2026-10-30/profile-mutex.csv)保留明细。
 
 | 房间 | 全部互斥等待样本 | 位于 Arena::contains / release 或 Storage::finalize_with 调用链 | 占互斥等待样本 |
 | --- | --- | --- | --- |
@@ -121,7 +123,7 @@ build 目录保留原始构建日志、修改后的源码、打包应用、Cargo
 
 ```sh
 mkdir -p target/benchmarks/chat-workers/symbol-tools
-cp benches/reports/chat-workers-2026-10-30/profile-cc.py target/benchmarks/chat-workers/symbol-tools/cc
+git show f8fc33a8ed6bb4ac9defe93ac1f30528c03ebaa6:benches/reports/chat-workers-2026-10-30/profile-cc.py > target/benchmarks/chat-workers/symbol-tools/cc
 chmod +x target/benchmarks/chat-workers/symbol-tools/cc
 PATH="$PWD/target/benchmarks/chat-workers/symbol-tools:$PATH" \
   python3 benches/chat-workers.py prepare \
