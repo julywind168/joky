@@ -4,11 +4,17 @@ import joky/dns
 // Defaults to local name service; an optional argument selects another host.
 fn main() @suspends -> Int32 {
     var arguments = process.args()!
-    if arguments.len() > 1 { eprintln("usage: dns_lookup [host]"); return 2 }
+    if arguments.len() > 1 {
+        eprintln("usage: dns_lookup [host]")
+        return 2
+    }
     let host = arguments.pop().unwrap_or("localhost")
     let addresses = match dns.lookup(host, 443) {
         Ok(addresses) => addresses
-        Err(error) => { eprintln(error.message); return 1 }
+        Err(error) => {
+            eprintln(error.message)
+            return 1
+        }
     }
     assert(!addresses.is_empty(), "lookup returns at least one address")
     println("{host} resolved")

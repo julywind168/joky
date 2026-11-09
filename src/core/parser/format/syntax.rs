@@ -17,7 +17,13 @@ pub(super) struct Syntax {
     pub continuation: Vec<bool>,
     pub anchors: Vec<Option<usize>>,
     pub chain: Vec<bool>,
+    pub separators: Vec<Separator>,
     shape: Shape,
+}
+
+pub(super) struct Separator {
+    pub tokens: Range<usize>,
+    pub next: usize,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -65,6 +71,7 @@ impl Syntax {
             continuation: vec![false; tokens.len()],
             anchors: vec![None; tokens.len()],
             chain: vec![false; tokens.len()],
+            separators: Vec::new(),
             tokens,
             roles,
             shape: Shape::default(),
@@ -103,10 +110,15 @@ impl Syntax {
                     trailing: matches!(expr, Expr::Sequence { trailing: true, .. }),
                 });
                 match expr {
-                    Expr::Block { span, .. } => {
+                    Expr::Block { exprs, span } => {
                         syntax.braces(*span, Role::BlockOpen, true);
+                        syntax.separators(exprs, *span, true);
                     }
-                    Expr::Unsafe { span, .. } | Expr::Graph { span, .. } => {
+                    Expr::Unsafe { exprs, span } => {
+                        syntax.braces(*span, Role::BlockOpen, false);
+                        syntax.separators(exprs, *span, false);
+                    }
+                    Expr::Graph { span, .. } => {
                         syntax.braces(*span, Role::BlockOpen, false);
                     }
                     Expr::Concurrent { span, .. }
@@ -233,6 +245,66 @@ impl Syntax {
             .is_some_and(|t| t.kind == TokenKind::Dot)
         {
             self.chain[dot] = true;
+        }
+    }
+
+    fn separators(&mut self, statements: &[Expr], span: Span, exact_start: bool) {
+        let range = self.range(span);
+        let Some(close) = range.end.checked_sub(1) else {
+            return;
+        };
+        let Some(open) = self.pairs[close] else {
+            return;
+        };
+        if self.tokens[close].kind != TokenKind::RBrace
+            || open < range.start
+            || (exact_start && open != range.start)
+        {
+            return;
+        }
+        for statement in statements {
+            let Expr::Sequence { exprs, .. } = statement else {
+                continue;
+            };
+            let Some(first) = exprs.first() else { continue };
+            // Parenthesized sequences keep their expression context. Generated
+            // blocks are excluded by the real-brace check above.
+            if self.range(statement.span()).start != self.range(first.span()).start {
+                continue;
+            }
+            for pair in exprs.windows(2) {
+                // These forms may stand alone without unused_value diagnostics.
+                // Calls need no return-type inference: non-tail call results may
+                // already be implicitly discarded by the language.
+                if !matches!(
+                    pair[0],
+                    Expr::Let { .. }
+                        | Expr::Var { .. }
+                        | Expr::Destructure { .. }
+                        | Expr::Assign { .. }
+                        | Expr::FieldAssign { .. }
+                        | Expr::Call { .. }
+                        | Expr::Invoke { .. }
+                        | Expr::MethodCall(_)
+                        | Expr::Return { .. }
+                        | Expr::Break { .. }
+                        | Expr::Continue { .. }
+                ) {
+                    continue;
+                }
+                let end = self.range(pair[0].span()).end;
+                let next = self.range(pair[1].span()).start;
+                if end < next
+                    && self.tokens[end..next]
+                        .iter()
+                        .all(|t| t.kind == TokenKind::Semi)
+                {
+                    self.separators.push(Separator {
+                        tokens: end..next,
+                        next,
+                    });
+                }
+            }
         }
     }
 

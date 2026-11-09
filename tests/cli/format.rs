@@ -122,6 +122,8 @@ fn fmt_cli_formatted_program_preserves_behavior_on_all_backends() {
             "fn choose(value:Bool)->Int32{match value{true=>1;2,false=>3}}\n",
             "fn identity<T:Copy>(value:T)->T{value}\n",
             "fn discard(){42;}\n",
+            "fn early()->Int32{println(\"before return\");return 1}\n",
+            "fn owned()->String{\"discarded\"}\n",
             "fn main(){\nlet n=5\n-2;\nprintln(n)\n",
             "let text=\"\"\"\n  n={n}\n  \"\"\"\nprintln(text)\n",
             "println(r#\"{raw} \\n\"#)\n",
@@ -131,7 +133,8 @@ fn fmt_cli_formatted_program_preserves_behavior_on_all_backends() {
             "let amount=10+\n20\nprintln(amount)\n",
             "println(choose(true))\nprintln(identity::<Int32>(8))\ndiscard()\n",
             "let(first_argument,second_argument,third_argument,fourth_argument,fifth_argument,sixth_argument)=(1,2,3,4,5,6)\n",
-            "println(preserved(sum(first_argument,second_argument,third_argument,fourth_argument,fifth_argument,sixth_argument)))\n}\n",
+            "println(preserved(sum(first_argument,second_argument,third_argument,fourth_argument,fifth_argument,sixth_argument)))\n",
+            "owned();println(early())\n}\n",
         ),
     );
     success(&work.cli(&["fmt", "program.jk"]));
@@ -139,7 +142,7 @@ fn fmt_cli_formatted_program_preserves_behavior_on_all_backends() {
     work.assert_all_backends(
         "program.jk",
         &[],
-        b"5\nn=5\n{raw} \\n\n-6\n4\n30\n2\n8\n21\n",
+        b"5\nn=5\n{raw} \\n\n-6\n4\n30\n2\n8\n21\nbefore return\n1\n",
         0,
     );
 }

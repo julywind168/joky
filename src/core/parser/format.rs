@@ -1,9 +1,11 @@
 //! Syntax-aware formatting over original tokens, comments and literal spellings.
 mod layout;
+mod semicolons;
 mod skip;
 mod syntax;
 mod wrap;
 use super::{Diagnostic, Token, TokenKind};
+use std::borrow::Cow;
 use syntax::Syntax;
 
 /// Format valid syntax without resolving imports, checking types or running code.
@@ -15,9 +17,31 @@ pub fn format(source: &str) -> Result<String, Diagnostic> {
     let syntax = Syntax::parse(source)?;
     let pieces = pieces(source, &syntax.tokens);
     let skipped = skip::regions(source, &pieces)?;
-    let output = layout::render(source, &syntax, &pieces, &skipped);
-    let output = skip::restore(source, &skipped, output)?;
-    verify(source, &syntax, &output)?;
+    let original_len = source.len();
+    let invariant_error = || {
+        Diagnostic::at(
+            1,
+            0..original_len,
+            "Formatting would change source structure; source left unchanged",
+        )
+    };
+    // Normalize only separators that the parser classified as safe standalone
+    // statements. Check layout against this baseline without relaxing the
+    // general token/structure guard for arbitrary punctuation changes.
+    let (syntax, source) =
+        if let Some(normalized) = semicolons::normalize(source, &syntax, &skipped) {
+            (
+                Syntax::parse(&normalized).map_err(|_| invariant_error())?,
+                Cow::Owned(normalized),
+            )
+        } else {
+            (syntax, Cow::Borrowed(source))
+        };
+    let pieces = self::pieces(&source, &syntax.tokens);
+    let skipped = skip::regions(&source, &pieces).map_err(|_| invariant_error())?;
+    let output = layout::render(&source, &syntax, &pieces, &skipped);
+    let output = skip::restore(&source, &skipped, output).map_err(|_| invariant_error())?;
+    verify(&source, &syntax, &output).map_err(|_| invariant_error())?;
     Ok(output)
 }
 

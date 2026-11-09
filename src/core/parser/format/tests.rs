@@ -15,7 +15,7 @@ fn format_normalizes_indentation_and_horizontal_spacing() {
     assert_format("fn f(){Ok(( ))}", "fn f() {\n    Ok(())\n}\n");
     assert_format(
         "fn  main( ) {\n\tvar x=1+2\n if x==3{\nprintln( x );x=x*-2\n }\n}\n",
-        "fn main() {\n    var x = 1 + 2\n    if x == 3 {\n        println(x);\n        x = x * -2\n    }\n}\n",
+        "fn main() {\n    var x = 1 + 2\n    if x == 3 {\n        println(x)\n        x = x * -2\n    }\n}\n",
     );
     assert_format(
         "fn f(\nx: Int32,\ny: Int32,\n) -> Int32 {x+y}",
@@ -112,7 +112,7 @@ fn format_examples_and_standard_modules_are_idempotent() {
 fn format_mutable_parameters() {
     assert_format(
         "fn f(var  value:Int32)->Int32{value+=1;value}",
-        "fn f(var value: Int32) -> Int32 {\n    value += 1;\n    value\n}\n",
+        "fn f(var value: Int32) -> Int32 {\n    value += 1\n    value\n}\n",
     );
 }
 
@@ -140,7 +140,7 @@ fn format_distinguishes_type_angles_from_comparisons_and_shifts() {
 fn format_distinguishes_closure_delimiters_borrows_and_binary_operators() {
     assert_format(
         "fn f(x:&Int32){let half=|value:Int32|{value/2};let zero=move||{0};let y=1|2;let p = & *x}\n",
-        "fn f(x: &Int32) {\n    let half = |value: Int32| {\n        value / 2\n    };\n    let zero = move || {\n        0\n    };\n    let y = 1 | 2;\n    let p = &*x\n}\n",
+        "fn f(x: &Int32) {\n    let half = |value: Int32| {\n        value / 2\n    }\n    let zero = move || {\n        0\n    }\n    let y = 1 | 2\n    let p = &*x\n}\n",
     );
 }
 
@@ -172,11 +172,11 @@ fn format_expands_blocks_and_preserves_branch_sequence_boundaries() {
 fn format_keeps_trailing_comments_with_their_original_tokens() {
     assert_format(
         "fn f(){first();/* why */second() // trailing  \n}\n",
-        "fn f() {\n    first(); /* why */\n    second() // trailing  \n}\n",
+        "fn f() {\n    first() /* why */\n    second() // trailing  \n}\n",
     );
     assert_format(
         "\u{feff}fn f(){let value=1;value;}\r\n",
-        "\u{feff}fn f() {\r\n    let value = 1;\r\n    value;\r\n}\r\n",
+        "\u{feff}fn f() {\r\n    let value = 1\r\n    value;\r\n}\r\n",
     );
 }
 
@@ -301,6 +301,43 @@ fn format_normalizes_blank_lines_and_treats_width_as_a_soft_limit() {
 fn format_separates_binding_keywords_from_tuple_and_array_patterns() {
     assert_format(
         "fn f(){let(x,y)=(1,2);var[a,b]=[3,4];for(key,value) in entries{call(key,value)}}\n",
-        "fn f() {\n    let (x, y) = (1, 2);\n    var [a, b] = [3, 4];\n    for (key, value) in entries {\n        call(key, value)\n    }\n}\n",
+        "fn f() {\n    let (x, y) = (1, 2)\n    var [a, b] = [3, 4]\n    for (key, value) in entries {\n        call(key, value)\n    }\n}\n",
     );
+}
+
+#[test]
+fn format_removes_only_proven_non_tail_statement_separators() {
+    assert_format(
+        "fn fail(error:String)->Int32{eprintln(error);return 1}\n",
+        "fn fail(error: String) -> Int32 {\n    eprintln(error)\n    return 1\n}\n",
+    );
+    assert_format(
+        "fn f(){let x=1;;;var y=2;y=x;print(y);(42)}\n",
+        "fn f() {\n    let x = 1\n    var y = 2\n    y = x\n    print(y)\n    (42)\n}\n",
+    );
+    let source = "fn f(){call();/* trailing */next(); // keep\nlast()}\n";
+    let output = format(source).unwrap();
+    assert!(output.contains("call() /* trailing */\n"), "{output}");
+    assert!(output.contains("next() // keep\n"), "{output}");
+    assert_eq!(format(&output).unwrap(), output);
+}
+
+#[test]
+fn format_keeps_discard_value_context_and_disabled_semicolons() {
+    let source = concat!(
+        "fn f(){42;call();next();}\n",
+        "fn g(){(call();next());let x=(first();42)}\n",
+        "fn h(value:Bool)->Int32{match value{true=>call();1,false=>2}}\n",
+        "fn marked(){call()\n; // fmt: off\nnext()}\n",
+        "// fmt: off\nfn kept(){call();next()}\n// fmt: on\n",
+    );
+    let output = format(source).unwrap();
+    assert!(output.contains("42;\n"), "{output}");
+    assert!(output.contains("next();\n"), "{output}");
+    assert!(output.contains("(call(); next());"), "{output}");
+    assert!(output.contains("(first(); 42)"), "{output}");
+    assert!(output.contains("true => call(); 1,"), "{output}");
+    assert!(output.contains("; // fmt: off"), "{output}");
+    assert!(output.contains("fn kept(){call();next()}"), "{output}");
+    assert_eq!(format(&output).unwrap(), output);
 }
