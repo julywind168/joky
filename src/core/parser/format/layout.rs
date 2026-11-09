@@ -22,16 +22,23 @@ pub(super) fn render(
     skipped: &[Range<usize>],
 ) -> String {
     let mut wrap = Wrap::new(syntax, pieces, skipped);
+    let blank_before = declaration_gaps(syntax, pieces);
     loop {
         wrap.changed = false;
-        let output = render_once(source, syntax, pieces, &mut wrap);
+        let output = render_once(source, syntax, pieces, &mut wrap, &blank_before);
         if !wrap.changed {
             return output;
         }
     }
 }
 
-fn render_once(source: &str, syntax: &Syntax, pieces: &[Piece<'_>], wrap: &mut Wrap<'_>) -> String {
+fn render_once(
+    source: &str,
+    syntax: &Syntax,
+    pieces: &[Piece<'_>],
+    wrap: &mut Wrap<'_>,
+    blank_before: &[bool],
+) -> String {
     let ending = source
         .find(['\r', '\n'])
         .map_or("\n", |i| line_ending(&source[i..]));
@@ -60,8 +67,26 @@ fn render_once(source: &str, syntax: &Syntax, pieces: &[Piece<'_>], wrap: &mut W
                     && pieces[index - 1].token == Some(frame.open)
                     && syntax.pairs[frame.open] == piece.token
             });
-        if index > 0 && !empty_close {
-            copy_line_breaks(piece.gap, &mut output);
+        let previous_role = index
+            .checked_sub(1)
+            .and_then(|i| pieces[i].token)
+            .map_or(Role::Normal, |t| syntax.roles[t]);
+        let joined_else =
+            token.is_some_and(|t| t.kind == TokenKind::Else) && previous_role == Role::BlockClose;
+        if index > 0 && !empty_close && !joined_else {
+            let block_edge = matches!(
+                role,
+                Role::BlockClose | Role::ArmsClose | Role::DeclarationsClose
+            ) || matches!(
+                previous_role,
+                Role::BlockOpen | Role::ArmsOpen | Role::DeclarationsOpen
+            );
+            if blank_before[index] {
+                output.push_str(ending);
+                output.push_str(ending);
+            } else {
+                copy_line_breaks(piece.gap, &mut output, if block_edge { 1 } else { 2 });
+            }
             if output.ends_with(['\r', '\n']) {
                 column = 0;
             }
@@ -114,11 +139,16 @@ fn render_once(source: &str, syntax: &Syntax, pieces: &[Piece<'_>], wrap: &mut W
                 column += 1;
             }
         }
-        output.push_str(piece.text);
-        if let Some(end) = piece.text.rfind(['\r', '\n']) {
-            column = piece.text[end + 1..].chars().count();
+        let text = if piece.token.is_none() {
+            super::comments::reindent(piece.text, column)
         } else {
-            column += piece.text.chars().count();
+            std::borrow::Cow::Borrowed(piece.text)
+        };
+        output.push_str(&text);
+        if let Some(end) = text.rfind(['\r', '\n']) {
+            column = text[end + 1..].chars().count();
+        } else {
+            column += text.chars().count();
         }
         let Some(i) = piece.token else { continue };
         indents[i] = line_indent;
@@ -166,6 +196,33 @@ fn render_once(source: &str, syntax: &Syntax, pieces: &[Piece<'_>], wrap: &mut W
     output
 }
 
+// Start the gap before the next declaration's attributes and leading comments,
+// but keep same-line comments and optional semicolons on the previous item.
+fn declaration_gaps(syntax: &Syntax, pieces: &[Piece<'_>]) -> Vec<bool> {
+    let mut gaps = vec![false; pieces.len()];
+    for pair in syntax.top_level.windows(2) {
+        if !pair[0].1 && !pair[1].1 {
+            continue;
+        }
+        let end = pair[0].0.end;
+        let mut i = pieces.partition_point(|p| p.end <= syntax.tokens[end - 1].span.end());
+        while let Some(piece) = pieces.get(i) {
+            let semicolon = piece
+                .token
+                .is_some_and(|t| syntax.tokens[t].kind == TokenKind::Semi);
+            let trailing = piece.token.is_none() && !piece.gap.contains(['\r', '\n']);
+            if !semicolon && !trailing {
+                break;
+            }
+            i += 1;
+        }
+        if i < gaps.len() {
+            gaps[i] = true;
+        }
+    }
+    gaps
+}
+
 fn line_ending(text: &str) -> &str {
     if text.starts_with("\r\n") {
         "\r\n"
@@ -174,10 +231,10 @@ fn line_ending(text: &str) -> &str {
     }
 }
 
-fn copy_line_breaks(mut gap: &str, output: &mut String) {
+fn copy_line_breaks(mut gap: &str, output: &mut String, limit: usize) {
     let mut count = 0;
     while let Some(index) = gap.find(['\r', '\n']) {
-        if count == 2 {
+        if count == limit {
             break;
         }
         let ending = line_ending(&gap[index..]);
@@ -229,6 +286,14 @@ pub(super) fn space_between(syntax: &Syntax, left: &Piece<'_>, right: &Piece<'_>
     let (ar, br) = (syntax.roles[left], syntax.roles[right]);
     // Do not merge borrows into &&, or integer member access into a float.
     if matches!((a, b), (Amp, Amp) | (IntLit(_), Dot) | (Minus, Minus)) {
+        return true;
+    }
+    // A trailing comma in associated equalities requires a standalone close.
+    if ar == Role::TypeClose
+        && br == Role::TypeClose
+        && left > 0
+        && syntax.tokens[left - 1].kind == Comma
+    {
         return true;
     }
     if ar == Role::ImportSlash

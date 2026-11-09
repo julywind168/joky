@@ -1,4 +1,5 @@
 //! Syntax-aware formatting over original tokens, comments and literal spellings.
+mod comments;
 mod layout;
 mod semicolons;
 mod skip;
@@ -169,11 +170,11 @@ fn verify(source: &str, original: &Syntax, output: &str) -> Result<(), Diagnosti
     Ok(())
 }
 
-fn comments<'a>(source: &'a str, tokens: &[Token]) -> Vec<&'a str> {
+fn comments<'a>(source: &'a str, tokens: &[Token]) -> Vec<Cow<'a, str>> {
     pieces(source, tokens)
         .into_iter()
         .filter(|piece| piece.token.is_none())
-        .map(|piece| piece.text)
+        .map(|piece| comments::reindent(piece.text, 0))
         .collect()
 }
 

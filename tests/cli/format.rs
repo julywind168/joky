@@ -22,7 +22,7 @@ fn stdin(work: &Workspace, flags: &[&str], source: &[u8]) -> std::process::Outpu
 fn fmt_cli_stdin_and_check_do_not_execute_or_resolve_imports() {
     let work = Workspace::new();
     let source = "import missing/module\nfn f(){unknown()}";
-    let expected = b"import missing/module\nfn f() {\n    unknown()\n}\n";
+    let expected = b"import missing/module\n\nfn f() {\n    unknown()\n}\n";
     let output = stdin(&work, &[], source.as_bytes());
     success(&output);
     assert_eq!(output.stdout, expected);
@@ -124,6 +124,10 @@ fn fmt_cli_formatted_program_preserves_behavior_on_all_backends() {
             "fn discard(){42;}\n",
             "fn early()->Int32{println(\"before return\");return 1}\n",
             "fn owned()->String{\"discarded\"}\n",
+            "trait Source{type Item\nfn value(&self)->Self.Item}\nstruct Number{n:Int32}\n",
+            "impl Source for Number{type Item=Int32\nfn value(&self)->Int32{self.n}}\n",
+            "fn read<T:Source<Item=Int32,> >(source:&T)->Int32{source.value()}\n",
+            "fn conditional(x:Bool)->Int32{if x {1}\nelse {2}}\n",
             "fn main(){\nlet n=5\n-2;\nprintln(n)\n",
             "let text=\"\"\"\n  n={n}\n  \"\"\"\nprintln(text)\n",
             "println(r#\"{raw} \\n\"#)\n",
@@ -134,7 +138,11 @@ fn fmt_cli_formatted_program_preserves_behavior_on_all_backends() {
             "println(choose(true))\nprintln(identity::<Int32>(8))\ndiscard()\n",
             "let(first_argument,second_argument,third_argument,fourth_argument,fifth_argument,sixth_argument)=(1,2,3,4,5,6)\n",
             "println(preserved(sum(first_argument,second_argument,third_argument,fourth_argument,fifth_argument,sixth_argument)))\n",
-            "owned();println(early())\n}\n",
+            "owned();println(early())\n",
+            "/* details\n * aligned stars\n */\n",
+            "let number=Number{n:42}\nprintln(read(&number))\nprintln(conditional(false))\n",
+            "println((|x:Int32|{x+1})((|y:Int32|{y*2})(3)))\n",
+            "println(Some(1).map(|n:Int32|{n+1}).map(|n:Int32|{n+2}).unwrap_or(0))\n}\n",
         ),
     );
     success(&work.cli(&["fmt", "program.jk"]));
@@ -142,7 +150,7 @@ fn fmt_cli_formatted_program_preserves_behavior_on_all_backends() {
     work.assert_all_backends(
         "program.jk",
         &[],
-        b"5\nn=5\n{raw} \\n\n-6\n4\n30\n2\n8\n21\nbefore return\n1\n",
+        b"5\nn=5\n{raw} \\n\n-6\n4\n30\n2\n8\n21\nbefore return\n1\n42\n2\n7\n4\n",
         0,
     );
 }

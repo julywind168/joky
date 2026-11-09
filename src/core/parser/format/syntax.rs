@@ -17,6 +17,8 @@ pub(super) struct Syntax {
     pub continuation: Vec<bool>,
     pub anchors: Vec<Option<usize>>,
     pub chain: Vec<bool>,
+    pub chain_root: Vec<Option<usize>>,
+    pub top_level: Vec<(Range<usize>, bool)>,
     pub separators: Vec<Separator>,
     shape: Shape,
 }
@@ -71,6 +73,8 @@ impl Syntax {
             continuation: vec![false; tokens.len()],
             anchors: vec![None; tokens.len()],
             chain: vec![false; tokens.len()],
+            chain_root: vec![None; tokens.len()],
+            top_level: Vec::new(),
             separators: Vec::new(),
             tokens,
             roles,
@@ -91,6 +95,14 @@ impl Syntax {
             }
         }
         syntax.declarations(&module);
+        syntax.top_level = syntax
+            .shape
+            .declarations
+            .iter()
+            .filter(|d| !d.range.is_empty() && depths[d.range.start] == 0)
+            .map(|d| (d.range.clone(), d.kind == "function"))
+            .collect();
+        syntax.top_level.sort_by_key(|(range, _)| range.start);
         for root in module.expression_roots() {
             // Include root boundaries so moving an expression between declarations
             // cannot be hidden by flattening the pre-order traversal.
@@ -133,6 +145,32 @@ impl Syntax {
                     _ => {}
                 }
                 match expr {
+                    Expr::Call { callee, .. } if callee.contains('.') => {
+                        // Identifier-rooted calls are folded into a dotted name
+                        // by the parser; their receiver dots have no Field nodes.
+                        let end = range
+                            .clone()
+                            .take_while(|&i| {
+                                matches!(
+                                    syntax.tokens[i].kind,
+                                    TokenKind::Ident(_) | TokenKind::Dot | TokenKind::TupleIndex(_)
+                                )
+                            })
+                            .last()
+                            .map_or(range.start, |i| i + 1);
+                        let path: String = syntax.tokens[range.start..end]
+                            .iter()
+                            .map(|t| &source[t.span.start()..t.span.end()])
+                            .collect();
+                        if path == *callee {
+                            for i in range.start..end {
+                                if syntax.tokens[i].kind == TokenKind::Dot {
+                                    syntax.chain[i] = true;
+                                    syntax.chain_root[i] = Some(range.start);
+                                }
+                            }
+                        }
+                    }
                     Expr::MethodCall(call) => syntax.chain(&call.receiver),
                     Expr::Field { base, .. } => syntax.chain(base),
                     _ => {}
@@ -245,6 +283,7 @@ impl Syntax {
             .is_some_and(|t| t.kind == TokenKind::Dot)
         {
             self.chain[dot] = true;
+            self.chain_root[dot] = Some(self.range(receiver.span()).start);
         }
     }
 

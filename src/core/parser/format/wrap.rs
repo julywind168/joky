@@ -5,7 +5,7 @@ use super::{
     syntax::Syntax,
     Piece, Role, TokenKind,
 };
-use std::ops::Range;
+use std::{collections::BTreeSet, ops::Range};
 
 pub(super) const WIDTH: usize = 100;
 
@@ -26,6 +26,7 @@ pub(super) struct Wrap<'a> {
     groups: Vec<Option<Group>>,
     protected: Vec<bool>,
     forced: Vec<bool>,
+    broken_chains: BTreeSet<usize>,
     pub changed: bool,
 }
 
@@ -36,6 +37,7 @@ impl<'a> Wrap<'a> {
         let mut barriers = vec![0usize; pieces.len() + 1];
         let mut stack: Vec<usize> = Vec::new();
         let mut protected = Vec::with_capacity(pieces.len());
+        let mut broken_chains = BTreeSet::new();
         for (i, piece) in pieces.iter().enumerate() {
             let start = piece.end - piece.text.len();
             let region = skipped.partition_point(|range| range.end <= start);
@@ -61,6 +63,31 @@ impl<'a> Wrap<'a> {
                 }
             }
             let Some(t) = piece.token else { continue };
+            if piece.gap.contains(['\r', '\n']) && !skipped {
+                if let Some(root) = syntax.chain_root[t] {
+                    broken_chains.insert(root);
+                }
+            }
+            // A nonempty source block will expand even if it started on one line.
+            // Give every containing argument/list group its own vertical layout.
+            if block
+                && syntax.pairs[t].is_some_and(|close| {
+                    pieces
+                        .get(i + 1)
+                        .is_some_and(|next| next.token != Some(close))
+                })
+            {
+                for &open in stack.iter().rev() {
+                    let parent_role = pieces[open].token.map_or(Role::Normal, |t| syntax.roles[t]);
+                    if matches!(
+                        parent_role,
+                        Role::BlockOpen | Role::ArmsOpen | Role::DeclarationsOpen
+                    ) {
+                        break;
+                    }
+                    groups[open].as_mut().unwrap().multiline = true;
+                }
+            }
             let kind = &syntax.tokens[t].kind;
             if is_close(kind, role) {
                 if let Some(open) = stack.pop() {
@@ -89,6 +116,7 @@ impl<'a> Wrap<'a> {
             groups,
             protected,
             forced: vec![false; pieces.len()],
+            broken_chains,
             changed: false,
         }
     }
@@ -111,7 +139,7 @@ impl<'a> Wrap<'a> {
         }
     }
 
-    pub fn break_before(&self, i: usize, column: usize) -> bool {
+    pub fn break_before(&mut self, i: usize, column: usize) -> bool {
         if i == 0 || self.protected[i] {
             return false;
         }
@@ -120,10 +148,20 @@ impl<'a> Wrap<'a> {
         let chain = token.is_some_and(|t| self.syntax.chain[t]);
         let operator = previous
             .is_some_and(|t| after_operator(&self.syntax.tokens[t].kind, self.syntax.roles[t]));
-        (chain || operator)
+        let root = token.and_then(|t| self.syntax.chain_root[t]);
+        if root.is_some_and(|root| self.broken_chains.contains(&root)) {
+            return true;
+        }
+        let breaks = (chain || operator)
             && self
                 .chunk_width(i, WIDTH.saturating_sub(column))
-                .is_some_and(|width| column + width > WIDTH)
+                .is_some_and(|width| column + width > WIDTH);
+        if breaks {
+            if let Some(root) = root {
+                self.changed |= self.broken_chains.insert(root);
+            }
+        }
+        breaks
     }
 
     fn chunk_width(&self, start: usize, available: usize) -> Option<usize> {

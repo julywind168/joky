@@ -56,7 +56,7 @@ fn format_retains_expression_lines_and_ambiguous_token_separation() {
     );
     assert_format(
         "import joky/array.{type Array}\nfn f(x: Array<Array<Int32> >) {let y = 4/2}\n",
-        "import joky/array.{type Array}\nfn f(x: Array<Array<Int32>>) {\n    let y = 4 / 2\n}\n",
+        "import joky/array.{type Array}\n\nfn f(x: Array<Array<Int32>>) {\n    let y = 4 / 2\n}\n",
     );
 }
 
@@ -64,7 +64,7 @@ fn format_retains_expression_lines_and_ambiguous_token_separation() {
 fn format_preserves_crlf_and_blank_lines_without_trailing_code_whitespace() {
     assert_format(
         "// comment\r\nfn f(){  \r\n  \r\nlet x=1  \r\n}\r\n  ",
-        "// comment\r\nfn f() {\r\n\r\n    let x = 1\r\n}\r\n",
+        "// comment\r\nfn f() {\r\n    let x = 1\r\n}\r\n",
     );
     assert_format("", "");
     assert_format(" \t ", "");
@@ -76,7 +76,7 @@ fn format_preserves_crlf_and_blank_lines_without_trailing_code_whitespace() {
 fn format_requires_syntax_but_not_import_resolution_or_a_main_function() {
     assert_format(
         "import missing/module\npub fn f(){unknown()}",
-        "import missing/module\npub fn f() {\n    unknown()\n}\n",
+        "import missing/module\n\npub fn f() {\n    unknown()\n}\n",
     );
     for source in [
         "fn broken(",
@@ -128,11 +128,11 @@ fn duration_literals_preserve_spelling_and_member_boundaries() {
 fn format_distinguishes_type_angles_from_comparisons_and_shifts() {
     assert_format(
         "import joky / array . {type Array}\nfn f < T : Copy > (x:Array < Array < T > >,a:Int32,b:Int32)->Bool{a<b || a>b || a/b==a>>b}\n",
-        "import joky/array.{type Array}\nfn f<T: Copy>(x: Array<Array<T>>, a: Int32, b: Int32) -> Bool {\n    a < b || a > b || a / b == a >> b\n}\n",
+        "import joky/array.{type Array}\n\nfn f<T: Copy>(x: Array<Array<T>>, a: Int32, b: Int32) -> Bool {\n    a < b || a > b || a / b == a >> b\n}\n",
     );
     assert_format(
         "type Item<T> = < T as Iterator > :: Item\nfn f<T>(p:& <T as Iterator>::Item){let x:Option<Int32>=None::<Int32>}\n",
-        "type Item<T> = <T as Iterator>::Item\nfn f<T>(p: &<T as Iterator>::Item) {\n    let x: Option<Int32> = None::<Int32>\n}\n",
+        "type Item<T> = <T as Iterator>::Item\n\nfn f<T>(p: &<T as Iterator>::Item) {\n    let x: Option<Int32> = None::<Int32>\n}\n",
     );
 }
 
@@ -160,7 +160,7 @@ fn format_indents_expression_continuations_and_method_chains() {
 fn format_expands_blocks_and_preserves_branch_sequence_boundaries() {
     assert_format(
         "fn f(value:Bool)->Int32{match value{true=>1;2,false=>3}}\nfn empty(){\n}\n",
-        "fn f(value: Bool) -> Int32 {\n    match value {\n        true => 1; 2,\n        false => 3\n    }\n}\nfn empty() {}\n",
+        "fn f(value: Bool) -> Int32 {\n    match value {\n        true => 1; 2,\n        false => 3\n    }\n}\n\nfn empty() {}\n",
     );
     assert_format(
         "struct Point{x:Int32,y:Int32}\nimpl Point{fn sum(&self)->Int32{self.x+self.y}}\n",
@@ -203,7 +203,7 @@ fn format_guard_rejects_parseable_changes_to_expression_boundaries() {
 fn format_keeps_negative_patterns_and_attribute_literals_together() {
     assert_format(
         "#repr(C, align: - 1) struct Point{x:Int32}\nfn f(value:Int32)->Int32{match value{-2..=-1=>0,_=>1}}\n",
-        "#repr(C, align: -1) struct Point { x: Int32 }\nfn f(value: Int32) -> Int32 {\n    match value {\n        -2 ..= -1 => 0,\n        _ => 1\n    }\n}\n",
+        "#repr(C, align: -1) struct Point { x: Int32 }\n\nfn f(value: Int32) -> Int32 {\n    match value {\n        -2 ..= -1 => 0,\n        _ => 1\n    }\n}\n",
     );
 }
 
@@ -340,4 +340,81 @@ fn format_keeps_discard_value_context_and_disabled_semicolons() {
     assert!(output.contains("; // fmt: off"), "{output}");
     assert!(output.contains("fn kept(){call();next()}"), "{output}");
     assert_eq!(format(&output).unwrap(), output);
+}
+
+#[test]
+fn format_retains_required_separation_after_generic_trailing_commas() {
+    assert_format(
+        "fn f<T: Trait<Item = Int32,> >(x:&T){}",
+        "fn f<T: Trait<Item = Int32,> >(x: &T) {}\n",
+    );
+    let source = include_str!("../../../../tests/fixtures/function_values.jk");
+    let output = format(source).unwrap();
+    assert_eq!(format(&output).unwrap(), output);
+}
+
+#[test]
+fn format_expands_containing_calls_and_entire_wrapped_chains() {
+    assert_format(
+        "fn f(){outer(first(|x| {x+1}),second(|y| {y+2}))}",
+        "fn f() {\n    outer(\n        first(\n            |x| {\n                x + 1\n            }\n        ),\n        second(\n            |y| {\n                y + 2\n            }\n        )\n    )\n}\n",
+    );
+    let comments = format("fn f(){outer(||{/* note */},||{})}").unwrap();
+    assert!(comments.contains("outer(\n"), "{comments}");
+    assert_eq!(format(&comments).unwrap(), comments);
+    let source = "fn f(){let result = receiver.first_method_with_a_long_name().second_method_with_a_long_name().third_method_with_a_long_name().fourth()}";
+    let output = format(source).unwrap();
+    for name in [
+        "first_method_with_a_long_name",
+        "second_method_with_a_long_name",
+        "third_method_with_a_long_name",
+        "fourth",
+    ] {
+        assert!(output.contains(&format!("\n        .{name}()")), "{output}");
+    }
+    assert_eq!(format(&output).unwrap(), output);
+    assert_format(
+        "fn f(){receiver.short().other()}",
+        "fn f() {\n    receiver.short().other()\n}\n",
+    );
+}
+
+#[test]
+fn format_normalizes_declaration_gaps_block_edges_and_else() {
+    assert_format(
+        "fn a(){\n\nif true {first()}\nelse {second()}\n\n} // trailing\n// next function\n#test\nfn b(){}",
+        "fn a() {\n    if true {\n        first()\n    } else {\n        second()\n    }\n} // trailing\n\n// next function\n#test\nfn b() {}\n",
+    );
+    assert_format(
+        "fn a(){if true {first()} // explain\nelse {second()}}",
+        "fn a() {\n    if true {\n        first()\n    } // explain\n    else {\n        second()\n    }\n}\n",
+    );
+}
+
+#[test]
+fn format_reindents_only_conventional_block_comment_stars() {
+    assert_format(
+        "fn f(){\n/* details\n * example:\n *   indented code\n */\ncall()}\n",
+        "fn f() {\n    /* details\n     * example:\n     *   indented code\n     */\n    call()\n}\n",
+    );
+    for comment in [
+        "/* table\n  left  right\n   1      2\n */",
+        "/* nested\n * /* inner */\n */",
+    ] {
+        let output = format(&format!("fn f(){{\n{comment}\ncall()}}")).unwrap();
+        assert!(output.contains(comment), "{output}");
+        assert_eq!(format(&output).unwrap(), output);
+    }
+    for ending in ["\n", "\r\n", "\r"] {
+        let comment = format!("/* info{ending}\t* details  {ending} */");
+        let source = format!("fn f(){{{ending}{comment}{ending}call()}}{ending}");
+        let output = format(&source).unwrap();
+        assert!(output.contains(&format!("/* info{ending}     * details  {ending}     */")));
+        assert_eq!(format(&output).unwrap(), output);
+    }
+    let source = "// fmt: off\nfn f(){\n/* details\n * keep\n */\n}\n// fmt: on\n";
+    assert_format(source, source);
+    let source = "fn f(){\n/* info\n * same\n */\n}";
+    let original = super::syntax::Syntax::parse(source).unwrap();
+    assert!(super::verify(source, &original, &source.replace("same", "changed")).is_err());
 }
