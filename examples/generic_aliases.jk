@@ -1,5 +1,3 @@
-import joky/io.{println}
-
 type PairOf<T> = (T, T)
 type MaybePair<T> = Option<Pair<T>>
 struct Pair<T> { left: T, right: T }

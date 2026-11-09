@@ -1,5 +1,3 @@
-import joky/io.{println}
-
 type Count = Int64
 struct Counters { total: Count, pending: Count }
 

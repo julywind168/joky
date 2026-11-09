@@ -1,6 +1,4 @@
 import joky/random.{ type Rng }
-import joky/result.{ Ok, Err }
-import joky/io.{ println }
 
 fn main() {
     // Repeatable simulation/test values. Never use Rng for secrets.

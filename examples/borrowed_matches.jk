@@ -1,13 +1,9 @@
-import joky/io.{println}
-import joky/array.{type Array}
 import joky/drop.{type Drop}
 
 struct Resource { id: Int32, values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { println(self.id) } }
 fn resource(id: Int32) -> Resource {
-    var values = Array.new::<Int32>()
-    values.push(id)
-    Resource { id: id, values: values }
+    Resource { id, values: [id] }
 }
 fn main() {
     let zipped = Some((resource(20), resource(22)))
@@ -18,7 +14,7 @@ fn main() {
     }
     // The same enum can still be consumed after the shared references expire.
     match zipped {
-        Some((left, right)) => println(left.values.get(0).unwrap_or(0) + right.id)
+        Some((left, right)) => println(left.values[0] + right.id)
         None => println(0)
     }
 }

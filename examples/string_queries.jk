@@ -1,14 +1,10 @@
-import joky/io.{println}
-import joky/string
-import joky/array.{type Array}
-
 // Byte offsets and Unicode scalar counts are deliberately different.
 fn main() {
     let input: Array<UInt8> = [0xe4, 0xb8, 0xad]
     match String.from_utf8(input) {
         Err(error) => { println(error.offset) }
         Ok(value) => {
-            let combined = string.concat(&value, "🙂e\u{301}")
+            let combined = value.concat("🙂e\u{301}")
             let piece = combined.substring(0, 7).unwrap_or("")
             println(piece.byte_length())
             println(combined.rune_count())

@@ -1,5 +1,3 @@
-import joky/io.{println}
-
 ;
 
 fn main() {

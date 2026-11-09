@@ -1,15 +1,8 @@
 // Batch conversion and iteration are separate from the core Map example to
 // keep each program within the compiler's generic specialization budget.
-import joky/io.{println}
-import joky/map.{type Map}
-import joky/array.{type Array}
-
 fn batches_and_iteration() -> Int32 {
-    var input = Array.new::<(Int32, Int32)>()
-    input.push((1, 1)); input.push((1, 20))
-    var values = Map.from_entries(input)
-    var more = Array.new::<(Int32, Int32)>(); more.push((2, 22))
-    values.extend(more)
+    var values = Map.from_entries([(1, 1), (1, 20)])
+    values.extend([(2, 22)])
     var sum = 0
     for value in values.values() { sum += *value }
     var exported_sum = 0

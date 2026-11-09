@@ -1,6 +1,5 @@
 import joky/process
 import joky/dns
-import joky/check.{assert}
 
 // Defaults to local name service; an optional argument selects another host.
 fn main() @suspends -> Int32 {

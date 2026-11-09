@@ -1,7 +1,4 @@
-import joky/array.{type Array}
 import joky/iter.{type SharedIterator}
-import joky/option.{type Option}
-import joky/io.{println}
 
 // Advanced: each step returns the next state and an optional item.
 fn count<I: Copy + SharedIterator>(var source: I) -> UInt64 {

@@ -662,12 +662,7 @@ fn show_map_and_explicit_io_work_without_prelude_in_all_backends() {
 fn list_example_and_cross_module_aliases_run_in_all_backends() {
     let work = Workspace::new();
     work.write("lists.jk", include_str!("../../examples/lists.jk"));
-    work.assert_all_backends(
-        "lists.jk",
-        &["--no-prelude"],
-        b"last\n0\nlast\nbefore\nextra\ntail\n",
-        0,
-    );
+    work.assert_all_backends("lists.jk", &[], b"last\n0\nlast\nbefore\nextra\ntail\n", 0);
     work.write("views.jk", include_str!("../fixtures/list_views.jk"));
     work.write(
         "aliased.jk",
@@ -696,12 +691,7 @@ fn list_example_and_cross_module_aliases_run_in_all_backends() {
 fn set_example_and_cross_module_aliases_run_in_all_backends() {
     let work = Workspace::new();
     work.write("sets.jk", include_str!("../../examples/sets.jk"));
-    work.assert_all_backends(
-        "sets.jk",
-        &["--no-prelude"],
-        b"2\ntrue\n3\ntrue\ntrue\n3\n",
-        0,
-    );
+    work.assert_all_backends("sets.jk", &[], b"2\ntrue\n3\ntrue\ntrue\n3\n", 0);
     work.write("views.jk", include_str!("../fixtures/set_views.jk"));
     work.write(
         "aliased.jk",
@@ -1156,7 +1146,7 @@ fn check_generic_map_cli_cases(additional_cases: bool) {
         return;
     }
     work.write("maps.jk", include_str!("../../examples/maps.jk"));
-    work.assert_all_backends("maps.jk", &[], b"42\n42\n42\n42\n42\n", 0);
+    work.assert_all_backends("maps.jk", &[], b"42\n42\n42\n42\n", 0);
     work.write(
         "map_batches.jk",
         include_str!("../../examples/map_batches.jk"),

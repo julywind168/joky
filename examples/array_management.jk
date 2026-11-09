@@ -1,18 +1,40 @@
-import joky/io.{println}
-import joky/array.{type Array}
-
 struct Resource { id: Int32, values: Array<Int32> }
-fn resource(id: Int32) -> Resource { Resource { id: id, values: Array.new::<Int32>() } }
-fn main() {
+fn resource(id: Int32) -> Resource { Resource { id, values: [] } }
+
+fn ordered_removal() {
+    var values = [resource(20)]
+    values.insert(0, resource(22))
+    values.insert(1, resource(21))
+    println(values.remove(1)!.id) // 21; the remaining elements keep their order.
+    println(values[0].id) // 22
+    println(values[1].id) // 20
+    println(values.insert(99, resource(0))) // false
+}
+
+fn unordered_removal() {
+    var values = [resource(20), resource(21), resource(22)]
+    println(values.swap_remove(0)!.id) // 20
+    println(values[0].id) // 22; the last element fills the gap.
+    println(values.len()) // 2
+    println(values.swap_remove(99).is_none()) // true
+}
+
+fn capacity_and_reuse() {
     var values = Array.with_capacity::<Resource>(4)
-    values.push(resource(20)); values.push(resource(21)); values.push(resource(22))
+    for id in 20 ..= 22 { values.push(resource(id)) }
     values.swap(0, 2)
-    println(values.borrow_ref(0).id)
+    println(values[0].id) // 22
     values.truncate(1)
-    println(int32(values.len()))
+    println(values.len()) // 1
     values.clear()
-    println(int32(values.capacity()))
+    println(values.capacity()) // 4; clearing keeps the allocation for reuse.
     values.push(resource(42))
-    println(values.borrow_ref(0).id)
-    println(if values.swap(0, 99) { 1 } else { 0 })
+    println(values[0].id) // 42
+    println(values.swap(0, 99)) // false
+}
+
+fn main() {
+    ordered_removal()
+    unordered_removal()
+    capacity_and_reuse()
 }

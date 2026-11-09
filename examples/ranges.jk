@@ -1,6 +1,4 @@
-import joky/io.{println}
 import joky/iter.{type Range, range}
-import joky/integer
 
 fn small_range() -> Range<UInt64> { 0..=uint64(3) }
 

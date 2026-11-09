@@ -1,5 +1,3 @@
-import joky/io.{println}
-
 // Propagate a missing input, then transform its successful value.
 fn increment(value: Option<Int32>) -> Option<Int32> {
     Some(value? + 1)

@@ -44,7 +44,7 @@ cp -R examples "$task_bundle/share/doc/joky/examples"
 cat > "$task_bundle/INSTALL.txt" <<'INSTALL'
 Keep this entire directory together and add its bin directory to PATH.
 Run `joky --version` to check the installation.
-Run `joky run share/doc/joky/examples/hello.jk` from this directory (output: 42).
+Run `joky run share/doc/joky/examples/hello.jk` from this directory (output: Hello, world!).
 Native builds need the system C compiler (cc) and lib/joky/libjoky.a.
 Open share/doc/joky/html/index.html for offline standard-library documentation.
 Tutorial: https://github.com/julywind168/joky/blob/main/docs/getting-started.md

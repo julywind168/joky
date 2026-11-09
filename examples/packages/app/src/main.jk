@@ -1,6 +1,7 @@
 import common/greeting
-import joky/io.{println}
+import math
 
 fn main() {
     println(greeting.message())
+    println(math.add(20, 22))
 }

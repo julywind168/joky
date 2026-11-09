@@ -1,14 +1,10 @@
-import joky/io.{println}
-
 fn sum_until(n: Int32, limit: Int32) -> Int32 {
     if n <= 0 { return 0 }
-    var i = 0
     var total = 0
-    while i < n {
-        i = i + 1
+    for i in 1 ..= n {
         if i == 2 { continue }
         if i > limit { break }
-        total = total + i
+        total += i
     }
     total
 }

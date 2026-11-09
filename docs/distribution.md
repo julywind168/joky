@@ -25,7 +25,7 @@ joky --version --verbose
 
 ```joky
 fn main() {
-    println(42)
+    println("Hello, world!")
 }
 ```
 
@@ -38,7 +38,7 @@ joky build hello.jk -o hello
 ./hello
 ```
 
-三次运行均应输出 `42`。`build` 需要系统 `cc`；macOS 可安装 Xcode Command Line Tools，
+三次运行均应输出 `Hello, world!`。`build` 需要系统 `cc`；macOS 可安装 Xcode Command Line Tools，
 Linux 可安装发行版的 C 编译器和链接工具。缺少 runtime 时请恢复完整目录，或用
 `JOKY_RUNTIME` 指向同版本 `libjoky.a`。`joky: command not found` 时检查 PATH 并重开终端。
 

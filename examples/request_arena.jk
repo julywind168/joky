@@ -5,15 +5,11 @@ fn request() @suspends -> Int32 {
     let arena = Arena.new()
     let value = arena.alloc(40)
     task.sleep(1ms)
-    (*value) = (*value) + 2
+    *value += 2
     *value
 }
 
 fn main() @suspends {
-    var index = 0
-    while index < 3 {
-        assert_eq(request(), 42)
-        index += 1
-    }
+    for _ in 0 .. 3 { assert_eq(request(), 42) }
     println("requests completed")
 }

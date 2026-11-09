@@ -1,21 +1,16 @@
 import joky/mem
-import joky/io.{println}
-import joky/array.{type Array}
-import joky/slice
 
 struct Resource { id: Int32, values: Array<Int32> }
 fn resource(id: Int32) -> Resource {
-    Resource { id: id, values: Array.new::<Int32>() }
+    Resource { id, values: [] }
 }
 fn main() {
-    var values = Array.new::<Resource>()
-    values.push(resource(20))
-    values.push(resource(21))
-    let region = values.slice_mut(0, 2)
-    let child = slice.slice_mut(region, 1, 2)
-    let old = mem.replace(slice.borrow_mut_ref(child, 0), resource(22))
+    var values = [resource(20), resource(21)]
+    let region = &mut values[0 .. 2]
+    let child = &mut region[1 .. 2]
+    let old = mem.replace(&mut child[0], resource(22))
     println(old.id)
-    println(slice.borrow_ref(region, 0).id + slice.borrow_ref(region, 1).id)
+    println(region[0].id + region[1].id)
     values.push(resource(99)) // The final view use restores array mutation.
-    println(int32(values.len()))
+    println(values.len())
 }

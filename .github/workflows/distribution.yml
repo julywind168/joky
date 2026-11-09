@@ -28,11 +28,11 @@ jobs:
           bundle=$(find "$RUNNER_TEMP/joky-relocated" -mindepth 1 -maxdepth 1 -type d)
           cd "$RUNNER_TEMP"
           "$bundle/bin/joky" run "$bundle/share/doc/joky/examples/hello.jk" > hello.out
-          test "$(cat hello.out)" = 42
+          test "$(cat hello.out)" = 'Hello, world!'
           "$bundle/bin/joky" run --interpreter "$bundle/share/doc/joky/examples/hello.jk" > hello.out
-          test "$(cat hello.out)" = 42
+          test "$(cat hello.out)" = 'Hello, world!'
           "$bundle/bin/joky" build "$bundle/share/doc/joky/examples/hello.jk" -o hello
-          test "$(./hello)" = 42
+          test "$(./hello)" = 'Hello, world!'
       - uses: actions/upload-artifact@v4
         with:
           name: joky-${{ matrix.os }}

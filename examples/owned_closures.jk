@@ -1,5 +1,3 @@
-import joky/io.{println}
-
 // Store reference-free move closures without naming their environment types.
 struct Callback<F> { callback: F }
 fn save<F>(callback: F) -> Callback<F> { Callback { callback } }

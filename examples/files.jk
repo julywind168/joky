@@ -1,6 +1,5 @@
 import joky/process
 import joky/fs
-import joky/io.{println}
 
 // Optional first argument selects a file relative to the caller directory.
 fn main() @suspends -> Int32 {

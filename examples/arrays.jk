@@ -1,18 +1,14 @@
-import joky/io.{println}
-import joky/array.{type Array}
-
 fn answer() -> Int32 {
-    var values: Array<Int32> = [20]
+    var values = [20]
     let view = &values
-    let first = view.get(0).unwrap_or(0)
+    let first = view[0]
     // The last use of view ends its borrow, so another push is allowed.
     values.push(22)
     let moved = values
     // The moved array is cleaned up automatically on return.
-    first + moved.get(1).unwrap_or(0)
+    first + moved[1]
 }
 
-fn main() -> Int32 {
+fn main() {
     println(answer()) // 42
-    0
 }

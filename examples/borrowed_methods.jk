@@ -1,5 +1,3 @@
-import joky/io.{println}
-
 // Borrowed methods use the same ownership rules as reference parameters.
 struct Counter { value: Int32 }
 impl Counter {

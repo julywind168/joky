@@ -1,8 +1,5 @@
 import joky/json/typed.{type ToJson, type FromJson, type Context, type MappingError}
 import joky/json.{type Value}
-import joky/result.{type Result, Ok, Err}
-import joky/option.{type Option}
-import joky/check.{assert, panic}
 
 struct User { name: String, age: UInt8, nickname: Option<String> }
 impl ToJson for User {

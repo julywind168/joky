@@ -1108,7 +1108,7 @@ swap_remove 同时支持 Copy 与拥有型元素，可写 `values.swap_remove(in
 长度或容量。复杂度相对于数组长度为 O(1)，存储交换工作与元素大小成正比。
 最后使用完元素/切片视图后才允许删除；返回的共享内容引用沿用任务期保留契约。
 算法和交换原语不分配，但拥有型返回值的局部存储或清理快照仍可能分配失败并终止任务。
-示例见 [swap_remove.jk](../examples/swap_remove.jk)，三后端输出 20、22、2、1。
+示例见 [array_management.jk](../examples/array_management.jk) 的 `unordered_removal`，依次输出 20、22、2、true。
 
 remove / insert 同时支持 Copy 与拥有型元素，方法与模块函数写法均可用。
 `remove(index)` 将后续元素依次向前移动，返回被移出值，不运行元素 Drop；
@@ -1123,7 +1123,7 @@ index > len 时返回 false，不扩容、不修改数组，传入的拥有值�
 有效插入的扩容可能分配，拥有型返回值仍可能需要局部存储和清理快照。
 数组元素/切片借用活跃时禁止这些操作，最后使用后恢复权限；内容引用仍沿用任务期保留契约。
 不可恢复分配失败、Drop 失败及解释器内部取消沿用任务清理路径，所有已构造资源恰好清理一次。
-示例见 [ordered_arrays.jk](../examples/ordered_arrays.jk)，三后端输出 21、22、20、0。
+示例见 [array_management.jk](../examples/array_management.jk) 的 `ordered_removal`，依次输出 21、22、20、false。
 
 truncate / clear / swap 支持 Copy 与拥有型元素，提供同名方法和模块函数。
 `truncate(length)` 只在 length < len 时删除尾部；length >= len（包括 UInt64.MAX）
@@ -1141,7 +1141,7 @@ Copy 元素没有析构逻辑，截断只更新长度；拥有型元素的清理
 
 三种操作要求数组独占访问，活跃元素/切片视图阻止冲突操作，最后使用后恢复权限；
 这些操作可在挂起函数中调用，无引用元素视图也可跨挂起保留。完整示例见
-[array_management.jk](../examples/array_management.jk)，三后端输出 22、1、4、42、0。
+[array_management.jk](../examples/array_management.jk) 的 `capacity_and_reuse`，依次输出 22、1、4、42、false。
 
 共享引用元素示例：
 
@@ -2623,7 +2623,7 @@ fn read(value: Maybe<Int32>) -> Int32 {
 - 默认 prelude 提供容器类型名 `Array`、`Map`、`Set`。调用其模块级函数仍需显式导入对应模块。
 - 默认 prelude 引入 `Option`、`Some`、`None`、`Result`、`Ok`、`Err` 及上述基础方法，以及整数的 16 个 `to_*()` 方法与 `MIN` / `MAX`。
   四个 wrapping 转换函数 `int32` / `int64` / `uint32` / `uint64` 属于语言内建，不受 prelude 开关影响。
-  prelude 还引入 `print` / `println`，不引入数组或 VM。显式 `import joky/prelude` 可在关闭默认 prelude 后恢复这些名称；
+  prelude 还引入 `print` / `println` / `eprint` / `eprintln`、`assert` / `panic`、`assert_eq` / `assert_ne`，不引入 VM。显式 `import joky/prelude` 可在关闭默认 prelude 后恢复这些名称；
   `import joky/prelude as p` 提供限定名称及相应类型的成员方法。
 - CLI 的 `run` / `build` 支持 `--no-prelude`；Rust 中用
   `TypeRegistry::with_prelude(false)` 或 `set_prelude_enabled(false)`，
@@ -2919,13 +2919,13 @@ AOT 将静态导入的依赖代码编入应用，运行产物无需依赖源码�
 
 ## 用户文件模块
 
-单文件 CLI 以入口文件所在目录为唯一源码根目录；项目模式使用清单的 `source-root`。`import app/math` 对应该目录下的
-`app/math.jk`；同包文件里的导入也从该包根目录解析，不相对于文件自身。
+单文件 CLI 以入口文件所在目录为唯一源码根目录；项目模式使用清单的 `source-root`。`import math` 对应该目录下的
+`math.jk`；同包文件里的导入也从该包根目录解析，不相对于文件自身。
 项目声明本地包依赖时，依赖别名按上一节路由到对应包的源码根。
 不隐式搜索当前工作目录、环境变量或全局包目录；import 路径由标识符段和 `/` 组成，不能包含 `..`，
 `joky` 命名空间保留给标准库。符号链接解析后的依赖文件也必须位于源码根目录内。
 
-`app/math.jk`：
+`math.jk`：
 
 ```joky
 pub fn add(a: Int32, b: Int32) -> Int32 { a + b }
@@ -2934,12 +2934,12 @@ pub fn add(a: Int32, b: Int32) -> Int32 { a + b }
 `main.jk`：
 
 ```joky
-import app/math.{add}
+import math.{add}
 fn main() -> Int32 { add(20, 22) }
 ```
 
 上述程序在 JIT、解释器和 AOT 下均返回退出码 42。打印结果并正常退出的完整示例见
-[examples/modules/main.jk](../examples/modules/main.jk)。
+[examples/packages/app/src/main.jk](../examples/packages/app/src/main.jk)；该项目同时导入同包 `math` 模块与本地依赖 `common/greeting`，使用 `joky run examples/packages/app` 运行。
 
 - 函数、记录、枚举、透明类型别名、模块常量、impl 内的方法和常量默认私有；`pub` 标记对其他模块公开的声明。
   `pub enum` 同时公开全部构造器；不同枚举的同名成员可以共存，裸导出名有歧义时须使用类型限定名。

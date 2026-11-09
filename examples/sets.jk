@@ -1,12 +1,5 @@
-import joky/set.{type Set}
-import joky/array.{type Array}
-import joky/io.{println}
-import joky/string
-
 fn main() {
-    var input = Array.new::<String>()
-    input.push("apple"); input.push("pear"); input.push("apple")
-    let words = Set.from_array(input)
+    let words = Set.from_array(["apple", "pear", "apple"])
     println(words.len())
     var query = "pear"
     println(words.contains(query))

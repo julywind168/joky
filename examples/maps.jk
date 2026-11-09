@@ -1,7 +1,3 @@
-import joky/io.{println}
-import joky/map.{type Map}
-import joky/array.{type Array}
-import joky/element
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
 
@@ -26,13 +22,13 @@ fn custom_keys() -> Int32 {
     old.unwrap_or(0) + scores.remove(Coordinate { x: 3, y: 7 }).unwrap_or(0)
 }
 fn owning_values() -> Int32 {
-    let row = [20, 22]
+    // The removed row stays alive after the Map leaves its scope.
+    let moved = {
     var rows = Map.new::<Int32, Array<Int32>>()
-    rows.insert(1, row)
-    // Explicit early release demonstrates that the removed row owns its storage.
-    let moved = match rows.remove(1) { Some(value) => value, None => return 0 }
-    rows.release()
-    moved.get(0).unwrap_or(0) + moved.get(1).unwrap_or(0)
+        rows.insert(1, [20, 22])
+        rows.remove(1)!
+    }
+    moved[0] + moved[1]
 }
 fn borrowed_values() -> Int32 {
     var counts = Map.new::<Int32, Int32>()
@@ -41,17 +37,9 @@ fn borrowed_values() -> Int32 {
     *count += 22
     *count
 }
-fn shared_values() -> Int32 {
-    var values = Map.new::<Int32, &Int32>()
-    values.insert(1, &*alloc(42))
-    let copy = element.read(values.borrow(1))
-    values.release()
-    *copy
-}
 fn main() {
     println(frequencies())
     println(custom_keys())
     println(owning_values())
     println(borrowed_values())
-    println(shared_values())
 }

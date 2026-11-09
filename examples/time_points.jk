@@ -1,6 +1,5 @@
 import joky/time.{ type Instant, type Timestamp }
 import joky/task
-import joky/io.{ println }
 
 fn main() @suspends {
     let started = Instant.now()

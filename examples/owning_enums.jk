@@ -1,26 +1,20 @@
-import joky/io.{println}
-import joky/array.{type Array}
 import joky/drop.{type Drop}
 
 struct Resource { id: Int32, values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { println(self.id) } }
 enum Message { Empty, Ready(Resource), Count(Int32) }
 fn resource(id: Int32) -> Resource {
-    var values = Array.new::<Int32>()
-    values.push(id)
-    Resource { id: id, values: values }
+    Resource { id, values: [id] }
 }
 fn main() {
-    var queue = Array.new::<Message>()
-    queue.push(Message.Empty)
-    queue.push(Message.Ready(resource(42)))
+    var queue = [Message.Empty, Message.Ready(resource(42))]
     let optional = queue.pop()
     match optional {
         None => println(0)
         Some(message) => match message {
             Empty => println(0)
             Count(value) => println(value)
-            Ready(value) => println(value.values.get(0).unwrap_or(0))
+            Ready(value) => println(value.values[0])
         }
     }
     // The bound resource is dropped once when its match arm ends.

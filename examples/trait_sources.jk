@@ -1,4 +1,3 @@
-import joky/option.{type Option, Some}
 import joky/show.{type Show}
 
 trait Source {

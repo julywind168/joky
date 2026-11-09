@@ -179,7 +179,7 @@ joky build
 `check` 不检查 `#test` 函数体，因此修改测试后还需要执行 `joky test`。
 项目构建生成 `dist/` 目录包，可以整体搬动。
 
-拆分模块和本地依赖时，参考[包示例](../examples/packages/app/joky.toml)与
+拆分模块和本地依赖时，参考[包示例](../examples/packages/app/joky.toml)（同时导入同包 `math` 模块与依赖包 `common/greeting`）与
 [命令行指南](cli.md#本地源码依赖)。目前支持本地 path 依赖，尚无 registry 下载与锁文件。
 
 ## 6. 可挂起任务

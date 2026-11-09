@@ -1,5 +1,4 @@
-import joky/io.{println}
-import joky/array.{type Array}
+import joky/array
 import joky/drop.{type Drop}
 
 struct Item { id: Int32, values: Array<Int32> }
@@ -7,19 +6,15 @@ impl Drop for Item {
     fn drop(&mut self) { println(self.id) }
 }
 impl Item {
-    fn stored(&self) -> Int32 { self.values.get(0).unwrap_or(0) }
+    fn stored(&self) -> Int32 { self.values[0] }
 }
 fn item(id: Int32) -> Item {
-    var values = Array.new::<Int32>()
-    values.push(id)
-    Item { id: id, values: values }
+    Item { id, values: [id] }
 }
 fn main() {
-    var items = Array.new::<Item>()
-    items.push(item(20))
-    items.push(item(22))
+    var items = [item(20), item(22)]
     // Shared element borrows inspect both resources while they stay in the array.
-    let answer = items.borrow_ref(0).stored() + items.borrow_ref(1).stored()
+    let answer = items[0].stored() + items[1].stored()
     let last = items.take_last()
     let first = items.take_last()
     println(answer)

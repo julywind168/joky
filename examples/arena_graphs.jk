@@ -1,5 +1,3 @@
-import joky/io.{println}
-
 // Shared fields connect objects in the current task's implicit arena.
 struct Node { value: Int32, next: Option<&Node> }
 fn push(head: Option<&Node>, value: Int32) -> &Node {

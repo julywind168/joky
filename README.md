@@ -37,7 +37,7 @@ cd joky
 cargo run -- run examples/hello.jk
 ```
 
-预期输出 `42`。首次编译需要下载并构建依赖；后续运行复用缓存。
+预期输出 `Hello, world!`。首次编译需要下载并构建依赖；后续运行复用缓存。
 该命令使用 Debug 构建，无需先进行 Release 编译。
 已有 CLI 的 `run` / `check` 不调用系统 `cc`，`build` 原生链接需要它。
 
@@ -54,7 +54,7 @@ joky build examples/hello.jk -o /tmp/joky-hello
 /tmp/joky-hello
 ```
 
-最后两次程序运行均输出 `42`。将 PATH 设置加入你的 shell 配置后，新终端也可直接使用 `joky`。
+最后两次程序运行均输出 `Hello, world!`。将 PATH 设置加入你的 shell 配置后，新终端也可直接使用 `joky`。
 安装脚本默认构建 Release，首次耗时会比快速试用更长；本地开发可用
 `./scripts/install.sh --debug /tmp/joky-dev` 验证相同安装布局。
 默认前缀是 `~/.local`，可传入其他目录，如 `./scripts/install.sh /path/to/prefix`。

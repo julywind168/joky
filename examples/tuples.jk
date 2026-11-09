@@ -1,5 +1,3 @@
-import joky/io.{println}
-
 type Inspection = (Int32, Bool)
 
 fn inspect(n: Int32) -> Inspection {

@@ -1,5 +1,3 @@
-import joky/io.{println}
-import joky/slice
 import joky/fixed_array.{type FixedArray}
 
 fn main() {
@@ -16,6 +14,8 @@ fn main() {
     println(first[0]) // 31; subslice indices are relative to tail.
 
     let fixed: FixedArray<Int32, 3> = [1, 2, 3]
-    println(slice.len(&fixed[0..=1])) // 2
-    println(slice.len(&values[4..4])) // 0; an empty half-open slice is valid.
+    let prefix = &fixed[0..=1]
+    println(prefix.len()) // 2
+    let empty = &values[4..4]
+    println(empty.len()) // 0; an empty half-open slice is valid.
 }

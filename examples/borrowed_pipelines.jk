@@ -1,10 +1,7 @@
-import joky/array.{type Array}
 import joky/iter
-import joky/string
-import joky/io.{println}
 
 fn nonempty(value: &String) @noescape -> Bool { value != "" }
-fn byte_length(value: &String) @noescape -> UInt64 { string.byte_length(value) }
+fn byte_length(value: &String) @noescape -> UInt64 { value.byte_length() }
 fn positive(value: &Int32) @noescape -> Bool { *value > 0 }
 
 fn shared_demo() {

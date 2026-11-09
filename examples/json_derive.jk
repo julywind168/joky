@@ -1,7 +1,4 @@
 import joky/json/typed
-import joky/result.{Ok, Err}
-import joky/option.{type Option}
-import joky/check.{assert, panic}
 
 #derive(ToJson, FromJson)
 struct User { name: String, age: UInt8, nickname: Option<String> }

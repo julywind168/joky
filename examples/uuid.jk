@@ -1,7 +1,4 @@
 import joky/uuid.{ type Uuid, type V7Error }
-import joky/map.{ type Map }
-import joky/result.{ Ok, Err }
-import joky/io.{ println }
 
 fn main() {
     let parsed = Uuid.parse("00112233-4455-4677-8899-AABBCCDDEEFF").unwrap()

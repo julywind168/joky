@@ -1,10 +1,8 @@
 import joky/mem
-import joky/io.{println}
-import joky/array.{type Array}
 
 struct Resource { id: Int32, values: Array<Int32> }
 fn resource(id: Int32) -> Resource {
-    Resource { id: id, values: Array.new::<Int32>() }
+    Resource { id, values: [] }
 }
 fn exchange<T>(value: &mut T, next: T) -> T {
     mem.replace(value, next)
@@ -17,8 +15,7 @@ fn main() {
     }
     println(if pending.is_none() { 1 } else { 0 })
 
-    var resources = Array.new::<Resource>()
-    resources.push(resource(20))
-    let previous = exchange(resources.borrow_mut_ref(0), resource(22))
-    println(previous.id + resources.borrow_ref(0).id)
+    var resources = [resource(20)]
+    let previous = exchange(&mut resources[0], resource(22))
+    println(previous.id + resources[0].id)
 }

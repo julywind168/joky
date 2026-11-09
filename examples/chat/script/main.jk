@@ -4,7 +4,6 @@
 import contract.{type Host, type Call, type AccountInit, type Client}
 import joky/domain
 import joky/session
-import joky/option.{type Option, Some, None}
 
 const START_BALANCE_CENTS: UInt64 = 500
 const SAY_PRICE_CENTS: UInt64 = 100

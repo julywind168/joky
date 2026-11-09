@@ -1,8 +1,5 @@
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
 import joky/json.{type Value, type Number, type Limits}
-import joky/array.{type Array}
-import joky/option.{type Option, Some, None}
-import joky/check.{assert, panic}
 import joky/task
 
 fn ensure(ok: Bool) { assert(ok, "JSON message session") }
@@ -16,17 +13,15 @@ fn decoded(text: String) -> Value {
     match json.decode_with_limits(&text, limits()) { Ok(value) => value, Err(_) => panic("JSON message session") }
 }
 fn envelope(kind: String, id: UInt64, payload: Value) -> Value {
-    var items = Array.new::<Value>()
-    items.push(Value.Text(kind)); items.push(Value.Number(Number.from_u64(id))); items.push(payload)
-    Value.Array(items)
+    Value.Array([Value.Text(kind), Value.Number(Number.from_u64(id)), payload])
 }
 // Only integer IDs and exactly three fields belong to this application protocol.
 fn message_id(value: &Value, kind: &String) -> Option<UInt64> {
     match value {
         Array(items) => {
             if items.len() != 3 { return None }
-            match items.borrow_ref(0) { Text(text) => { if text != kind { return None } }, _ => { return None } }
-            match items.borrow_ref(1) { Number(number) => number.to_u64().ok(), _ => None }
+            match &items[0] { Text(text) => { if text != kind { return None } }, _ => { return None } }
+            match &items[1] { Number(number) => number.to_u64().ok(), _ => None }
         }
         _ => None
     }

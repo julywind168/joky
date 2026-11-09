@@ -1,6 +1,4 @@
 import joky/iter
-import joky/array.{type Array}
-import joky/io.{println}
 
 fn nonempty(value: &String) @noescape -> Bool { value != "" }
 

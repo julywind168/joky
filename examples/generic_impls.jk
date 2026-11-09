@@ -1,5 +1,3 @@
-import joky/io.{println}
-
 struct Pair<T> { left: T, right: T }
 impl<T> Pair<T> {
     const SIZE: Int32 = 2

@@ -1,41 +1,33 @@
 import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp}
-import joky/check.{assert, panic}
-import joky/string
 
 // A finite loopback echo service. Both sides use the same bounded message format.
 fn serve(listener: &mut TcpListener) @suspends {
-    let stream = match listener.accept() { Ok(stream) => stream, _ => { return } }
-    var connection = BufferedTcp.new(stream)
-    let status = "Message server I/O"
-    while true {
-        let message = match connection.read_message(4096) {
-            Ok(Some(message)) => message
-            Ok(None) => { break }
-            Err(_) => panic(&status)
+    var connection = BufferedTcp.new(listener.accept()!)
+    // EOF ends the session; unexpected I/O errors report their original cause.
+    while let Some(message) = connection.read_message(4096)! {
+        connection.write_message(message, 4096)!
         }
-        assert(connection.write_message(message, 4096).is_ok(), &status)
+    connection.close()!
     }
-    assert(connection.close().is_ok(), &status)
-}
+
 fn exchange(connection: &mut BufferedTcp, text: String) @suspends {
-    let status = "Message client I/O"
-    assert(connection.write_message(text.into_bytes(), 4096).is_ok(), &status)
-    let message = match connection.read_message(4096) { Ok(Some(message)) => message, _ => panic(&status) }
-    let response = match String.from_utf8(message) { Ok(text) => text, _ => panic(&status) }
-    println(response)
+    connection.write_message(text.into_bytes(), 4096)!
+    let message = connection.read_message(4096)!.expect("Expected an echo reply")
+    println(String.from_utf8(message)!)
 }
+
 fn client(address: Address) @suspends {
-    let status = "Message client connection"
-    let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => panic(&status) }
-    var connection = BufferedTcp.new(stream)
+    var connection = BufferedTcp.new(TcpStream.connect(address)!)
     exchange(&mut connection, "hello")
     exchange(&mut connection, "你好")
     exchange(&mut connection, "")
-    assert(connection.close().is_ok(), &status)
+    connection.close()!
 }
+
 fn main() @suspends -> Int32 {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, _ => { return 1 } }
-    let address = match listener.local_addr() { Ok(address) => address, _ => { return 2 } }
+    var listener = tcp.listen("127.0.0.1", 0)!
+    let address = listener.local_addr()!
     join { serve(&mut listener), client(address) }
-    match listener.close() { Ok(_) => 0, Err(_) => 3 }
+    listener.close()!
+    0
 }

@@ -114,7 +114,7 @@ fn command_help_is_scoped_and_missing_project_errors_offer_next_steps() {
     work.write("main.jk", include_str!("../../examples/hello.jk"));
     let output = work.cli(&["run", "main.jk", "--", "--help"]);
     success(&output);
-    assert_eq!(output.stdout, b"42\n");
+    assert_eq!(output.stdout, b"Hello, world!\n");
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn run_can_select_the_interpreter_without_a_c_compiler() {
             .output()
             .unwrap();
         success(&output);
-        assert_eq!(output.stdout, b"42\n");
+        assert_eq!(output.stdout, b"Hello, world!\n");
         if flags == ["--verbose"] {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let lines: Vec<_> = stderr.lines().map(str::trim_start).collect();
@@ -165,7 +165,7 @@ fn run_progress_colors_only_status_words_and_respects_no_color() {
         }
         let output = command.output().unwrap();
         success(&output);
-        assert_eq!(output.stdout, b"42\n");
+        assert_eq!(output.stdout, b"Hello, world!\n");
         let stderr = String::from_utf8_lossy(&output.stderr);
         let lines: Vec<_> = stderr.lines().collect();
         assert_eq!(lines.len(), 3, "{stderr}");
@@ -196,6 +196,6 @@ fn run_needs_no_c_compiler_and_accepts_paths_after_double_dash() {
         .output()
         .unwrap();
     success(&output);
-    assert_eq!(output.stdout, b"42\n");
+    assert_eq!(output.stdout, b"Hello, world!\n");
     assert!(output.stderr.is_empty());
 }

@@ -1,9 +1,7 @@
 // Logical time is injected so expiry and retry boundaries are reproducible.
 import joky/domain
 import joky/task
-import joky/check
 import joky/uuid
-import joky/array.{type Array}
 
 const HOLD_TICKS: UInt64 = 10
 const REPLAY_TICKS: UInt64 = 60
@@ -88,7 +86,7 @@ fn finish(stock: domain.WriteHandle<Stock>, ticket: UInt64, decision: Decision, 
 }
 fn eligibility(decision: Decision) @suspends -> Decision {
     task.yield_now()
-    if let Fail = decision { check.panic("remote eligibility service failed") }
+    if let Fail = decision { panic("remote eligibility service failed") }
     decision
 }
 fn purchase(stock: domain.WriteHandle<Stock>, request: Request, decision: Decision, now: UInt64) @suspends -> Reply {
@@ -98,7 +96,7 @@ fn purchase(stock: domain.WriteHandle<Stock>, request: Request, decision: Decisi
     finish(stock, ticket, result, now + 1)
 }
 fn abandoned(stock: domain.WriteHandle<Stock>, request: Request) @suspends {
-    let ticket = match begin(stock, request, 100) { Start(id) => id, _ => check.panic("expected hold") }
+    let ticket = match begin(stock, request, 100) { Start(id) => id, _ => panic("expected hold") }
     task.sleep(60s)
     finish(stock, ticket, Decision.Accept, 101);
 }
@@ -106,7 +104,7 @@ fn stop_after_reservation(stock: domain.ReadHandle<Stock>) @suspends {
     while when (stock) { stock.reserved == 0 }! { task.yield_now() }
 }
 fn assert_stock(stock: domain.ReadHandle<Stock>, available: Int32, sold: Int32, reserved: Int32) @suspends {
-    check.assert(when (stock) {
+    assert(when (stock) {
         stock.available == available && stock.sold == sold && stock.reserved == reserved &&
             stock.available + stock.sold + stock.reserved == 100
     }!, "stock conservation")
@@ -122,35 +120,35 @@ fn demo(_: Unit) @suspends {
     let ticket = match (a, b) {
         (Start(id), Return(Processing)) => id,
         (Return(Processing), Start(id)) => id,
-        _ => check.panic("only one caller may start the order")
+        _ => panic("only one caller may start the order")
     }
     assert_stock(read, 90, 0, 10)
     let changed = Request { user: 1, id: key, amount: 9 }
-    check.assert(match begin(stock, changed, 0) { Return(Conflict) => true, _ => false }, "key reused with different amount")
+    assert(match begin(stock, changed, 0) { Return(Conflict) => true, _ => false }, "key reused with different amount")
     // Commit, then lose the reply. A retry must return the original order ID.
     finish(stock, ticket, Decision.Accept, 1);
-    check.assert(match purchase(stock, order, Decision.Fail, 2) { Confirmed(id) => id == ticket, _ => false }, "replay committed order")
-    check.assert(match finish(stock, ticket, Decision.Reject, 2) { Confirmed(id) => id == ticket, _ => false }, "duplicate settlement preserves confirmation")
+    assert(match purchase(stock, order, Decision.Fail, 2) { Confirmed(id) => id == ticket, _ => false }, "replay committed order")
+    assert(match finish(stock, ticket, Decision.Reject, 2) { Confirmed(id) => id == ticket, _ => false }, "duplicate settlement preserves confirmation")
     assert_stock(read, 90, 10, 0)
 
     let other = Request { user: 2, id: key, amount: 10 }
-    check.assert(match purchase(stock, other, Decision.Reject, 3) { Declined => true, _ => false }, "keys are per user")
+    assert(match purchase(stock, other, Decision.Reject, 3) { Declined => true, _ => false }, "keys are per user")
     let failed = Request { user: 3, id: key, amount: 10 }
-    check.assert(match purchase(stock, failed, Decision.Fail, 4) { Failed => true, _ => false }, "release on failed check")
+    assert(match purchase(stock, failed, Decision.Fail, 4) { Failed => true, _ => false }, "release on failed check")
     let fourth = Request { user: 4, id: key, amount: 10 }
     purchase(stock, fourth, Decision.Reject, 5);
     let fresh = Request { user: 5, id: key, amount: 5 }
-    check.assert(match begin(stock, fresh, 60) { Return(Busy) => true, _ => false }, "full replay table")
-    check.assert(match begin(stock, order, 60) { Return(Confirmed(id)) => id == ticket, _ => false }, "retain until deadline")
-    check.assert(match purchase(stock, order, Decision.Reject, 61) { Declined => true, _ => false }, "new admission after replay window")
+    assert(match begin(stock, fresh, 60) { Return(Busy) => true, _ => false }, "full replay table")
+    assert(match begin(stock, order, 60) { Return(Confirmed(id)) => id == ticket, _ => false }, "retain until deadline")
+    assert(match purchase(stock, order, Decision.Reject, 61) { Declined => true, _ => false }, "new admission after replay window")
 
     race { abandoned(stock, fresh), stop_after_reservation(read) }
     assert_stock(read, 85, 10, 5)
     let old = when (stock) { stock.next_id - 1 }!
     when (mut stock) { stock.expire(110) }!
-    check.assert(match begin(stock, fresh, 110) { Return(Expired) => true, _ => false }, "retry after hold expiry")
-    let next = match begin(stock, other, 111) { Start(id) => id, _ => check.panic("fresh hold") }
-    check.assert(match finish(stock, old, Decision.Accept, 112) { Expired => true, _ => false }, "ignore late reply")
+    assert(match begin(stock, fresh, 110) { Return(Expired) => true, _ => false }, "retry after hold expiry")
+    let next = match begin(stock, other, 111) { Start(id) => id, _ => panic("fresh hold") }
+    assert(match finish(stock, old, Decision.Accept, 112) { Expired => true, _ => false }, "ignore late reply")
     assert_stock(read, 80, 10, 10)
     finish(stock, next, Decision.Accept, 112);
     assert_stock(read, 80, 20, 0)

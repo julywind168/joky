@@ -1,6 +1,4 @@
 import joky/list.{type List}
-import joky/array.{type Array}
-import joky/io.{println}
 
 fn main() {
     var words = List.new::<String>()
@@ -8,9 +6,8 @@ fn main() {
     words.remove(1)
     // Logical position zero follows the links, including after a reversal.
     words.reverse()
-    for first in words.iter_shared() { println(first); break }
-    var input = Array.new::<String>(); input.push("extra")
-    words.extend(input)
+    for first in &words { println(first); break }
+    words.extend(["extra"])
     var other = List.new::<String>(); other.push_back("tail")
     words.append(&mut other)
     println(other.len())

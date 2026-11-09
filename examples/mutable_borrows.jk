@@ -1,19 +1,16 @@
-import joky/io.{println}
-import joky/array.{type Array}
 import joky/drop.{type Drop}
 
 struct Resource { id: Int32, values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { println(self.id) } }
 fn main() {
-    var values = Array.new::<Option<Resource>>()
-    values.push(Some(Resource { id: 1, values: Array.new::<Int32>() }))
+    var values = [Some(Resource { id: 1, values: [] })]
     // Borrow the enum in place, then borrow its resource payload exclusively.
-    match values.borrow_mut_ref(0) {
+    match &mut values[0] {
         Some(item) => { item.id = 42; item.values.push(42) }
         None => {}
     }
-    match values.borrow_ref(0) {
-        Some(item) => println(item.values.get(0).unwrap_or(0))
+    match &values[0] {
+        Some(item) => println(item.values[0])
         None => println(0)
     }
     var count = Some(0)

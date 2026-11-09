@@ -1,5 +1,3 @@
-import joky/io.{println}
-
 struct Point { x: Int32, y: Int32 }
 struct Segment { start: Point, end: Point }
 struct User { name: String, score: Int32 }

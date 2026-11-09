@@ -2,9 +2,6 @@
 import joky/shutdown
 import joky/task
 import joky/tcp.{type TcpListener, type TcpStream, type BufferedTcp}
-import joky/result.{Ok, Err}
-import joky/option.{type Option, Some, None}
-import joky/io.{println, eprintln}
 
 fn connection(stream: TcpStream, stop: &shutdown.Controller) @suspends {
     var stream = BufferedTcp.new(stream)

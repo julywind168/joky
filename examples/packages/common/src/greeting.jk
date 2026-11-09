@@ -1,5 +1,3 @@
-import joky/check.{assert}
-
 pub fn message() -> String { "Hello from a local package" }
 
 #test
