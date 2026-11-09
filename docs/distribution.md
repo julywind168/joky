@@ -74,6 +74,8 @@ VS Code 扩展单独分发为 `joky-<version>.vsix`，安装步骤见[扩展说�
 
 从仓库任意位置调用 `scripts/package.sh`（仓库外使用脚本的完整路径），
 它使用当前 host target、锁定的 Cargo 依赖和 Release 构建，输出到 `target/dist/`。
+打包还需要 Python 3，用于收集锁定的生产与构建依赖许可文本，保存为
+`share/licenses/joky/THIRD_PARTY_NOTICES.txt`；开发测试依赖不包含在这份清单中。
 可传入输出目录；已有同名包时拒绝覆盖。
 
 ```sh

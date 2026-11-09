@@ -8,6 +8,9 @@ permissions:
 
 jobs:
   package:
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
     strategy:
       fail-fast: false
       matrix:

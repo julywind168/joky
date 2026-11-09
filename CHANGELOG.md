@@ -5,10 +5,16 @@
 
 ## Unreleased
 
-以下变化仍属于源码开发状态，不表示已发布到某个二进制包或 Marketplace。
+尚无待发布变更。
+
+## 0.1.0 — 2026-11-09
+
+首次公开发行。Joky 仍处于早期开发阶段，语法、标准库与嵌入 API 可能在后续次版本调整。
 
 ### 新增
 
+- Rust 实现的静态类型语言与内嵌标准库，提供 JIT、字节码解释器和 AOT 原生构建，以及 Rust / C 嵌入接口。
+- 支持所有权与借用、泛型、trait、模式匹配、闭包、集合、JSON、可挂起任务及本地 path 包依赖；具体边界以语言参考为准。
 - `joky --version --verbose` 显示编译时提交、源码状态、目标平台、构建配置与 rustc 版本；简短版本输出保持原有格式。
 - `joky init [目录]` 创建包含 `joky.toml` 与 `src/main.jk` 的最小应用，已有文件不覆盖。
 - 分命令 `--help`／`-h` 与 `joky help <命令>`；无项目执行 `run` 时提供下一步示例。
@@ -36,7 +42,7 @@
 
 ### 验证记录的读法
 
-本条目不声称所有目标平台或 Release 检查已通过。查看对应提交的
+各平台的实际验证范围、构建提交和校验文件记录在 GitHub Release 说明中；
+源码 CI 与发行包检查的范围不同。查看对应提交的
 [CLI smoke](https://github.com/julywind168/joky/actions/workflows/ci.yml)、
-[扩展打包](https://github.com/julywind168/joky/actions/workflows/editor.yml)与发行说明；
-维护者发布时应附实际验证范围。
+[扩展打包](https://github.com/julywind168/joky/actions/workflows/editor.yml)与发行说明。

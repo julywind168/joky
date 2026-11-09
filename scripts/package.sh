@@ -38,6 +38,7 @@ set --
 if [ "$task_profile" = debug ]; then set -- --debug; fi
 ./scripts/install.sh "$@" "$task_work/$task_name"
 task_bundle="$task_work/$task_name"
+python3 scripts/collect-licenses.py "$task_bundle/share/licenses/joky/THIRD_PARTY_NOTICES.txt"
 mkdir -p "$task_bundle/share/doc/joky"
 "$task_bundle/bin/joky" doc -o "$task_bundle/share/doc/joky/html"
 cp -R examples "$task_bundle/share/doc/joky/examples"
