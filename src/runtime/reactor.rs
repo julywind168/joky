@@ -99,6 +99,8 @@ impl Drop for Notifications {
 }
 struct Core {
     driver: Mutex<Driver>,
+    #[cfg(test)]
+    before_poll: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     registry: Registry,
     signal: Arc<mio::Waker>,
     table: Mutex<Table>,
@@ -131,6 +133,8 @@ impl Reactor {
                 poll,
                 events: Events::with_capacity(event_batch),
             }),
+            #[cfg(test)]
+            before_poll: Mutex::new(None),
             registry,
             signal,
             table: Mutex::new(Table {
@@ -258,6 +262,15 @@ impl Reactor {
             Some(Duration::ZERO)
         };
         let Driver { poll, events } = &mut *driver;
+        // Tests observe admission after taking the driver lock and checking the
+        // table, without competing for that lock or changing non-test builds.
+        #[cfg(test)]
+        {
+            let before_poll = lock(&self.0.before_poll).take();
+            if let Some(before_poll) = before_poll {
+                before_poll();
+            }
+        }
         match poll.poll(events, timeout) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {

@@ -430,9 +430,25 @@ fn shared_reactor_transfers_live_tcp_directions_without_changing_poll() {
     executor.cancel_group(&group);
 }
 
+// Pause once after poll admission, before entering the kernel. Waiting for an
+// explicit handshake never steals the driver mutex from the thread under test.
+fn pause_next_poll(
+    reactor: &Reactor,
+) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+    let (entered, polling) = std::sync::mpsc::channel();
+    let (resume, paused) = std::sync::mpsc::channel();
+    *lock(&reactor.0.before_poll) = Some(Box::new(move || {
+        entered.send(()).unwrap();
+        paused
+            .recv_timeout(Duration::from_secs(5))
+            .expect("poll was not resumed");
+    }));
+    (polling, resume)
+}
+
 #[test]
 fn shared_reactor_close_interrupts_driver_and_retires_all_waiters() {
-    use std::{thread, time::Instant};
+    use std::{sync::mpsc, thread, time::Instant};
 
     let (executor, group, waker) = target();
     let reactor = Reactor::new(2, 2).unwrap();
@@ -445,22 +461,46 @@ fn shared_reactor_close_interrupts_driver_and_retires_all_waiters() {
         .unwrap();
     let stale = read.token;
     let permit = reactor.reserve_socket().unwrap();
+    let (polling, resume) = pause_next_poll(&reactor);
+    let (finished, result) = mpsc::channel();
     let driver = {
         let reactor = reactor.clone();
-        thread::spawn(move || reactor.poll(Some(Duration::from_secs(5))))
+        thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                // Spurious readiness and EINTR do not mean the driver has closed.
+                let report = reactor.poll(Some(deadline.saturating_duration_since(Instant::now())));
+                if report.is_err() || Instant::now() >= deadline {
+                    finished.send(report).unwrap();
+                    break;
+                }
+            }
+        })
     };
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        if matches!(reactor.0.driver.try_lock(), Err(TryLockError::WouldBlock)) {
-            break;
-        }
-        assert!(Instant::now() < deadline, "driver did not enter poll");
-        thread::yield_now();
+    polling
+        .recv_timeout(Duration::from_secs(5))
+        .expect("driver did not reach poll");
+    assert_eq!(
+        reactor.poll(Some(Duration::ZERO)).unwrap_err().message(),
+        "Readiness driver is already polling"
+    );
+    resume.send(()).unwrap();
+    reactor.request_close();
+    reactor.request_close();
+    // Finish well before the OS poll's fallback timeout; merely seeing the
+    // closed flag after that timeout would not prove close actually woke it.
+    let result = result.recv_timeout(Duration::from_secs(5));
+    if result.is_err() {
+        let _ = reactor.0.signal.wake();
     }
-    assert!(reactor.poll(Some(Duration::ZERO)).is_err());
-    reactor.request_close();
-    reactor.request_close();
-    assert!(driver.join().unwrap().is_err());
+    driver.join().unwrap();
+    assert_eq!(
+        result
+            .expect("close did not interrupt poll")
+            .unwrap_err()
+            .message(),
+        "Readiness driver is closed"
+    );
     assert_eq!(executor.poll(1).unwrap().polled, 1);
     assert_eq!(executor.poll(1).unwrap().polled, 0);
     assert!(!reactor.notify(stale));
@@ -536,18 +576,27 @@ fn shared_reactor_does_not_lose_an_edge_during_registration_publication() {
         registered,
         publish: resume,
     });
+    let (polling, resume_poll) = pause_next_poll(&reactor);
+    let (finished, result) = mpsc::channel();
     let driver = {
         let reactor = reactor.clone();
-        thread::spawn(move || reactor.poll(Some(Duration::from_secs(5))).unwrap())
+        thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                let report = reactor
+                    .poll(Some(deadline.saturating_duration_since(Instant::now())))
+                    .unwrap();
+                if report.notified != 0 || Instant::now() >= deadline {
+                    finished.send(report).unwrap();
+                    break;
+                }
+            }
+        })
     };
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        if matches!(reactor.0.driver.try_lock(), Err(TryLockError::WouldBlock)) {
-            break;
-        }
-        assert!(Instant::now() < deadline, "driver did not enter poll");
-        thread::yield_now();
-    }
+    polling
+        .recv_timeout(Duration::from_secs(5))
+        .expect("driver did not reach poll");
+    resume_poll.send(()).unwrap();
     let registering = {
         let reactor = reactor.clone();
         thread::spawn(move || {
@@ -565,7 +614,17 @@ fn shared_reactor_does_not_lose_an_edge_during_registration_publication() {
     ));
     publish.send(()).unwrap();
     let registration = registering.join().unwrap();
-    assert_eq!(driver.join().unwrap().notified, 1);
+    let result = result.recv_timeout(Duration::from_secs(5));
+    if result.is_err() {
+        reactor.request_close();
+    }
+    driver.join().unwrap();
+    assert_eq!(
+        result
+            .expect("driver did not dispatch published readiness")
+            .notified,
+        1
+    );
     assert!(registration.is_ready());
     assert_eq!(executor.poll(1).unwrap().polled, 1);
     drop(registration);
