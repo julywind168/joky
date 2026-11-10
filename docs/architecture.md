@@ -2690,7 +2690,7 @@ CLI 自动链接所需 runtime；独立程序除零或非法移位时报告错�
 
 ## 已知边界
 
-- 四种整数的除法语义已一致；原生错误携带出错范围但没有完整语言调用轨迹，解释器仍提供
+- 八种整数的除法语义已一致；原生错误携带出错范围但没有完整语言调用轨迹，解释器仍提供
   `runtime_trace`。Span 携带源文件 ID；跨模块或重载后的嵌入方应从错误对应的源码快照解析位置。
   不捕获宿主自身的机器陷阱，不能把 catch_unwind 当作机器陷阱处理。
 - 解释器的平坦执行栈在达到帧数限额时返回 `ResourceLimit`。JIT 和独立 AOT 当前没有等价的原生栈保护；
@@ -2742,8 +2742,9 @@ CLI 的 Release 原生链接也清理无用代码/符号。LTO 可能增大含�
 安装和 runtime 查找方式见 [README](../README.md#安装与产物)。Cranelift 依赖保持同一版本系列，
 Cargo.lock 固定精确版本。C 示例链接所需系统库可用 `cargo rustc --lib -- --print native-static-libs` 查询。
 
-按改动范围选择验证：`./scripts/check.sh` 默认快速检查，`--full` 增加 Release 常规回归，
-`--stress` 独立执行 Release 穷举与长输入基准正确性，发布验收运行 full 和 stress；
+按改动范围选择验证：`./scripts/check.sh` 默认运行 Debug 快速检查，`--full` 是相同检查的兼容别名；
+`--stress` 独立执行 Debug 穷举与长输入基准正确性。显式添加 `--release` 才切换测试与基准正确性的构建模式，
+明确要求发布验收时运行 `--full --release` 和 `--stress --release`；
 测试要求见 [CONTRIBUTING](../CONTRIBUTING.md)。
 解析器测试按声明、表达式、运算符和泛型归入 `core/parser/tests`；AOT 测试按功能归入
 `backends/aot/tests`，`support` 共享同步结果与 CPS 生命周期断言，C 链接及临时目录工具仍由 `tests/support` 提供。
