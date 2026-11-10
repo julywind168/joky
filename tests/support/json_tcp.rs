@@ -1,3 +1,6 @@
+mod socket_buffer {
+    include!("socket_buffer.rs");
+}
 use std::{
     io::{Read, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
@@ -35,17 +38,19 @@ fn read_frame(stream: &mut TcpStream) -> Option<Vec<u8>> {
 }
 pub struct Peer {
     pub port: u16,
-    gate: Option<mpsc::Sender<()>>,
+    gate: Option<mpsc::Sender<bool>>,
     thread: Option<JoinHandle<usize>>,
 }
 impl Peer {
     pub fn release(&mut self) {
         if let Some(gate) = self.gate.take() {
-            let _ = gate.send(());
+            let _ = gate.send(false);
         }
     }
-    pub fn finish(mut self) -> usize {
-        self.release();
+    pub fn finish(mut self, cancelled: bool) -> usize {
+        if let Some(gate) = self.gate.take() {
+            let _ = gate.send(cancelled);
+        }
         self.thread.take().unwrap().join().unwrap()
     }
 }
@@ -61,6 +66,10 @@ impl Drop for Peer {
 // 3: hold the receive window closed until the VM confirms pending write progress.
 pub fn peer(case: u8) -> Peer {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    if case == 3 {
+        // Configure before the handshake so the initial receive window is bounded.
+        socket_buffer::set(&listener, libc::SO_RCVBUF, 4096);
+    }
     let port = listener.local_addr().unwrap().port();
     listener.set_nonblocking(true).unwrap();
     let (gate, wait) = mpsc::channel();
@@ -88,9 +97,18 @@ pub fn peer(case: u8) -> Peer {
             stream
                 .write_all(&frame(br#"["push",99,{"alive":true}]"#))
                 .unwrap();
-            wait.recv_timeout(Duration::from_secs(60)).unwrap();
+            let cancelled = wait.recv_timeout(Duration::from_secs(60)).unwrap();
+            // Once the gate opens, restore receive capacity for draining.
+            socket_buffer::set(&stream, libc::SO_RCVBUF, 262144);
             let mut wire = Vec::new();
-            stream.read_to_end(&mut wire).unwrap();
+            if let Err(error) = stream.read_to_end(&mut wire) {
+                // Cancelling with the incoming push unread may reset TCP on Linux.
+                // Successful completion must still reach EOF; other errors are failures.
+                assert!(
+                    cancelled && error.kind() == std::io::ErrorKind::ConnectionReset,
+                    "JSON peer drain failed: {error}"
+                );
+            }
             let expected = frame(format!("[\"reply\",7,\"{}\"]", "x".repeat(8192)).as_bytes());
             let count = wire.len() / expected.len();
             assert!(count <= 512);

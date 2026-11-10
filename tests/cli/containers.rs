@@ -803,7 +803,7 @@ fn native_peer_fragmentation_errors_and_terminal_frames_in_standalone_aot() {
             output.stdout.is_empty() && output.stderr.is_empty(),
             "{output:?}"
         );
-        assert_eq!(peer.finish(), if case == 3 { 512 } else { 0 });
+        assert_eq!(peer.finish(false), if case == 3 { 512 } else { 0 });
         work.assert_no_build_files();
     }
 }

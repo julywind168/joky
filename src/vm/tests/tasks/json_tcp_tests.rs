@@ -50,7 +50,7 @@ fn json_tcp_native_frames_and_business_recovery_release_owners() {
                     .unwrap_or_else(|error| panic!("{mode:?}: {error}")),
                 42
             );
-            assert_eq!(peer.finish(), 0);
+            assert_eq!(peer.finish(false), 0);
             clean();
         }
     }
@@ -69,6 +69,7 @@ fn exhaustive_json_tcp_borrowed_encoded_tree_resumes_after_backpressure() {
 fn borrowed_encoded_tree_backpressure(modes: &[VmMode], cancellations: &[bool]) {
     for &mode in modes {
         for &cancel in cancellations {
+            let pressure = crate::runtime::tcp::backpressure_probe::Probe::new();
             let mut peer = endpoint::peer(3);
             let source = format!(
                 "{}\nfn probe() @suspends -> Int32 {{ pressure({}) }}",
@@ -86,12 +87,20 @@ fn borrowed_encoded_tree_backpressure(modes: &[VmMode], cancellations: &[bool]) 
             let mut idle = 0;
             while idle < 16 {
                 let report = executor.poll(1).unwrap();
-                idle = if report.polled == 0 && SENT.with(|count| count.get() > 0) {
+                let sent = SENT.with(Cell::get);
+                assert!(report.completed.is_empty(),
+                    "{mode:?}: cancel={cancel}, frames={sent}, blocked writes={}: premature completion {:?}",
+                    pressure.blocked_writes(), report.completed);
+                idle = if report.polled == 0 && sent > 0 && pressure.blocked_writes() > 0 {
                     idle + 1
                 } else {
                     0
                 };
-                assert!(Instant::now() < deadline, "{mode:?}: cancel={cancel}");
+                assert!(
+                    Instant::now() < deadline,
+                    "{mode:?}: cancel={cancel}, frames={sent}, blocked writes={}",
+                    pressure.blocked_writes()
+                );
                 assert_eq!(executor.task_count(), 1);
             }
             let before = SENT.with(Cell::get);
@@ -105,7 +114,7 @@ fn borrowed_encoded_tree_backpressure(modes: &[VmMode], cancellations: &[bool]) 
                 executor.cancel_group(&group);
                 assert_eq!(executor.poll(1).unwrap().polled, 0);
                 assert_eq!(SENT.with(Cell::get), before);
-                assert!(peer.finish() < 512);
+                assert!(peer.finish(true) < 512);
             } else {
                 peer.release();
                 while executor.task_count() != 0 {
@@ -116,7 +125,7 @@ fn borrowed_encoded_tree_backpressure(modes: &[VmMode], cancellations: &[bool]) 
                     assert!(Instant::now() < deadline, "{mode:?}: cancel={cancel}");
                 }
                 assert_eq!(SENT.with(Cell::get), 512);
-                assert_eq!(peer.finish(), 512);
+                assert_eq!(peer.finish(false), 512);
             }
             clean();
         }

@@ -448,6 +448,8 @@ fn adopt_stream(
     source: IoSource<TcpStream>,
     permit: Option<SocketPermit>,
 ) -> Result<NonNull<Buffer>, Error> {
+    #[cfg(test)]
+    source.with_io(backpressure_probe::configure);
     let bytes = std::mem::size_of::<Connection>()
         + 2 * std::mem::size_of::<usize>()
         + IoSource::<TcpStream>::allocation_size();
@@ -848,6 +850,10 @@ unsafe fn drive(
                     Ok(count) => (count, 0),
                     Err(e) if retry(&e) => {
                         request.registration.as_ref().unwrap().rearm(interest)?;
+                        #[cfg(test)]
+                        if op.is_write() && e.kind() == io::ErrorKind::WouldBlock {
+                            backpressure_probe::blocked();
+                        }
                         if e.kind() == io::ErrorKind::Interrupted {
                             wake_current();
                         }
@@ -1079,3 +1085,7 @@ impl Drop for Owner {
 #[cfg(test)]
 #[path = "tcp_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tcp_backpressure_probe.rs"]
+pub(crate) mod backpressure_probe;
