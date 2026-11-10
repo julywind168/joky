@@ -41,13 +41,10 @@ fn unconditional_loops_preserve_structural_reachability() {
 #[test]
 fn unconditional_loop_returns_resume_and_cancel_with_owner_cleanup() {
     let source = r#"
-        import joky/drop.{type Drop}
         extern fn record(value: Int32) -> Int32
         extern fn delayed_value(value: Int32) @suspends -> Int32
         struct Owner { text: String }
-        impl Drop for Owner {
-            fn drop(&mut self) { record(90); }
-        }
+
         fn check() @suspends -> Int32 {
             let owner = Owner { text: "owned" }
             var attempts = 0
@@ -80,7 +77,7 @@ fn unconditional_loop_returns_resume_and_cancel_with_owner_cleanup() {
         }
         EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 1]));
         drop(task);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 1, 90]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 1]));
         crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
 
         EVENTS.with(|events| events.borrow_mut().clear());
@@ -94,7 +91,7 @@ fn unconditional_loop_returns_resume_and_cancel_with_owner_cleanup() {
         }
         assert_eq!(task.cps_result(), Some(42));
         drop(task);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 1, 2, 2, 90]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 1, 2, 2]));
         crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
 
         for entry in ["scoped_return", "scoped_break"] {

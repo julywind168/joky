@@ -434,13 +434,10 @@ pub(super) fn lower(
                 Op::Local { target, .. } if !target.is_place() => Some(target),
                 _ => None,
             };
-            local
-                .into_iter()
-                .chain(op.cleanup_storage().map(|(_, ty)| ty))
-                .try_fold(total, |total, ty| {
-                    let layout = ty.storage_layout().ok()?;
-                    total.checked_add(layout.size.max(1) + layout.align.max(8) - 1)
-                })
+            local.into_iter().try_fold(total, |total, ty| {
+                let layout = ty.storage_layout().ok()?;
+                total.checked_add(layout.size.max(1) + layout.align.max(8) - 1)
+            })
         });
         let Some(mut remaining) = local_bytes.and_then(|n| (64 * 1024usize).checked_sub(n)) else {
             continue;

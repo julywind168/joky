@@ -38,21 +38,20 @@ fn mutable_borrows_update_storage_in_both_execution_modes() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = vm(mode);
         for (entry, failure, events) in [
-            ("mutable_match_empty", false, vec![]),
-            ("mutable_match_control_flow", false, vec![3]),
-            ("mutable_borrow_nested_array", false, vec![]),
-            ("mutable_borrow_drop_failure", true, vec![2, 3]),
-            ("mutable_borrow_modules", false, vec![]),
-            ("mutable_element", false, vec![2, 21]),
-            ("mutable_match_nested", false, vec![10, 20]),
-            ("mutable_match_array", false, vec![41]),
-            ("mutable_match_copy", false, vec![]),
-            ("mutable_match_generic", false, vec![]),
-            ("mutable_element_wrapper", false, vec![]),
-            ("mutable_match_scalar_return", false, vec![1]),
-            ("mutable_match_nested_enum", false, vec![41]),
-            ("mutable_borrow_bounds", true, vec![1]),
-            ("mutable_borrow_failure", true, vec![2]),
+            ("mutable_match_empty", false, Vec::<i32>::new()),
+            ("mutable_match_control_flow", false, Vec::<i32>::new()),
+            ("mutable_borrow_nested_array", false, Vec::<i32>::new()),
+            ("mutable_borrow_modules", false, Vec::<i32>::new()),
+            ("mutable_element", false, Vec::<i32>::new()),
+            ("mutable_match_nested", false, Vec::<i32>::new()),
+            ("mutable_match_array", false, Vec::<i32>::new()),
+            ("mutable_match_copy", false, Vec::<i32>::new()),
+            ("mutable_match_generic", false, Vec::<i32>::new()),
+            ("mutable_element_wrapper", false, Vec::<i32>::new()),
+            ("mutable_match_scalar_return", false, Vec::<i32>::new()),
+            ("mutable_match_nested_enum", false, Vec::<i32>::new()),
+            ("mutable_borrow_bounds", true, Vec::<i32>::new()),
+            ("mutable_borrow_failure", true, Vec::<i32>::new()),
         ] {
             EVENTS.with(|events| events.borrow_mut().clear());
             let result = vm.call_int32_0(entry);
@@ -108,17 +107,7 @@ fn mutable_borrows_reject_aliases_moves_and_storage_escape() {
 }
 
 fn tracked(context: &str) {
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        for id in 1..=6 {
-            let drops = events.iter().filter(|&&event| event == id).count();
-            assert!(drops <= 1, "{context}: duplicate drop {events:?}");
-            if events.contains(&-id) {
-                assert_eq!(drops, 1, "{context}: lost owner {events:?}");
-            }
-        }
-    });
-    LIVE.with(|count| assert_eq!(count.get(), 0, "{context}"));
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0, "{context}"));
 }
 struct RestoreLimit;
 impl Drop for RestoreLimit {

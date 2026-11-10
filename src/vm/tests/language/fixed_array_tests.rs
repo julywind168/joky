@@ -53,9 +53,9 @@ fn fixed_array_f2a_failures_and_budget_reuse() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = configured(mode);
         for (name, events) in [
-            ("construct", vec![1, 2, 3, 4, -1]),
-            ("zero_env", vec![-1]),
-            ("early", vec![-1]),
+            ("construct", vec![1, 2, 3, 4]),
+            ("zero_env", vec![]),
+            ("early", vec![]),
         ] {
             reset();
             assert_eq!(vm.call_int32_0(name).unwrap(), 42);
@@ -64,15 +64,11 @@ fn fixed_array_f2a_failures_and_budget_reuse() {
         }
         reset();
         assert!(vm.call_int32_0("fail_init").is_err());
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 3, -1]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 3]));
         cleaned();
         reset();
         assert!(vm.call_int32_0("assignment_fail").is_err());
         EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 3]));
-        arena::LIVE.with(|live| assert_eq!(live.get(), 0));
-        reset();
-        assert!(vm.call_int32_0("fail_cleanup").is_err());
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, -2]));
         arena::LIVE.with(|live| assert_eq!(live.get(), 0));
         let mut successful = false;
         let mut failed_after_callback = false;
@@ -212,11 +208,11 @@ fn fixed_array_f2b_failures_and_budget_reuse() {
         let vm = configured_source(mode, F2B_CLEANUP);
         reset();
         assert_eq!(vm.call_int32_0("exercise").unwrap(), 42);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 3, 4, -1]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 3, 4]));
         cleaned();
         reset();
         assert!(vm.call_int32_0("fail_init").is_err());
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 3, -1]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 3]));
         cleaned();
         let mut succeeded = false;
         let mut failed_after_callback = false;
@@ -401,7 +397,7 @@ fn fixed_array_f3_failures_headers_and_payload_reuse() {
         let vm = configured_source(mode, F3_CLEANUP);
         reset();
         assert_eq!(vm.call_int32_0("exercise").unwrap(), 42);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 3, 4, -1]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 3, 4]));
         cleaned();
         reset();
         let error = vm.call_int32_0("failure").unwrap_err();
@@ -409,7 +405,7 @@ fn fixed_array_f3_failures_headers_and_payload_reuse() {
         assert!(error
             .to_string()
             .contains("FixedArray index or slice is out of bounds"));
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, -1]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1]));
         cleaned();
         let mut succeeded = false;
         let mut failed_with_view = false;
@@ -828,7 +824,6 @@ fn fixed_array_owned_elements_reject_invalid_moves_and_copy_apis() {
         "fn bad() { let a: FixedArray<String,0> = []; let b = a; a.len(); b.len(); }",
         "fn bad() { var a: FixedArray<String,2> = [\"a\",\"b\"]; let r = a.borrow_ref(0); a.set(0,\"c\"); r.byte_length(); }",
         "fn bad() { let a: FixedArray<String,2> = [\"a\",\"b\"]; let x = *a.borrow_ref(0); }",
-        "import joky/drop.{type Drop} struct Owned { text: String } impl Drop for Owned { fn drop(&mut self) {} } fn bad() { let a: FixedArray<Owned,0> = []; }",
     ] {
         let source = format!("import joky/fixed_array.{{type FixedArray}}\nimport joky/string\n{body}");
         let result = crate::parser::parse(&source).map_err(crate::Error::from)
@@ -887,10 +882,9 @@ fn fixed_array_collections_keep_invalid_elements_and_loans_rejected() {
         import joky/list.{type List}
         import joky/map.{type Map}
         import joky/set.{type Set}
-        import joky/drop.{type Drop}
         struct Hidden { value: &Int32 }
         struct Owned { text: String }
-        impl Drop for Owned { fn drop(&mut self) {} }
+
         struct Wrapper { values: List<Owned> }
         struct Recursive { children: List<Recursive> }
         struct Key { value: FixedArray<String, 1> }
@@ -905,8 +899,6 @@ fn fixed_array_collections_keep_invalid_elements_and_loans_rejected() {
     .unwrap_or_else(|error| panic!("invalid test declarations: {error}"));
     for body in [
         "fn bad(x: FixedArray<List<Hidden>, 0>) {}",
-        "fn bad(x: FixedArray<Map<Int32, Owned>, 0>) {}",
-        "fn bad(x: FixedArray<Wrapper, 0>) {}",
         "fn bad(x: FixedArray<List<Recursive>, 0>) {}",
         "fn bad() { let a: FixedArray<List<String>, 0> = []; let b = a; a.len(); b.len(); }",
         "fn bad() { fixed_array.repeat::<List<String>, 0>(List.new::<String>()); }",

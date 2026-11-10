@@ -4,8 +4,7 @@ use crate::{
     core::{
         integer::{Comparison, IntegerType},
         ir::{
-            BufferOp, CleanupOp, Constant, DropHook, FloatKind, FunctionInfo, FunctionPlan, Op,
-            TextSource,
+            BufferOp, CleanupOp, Constant, FloatKind, FunctionInfo, FunctionPlan, Op, TextSource,
         },
         prepared::PreparedModule,
     },
@@ -38,8 +37,7 @@ mod places;
 mod worker_tests;
 
 pub(crate) use execute::{
-    call_instance, call_sync, cleanup_call, prepare_domain, prepare_scalar, prepare_script, start,
-    start_text,
+    call_instance, call_sync, prepare_domain, prepare_scalar, prepare_script, start, start_text,
 };
 #[cfg(test)]
 use execute::{Execution, Frame, Poll};
@@ -122,7 +120,6 @@ enum Instruction {
     Cleanup {
         value: crate::core::ir::Slot,
         place: Option<usize>,
-        hooks: Vec<DropHook>,
         elements: Vec<crate::core::ir::ElementCleanup>,
     },
     IndirectCall(Box<IndirectCall>),
@@ -243,7 +240,6 @@ struct BytecodeFunction {
     result: Option<usize>,
     aggregate_result: Vec<usize>,
     owner_result: Option<usize>,
-    instance_hooks: Vec<DropHook>,
 }
 
 #[derive(Clone)]
@@ -639,12 +635,10 @@ fn lower_unoptimized(
             Op::Cleanup(CleanupOp::Register {
                 value,
                 place,
-                hooks,
                 elements,
             }) => Instruction::Cleanup {
                 value: value.clone(),
                 place: place.as_ref().map(|s| s.index),
-                hooks: hooks.clone(),
                 elements: elements.clone(),
             },
             Op::Text { dst, source } => Instruction::Text {
@@ -935,7 +929,6 @@ fn lower_unoptimized(
         } else {
             Arc::from([])
         },
-        instance_hooks: plan.instance_hooks(&info.signature.ret),
         owner_result: plan
             .result
             .as_ref()
@@ -1012,10 +1005,6 @@ pub(crate) fn script_info<'a>(module: &'a BytecodeModule, name: &str) -> Option<
 /// Compiler-addressed request entries may be private imported functions.
 pub(crate) fn request_info<'a>(module: &'a BytecodeModule, name: &str) -> Option<&'a FunctionInfo> {
     module.functions.get(name).map(|function| &function.info)
-}
-
-pub(crate) fn instance_hooks<'a>(module: &'a BytecodeModule, name: &str) -> &'a [DropHook] {
-    &module.functions[name].instance_hooks
 }
 
 pub(crate) fn instance_info<'a>(

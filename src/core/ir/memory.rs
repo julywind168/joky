@@ -332,9 +332,6 @@ impl FunctionPlan {
         }
         path.reverse();
         let field = self.field_target(target.clone(), &path, expr.span())?;
-        if assigning && field.is_owner() {
-            self.check_owner_projection(target.clone(), &path, expr.span())?;
-        }
         let handle = target.is_owner() && !target.is_inline_owner() && field.is_owner();
         let dst = self.slot(Type::reference(field, mutable))?;
         if handle {
@@ -856,7 +853,7 @@ pub(super) fn check_module(
                 Op::Concurrent { .. } | Op::TaskBranch { .. } | Op::TaskJoin { .. }
             )
         });
-        info.needs_arena = body.is_destructor || body.has_buffers() || addressed.contains(name) || info.uses_arena || body.ops.iter().any(|op| matches!(op, Op::ArenaNew { .. } | Op::ArenaAlloc { .. })) || body.ops.iter().any(|op| {
+        info.needs_arena = body.has_buffers() || addressed.contains(name) || info.uses_arena || body.ops.iter().any(|op| matches!(op, Op::ArenaNew { .. } | Op::ArenaAlloc { .. })) || body.ops.iter().any(|op| {
             matches!(op, Op::Buffer(BufferOp::Storage { intrinsic, .. }) if intrinsic.needs_arena())
         });
     }
@@ -892,17 +889,10 @@ pub(super) fn check_module(
                 changed = true;
             }
             if !functions[name].uses_arena
-                && body.ops.iter().any(|op| {
-                    op.cleanups().any(|cleanup| {
-                        let CleanupOp::Register {
-                            hooks, elements, ..
-                        } = cleanup;
-                        hooks
-                            .iter()
-                            .chain(elements.iter().flat_map(|e| &e.hooks))
-                            .any(|hook| functions[&hook.name].uses_arena)
-                    }) || op.callees().any(|callee| functions[callee].uses_arena)
-                })
+                && body
+                    .ops
+                    .iter()
+                    .any(|op| op.callees().any(|callee| functions[callee].uses_arena))
             {
                 functions.get_mut(name).unwrap().uses_arena = true;
                 changed = true;
@@ -1050,10 +1040,7 @@ pub(super) fn check_module(
                 Op::Local { target, .. } if !target.is_place() => Some(target),
                 _ => None,
             };
-            for target in storage
-                .into_iter()
-                .chain(op.cleanup_storage().map(|(_, ty)| ty))
-            {
+            for target in storage.into_iter() {
                 if info.suspends
                     && !target.is_copy_value()
                     && !target.is_suspend_safe_local_owner()

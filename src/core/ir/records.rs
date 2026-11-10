@@ -277,17 +277,7 @@ impl FunctionPlan {
                         "Record update requires a Copy or owning struct",
                     ));
                 }
-                if base.is_some() {
-                    let Type::Record(record) = &ty else {
-                        unreachable!()
-                    };
-                    let moves = record
-                        .fields
-                        .iter()
-                        .map(|field| (!fields.iter().any(|f| f.name == field.name), false))
-                        .collect::<Vec<_>>();
-                    self.check_record_pattern_moves(record, &moves, *span)?;
-                }
+
                 let result = self.slot(ty.clone())?;
                 if ty.is_place() {
                     self.emit(Op::Place(PlaceOp::Allocate(result.clone())));
@@ -388,12 +378,7 @@ impl FunctionPlan {
                         self.emit(Op::Buffer(BufferOp::End(value)));
                     }
                 }
-                if let Type::Record(record) = &result.ty {
-                    if record.drop_anchor().is_some() {
-                        let anchor = result.scalars().last().unwrap();
-                        self.emit(Op::Literal(anchor, Constant::NullPtr));
-                    }
-                }
+
                 if result.ty.is_owner() {
                     self.register_owner(result.clone(), None);
                 }
@@ -409,16 +394,6 @@ impl FunctionPlan {
                 if matches!(root, Expr::Ident { name, .. } if vars.contains_key(name)) {
                     // Snapshot only the selected field, not the entire root record.
                     let (root, value) = place(self, expr, vars)?;
-                    if slot_type(&value).is_owner() {
-                        let mut path = Vec::new();
-                        let mut field = expr;
-                        while let Expr::Field { base, name, .. } = field {
-                            path.push(name.clone());
-                            field = base;
-                        }
-                        path.reverse();
-                        self.check_owner_projection(slot_type(&vars[root].slot), &path, *span)?;
-                    }
                     return if vars[root].mutable || slot_type(&value).is_owner() {
                         self.snapshot(&value).map(Flow::Value)
                     } else {
@@ -444,13 +419,6 @@ impl FunctionPlan {
                     return self.place_read(&base, offset, ty).map(Flow::Value);
                 }
                 let field = field_slot(self, &base, name, span)?;
-                if slot_type(&field).is_owner() {
-                    self.check_owner_projection(
-                        base.ty.clone(),
-                        std::slice::from_ref(name),
-                        *span,
-                    )?;
-                }
                 if let Some(field) = field.as_ref().filter(|field| field.ty.is_owner()) {
                     let dst = self.slot(field.ty.clone())?;
                     self.emit(Op::Buffer(BufferOp::Extract {
@@ -468,18 +436,8 @@ impl FunctionPlan {
                 value,
                 span,
             } => {
-                let mut path = Vec::new();
-                let mut field = target.as_ref();
-                while let Expr::Field { base, name, .. } = field {
-                    path.push(name.clone());
-                    field = base;
-                }
-                path.reverse();
                 let (root, target) = place(self, target, vars)?;
                 let binding = &vars[root];
-                if slot_type(&target).is_owner() {
-                    self.check_owner_projection(slot_type(&binding.slot), &path, *span)?;
-                }
                 if !binding.mutable {
                     return Err(type_error(
                         span,

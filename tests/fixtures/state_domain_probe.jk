@@ -1,7 +1,6 @@
 // SC0 generated-code prerequisites, not an implementation of Domain or commit.
 import joky/array.{type Array}
 import joky/check
-import joky/drop.{type Drop}
 import joky/io.{println}
 import joky/mem
 import joky/task
@@ -55,7 +54,7 @@ fn replacement() @suspends -> Int32 {
 }
 
 struct RequestGuard { id: Int32, text: String }
-impl Drop for RequestGuard { fn drop(&mut self) { let id = self.id; println(&id) } }
+
 
 fn cancelled(candidate: State) @suspends {
     let guard = RequestGuard { id: 77, text: "request" }

@@ -3,59 +3,6 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
-fn drop_hooks_execute_in_standalone_native_code() {
-    let ast =
-        crate::parser::parse(include_str!("../../../../tests/fixtures/dropped_owners.jk")).unwrap();
-    let fixture = ScratchDir::new("dropped-owners");
-    let object = fixture.path().join("drop.o");
-    let host = fixture.path().join("host.c");
-    let executable = fixture.path().join("drop");
-    let mut compiler = AotCompiler::new("drop").unwrap();
-    compiler.compile_module(&ast).unwrap();
-    compiler.write_object(&object).unwrap();
-    std::fs::write(&host, r#"
-        #include <stdint.h>
-        #include "joky_runtime.h"
-        static int32_t events[64];
-        static int count;
-        void record_drop(int32_t value) { if (count < 64) events[count++] = value; }
-        extern int32_t drop_reused_registration(void), drop_scope(void), drop_moves(void), drop_replace(void), drop_loops(void);
-        extern int32_t drop_failure(void), drop_early(void), drop_nested(void), drop_generic(void);
-        extern int32_t drop_discard(void), drop_partial(void), drop_failing_hook(void), drop_failed_return(void);
-        extern int32_t drop_mutated_child(void), drop_reuse_budget(void), drop_leading_owner(void);
-        int main(void) {
-            struct Case { int32_t (*call)(void); int failure; int count; int32_t events[4]; } cases[] = {
-                {drop_reused_registration, 1, 4, {1, 3, 2, 4}},
-                {drop_scope, 0, 2, {3, 1}}, {drop_moves, 0, 1, {1}},
-                {drop_replace, 0, 2, {1, 3}}, {drop_loops, 0, 3, {0, 1, 2}},
-                {drop_failure, 1, 2, {2, 1}}, {drop_early, 0, 2, {2, 1}},
-                {drop_nested, 0, 2, {1, 2}}, {drop_generic, 0, 1, {4}},
-                {drop_discard, 0, 1, {5}}, {drop_partial, 1, 1, {2}},
-                {drop_failing_hook, 1, 2, {2, 1}}, {drop_failed_return, 1, 3, {-1, 2, 1}},
-                {drop_mutated_child, 0, 2, {1, 9}}, {drop_reuse_budget, 0, 0, {0}},
-                {drop_leading_owner, 0, 2, {1, 2}}
-            };
-            for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
-                count = 0;
-                int32_t result = cases[i].call();
-                if (cases[i].failure != !!joky_runtime_error_code()) return 1;
-                if (!cases[i].failure && result != 42) return 2;
-                if (count != cases[i].count) return 3;
-                for (int j = 0; j < count; j++) if (events[j] != cases[i].events[j]) return 4;
-                joky_runtime_error_clear();
-            }
-            return 0;
-        }
-    "#).unwrap();
-    link(
-        link_runtime(c_compiler().arg(host).arg(object)),
-        &executable,
-    );
-    assert!(Command::new(executable).status().unwrap().success());
-}
-
-#[test]
-#[cfg(unix)]
 fn multi_owners_execute_in_standalone_native_code() {
     let ast =
         crate::parser::parse(include_str!("../../../../tests/fixtures/multi_owners.jk")).unwrap();
@@ -81,24 +28,22 @@ fn multi_owners_execute_in_standalone_native_code() {
         extern int32_t multi_references(void), multi_reuse_budget(void);
         int main(void) {
             struct Case { int32_t (*call)(void); int failure; int count; int32_t events[8]; } cases[] = {
-                {multi_scope, 0, 6, {20, 21, 22, 10, 11, 12}},
-                {multi_move, 0, 3, {30, 31, 32}},
-                {multi_replace, 0, 6, {10, 11, 12, 20, 21, 22}},
-                {multi_reinitialize, 0, 6, {10, 11, 12, 20, 21, 22}},
-                {multi_reinitialize_failure, 1, 6, {10, 11, 12, 20, 21, 22}},
-                {multi_call, 0, 6, {20, 21, 22, 10, 11, 12}},
-                {multi_early, 0, 6, {20, 21, 22, 10, 11, 12}},
-                {multi_loop, 0, 6, {10, 11, 12, 20, 21, 22}},
-                {multi_nested, 0, 8, {1, 10, 11, 12, 20, 29, 22, 3}},
-                {multi_partial, 1, 2, {1, 2}},
-                {multi_partial_return, 0, 2, {1, 2}},
-                {multi_partial_break, 0, 2, {2, 1}},
-                {multi_partial_nested, 1, 4, {11, 20, 21, 22}},
-                {multi_argument_failure, 1, 4, {22, 10, 11, 12}},
-                {multi_failing_hook, 1, 6, {9, 1, 2, 10, 11, 12}},
-                {multi_original_failure, 1, 3, {9, 1, 2}},
-                {multi_failed_overwrite, 1, 6, {9, 1, 2, 9, 3, 4}},
-                {multi_failed_return, 1, 6, {9, 1, 2, 10, 11, 12}},
+                {multi_scope, 0, 0, {0}},
+                {multi_move, 0, 0, {0}},
+                {multi_replace, 0, 0, {0}},
+                {multi_reinitialize, 0, 0, {0}},
+                {multi_reinitialize_failure, 1, 0, {0}},
+                {multi_call, 0, 0, {0}},
+                {multi_early, 0, 0, {0}},
+                {multi_loop, 0, 0, {0}},
+                {multi_nested, 0, 0, {0}},
+                {multi_partial, 1, 0, {0}},
+                {multi_partial_return, 0, 0, {0}},
+                {multi_partial_break, 0, 0, {0}},
+                {multi_partial_nested, 1, 0, {0}},
+                {multi_argument_failure, 1, 0, {0}},
+                {multi_original_failure, 1, 0, {0}},
+
                 {multi_references, 0, 0, {0}}, {multi_reuse_budget, 0, 0, {0}}
             };
             for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
@@ -182,36 +127,33 @@ fn owner_fields_execute_in_standalone_native_code() {
 
         int main(void) {
             struct Case { int32_t (*call)(void); int failure; int count; int32_t events[16]; } cases[] = {
-                {fields_rhs_metadata, 0, 4, {22, 1, 23, 3}},
-                {fields_extract_failure, 1, 3, {1, 2, 3}},
-                {fields_extract_original_failure, 1, 3, {2, 1, 3}},
-                {fields_reinitialize_failure, 1, 6, {2, 3, 4, 5, 6, 1}},
-                {fields_nested_generic_drop, 0, 3, {0, 5, 6}},
-                {fields_generic_drop, 0, 5, {3, 0, 4, 2, 1}},
-                {fields_first, 0, 3, {1, 2, 3}},
-                {fields_middle, 0, 3, {2, 1, 3}},
-                {fields_last, 0, 3, {3, 1, 2}},
-                {fields_temporary, 0, 3, {2, 1, 3}},
-                {fields_return, 0, 3, {1, 3, 2}},
-                {fields_reinitialize, 0, 6, {1, 3, 2, 4, 5, 6}},
-                {fields_replace, 0, 5, {2, 5, 1, 8, 3}},
-                {fields_replace_edges, 0, 5, {1, 3, 4, 2, 6}},
-                {fields_nested, 0, 5, {2, 9, 1, 3, 8}},
-                {fields_nested_temporary, 0, 5, {2, 1, 3, 9, 8}},
-                {fields_nested_replace, 0, 6, {2, 9, 1, 5, 3, 8}},
-                {fields_subtree, 0, 6, {10, 1, 2, 3, 9, 8}},
-                {fields_subtree_temporary, 0, 6, {10, 1, 2, 3, 9, 8}},
-                {fields_rhs_failure, 1, 4, {4, 1, 2, 3}},
-                {fields_drop_failure, 1, 4, {2, 4, 1, 3}},
-                {fields_original_failure, 1, 3, {1, 2, 3}},
-                {fields_loop, 0, 8, {11, 12, 10, 13, 21, 22, 20, 23}},
-                {fields_branch_true, 0, 3, {1, 3, 2}},
-                {fields_branch_false, 0, 3, {1, 3, 2}},
-                {fields_early, 0, 3, {2, 1, 3}},
+                {fields_rhs_metadata, 0, 0, {0}},
+                {fields_extract_original_failure, 1, 0, {0}},
+                {fields_nested_generic_drop, 0, 1, {0}},
+                {fields_generic_drop, 0, 1, {0}},
+                {fields_first, 0, 0, {0}},
+                {fields_middle, 0, 0, {0}},
+                {fields_last, 0, 0, {0}},
+                {fields_temporary, 0, 0, {0}},
+                {fields_return, 0, 0, {0}},
+                {fields_reinitialize, 0, 0, {0}},
+                {fields_replace, 0, 0, {0}},
+                {fields_replace_edges, 0, 0, {0}},
+                {fields_nested, 0, 0, {0}},
+                {fields_nested_temporary, 0, 0, {0}},
+                {fields_nested_replace, 0, 0, {0}},
+                {fields_subtree, 0, 0, {0}},
+                {fields_subtree_temporary, 0, 0, {0}},
+                {fields_rhs_failure, 1, 0, {0}},
+                {fields_original_failure, 1, 0, {0}},
+                {fields_loop, 0, 0, {0}},
+                {fields_branch_true, 0, 0, {0}},
+                {fields_branch_false, 0, 0, {0}},
+                {fields_early, 0, 0, {0}},
                 {fields_transparent, 0, 0, {0}},
                 {fields_references, 0, 0, {0}},
                 {fields_replace_references, 0, 0, {0}},
-                {fields_subtree_replace, 0, 10, {10, 1, 2, 3, 9, 20, 4, 5, 6, 8}},
+                {fields_subtree_replace, 0, 0, {0}},
             };
             for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
                 count = 0;
@@ -278,62 +220,58 @@ fn owning_elements_execute_in_standalone_native_code() {
         extern int32_t enums_failure(void), enums_cleanup_failure(void), enums_empty_replacement_failure(void), enums_methods(void);
         int main(void) {
             struct Case { int32_t (*call)(void); int failure; int count; int32_t events[16]; } cases[] = {
-                {tuples_ctor_return, 0, 1, {1}},
-                {tuples_loop, 0, 6, {1, 2, 3, 4, 6, 5}},
-                {tuples_branch, 0, 2, {2, 1}},
+                {tuples_ctor_return, 0, 0, {0}},
+                {tuples_loop, 0, 0, {0}},
+                {tuples_branch, 0, 0, {0}},
                 {tuples_phantom_reference, 0, 0, {0}},
-                {tuples_nested, 0, 4, {10, 2, 3, 1}},
-                {tuples_discard, 0, 3, {1, 3, 2}},
-                {tuples_discard_all, 0, 5, {1, 10, 2, 3, 20}},
-                {tuples_subtuple, 0, 3, {1, 3, 2}},
-                {tuples_zip, 0, 2, {2, 1}},
-                {tuples_zip_empty, 0, 2, {1, 2}},
-                {tuples_overwrite, 0, 6, {1, 2, 3, 4, 6, 5}},
-                {tuples_record, 0, 3, {10, 1, 2}},
-                {tuples_array, 0, 6, {1, 2, 4, 3, 5, 6}},
-                {tuples_enum, 0, 4, {1, 10, 2, 3}},
-                {tuples_empty_lane, 0, 1, {1}},
-                {tuples_rhs_failure, 1, 2, {2, 1}},
-                {tuples_discard_failure, 1, 3, {2, 3, 1}},
-                {tuples_early_return, 0, 2, {2, 1}},
-                {elements_borrow_shared, 0, 3, {1, 2, 3}},
-                {elements_borrow_nested, 0, 3, {10, 1, 2}},
+                {tuples_nested, 0, 0, {0}},
+                {tuples_discard, 0, 0, {0}},
+                {tuples_discard_all, 0, 1, {20}},
+                {tuples_subtuple, 0, 0, {0}},
+                {tuples_zip, 0, 0, {0}},
+                {tuples_zip_empty, 0, 0, {0}},
+                {tuples_overwrite, 0, 0, {0}},
+                {tuples_record, 0, 0, {0}},
+                {tuples_array, 0, 0, {0}},
+                {tuples_enum, 0, 0, {0}},
+                {tuples_empty_lane, 0, 0, {0}},
+                {tuples_rhs_failure, 1, 0, {0}},
+                {tuples_early_return, 0, 0, {0}},
+                {elements_borrow_shared, 0, 0, {0}},
+                {elements_borrow_nested, 0, 0, {0}},
                 {elements_borrow_wrapper, 0, 0, {0}},
-                {elements_borrow_array, 0, 1, {1}},
-                {elements_borrow_bounds, 1, 2, {2, 1}},
+                {elements_borrow_array, 0, 0, {0}},
+                {elements_borrow_bounds, 1, 0, {0}},
                 {elements_borrow_empty, 1, 0, {0}},
-                {elements_borrow_failure, 1, 1, {1}},
-                {elements_borrow_early_return, 0, 1, {1}},
-                {elements_borrow_drop_failure, 1, 2, {3, 2}},
-                {elements_growth, 0, 5, {5, 4, 3, 2, 1}},
-                {elements_generic_metadata, 0, 1, {1}},
-                {elements_set, 0, 5, {2, 5, 3, 4, 1}},
-                {elements_release, 0, 2, {2, 1}},
-                {elements_overwrite, 0, 3, {2, 1, 3}},
-                {elements_nested, 0, 3, {3, 2, 1}},
-                {elements_groups, 0, 9, {10, 1, 2, 20, 3, 4, 30, 5, 6}},
-                {enums_borrow_boundary, 0, 1, {1}},
+                {elements_borrow_failure, 1, 0, {0}},
+                {elements_borrow_early_return, 0, 0, {0}},
+                {elements_growth, 0, 0, {0}},
+                {elements_generic_metadata, 0, 0, {0}},
+                {elements_set, 0, 0, {0}},
+                {elements_release, 0, 0, {0}},
+                {elements_overwrite, 0, 0, {0}},
+                {elements_nested, 0, 0, {0}},
+                {elements_groups, 0, 0, {0}},
+                {enums_borrow_boundary, 0, 0, {0}},
                 {enums_phantom_reference, 0, 0, {0}},
                 {enums_phantom, 0, 0, {0}},
                 {enums_buffers, 0, 0, {0}},
-                {enums_field, 0, 2, {1, 2}},
-                {enums_array_set, 0, 6, {1, 5, 10, 2, 3, 4}},
-                {enums_custom, 0, 4, {10, 2, 3, 1}},
-                {enums_pop, 0, 3, {3, 1, 2}},
-                {enums_result, 0, 6, {2, 3, 10, 4, 5, 1}},
-                {enums_overwrite, 0, 4, {1, 10, 2, 3}},
-                {enums_nested_array, 0, 5, {40, 30, 20, 10, 1}},
-                {enums_array, 0, 4, {10, 2, 3, 1}},
-                {enums_wildcard, 0, 3, {10, 1, 2}},
-                {enums_early_exit, 0, 1, {1}},
-                {enums_failure, 1, 1, {1}},
-                {enums_cleanup_failure, 1, 3, {3, 2, 1}},
-                {enums_empty_replacement_failure, 1, 4, {2, 4, 3, 1}},
-                {enums_methods, 0, 7, {1, 2, 4, 5, 7, 6, 3}},
+                {enums_field, 0, 0, {0}},
+                {enums_array_set, 0, 0, {0}},
+                {enums_custom, 0, 0, {0}},
+                {enums_pop, 0, 0, {0}},
+                {enums_result, 0, 0, {0}},
+                {enums_overwrite, 0, 0, {0}},
+                {enums_nested_array, 0, 0, {0}},
+                {enums_array, 0, 0, {0}},
+                {enums_wildcard, 0, 0, {0}},
+                {enums_early_exit, 0, 0, {0}},
+                {enums_failure, 1, 0, {0}},
+
+                {enums_methods, 0, 0, {0}},
                 {elements_empty, 1, 0, {0}},
-                {elements_rhs_failure, 1, 3, {3, 2, 1}},
-                {elements_drop_failure, 1, 4, {2, 4, 3, 1}},
-                {elements_cleanup_failure, 1, 3, {3, 2, 1}},
+                {elements_rhs_failure, 1, 0, {0}},
+
             };
             for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
                 count = 0;

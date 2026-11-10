@@ -1,7 +1,6 @@
 // NET0 only: bounded host-owned I/O, not a public socket or byte-buffer ABI.
 import joky/array.{type Array}
 import joky/result.{type Result, Ok, Err}
-import joky/drop.{type Drop}
 import joky/task
 import joky/check.{assert}
 
@@ -13,9 +12,9 @@ extern fn borrowed_host_io_read(request: &mut NetRequest) @suspends -> Int32
 extern fn borrowed_host_io_event(value: Int32)
 fn ensure(condition: Bool) { let message = "NET0 contract violation"; assert(condition, &message) }
 struct Packet { bytes: Array<UInt8> }
-impl Drop for Packet { fn drop(&mut self) { borrowed_host_io_event(20) } }
+
 struct PendingBytes { bytes: Array<UInt8> }
-impl Drop for PendingBytes { fn drop(&mut self) { borrowed_host_io_event(21) } }
+
 enum IoError { UnexpectedEof(Int32), ReadFailed(Int32) }
 fn request(mode: Int32) -> &mut NetRequest {
     alloc(NetRequest { marker: 42, mode: mode, limit: 4, received: 0,
@@ -94,6 +93,6 @@ fn unstarted() @suspends -> Int32 {
     42
 }
 struct State { label: String }
-impl Drop for State { fn drop(&mut self) { borrowed_host_io_event(30) } }
+
 fn create() -> State { State { label: "NET0 instance" } }
 fn instance_read() @suspends { data(); }

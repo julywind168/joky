@@ -1,31 +1,12 @@
 //! P3 exercises shared by JIT, interpreter and a loaded AOT object.
 use super::{InstanceLimits, InstanceStatus, InstanceValue as V, VmEngine, VmMode};
-use crate::{runtime::arena::LIVE, FunctionSignature, Type};
+use crate::runtime::arena::LIVE;
 
 pub(crate) const SOURCE: &str = include_str!("../../../../tests/fixtures/persistent_containers.jk");
-thread_local! { static EVENTS: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) }; }
-extern "C" fn record_drop(value: i32) {
-    EVENTS.with(|events| events.borrow_mut().push(value));
-}
-fn events(expected: &[i32]) {
-    EVENTS.with(|events| {
-        let mut actual = std::mem::take(&mut *events.borrow_mut());
-        let mut expected = expected.to_vec();
-        actual.sort();
-        expected.sort();
-        assert_eq!(actual, expected);
-    });
-}
+
 fn vm(mode: VmMode) -> VmEngine {
     let mut vm = VmEngine::with_mode(mode);
-    unsafe {
-        vm.register_fn(
-            "record_drop",
-            FunctionSignature::new(vec![Type::Int32], Type::Unit),
-            record_drop as *const u8,
-        )
-        .unwrap();
-    }
+
     vm.load_source(SOURCE)
         .unwrap_or_else(|e| panic!("{mode:?}: {e} {:?}", e.span()));
     vm
@@ -36,11 +17,11 @@ fn clean(vm: &VmEngine) {
     LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 
-pub(crate) fn exercise(vm: &VmEngine, events: impl Fn(&[i32])) {
-    exercise_cycles(vm, events, 100);
+pub(crate) fn exercise(vm: &VmEngine) {
+    exercise_cycles(vm, 100);
 }
 
-fn exercise_cycles(vm: &VmEngine, events: impl Fn(&[i32]), cycles: i32) {
+fn exercise_cycles(vm: &VmEngine, cycles: i32) {
     let builder = vm.create_instance("make_builder", &[]).unwrap();
     assert_eq!(
         vm.call_instance(builder, "builder_append", &[]).unwrap(),
@@ -83,19 +64,19 @@ fn exercise_cycles(vm: &VmEngine, events: impl Fn(&[i32]), cycles: i32) {
         assert!(vm.instance_bytes() > baseline);
         vm.call_instance(a, "container_replace", &[V::Int32(0)])
             .unwrap();
-        events(&[0]);
+
         assert_eq!(
             vm.call_instance(a, "container_remove", &[V::Int32(1)])
                 .unwrap(),
             V::UInt64(31)
         );
-        events(&[1]);
+
         // Reinsert through a tombstone, then replace every owner, including builder.finish().
         vm.call_instance(a, "container_fill", &[V::Int32(2)])
             .unwrap();
-        events(&[1000]);
+
         vm.call_instance(a, "container_reset", &[]).unwrap();
-        events(&(0..32).collect::<Vec<_>>());
+
         assert_eq!(
             vm.call_instance(a, "container_generation", &[]).unwrap(),
             V::Int32(generation)
@@ -107,36 +88,12 @@ fn exercise_cycles(vm: &VmEngine, events: impl Fn(&[i32]), cycles: i32) {
     vm.close_instance(a).unwrap();
     vm.close_instance(b).unwrap();
     clean(vm);
-    for operation in ["container_remove", "container_clear", "close"] {
-        let id = vm.create_instance("make_containers", &[]).unwrap();
-        vm.call_instance(id, "container_fill", &[V::Int32(3)])
-            .unwrap();
-        vm.call_instance(id, "container_poison", &[]).unwrap();
-        events(&[0]);
-        if operation == "close" {
-            assert!(vm.close_instance(id).is_err());
-            assert!(vm.close_instance(id).is_err());
-        } else {
-            let args = if operation == "container_remove" {
-                vec![V::Int32(0)]
-            } else {
-                vec![]
-            };
-            assert!(vm.call_instance(id, operation, &args).is_err());
-            assert_eq!(vm.instance_status(id).unwrap(), InstanceStatus::Failed);
-            assert!(vm.instance_error(id).unwrap().is_some());
-            assert!(vm.call_instance(id, "container_count", &[]).is_err());
-            vm.close_instance(id).unwrap();
-        }
-        events(&[-99, 1, 2]);
-        clean(vm);
-    }
 }
 
 #[test]
-fn persistent_instances_containers_reclaim_storage_and_finish_fallible_elements() {
+fn persistent_instances_containers_reclaim_storage_across_replacement() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        exercise(&vm(mode), events);
+        exercise(&vm(mode));
     }
 }
 
@@ -152,15 +109,14 @@ fn persistent_instances_containers_pin_old_methods_and_drop_across_reload() {
             vm.call_instance(old, "container_count", &[]).unwrap(),
             V::UInt64(3)
         );
-        // Same names, different layout and destructor behavior.
+        // Same names, different layout and method signatures.
         vm.load_source(
             &SOURCE
                 .replace("generation: Int32", "generation: Int64")
                 .replace(
                     "-> Int32 { state.generation }",
                     "-> Int64 { state.generation }",
-                )
-                .replace("record_drop(self.id)", "record_drop(self.id + 100)"),
+                ),
         )
         .unwrap();
         let new = vm.create_instance("make_containers", &[]).unwrap();
@@ -168,18 +124,18 @@ fn persistent_instances_containers_pin_old_methods_and_drop_across_reload() {
             .unwrap();
         vm.call_instance(old, "container_replace", &[V::Int32(0)])
             .unwrap();
-        events(&[0]);
+
         vm.close_instance(old).unwrap();
-        events(&[1000, 1, 2]);
+
         let report = vm.instance_cleanup_report();
         drop(vm);
-        events(&[100, 101]);
+
         assert!(report.error().is_none());
         LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }
 
-pub(crate) fn transfer_failures(vm: &VmEngine, events: impl Fn(&[i32])) {
+pub(crate) fn transfer_failures(vm: &VmEngine) {
     use crate::runtime::arena::TRANSFER_FAIL;
     for fault in 0..3 {
         TRANSFER_FAIL.with(|n| n.set(Some(fault)));
@@ -188,7 +144,6 @@ pub(crate) fn transfer_failures(vm: &VmEngine, events: impl Fn(&[i32])) {
             .is_err());
         assert_eq!(vm.instance_count(), 0);
         clean(vm);
-        events(&[0, 1, 2]);
     }
     for fault in 0..6 {
         let id = vm.create_instance("make_containers", &[]).unwrap();
@@ -202,12 +157,11 @@ pub(crate) fn transfer_failures(vm: &VmEngine, events: impl Fn(&[i32])) {
         if fault < 3 {
             assert_eq!(vm.instance_status(id).unwrap(), InstanceStatus::Ready);
             assert_eq!(vm.instance_bytes(), before);
-            events(&[]);
+
             vm.close_instance(id).unwrap();
-            events(&[0, 1, 2]);
         } else {
             assert_eq!(vm.instance_status(id).unwrap(), InstanceStatus::Failed);
-            events(&[0, 1000, 1, 2]);
+
             vm.close_instance(id).unwrap();
         }
         clean(vm);
@@ -216,7 +170,7 @@ pub(crate) fn transfer_failures(vm: &VmEngine, events: impl Fn(&[i32])) {
 #[test]
 fn persistent_instances_containers_transfer_failures_have_one_cleanup_owner() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        transfer_failures(&vm(mode), events);
+        transfer_failures(&vm(mode));
     }
 }
 
@@ -256,15 +210,7 @@ fn budget_sweep(step: usize) {
                 }
                 vm.close_instance(id).unwrap();
                 clean(&vm);
-                EVENTS.with(|events| {
-                    let mut dropped = std::mem::take(&mut *events.borrow_mut());
-                    dropped.sort();
-                    assert!(dropped.iter().all(|id| (0..3).contains(id)));
-                    assert!(dropped.windows(2).all(|pair| pair[0] != pair[1]));
-                    if complete {
-                        assert_eq!(dropped, [0, 1, 2]);
-                    }
-                });
+
                 if complete {
                     break;
                 }
@@ -303,7 +249,7 @@ fn persistent_instances_containers_transfer_measurement() {
             assert_eq!(vm.instance_bytes(), bytes);
             LIVE.with(|n| assert_eq!(n.get(), allocations));
             vm.close_instance(id).unwrap();
-            events(&(0..count).collect::<Vec<_>>());
+
             clean(&vm);
         }
     }
@@ -331,6 +277,6 @@ fn persistent_instances_containers_reject_hidden_borrows_and_external_resources(
 #[ignore = "Release long container replacement lifecycle"]
 fn exhaustive_persistent_instances_containers_lifecycle() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        exercise_cycles(&vm(mode), events, 2000);
+        exercise_cycles(&vm(mode), 2000);
     }
 }

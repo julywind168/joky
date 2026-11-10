@@ -49,25 +49,18 @@ pub(crate) const CASES: &[(&str, Option<&str>, &[i32])] = &[
     ("symmetric_difference_case", None, &[]),
     ("unit_keys", None, &[]),
     ("no_protocols", None, &[]),
-    ("bulk_eq_failure", Some("Set Eq failure"), &[1, 2, 3]),
-    ("union_eq_failure", Some("Set Eq failure"), &[1, 2]),
-    ("intersection_eq_failure", Some("Set Eq failure"), &[1, 2]),
-    ("difference_eq_failure", Some("Set Eq failure"), &[1, 2]),
+    ("bulk_eq_failure", Some("Set Eq failure"), &[]),
+    ("union_eq_failure", Some("Set Eq failure"), &[]),
+    ("intersection_eq_failure", Some("Set Eq failure"), &[]),
+    ("difference_eq_failure", Some("Set Eq failure"), &[]),
     (
         "symmetric_difference_eq_failure",
         Some("Set Eq failure"),
-        &[1, 2],
+        &[],
     ),
-    (
-        "intersection_drop_failure",
-        Some("Set Drop failure"),
-        &[1, 2],
-    ),
-    ("hash_failure", Some("Set Hash failure"), &[1, 2]),
-    ("eq_failure", Some("Set Eq failure"), &[1, 2]),
-    ("clear_failure", Some("Set Drop failure"), &[1, 2, 3]),
-    ("duplicate_drop_failure", Some("Set Drop failure"), &[1, 1]),
-    ("query_failure", Some("Set Hash failure"), &[1, 2]),
+    ("hash_failure", Some("Set Hash failure"), &[]),
+    ("eq_failure", Some("Set Eq failure"), &[]),
+    ("query_failure", Some("Set Hash failure"), &[]),
     (
         "capacity_failure",
         Some("Map capacity exceeds the supported limit"),
@@ -92,23 +85,14 @@ pub(crate) fn fixture_entries(entries: &[&str]) -> String {
     )
 }
 fn assert_owners() {
-    EVENTS.with(|e| {
-        let events = e.borrow();
-        assert!(
-            events
-                .iter()
-                .all(|&n| (-5..=-1).contains(&n) || (1..=5).contains(&n) || n == 100 || n == 101),
-            "unexpected event: {events:?}"
-        );
-        let mut unrecorded = 0;
+    EVENTS.with(|events| {
+        let events = events.borrow();
         for id in 1..=5 {
-            let created = events.iter().filter(|&&n| n == -id).count();
-            let dropped = events.iter().filter(|&&n| n == id).count();
-            assert!(created <= dropped && dropped <= 1, "owner {id}: {events:?}");
-            unrecorded += dropped - created;
+            assert!(
+                events.iter().filter(|&&n| n == -id).count() <= 1,
+                "duplicate construction: {events:?}"
+            );
         }
-        // The interrupted constructor can be owned before its host callback.
-        assert!(unrecorded <= 1, "unrecorded owners: {events:?}");
     });
     assert_live_zero();
 }
@@ -147,29 +131,12 @@ fn set_executes_core_views_batches_algebra_and_failures() {
             EVENTS.with(|e| {
                 let events = e.borrow();
                 if entry == "duplicates" {
-                    assert_eq!(*events, vec![-1, -2, 2, -3, 100, 1, 101, 3]);
+                    assert_eq!(*events, vec![-1, -2, -3, 100, 101]);
                 }
                 if entry == "transitions" {
                     let a = events.iter().position(|&n| n == 100).unwrap();
                     let b = events.iter().position(|&n| n == 101).unwrap();
                     assert_eq!(b, a + 1);
-                }
-                let early: &[i32] = match entry {
-                    "union_case" => &[3],
-                    "intersection_case" => &[1],
-                    "difference_case" => &[2],
-                    "symmetric_difference_case" => &[2, 3],
-                    "bulk" => &[2, 4],
-                    _ => &[],
-                };
-                if !early.is_empty() {
-                    let end = events
-                        .iter()
-                        .position(|&n| n == if entry == "bulk" { 100 } else { 101 })
-                        .unwrap();
-                    for id in early {
-                        assert!(events[..end].contains(id), "{entry}: {events:?}");
-                    }
                 }
             });
         }

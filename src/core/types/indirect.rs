@@ -6,7 +6,6 @@ use std::sync::Arc;
 pub(super) fn shallow(ty: &Type, arguments: Vec<GenericArgument>) -> Type {
     match ty {
         Type::Record(r) => Type::Record(Arc::new(RecordType {
-            custom_drop: r.custom_drop,
             array: r.array,
             list: r.list,
             map: r.map,

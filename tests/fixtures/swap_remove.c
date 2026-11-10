@@ -10,12 +10,11 @@ extern int32_t remove_references(void), remove_drop_failure(void);
 int main(void) {
     struct Case { int32_t (*call)(void); int failure, count; int32_t events[12]; } cases[] = {
         {remove_copy, 0, 0, {0}},
-        {remove_owned, 0, 6, {-1, -2, -3, 1, 2, 3}},
-        {remove_enum_tuple, 0, 4, {-1, -2, 2, 1}},
+        {remove_owned, 0, 3, {-1, -2, -3}},
+        {remove_enum_tuple, 0, 2, {-1, -2}},
         {remove_wrapper, 0, 0, {0}},
         {remove_zero_and_aggregate, 0, 0, {0}},
         {remove_references, 0, 0, {0}},
-        {remove_drop_failure, 1, 3, {1, 2, 3}},
     };
     for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         count = 0;

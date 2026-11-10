@@ -11,13 +11,12 @@ extern int32_t manage_evaluation(void);
 int main(void) {
     struct Case { int32_t (*call)(void); int failure, count; int32_t events[12]; } cases[] = {
         {manage_copy, 0, 0, {0}},
-        {manage_owned, 0, 8, {-1, -2, -3, 1, 2, 3, -4, 4}},
-        {manage_enum_tuple, 0, 4, {-1, -2, 1, 2}},
+        {manage_owned, 0, 4, {-1, -2, -3, -4}},
+        {manage_enum_tuple, 0, 2, {-1, -2}},
         {manage_wrapper, 0, 0, {0}},
         {manage_zero_and_aggregate, 0, 0, {0}},
         {manage_references, 0, 0, {0}},
-        {manage_clear_failure, 1, 3, {3, 2, 1}},
-        {manage_truncate_failure, 1, 3, {3, 2, 1}},
+
         {manage_budget, 0, 0, {0}},
         {manage_evaluation, 0, 3, {10, 20, 30}},
     };

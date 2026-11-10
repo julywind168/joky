@@ -2,14 +2,13 @@ import joky/list as lists.{type List}
 import joky/array.{type Array}
 import joky/element
 import joky/option.{type Option, Some, None}
-import joky/drop.{type Drop}
 import joky/check.{assert}
 import joky/mem
 import joky/string
 fn ensure(condition: Bool, message: String) { assert(condition, &message) }
 extern fn record_int(value: Int32)
 struct Resource { id: Int32, data: String }
-impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
+
 fn resource(id: Int32) -> Resource {
     let value = Resource { id: id, data: "owned" }
     record_int(-id)
@@ -155,9 +154,7 @@ fn unit_and_enum<Tag>() -> Int32 {
     match shapes.get(1) { Some(Shape.Number(n)) => n, _ => 0 }
 }
 struct Failing { id: Int32, data: String, primary: Bool }
-impl Drop for Failing {
-    fn drop(&mut self) { record_int(self.id); ensure(false, if self.primary { "List Drop failure" } else { "Secondary List Drop failure" }) }
-}
+
 fn clear_failure<Tag>() -> Int32 {
     var list = List.new::<Failing>()
     list.push_back(Failing { id: 1, data: "one", primary: false }); list.push_back(Failing { id: 2, data: "two", primary: false }); list.push_back(Failing { id: 3, data: "three", primary: true })

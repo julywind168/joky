@@ -80,38 +80,6 @@ pub(super) fn resolve<'a>(
         .chain(module.enums.iter().map(Declaration::Enum))
         .chain(module.type_aliases.iter().map(Declaration::Alias))
         .collect();
-    let drop_trait = module
-        .traits
-        .iter()
-        .find(|d| d.is_drop)
-        .map(|d| d.self_parameter.id);
-    let drop_targets: HashSet<_> = module
-        .implementations
-        .iter()
-        .filter_map(|implementation| {
-            let scope = implementation
-                .scope
-                .as_ref()
-                .map(|s| s.imports.as_ref())
-                .or(module.scope.as_deref())?;
-            let binding = scope.traits.get(implementation.trait_name.as_ref()?)?;
-            if Some(binding.id) != drop_trait {
-                return None;
-            }
-            implementation
-                .target
-                .nominal()
-                .map(|(_, id)| id)
-                .or_else(|| scope.types.get(&implementation.target_name)?.declaration)
-                .or_else(|| {
-                    module
-                        .records
-                        .iter()
-                        .find(|r| r.name == implementation.target_name)
-                        .map(|r| r.id)
-                })
-        })
-        .collect();
     let mut names = HashMap::new();
     for (index, &declaration) in declarations.iter().enumerate() {
         let name = declaration.name();
@@ -194,7 +162,6 @@ pub(super) fn resolve<'a>(
     for (name, &index) in &names {
         let definition = match declarations[index] {
             Declaration::Record(d) => TypeDefinition::Type(Type::Record(Arc::new(RecordType {
-                custom_drop: drop_targets.contains(&d.id),
                 array: d.array,
                 list: d.list,
                 map: d.map,
@@ -547,7 +514,7 @@ pub(super) fn resolve<'a>(
             stack.pop();
         }
     }
-    let wide = wide_enums(&declarations, &names, &edges, &order, &drop_targets);
+    let wide = wide_enums(&declarations, &names, &edges, &order);
     for index in order {
         let declaration = declarations[index];
         let ty = match declaration {
@@ -573,7 +540,6 @@ pub(super) fn resolve<'a>(
                 }
                 let owners = record_owners(&fields, record.span)?;
                 TypeDefinition::Type(Type::Record(Arc::new(RecordType {
-                    custom_drop: drop_targets.contains(&record.id),
                     array: record.array,
                     list: record.list,
                     map: record.map,
@@ -726,7 +692,6 @@ fn wide_enums(
     names: &HashMap<&str, usize>,
     edges: &[Vec<(usize, Span)>],
     order: &[usize],
-    drops: &HashSet<u64>,
 ) -> HashSet<usize> {
     const OVERFLOW: usize = MAX_SCALAR_SLOTS + 1;
     fn width(
@@ -764,7 +729,7 @@ fn wide_enums(
         let decl = declarations[i];
         let eligible = match decl {
             Declaration::Enum(e) => e.type_params.is_empty(),
-            Declaration::Record(r) => r.type_params.is_empty() && !drops.contains(&r.id),
+            Declaration::Record(r) => r.type_params.is_empty(),
             Declaration::Alias(a) => a.type_params.is_empty(),
         };
         if eligible {

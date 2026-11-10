@@ -45,9 +45,20 @@ extern "C" fn room(sp: usize, frame: usize, source: u64, start: usize, end: usiz
 extern "C" fn enter() {
     TRACE.with_borrow_mut(|t| t.entries += 1);
 }
-extern "C" fn record_drop(tag: i32) {
+unsafe extern "C" fn create_owner(tag: u64, output: *mut *mut std::ffi::c_void) -> i32 {
+    *output = Box::into_raw(Box::new(tag as i32)).cast();
+    0
+}
+unsafe extern "C" fn release_owner(token: *mut std::ffi::c_void) {
+    let tag = *Box::from_raw(token.cast::<i32>());
     TRACE.with_borrow_mut(|t| t.drops.push(tag));
 }
+static FACTORY: crate::runtime::resource::ResourceFactoryV1 =
+    crate::runtime::resource::ResourceFactoryV1 {
+        abi_version: 1,
+        create: Some(create_owner),
+        release: Some(release_owner),
+    };
 
 fn source() -> String {
     // A returned aggregate reserves a real caller-side stack slot in descend.
@@ -55,12 +66,11 @@ fn source() -> String {
     let values = vec!["n"; 256].join(",");
     format!(
         r#"
-        import joky/drop.{{type Drop}}
         extern fn probe_enter()
-        extern fn probe_drop(tag:Int32)
+        extern fn probe_owner(tag:UInt64) -> ProbeResource
         extern fn probe_stack_room(sp:UInt64, bytes:UInt64, source:UInt64, start:UInt64, end:UInt64) -> Int32
-        struct Owner {{ tag:Int32, text:String }}
-        impl Drop for Owner {{ fn drop(&mut self) {{ probe_drop(self.tag) }} }}
+        struct Owner {{ resource:ProbeResource, text:String }}
+
         fn padding(n:Int32) -> ({fields}) {{ ({values}) }}
         fn probe_descend(n:Int32, owner:Owner) -> Int32 {{
             probe_enter()
@@ -69,7 +79,7 @@ fn source() -> String {
             let next = probe_descend(n - 1, owner)
             next + p.0 - n
         }}
-        fn start(n:Int32) -> Int32 {{ probe_descend(n, Owner {{ tag:7, text:"owned" }}) }}
+        fn start(n:Int32) -> Int32 {{ probe_descend(n, Owner {{ resource:probe_owner(7), text:"owned" }}) }}
     "#
     )
 }
@@ -159,9 +169,18 @@ fn native_stack_preflight_prototype() {
     let ast = crate::parser::parse(&source).unwrap();
     let hosts = [
         ("probe_enter", enter as *const u8),
-        ("probe_drop", record_drop as *const u8),
+        (
+            "__joky_resource_factory_v1_probe_owner",
+            &FACTORY as *const _ as *const u8,
+        ),
         ("probe_stack_room", room as *const u8),
     ];
+    let mut types = TypeRegistry::new().with_prelude(false);
+    let resource = types.register_resource("ProbeResource").unwrap();
+    types.resource_factories.insert(
+        "probe_owner".into(),
+        crate::FunctionSignature::new(vec![crate::Type::UInt64], resource),
+    );
     let compile_jit = || {
         jit::compile_with_registry(
             &ast,
@@ -170,7 +189,7 @@ fn native_stack_preflight_prototype() {
             vec![],
             ModuleId(1),
             &BindingRegistry::default(),
-            &TypeRegistry::new().with_prelude(false),
+            &types,
         )
         .unwrap()
     };
@@ -189,6 +208,10 @@ fn native_stack_preflight_prototype() {
     let compile_aot = || {
         let mut compiler = AotCompiler::new("stack-probe").unwrap();
         compiler.set_prelude_enabled(false).unwrap();
+        compiler.register_resource_type("ProbeResource").unwrap();
+        compiler
+            .register_resource_factory("probe_owner", "ProbeResource")
+            .unwrap();
         compiler.compile_module(&ast).unwrap();
         compiler
     };
@@ -200,6 +223,7 @@ fn native_stack_preflight_prototype() {
         .chain(crate::runtime::error::symbols())
         .chain(crate::runtime::buffer::symbols())
         .chain(crate::runtime::cleanup::symbols())
+        .chain(crate::runtime::resource::symbols())
         .chain(crate::runtime::arena::symbols())
         .chain(crate::runtime::owned_text::symbols())
         .chain(crate::runtime::float_env::symbols())

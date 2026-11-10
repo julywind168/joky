@@ -1,9 +1,8 @@
 import joky/array.{type Array}
 import management_library.{shorten, empty, exchange}
-import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
 struct Resource { id: Int32, values: Array<Int32> }
-impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
+
 fn resource(id: Int32) -> Resource {
     let result = Resource { id: id, values: Array.new::<Int32>() }
     record_drop(-id)
@@ -87,13 +86,7 @@ fn manage_references() -> Int32 {
     match a { Some(x) => match b { Some(y) => (*x) + (*y), None => 0 }, None => 0 }
 }
 struct Failing { id: Int32, values: Array<Int32> }
-impl Drop for Failing {
-    fn drop(&mut self) {
-        record_drop(self.id)
-        if self.id == 2 { let n = 32; let _ = 1 << n }
-        let zero = 0; let _ = 1 / zero
-    }
-}
+
 fn manage_clear_failure() -> Int32 {
     var values = Array.new::<Failing>()
     values.push(Failing { id: 1, values: Array.new::<Int32>() })

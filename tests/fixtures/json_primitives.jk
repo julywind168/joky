@@ -5,13 +5,12 @@ import joky/string.{type StringBuilder}
 import joky/integer
 import joky/mem
 import joky/check.{assert}
-import joky/drop.{type Drop}
 import joky/task
 
 enum Atom { Nil, Flag(Bool), Text(String), Numeric(String) }
 enum Group { Items(Array<Atom>), Fields(Map<String, Atom>) }
 struct Tracked { id: Int32, groups: Array<Group> }
-impl Drop for Tracked { fn drop(&mut self) { println(self.id) } }
+
 fn ensure(ok: Bool) { let message = "JSON0 existing primitive capability"; assert(ok, &message) }
 fn equals(atom: &Atom, expected: &String) -> Bool {
     match atom { Text(text) => text == expected, Numeric(text) => text == expected, _ => false }

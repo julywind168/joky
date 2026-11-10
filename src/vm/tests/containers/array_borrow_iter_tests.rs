@@ -10,21 +10,13 @@ fn reset() {
     EVENTS.with(|events| events.borrow_mut().clear());
 }
 fn cleaned() {
-    crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
-    let events = events();
-    for id in 1..=4 {
-        let created = events.iter().filter(|&&event| event == -id).count();
-        let dropped = events.iter().filter(|&&event| event == id).count();
-        assert!(
-            created <= 1 && dropped <= 1 && dropped >= created,
-            "{events:?}"
-        );
-    }
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 fn all_dropped() {
     cleaned();
+    let events = events();
     for id in 1..=4 {
-        assert!(events().contains(&id));
+        assert!(events.contains(&-id), "{events:?}");
     }
 }
 
@@ -41,13 +33,6 @@ fn array_borrow_iter_preserves_owners_and_checks_current_state() {
                 assert_eq!(result.unwrap(), expected);
             }
             all_dropped();
-            let events = events();
-            if action < 3 {
-                let end = events.iter().position(|&n| n == 20).unwrap();
-                for id in 1..=4 {
-                    assert!(events.iter().position(|&n| n == id).unwrap() > end);
-                }
-            }
         }
         for after_end in [0, 1] {
             let error = vm.call_int32_1("invalid_current", after_end).unwrap_err();

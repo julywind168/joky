@@ -25,7 +25,6 @@ fn packet(name: String, fields: Vec<(String, Type)>) -> Type {
         })
         .collect();
     Type::Record(Arc::new(RecordType {
-        custom_drop: false,
         array: false,
         list: false,
         map: false,
@@ -1112,7 +1111,7 @@ pub(super) fn validate_states(
         };
         let plan = FunctionPlan::new(&f, functions, types, nominals, generics.clone(), 0)?;
         if !plan.domain_storage(&nominals[&record.name]) {
-            return Err(type_error(&record.span, ErrorCode::InvalidCall, "#state requires a hook-free owning state record without references, resources or function values"));
+            return Err(type_error(&record.span, ErrorCode::InvalidCall, "#state requires an owning state record without references, resources or function values"));
         }
     }
     Ok(())

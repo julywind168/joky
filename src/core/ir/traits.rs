@@ -162,19 +162,7 @@ pub(super) fn collect(
             ));
         }
         members.traits.bounds.insert(id, vec![id]);
-        if declaration.is_drop
-            && (!declaration.associated_types.is_empty()
-                || declaration
-                    .methods
-                    .iter()
-                    .any(|method| method.body.is_some()))
-        {
-            return Err(type_error(
-                &declaration.span,
-                ErrorCode::TypeMismatch,
-                "The built-in Drop protocol requires its original abstract drop method",
-            ));
-        }
+
         let mut names = HashSet::new();
         for requirement in &declaration.methods {
             if !names.insert(&requirement.name) {
@@ -270,22 +258,7 @@ pub(super) fn collect(
                     "Unknown trait identity",
                 )
             })?;
-        if declaration.is_drop
-            && (!matches!(implementation.target, Type::Record(_))
-                || !implementation.target.is_owner()
-                || matches!(&implementation.target, Type::Record(record)
-                    if !record.parameters.is_empty() && implementation.type_params.is_empty())
-                || implementation
-                    .type_params
-                    .iter()
-                    .any(|p| !p.bounds.is_empty()))
-        {
-            return Err(type_error(
-                &implementation.span,
-                ErrorCode::TypeMismatch,
-                "Drop requires an owning record, all generic parameters, and no conditional bounds",
-            ));
-        }
+
         let target_owner = implementation
             .target
             .nominal()

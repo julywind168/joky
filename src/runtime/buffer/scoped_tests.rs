@@ -63,10 +63,7 @@ fn scoped_borrow_received_ranges_reject_widening_and_unproven_views() {
             let mut owner = Buffer::allocate(arena, 0, 8, 8).unwrap();
             owner
                 .as_mut()
-                .configure(ElementCleanup {
-                    owners: vec![0],
-                    hooks: vec![],
-                })
+                .configure(ElementCleanup { owners: vec![0] })
                 .unwrap();
             checked |= u64::from(
                 owner

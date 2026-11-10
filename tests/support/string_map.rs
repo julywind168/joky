@@ -9,11 +9,6 @@ pub fn groups() -> Vec<Group> {
         ("batch", &[10, 11, 12, 13], false),
         ("hash_failure", &[20, 21], true),
         ("eq_failure", &[30, 31], true),
-        ("duplicate_drop_failure", &[40, 41], true),
-        ("remove_drop_failure", &[50, 51, 52], true),
-        ("batch_failure", &[60, 61, 62], true),
-        ("clear_failure", &[70, 71], true),
-        ("release_failure", &[80, 81], true),
     ];
     let mut groups: Vec<_> = cases
         .iter()

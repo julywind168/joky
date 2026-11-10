@@ -31,7 +31,7 @@ Cargo 子工程独立于主仓库 workspace，普通 Joky 构建不下载 Godot 
 
 ## 脚本约定
 
-- 根类型名固定为 `State`，必须符合 P2 的无引用记录约束，可含 String、无引用 Array 与 Drop。
+- 根类型名固定为 `State`，必须符合 P2 的无引用记录约束，可含 String 和无引用 Array，拥有字段自动清理。
 - `fn create() -> State` 无参数；构造失败不发布实例。
 - 顶层函数的第一个参数为 `&State` 或 `&mut State`，经编译器验证为不逃逸的实例入口，
   才能作为 Godot 实例方法调用；接收者由扩展注入，不出现在 Godot 参数列表中。
@@ -92,7 +92,7 @@ PackedScene 保存导出属性的当前值，重开重新构造并应用这些�
 
 | 接口 | 行为 |
 | --- | --- |
-| `node.none()` / `node.self()` | 空句柄 / 当前调用所属节点的句柄；构造和 Drop 也有所属节点上下文 |
+| `node.none()` / `node.self()` | 空句柄 / 当前调用所属节点的句柄；构造也有所属节点上下文 |
 | `node.is_valid(handle)` | 检查当前程序登记、引擎身份及排队删除状态 |
 | `node.get_node(handle, &path)` | 查找节点；未找到报运行错误 |
 | `node.name(handle)` / `node.set_name(handle, &name)` | 复制 UTF-8 名称 / 设置合法名称；输入文本只借用到本次调用结束 |
@@ -101,7 +101,7 @@ PackedScene 保存导出属性的当前值，重开重新构造并应用这些�
 | `node.queue_free(handle)` | 由引擎排队删除；句柄立即视为失效 |
 
 `Node` 是含私有登记 token 的 Copy 记录，可保存在 State；不包含引擎地址、不强持有节点，
-Drop 不自动删除节点。token 不复用，并仅能在签发它的 Program 快照中解析；新快照有独立
+State 自动清理不删除节点，也不调用用户析构方法。token 不复用，并仅能在签发它的 Program 快照中解析；新快照有独立
 登记表。每个快照最多 4096 个活登记，签发时清除失效项。该宿主登记表不计入核心实例 arena
 额度；它是单独有界的适配器元数据。
 
@@ -193,7 +193,7 @@ GODOT_BIN=/path/to/Godot ./integrations/godot/check.sh
 编辑器刷新、Float64 两类帧回调、Node2D 移动、失效句柄、向量失败原子性、同步信号重入、
 带活根退出进程以及实际渲染画面检查。G2 增加两节点异步上下文、短 State 访问、帧/物理步/
 信号等待、暂停/缩放与双计时、race 输家退订、动态 scope、重复 ready、reload 活任务、
-切场景、反复销毁、异步失败/信号源退出、State Drop 与带挂起任务退出进程；
+切场景、反复销毁、异步失败/信号源退出、State 清理 与带挂起任务退出进程；
 异步移动示例另用真实引擎检查位置变化；同步信号中移除脚本的用例检查延迟 State 清理的节点上下文。
 
 [borrowed_dyn.jk](demo/borrowed_dyn.jk) 在普通同步 State 方法内部创建共享/独占 dyn 视图，

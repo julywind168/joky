@@ -55,16 +55,7 @@ fn reset() {
     EVENTS.with(|events| events.borrow_mut().clear());
 }
 fn cleaned() {
-    arena::LIVE.with(|live| assert_eq!(live.get(), 0));
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        for id in 1..=3 {
-            let created = events.iter().filter(|&&event| event == -id).count();
-            let dropped = events.iter().filter(|&&event| event == id).count();
-            assert_eq!(created, dropped, "resource {id}: {events:?}");
-            assert!(created <= 1, "duplicate resource {id}: {events:?}");
-        }
-    });
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 struct RestoreLimit(usize);
 impl RestoreLimit {
@@ -133,7 +124,7 @@ fn string_storage_probe_first_errors_survive_exhausted_arena_and_drop_failure() 
             let error = vm.call_int32_0(entry).unwrap_err();
             assert_eq!(error.code(), code, "{mode:?}: {error}");
             assert!(error.message().contains(message), "{mode:?}: {error}");
-            EVENTS.with(|events| assert_eq!(*events.borrow(), [-3, 902, 3]));
+            EVENTS.with(|events| assert_eq!(*events.borrow(), [-3, 902]));
             assert!(error.span().is_some());
             cleaned();
         }

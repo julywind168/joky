@@ -1,5 +1,4 @@
 import joky/task
-import joky/drop.{type Drop}
 import joky/array.{type Array}
 import joky/result.{type Result, Ok, Err}
 import joky/check.{assert}
@@ -8,12 +7,7 @@ extern fn delayed_value(value: Int32) @suspends -> Int32
 
 fn ensure(value: Bool) { let message = "race value contract"; assert(value, &message) }
 struct Tracked { id: Int32, text: String }
-impl Drop for Tracked {
-    fn drop(&mut self) {
-        record(self.id);
-        if self.id == 9 { ensure(false) }
-    }
-}
+
 fn make(id: Int32) -> Tracked {
     let value = Tracked { id: id, text: "payload" }
     record(-id);

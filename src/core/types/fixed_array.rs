@@ -78,7 +78,7 @@ pub(super) fn validate(ty: &Type, registry: &TypeRegistry) -> Result<(), Error> 
     if ty.is_place()
         && ty.contains_compact_enum()
         && !TypeWalk::new(ty, TypeEdges::Inline).all(|node| match node {
-            Type::Record(r) => !r.custom_drop && r.closure.is_none(),
+            Type::Record(r) => r.closure.is_none(),
             Type::Enum(_) | Type::Tuple(_) | Type::FixedArray(_) | Type::FixedArrayInit(_) => true,
             _ => crate::core::instance::scalar(node),
         })

@@ -1,5 +1,4 @@
 import joky/array.{type Array}
-import joky/drop.{type Drop}
 import joky/fixed_array.{type FixedArray}
 import joky/task
 
@@ -16,9 +15,7 @@ struct Pair<T> { first: T, second: T }
 type PointAlias = Point
 
 struct Resource { id: Int32, values: Array<Int32> }
-impl Drop for Resource {
-    fn drop(&mut self) { record_drop(self.id) }
-}
+
 struct Holder { left: Resource, right: Resource, tag: Int32 }
 
 enum Shape { Circle(Point), Named(User), Blank }
@@ -260,9 +257,7 @@ fn update_failed_base() -> Int32 {
     updated.tag
 }
 struct FailingResource { value: Resource }
-impl Drop for FailingResource {
-    fn drop(&mut self) { panic("Overwritten field drop failed") }
-}
+
 struct FallibleUpdate { discarded: FailingResource, retained: Resource }
 fn update_failed_drop() -> Int32 {
     let updated = FallibleUpdate {

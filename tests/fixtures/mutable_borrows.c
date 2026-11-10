@@ -36,19 +36,18 @@ int main(void) {
     struct Case { int32_t (*call)(void); int failure, count; int32_t events[8]; } cases[] = {
         {mutable_borrow_modules, 0, 0, {0}},
         {mutable_match_empty, 0, 0, {0}},
-        {mutable_match_control_flow, 0, 1, {3}},
+        {mutable_match_control_flow, 0, 0, {0}},
         {mutable_borrow_nested_array, 0, 0, {0}},
-        {mutable_borrow_drop_failure, 1, 2, {2, 3}},
-        {mutable_element, 0, 2, {2, 21}},
-        {mutable_match_nested, 0, 2, {10, 20}},
-        {mutable_match_array, 0, 1, {41}},
+        {mutable_element, 0, 0, {0}},
+        {mutable_match_nested, 0, 0, {0}},
+        {mutable_match_array, 0, 0, {0}},
         {mutable_match_copy, 0, 0, {0}},
         {mutable_match_generic, 0, 0, {0}},
         {mutable_element_wrapper, 0, 0, {0}},
-        {mutable_match_scalar_return, 0, 1, {1}},
-        {mutable_match_nested_enum, 0, 1, {41}},
-        {mutable_borrow_bounds, 1, 1, {1}},
-        {mutable_borrow_failure, 1, 1, {2}},
+        {mutable_match_scalar_return, 0, 0, {0}},
+        {mutable_match_nested_enum, 0, 0, {0}},
+        {mutable_borrow_bounds, 1, 0, {0}},
+        {mutable_borrow_failure, 1, 0, {0}},
     };
     for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         count = 0;

@@ -68,7 +68,7 @@ fn closed_signature(info: &FunctionInfo) -> bool {
         .chain([&info.signature.ret])
         .all(|ty| {
             TypeWalk::new(ty, TypeEdges::Inline).all(|part| match part {
-                Type::Record(r) => !r.indirect && r.closure.is_none() && r.drop_anchor().is_none(),
+                Type::Record(r) => !r.indirect && r.closure.is_none(),
                 Type::Enum(e) => !e.indirect,
                 Type::Tuple(_) | Type::String => true,
                 _ => crate::core::instance::scalar(part),
@@ -104,9 +104,7 @@ fn closed_module(
                 ..
             } => bodies.contains_key(name) || closed_signature(&functions[name]),
             Op::Buffer(BufferOp::Storage { intrinsic, .. }) => !intrinsic.is_pair(),
-            Op::Cleanup(CleanupOp::Register {
-                hooks, elements, ..
-            }) => hooks.is_empty() && elements.iter().all(|entry| entry.hooks.is_empty()),
+            Op::Cleanup(_) => true,
             Op::Buffer(_)
             | Op::Local { .. }
             | Op::ReadMemory { .. }

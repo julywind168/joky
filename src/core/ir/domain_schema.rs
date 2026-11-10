@@ -37,7 +37,6 @@ pub(super) fn freeze(body: &FunctionPlan, ty: &Type) -> Result<Type, Error> {
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 Type::Record(Arc::new(RecordType {
-                    custom_drop: false,
                     array: r.array,
                     list: r.list,
                     map: r.map,

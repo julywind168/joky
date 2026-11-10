@@ -27,18 +27,7 @@ fn configured(mode: VmMode) -> VmEngine {
     vm
 }
 fn cleaned() {
-    arena::LIVE.with(|n| assert_eq!(n.get(), 0));
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        for id in 1..=4 {
-            let created = events.iter().filter(|&&n| n == id).count();
-            let dropped = events.iter().filter(|&&n| n == -id).count();
-            assert!(
-                created <= 1 && dropped <= 1 && dropped >= created,
-                "owner {id}: {events:?}"
-            );
-        }
-    });
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 
 #[test]
@@ -81,7 +70,7 @@ fn indexing_cleanup_and_budget_failures() {
             assert_eq!(vm.call_int32_0(name).unwrap(), 42, "{mode:?} {name}");
             cleaned();
         }
-        for name in ["failed_rhs", "failed_index", "failed_drop"] {
+        for name in ["failed_rhs", "failed_index"] {
             reset();
             assert!(vm.call_int32_0(name).is_err(), "{mode:?} {name}");
             cleaned();

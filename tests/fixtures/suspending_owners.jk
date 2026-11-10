@@ -1,6 +1,5 @@
 import joky/array.{type Array}
 import joky/result.{type Result, Ok, Err}
-import joky/drop.{type Drop}
 import joky/task
 import joky/check.{assert}
 import joky/string.{type StringBuilder}
@@ -8,13 +7,7 @@ import joky/map as maps.{type Map}
 extern fn owner_event(id: Int32)
 fn ensure(ok: Bool) { let message="owner contract"; assert(ok, &message) }
 struct Tracked { id: Int32, text: String }
-impl Drop for Tracked {
-    fn drop(&mut self) {
-        ensure(self.text.byte_length() == 7)
-        owner_event(self.id)
-        ensure(self.id != 9)
-    }
-}
+
 fn make(id: Int32) -> Tracked {
     let value=Tracked { id: id, text: "payload" }
     owner_event(-id)

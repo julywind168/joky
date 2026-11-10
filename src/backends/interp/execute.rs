@@ -351,7 +351,6 @@ pub(super) struct Frame {
     call_region: Option<Rc<std::cell::RefCell<crate::runtime::arena::Arena>>>,
     _parallel_charge: Option<crate::runtime::parallel::Lease>,
     cleanups: crate::runtime::cleanup::Cleanups,
-    cleanup_locals: memory::Locals,
     locals: memory::Locals,
     function: Arc<BytecodeFunction>,
     slots: Vec<Value>,
@@ -384,7 +383,6 @@ impl Frame {
             call_region: None,
             _parallel_charge: charge,
             cleanups: Default::default(),
-            cleanup_locals: Default::default(),
             locals: Default::default(),
             function,
             slots,
@@ -537,7 +535,6 @@ pub(super) struct Execution {
     domain_return: Option<Type>,
     domain_result: Option<Vec<u64>>,
     cleanup_mode: bool,
-    cleanup_module: Option<Rc<BytecodeModule>>,
     nodes: Vec<Option<Node>>,
     free: Vec<usize>,
     live: usize,
@@ -562,7 +559,6 @@ impl Execution {
             root_aggregate: None,
             domain_return: None,
             domain_result: None,
-            cleanup_module: None,
             nodes: vec![Some(Node {
                 depth: 1,
                 parent: None,
@@ -927,7 +923,6 @@ impl Execution {
                         storage_size: 0,
                         storage: None,
                         owners: [Some(owner.as_ptr())].into(),
-                        hooks: vec![],
                     },
                 );
             }
@@ -994,7 +989,7 @@ impl Execution {
             };
         }
         let owned = Self::owned_arguments(module, target, args);
-        // Preserve the caller's hooks until the callee successfully installs
+        // Preserve the caller's cleanup responsibility until the callee successfully installs
         // its own snapshot. Registration itself may fail under allocation limits.
         let parent = self.frame_mut(id);
         for (dst, src) in owned {
@@ -1341,7 +1336,7 @@ impl Execution {
     }
 
     /// Stop losing subtrees before result handoff, retaining packets in the
-    /// parent until cleanup succeeds. No group borrow spans host stop or Drop.
+    /// parent until cleanup succeeds. No group borrow spans host stop or resource release.
     fn drain_concurrent(&mut self, parent: usize) -> Result<bool, Error> {
         let roots: Vec<_> = {
             let Some(Pending::Concurrent { branches, group }) = &self.frame_mut(parent).pending
@@ -1715,12 +1710,11 @@ impl Execution {
                         .map(Value::instance_bits)
                         .collect::<Result<Vec<_>, _>>()
                         .and_then(|words| unsafe {
-                            crate::runtime::parallel::packet::Packet::capture_value(
+                            crate::runtime::parallel::packet::Packet::capture(
                                 shape,
                                 words,
                                 owner.take(),
                                 &mut self.arena,
-                                true,
                             )
                         });
                     match captured {
@@ -2024,8 +2018,6 @@ impl Execution {
                         frame,
                         &mut self.budget,
                         arena.as_deref_mut().unwrap_or(&mut self.arena),
-                        module,
-                        &mut self.cleanup_module,
                     )
                 }
                 Activation::Host(host) => match self.budget.charge() {
@@ -2121,8 +2113,6 @@ fn run_frame(
     frame: &mut Frame,
     budget: &mut Budget,
     arena: &mut crate::runtime::arena::Arena,
-    module: &BytecodeModule,
-    cleanup_module: &mut Option<Rc<BytecodeModule>>,
 ) -> Step {
     loop {
         let Some(instruction) = frame.function.code.get(frame.pc) else {
@@ -2173,7 +2163,6 @@ fn run_frame(
             Instruction::Cleanup {
                 value,
                 place,
-                hooks,
                 elements,
             } => {
                 if let Some(place) = place {
@@ -2197,7 +2186,6 @@ fn run_frame(
                     storage_size: 0,
                     storage: None,
                     owners: Default::default(),
-                    hooks: vec![],
                 };
                 for owner in &owners {
                     let Value::Reference(handle) = frame.slots[owner.index] else {
@@ -2207,29 +2195,12 @@ fn run_frame(
                         .owners
                         .push(std::ptr::NonNull::new(handle.cast()).map(std::ptr::NonNull::as_ptr));
                 }
-                if place.is_some() || !hooks.is_empty() {
-                    let data = if let Some(place) = place {
-                        let Value::Reference(data) = frame.slots[*place] else {
-                            unreachable!()
-                        };
-                        data
-                    } else {
-                        match memory::snapshot(
-                            frame.pc,
-                            value,
-                            &frame.slots,
-                            &mut frame.cleanup_locals,
-                        ) {
-                            Ok(data) => data,
-                            Err(error) => return Step::Failed(error),
-                        }
+                if let Some(place) = place {
+                    let Value::Reference(data) = frame.slots[*place] else {
+                        unreachable!()
                     };
-                    let storage = if place.is_some() {
-                        frame.locals.keep_alive()
-                    } else {
-                        frame.cleanup_locals.keep_alive()
-                    };
-                    let mut descriptor = crate::runtime::buffer::ElementCleanup {
+                    let storage = frame.locals.keep_alive();
+                    let descriptor = crate::runtime::buffer::ElementCleanup {
                         owners: value
                             .ty
                             .storage_scalars()
@@ -2238,29 +2209,8 @@ fn run_frame(
                             .filter(|(_, ty)| ty.is_owner_lane())
                             .map(|(offset, _)| offset)
                             .collect(),
-                        hooks: vec![],
                     };
-                    for hook in hooks {
-                        let module = cleanup_module
-                            .get_or_insert_with(|| Rc::new(module.clone()))
-                            .clone();
-                        let name = hook.name.clone();
-                        let storage = storage.clone();
-                        descriptor.hooks.push(crate::runtime::buffer::ElementHook {
-                            before: hook.before,
-                            offset: hook.offset,
-                            indirect: hook.indirect,
-                            guards: hook.guards.clone(),
-                            callback: portable_cleanup(&name).unwrap_or_else(|| {
-                                crate::runtime::buffer::ElementCallback::Interpreted(Rc::new(
-                                    move |data, arena| {
-                                        let _keep_alive = &storage;
-                                        cleanup_call(&module, &name, data, arena)
-                                    },
-                                ))
-                            }),
-                        });
-                    }
+
                     entry.keep_alive = Some(storage);
                     entry.storage_size = value.ty.storage_layout().unwrap().size;
                     entry.storage = Some((data, descriptor));
@@ -2274,27 +2224,10 @@ fn run_frame(
                     if handle.is_null() {
                         continue;
                     }
-                    let mut cleanup = crate::runtime::buffer::ElementCleanup {
+                    let cleanup = crate::runtime::buffer::ElementCleanup {
                         owners: element.owners.clone(),
-                        hooks: Vec::new(),
                     };
-                    for hook in &element.hooks {
-                        let module = cleanup_module
-                            .get_or_insert_with(|| Rc::new(module.clone()))
-                            .clone();
-                        let name = hook.name.clone();
-                        cleanup.hooks.push(crate::runtime::buffer::ElementHook {
-                            before: hook.before,
-                            offset: hook.offset,
-                            indirect: hook.indirect,
-                            guards: hook.guards.clone(),
-                            callback: portable_cleanup(&name).unwrap_or_else(|| {
-                                crate::runtime::buffer::ElementCallback::Interpreted(Rc::new(
-                                    move |data, arena| cleanup_call(&module, &name, data, arena),
-                                ))
-                            }),
-                        });
-                    }
+
                     if let Err(error) = unsafe {
                         (*handle.cast::<crate::runtime::buffer::Buffer>()).configure(cleanup)
                     } {
@@ -2392,7 +2325,7 @@ fn run_frame(
                     let entry = frame
                         .cleanups
                         .take_fields(owner.source, owner.first, owner.count);
-                    // Keep the original hooks until registration has successfully
+                    // Keep the original cleanup responsibility until registration has successfully
                     // allocated its new snapshot; failure must still drop them.
                     frame.cleanups.insert(owner.destination, entry);
                 }
@@ -3009,49 +2942,6 @@ struct Task {
 impl Drop for Execution {
     fn drop(&mut self) {
         self.release();
-    }
-}
-
-fn portable_cleanup(name: &str) -> Option<crate::runtime::buffer::ElementCallback> {
-    let code = crate::runtime::parallel::pool::code::<crate::vm::parallel::Code>()?;
-    let crate::vm::parallel::Code::Interpreted(code) = code.as_ref() else {
-        return None;
-    };
-    Some(crate::runtime::buffer::ElementCallback::Portable(
-        crate::runtime::cleanup::PortableCallback::Interpreted {
-            code: code.clone(),
-            name: name.into(),
-        },
-    ))
-}
-
-pub(crate) fn cleanup_call(
-    module: &Rc<BytecodeModule>,
-    name: &str,
-    data: *mut u8,
-    arena: &mut crate::runtime::arena::Arena,
-) -> Result<(), Error> {
-    let function = module.functions[name].clone();
-    let args = [Value::Reference(data)];
-    let frame = Frame::new(function, args.iter())?;
-    // Cleanup must still run after the task exhausts its instruction budget,
-    // but an infinite destructor must not make cancellation or failure hang.
-    // Give each synchronous hook a bounded, independent cleanup allowance.
-    let limits = InterpreterLimits {
-        instruction_budget: Some(1_000_000),
-        ..InterpreterLimits::default()
-    };
-    let mut execution = Execution::new(frame, limits, false);
-    execution.cleanup_mode = true;
-    execution.cleanup_module = Some(module.clone());
-    execution.arena = std::mem::take(arena);
-    let result = execution.poll(module);
-    execution.release();
-    *arena = std::mem::take(&mut execution.arena);
-    match result {
-        Poll::Complete(_) => Ok(()),
-        Poll::Failed(error) => Err(error),
-        Poll::Pending => Err(abi_error("Destructor cannot suspend")),
     }
 }
 

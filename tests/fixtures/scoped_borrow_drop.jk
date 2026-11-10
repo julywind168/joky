@@ -1,4 +1,3 @@
-import joky/drop.{type Drop}
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
 import joky/list.{type List}
@@ -9,7 +8,7 @@ import joky/string
 
 fn trace(text: &String) -> Int32 { 0 }
 struct Tracked { text: String }
-impl Drop for Tracked { fn drop(&mut self) { trace(&self.text); } }
+
 struct Bundle { item: Tracked, rows: Array<Tracked>, choice: Option<Tracked> }
 fn tracked() -> Tracked { Tracked { text: "abc" } }
 fn make() -> Bundle { Bundle { item: tracked(), rows: [tracked()], choice: Some(tracked()) } }

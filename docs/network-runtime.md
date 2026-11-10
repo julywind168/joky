@@ -1,5 +1,7 @@
 # 网络运行时开发计划与验收记录
 
+> 2026-11-10 更新：本文涉及自定义 `joky/drop.Drop` 的设计、限制与验收为历史记录；该能力已撤回。当前自动清理规则及迁移见[撤回说明](custom-drop-withdrawal-review.md)。
+
 阅读约定：阶段编号与验收命令保留当时的记录；现行测试按行为命名，可用 `cargo test -- --list` 查找。当前 API 以 [language.md](language.md) 为准。
 
 状态：NET0–NET4 已完成本机 Debug 开发验证与 Godot 联合验收；NET5a 已完成拆分契约与独立拥有者借用前置，NET5b/NET5c 已完成独立读写端、缓存交接与消息发送，NET5d 已完成单连接双向示例与 Godot 联合验收。已提供共享 TCP 驱动、有界接收缓冲、读满、分隔符、UTF-8 行读取和长度前缀消息读写。

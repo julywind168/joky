@@ -1,17 +1,11 @@
 import joky/check.{panic, assert}
 import joky/option.{type Option, Some, None}
-import joky/drop.{type Drop}
 import joky/task
 
 extern fn record_int(value: Int32)
 
 struct Resource { text: String, id: Int32, fail: Bool }
-impl Drop for Resource {
-    fn drop(&mut self) {
-        record_int(self.id)
-        if self.fail { panic("Secondary cleanup failure") }
-    }
-}
+
 
 fn mark(n: Int32) -> Int32 { record_int(n); n }
 fn add(a: Int32, b: Int32) -> Int32 { a + b }

@@ -2,10 +2,9 @@ import joky/mem
 import joky/array.{type Array}
 import joky/slice.{type Slice}
 import slice_library.{tail, tail_mut, first, first_mut}
-import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
 struct Resource { id: Int32, values: Array<Int32> }
-impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
+
 fn resource(id: Int32) -> Resource {
     let result = Resource { id: id - 10, values: Array.new::<Int32>() }
     record_drop(-result.id)
@@ -98,9 +97,7 @@ fn slice_drop_failure() -> Int32 {
     42
 }
 struct Failing { id: Int32, values: Array<Int32> }
-impl Drop for Failing {
-    fn drop(&mut self) { record_drop(self.id); let zero = 0; let _ = 1 / zero }
-}
+
 fn slice_transitions() -> Int32 {
     var values = Array.new::<Resource>()
     values.push(resource(11)); values.push(resource(12))

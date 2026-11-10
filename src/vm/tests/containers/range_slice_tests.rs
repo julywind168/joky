@@ -31,9 +31,9 @@ fn range_slices_resume_once_and_release_borrows_on_cancel() {
                 assert_eq!(
                     *events.borrow(),
                     if cancel {
-                        vec![-99, -1, -1, 99]
+                        vec![-99, -1, -1]
                     } else {
-                        vec![-99, -1, -1, 0, 0, 4, 4, 99]
+                        vec![-99, -1, -1, 0, 0, 4, 4]
                     }
                 )
             });
@@ -79,13 +79,8 @@ fn exhaustive_range_slices_instruction_cancellation() {
         || EVENTS.with(|events| events.borrow().clone()),
         || {
             LIVE.with(|live| assert_eq!(live.get(), 0));
-            EVENTS.with(|events| {
-                let events = events.borrow();
-                let drops = events.iter().filter(|&&n| n == 99).count();
-                assert!(drops <= 1);
-                if events.contains(&-99) {
-                    assert_eq!(drops, 1);
-                }
+            crate::runtime::arena::LIVE.with(|live| {
+                assert_eq!(live.get(), 0);
             });
         },
     );

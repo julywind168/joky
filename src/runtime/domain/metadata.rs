@@ -307,7 +307,6 @@ impl Reader<'_> {
             .unwrap_or(0)
             + 1;
         let ty = Type::Record(Arc::new(RecordType {
-            custom_drop: false,
             array: code == 21,
             list: false,
             map: false,

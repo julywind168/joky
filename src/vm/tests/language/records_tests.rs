@@ -321,10 +321,6 @@ fn record_updates_reject_invalid_bases_and_inaccessible_fields() {
             "through a reference",
         ),
         (
-            "import joky/drop.{type Drop} struct P { text: String } impl Drop for P { fn drop(&mut self) {} } fn f(p: P) -> P { P { ..p } }",
-            "Cannot move an owning field",
-        ),
-        (
             "struct P { x: String, tag: Int32 } fn f(p: P) -> P { let view = &p.x; let next = P { tag: 2, ..p }; println(view); next }",
             "borrow",
         ),

@@ -77,7 +77,7 @@ fn plain_region_value(ty: &Type) -> bool {
 }
 
 /// Only inspect ordinary memory and scalar operations. In particular, an
-/// opaque call, destructor or task operation could publish an arena address.
+/// opaque call or task operation could publish an arena address.
 /// Propagate exclusions backwards, including through recursive call cycles.
 pub(super) fn infer_call_regions(
     functions: &mut HashMap<String, FunctionInfo>,
@@ -90,7 +90,6 @@ pub(super) fn infer_call_regions(
     for (name, body) in bodies {
         let info = &functions[name];
         let mut safe = !info.suspends
-            && !body.is_destructor
             && info.inferred_retained.as_ref().is_some_and(Vec::is_empty)
             && info.inferred_arena_retained.is_empty();
         for op in &body.ops {

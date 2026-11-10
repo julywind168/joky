@@ -570,25 +570,3 @@ fn owning_string_text_registration_metadata_results_and_errors() {
         crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
     }
 }
-
-#[test]
-fn owning_string_root_cleanup_failure_discards_text() {
-    let source = r#"
-        import joky/array.{type Array}
-        import joky/drop.{type Drop}
-        import joky/check.{assert}
-        struct Resource { data: Array<UInt8> }
-        impl Drop for Resource {
-            fn drop(&mut self) { let message = "Text cleanup failure"; assert(false, &message) }
-        }
-        fn text() -> String { let resource = Resource { data: Array.new::<UInt8>() }; "discarded" }
-    "#;
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm(source, mode);
-        assert_eq!(
-            vm.call_string_0("text").unwrap_err().message(),
-            "Text cleanup failure"
-        );
-        crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
-    }
-}

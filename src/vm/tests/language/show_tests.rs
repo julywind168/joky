@@ -66,10 +66,9 @@ fn shared_argument_cancellation(sweep: super::support::CancellationSweep) {
     use super::support::{assert_cancellation, parity_vm, EVENTS};
     let mut vm = parity_vm(
         r#"
-        import joky/drop.{type Drop}
         extern fn record(value: Int32) -> Int32
         struct Item { value: Int32, text: String }
-        impl Drop for Item { fn drop(&mut self) { record(2); } }
+
         fn make() -> Item { record(1); Item { value: 42, text: "owned" } }
         fn inspect(value: &Item) @noescape -> Int32 { value.value }
         fn helper() -> Int32 { inspect(make()) }
@@ -183,36 +182,20 @@ fn interpolation_reports_original_expression_spans_and_rejects_missing_show() {
 
 #[test]
 fn interpolation_failure_drops_temporary_once_and_preserves_primary_error() {
-    thread_local! { static DROPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-    extern "C" fn record_drop() {
-        DROPS.with(|n| n.set(n.get() + 1));
-    }
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
-        unsafe {
-            vm.register_fn(
-                "record_drop",
-                crate::FunctionSignature::new(vec![], crate::Type::Unit),
-                record_drop as *const u8,
-            )
-            .unwrap();
-        }
+
         vm.load_source(r#"
             import joky/show.{type Show}
             import joky/string.{type StringBuilder}
-            import joky/drop.{type Drop}
-            extern fn record_drop()
             struct Resource { text: String }
-            impl Drop for Resource { fn drop(&mut self) { record_drop() } }
+
             impl Show for Resource { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(&self.text); 1 / 0; } }
             fn make() -> Resource { Resource { text: "owned" } }
             fn text() -> String { "prefix {make()} unreachable" }
         "#).unwrap();
         assert!(vm.call_string_0("text").is_err());
-        DROPS.with(|n| {
-            assert_eq!(n.get(), 1);
-            n.set(0);
-        });
+
         LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }

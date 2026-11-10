@@ -216,7 +216,7 @@ fn migration_schema_identities_do_not_recur_after_reverse_migration() {
     }
 }
 #[test]
-fn migration_admission_rejects_unproved_entries_and_cleanup_hooks() {
+fn migration_admission_rejects_unproved_entries() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let (vm, domain, owners) = setup(mode);
         for source in [
@@ -232,7 +232,6 @@ fn migration_admission_rejects_unproved_entries_and_cleanup_hooks() {
                 "fn upgrade(old:&PreviousState)->Room",
                 "fn upgrade(old:&PreviousState) @suspends ->Room",
             ),
-            format!("{NEW}\nimpl Drop for Room {{ fn drop(&mut self) {{}} }}"),
         ] {
             assert!(prepare_new(&vm, &owners, &source).is_err());
         }

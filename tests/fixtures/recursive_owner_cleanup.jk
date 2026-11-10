@@ -1,7 +1,6 @@
 import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/mem
-import joky/drop.{type Drop}
 import joky/option.{Some, None}
 import joky/check.{assert}
 import joky/task
@@ -9,12 +8,7 @@ extern fn record_drop(value: Int32)
 
 struct Owned { id: Int32, fail: Bool, children: Array<Tree> }
 enum Tree { Empty, Leaf(Owned), Groups(Array<Tree>), Objects(Map<String, Tree>) }
-impl Drop for Owned {
-    fn drop(&mut self) {
-        record_drop(self.id)
-        if self.fail { ensure(false) }
-    }
-}
+
 fn ensure(ok: Bool) { let message = "recursive tree mismatch"; assert(ok, &message) }
 fn leaf(id: Int32) -> Tree {
     let owner = Owned { id: id, fail: false, children: Array.new::<Tree>() }

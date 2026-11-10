@@ -3,7 +3,6 @@ import joky/map.{type Map}
 import joky/array.{type Array}
 import joky/slice.{type Slice}
 import joky/check.{assert}
-import joky/drop.{type Drop}
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
 extern fn record_int(value: Int32)
@@ -77,9 +76,7 @@ fn batches<Tag>() -> Int32 {
     result
 }
 struct Resource { id: Int32, fail: Bool, data: Array<Int32> }
-impl Drop for Resource {
-    fn drop(&mut self) { record_int(self.id); { let assertion_condition = !self.fail; let assertion_message = "Batch drop failure"; assert(assertion_condition, &assertion_message) } }
-}
+
 fn resource(id: Int32, fail: Bool) -> Resource {
     var data = Array.new::<Int32>(); data.push(id)
     let result = Resource { id: id, fail: fail, data: data }

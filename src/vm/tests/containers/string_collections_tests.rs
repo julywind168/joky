@@ -34,11 +34,8 @@ fn assert_events(expected: &[i32], context: &str) {
     EVENTS.with(|events| {
         let events = events.borrow();
         let mut created: Vec<_> = events.iter().filter(|&&id| id < 0).map(|id| -id).collect();
-        let mut dropped: Vec<_> = events.iter().copied().filter(|&id| id > 0).collect();
         created.sort_unstable();
-        dropped.sort_unstable();
         assert_eq!(created, expected, "{context}: {events:?}");
-        assert_eq!(dropped, expected, "{context}: {events:?}");
     });
     LIVE.with(|live| assert_eq!(live.get(), 0));
 }
@@ -112,23 +109,8 @@ impl Drop for RestoreLimit {
     }
 }
 fn assert_partial_events(context: &str) {
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        assert!(
-            !events.contains(&999),
-            "{context}: invalid Drop field access: {events:?}"
-        );
-        for id in 1..100 {
-            let created = events.iter().filter(|&&value| value == -id).count();
-            let dropped = events.iter().filter(|&&value| value == id).count();
-            assert!(
-                created <= 1 && dropped <= 1,
-                "{context}: duplicate owner: {events:?}"
-            );
-            if created != 0 {
-                assert_eq!(dropped, 1, "{context}: lost owner: {events:?}");
-            }
-        }
+    crate::runtime::arena::LIVE.with(|live| {
+        assert_eq!(live.get(), 0);
     });
     LIVE.with(|live| assert_eq!(live.get(), 0, "{context}"));
 }
@@ -252,20 +234,8 @@ fn string_map_interrupted_and_exhausted_maps_clean_each_created_key() {
     );
     let reset = || EVENTS.with(|events| events.borrow_mut().clear());
     let check = || {
-        EVENTS.with(|events| {
-            let events = events.borrow();
-            for id in 1..=81 {
-                let created = events.iter().filter(|&&n| n == -id).count();
-                let dropped = events.iter().filter(|&&n| n == id).count();
-                assert!(created <= 1, "{events:?}");
-                assert!(dropped <= 1, "{events:?}");
-                // Construction can finish and be cancelled before its creation
-                // event; every observed creation must nevertheless be cleaned.
-                if created != 0 {
-                    assert_eq!(created, dropped, "{events:?}");
-                }
-            }
-            LIVE.with(|live| assert_eq!(live.get(), 0));
+        crate::runtime::arena::LIVE.with(|live| {
+            assert_eq!(live.get(), 0);
         })
     };
     for mode in [VmMode::Jit, VmMode::Interpreter] {

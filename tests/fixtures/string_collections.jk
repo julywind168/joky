@@ -3,18 +3,12 @@ import joky/string.{type StringBuilder}
 import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/slice
-import joky/drop.{type Drop}
 import joky/eq.{type Eq}
 
 extern fn record_drop(value: Int32)
 
 struct Pair { id: Int32, left: String, right: String }
-impl Drop for Pair {
-    fn drop(&mut self) {
-        if self.left.is_empty() || self.right.is_empty() { record_drop(999) }
-        record_drop(self.id)
-    }
-}
+
 impl Eq for Pair {
     fn eq(&self, other: &Self) -> Bool { self.id / 10 == other.id / 10 }
 }

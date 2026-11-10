@@ -1,15 +1,14 @@
-import joky/drop.{type Drop}
 import joky/task
 import joky/check
 import joky/array.{type Array}
 
 fn trace(text: &String) -> Int32 { println(text); 0 }
 struct Item { id: Int32, text: String }
-impl Drop for Item { fn drop(&mut self) { trace(&self.text); self.id += 1 } }
+
 trait Value { fn value(&self) @noescape -> Int32 }
 impl Value for Item { fn value(&self) -> Int32 { self.id } }
 struct Wrapped { text: String }
-impl Drop for Wrapped { fn drop(&mut self) { trace(&self.text); } }
+
 fn keep(item: Item) @suspends -> Item { task.yield_now(); item }
 fn slow(item: Item) @suspends -> Item { while true { task.yield_now() } }
 fn keep_array(items: Array<Item>) @suspends -> Array<Item> { task.yield_now(); items }
@@ -51,7 +50,7 @@ fn failed() @suspends {
 }
 
 struct Failing { text: String }
-impl Drop for Failing { fn drop(&mut self) { trace(&self.text); check.panic("destructor failure") } }
+
 fn cleanup_failed() @suspends {
     let value = Failing { text: "cleanup-failed" }
     scope { branch { discard(value) } }

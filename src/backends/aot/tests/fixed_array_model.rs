@@ -160,12 +160,24 @@ impl Fixture {
     fn new(seeds: &[u64], rounds: usize) -> Self {
         let directory = ScratchDir::new("fixed-array-model");
         let dir = directory.path();
-        let ast = crate::parser::parse(SOURCE).unwrap();
+        // Only the public C declarations need a generated header. The model also
+        // uses a runtime resource type registered separately for execution.
+        let declarations = SOURCE
+            .lines()
+            .filter(|line| {
+                line.starts_with("import joky/fixed_array")
+                    || line.starts_with("type Row=")
+                    || line.starts_with("#repr(C)")
+                    || line.starts_with("unsafe extern")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let ast = crate::parser::parse(&declarations).unwrap();
         std::fs::write(dir.join("bindings.h"), crate::ffi::c_header(&ast).unwrap()).unwrap();
         std::fs::write(dir.join("model.h"), model_header(seeds, rounds)).unwrap();
         std::fs::write(dir.join("host.c"), HOST).unwrap();
         let path = dir.join("host.so");
-        let output = Command::new("cc")
+        let output = c_compiler()
             .args([
                 "-std=c11",
                 "-pedantic-errors",
@@ -222,14 +234,22 @@ impl Fixture {
             }
             .unwrap();
         }
+        vm.register_resource_type("ModelResource").unwrap();
         unsafe {
-            vm.register_fn(
-                "model_drop",
-                FunctionSignature::new(vec![], Type::Unit),
-                *self.library.get::<*const u8>(b"model_drop").unwrap(),
+            let descriptor = self
+                .library
+                .get::<*const crate::runtime::resource::ResourceFactoryV1>(
+                    b"__joky_resource_factory_v1_model_owner",
+                )
+                .unwrap();
+            vm.register_resource_factory(
+                "model_owner",
+                "ModelResource",
+                **descriptor,
+                Some(self.library.clone()),
             )
+            .unwrap();
         }
-        .unwrap();
         // The fixture remains alive until all VMs and tasks have been dropped.
         vm.load_source(SOURCE).unwrap_or_else(|e| {
             panic!(
@@ -271,6 +291,10 @@ impl Fixture {
     fn aot(&self, seeds: usize, rounds: i32) {
         let dir = self.directory.path();
         let mut compiler = AotCompiler::new("fixed-array-model").unwrap();
+        compiler.register_resource_type("ModelResource").unwrap();
+        compiler
+            .register_resource_factory("model_owner", "ModelResource")
+            .unwrap();
         compiler
             .compile_module(&crate::parser::parse(SOURCE).unwrap())
             .unwrap();

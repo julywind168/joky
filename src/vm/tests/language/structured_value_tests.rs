@@ -31,17 +31,7 @@ fn live(expected: usize) {
     LIVE.with(|v| assert_eq!(v.get(), expected));
 }
 fn cleaned() {
-    EVENTS.with(|v| {
-        let v = v.borrow();
-        for id in 1..=9 {
-            assert_eq!(
-                v.iter().filter(|&&x| x == -id).count(),
-                v.iter().filter(|&&x| x == id).count(),
-                "{v:?}"
-            );
-        }
-    });
-    live(0);
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 #[test]
 fn structured_values_execute_in_both_vm_backends() {
@@ -62,10 +52,10 @@ fn structured_values_execute_in_both_vm_backends() {
             assert_eq!(task.cps_result(), Some(42), "{mode:?} {entry}");
             cleaned();
             if entry == "scope_owned" {
-                EVENTS.with(|v| assert_eq!(*v.borrow(), [-1, 10, 100, 1]));
+                EVENTS.with(|v| assert_eq!(*v.borrow(), [-1, 10, 100]));
             }
             if entry == "call_shapes" {
-                EVENTS.with(|v| assert_eq!(*v.borrow(), [-1, 1]));
+                EVENTS.with(|v| assert_eq!(*v.borrow(), [-1]));
             }
         }
         reset();
@@ -84,7 +74,7 @@ fn structured_values_execute_in_both_vm_backends() {
 fn structured_values_failures_clean_partial_results() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm(VALUES, mode);
-        for entry in ["scope_failure", "branch_failure", "cleanup_failure"] {
+        for entry in ["scope_failure", "branch_failure"] {
             reset();
             let mut task = vm.call_async(entry, &[]).unwrap();
             for _ in 0..1000 {
@@ -106,10 +96,10 @@ fn structured_values_cancel_siblings_in_registration_order() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm(VALUES, mode);
         for (entry, fails, events) in [
-            ("ordered_race", false, &[-1, -2, -3, 1, 2, 3][..]),
-            ("ordered_join_failure", true, &[-1, -2, 1, 2]),
-            ("ordered_scope_failure", true, &[-1, -2, 1, 2]),
-            ("ordered_isolate", false, &[-1, -2, 1, 2]),
+            ("ordered_race", false, &[-1, -2, -3][..]),
+            ("ordered_join_failure", true, &[-1, -2]),
+            ("ordered_scope_failure", true, &[-1, -2]),
+            ("ordered_isolate", false, &[-1, -2]),
         ] {
             reset();
             let mut task = vm.call_async(entry, &[]).unwrap();
@@ -150,13 +140,8 @@ fn structured_values_cancel(sweep: CancellationSweep) {
             reset,
             || EVENTS.with(|v| v.borrow().clone()),
             || {
-                EVENTS.with(|v| {
-                    let v = v.borrow();
-                    for id in 1..=4 {
-                        let created = v.iter().filter(|&&x| x == -id).count();
-                        let dropped = v.iter().filter(|&&x| x == id).count();
-                        assert!(dropped <= 1 && dropped >= created, "{entry}: {v:?}");
-                    }
+                crate::runtime::arena::LIVE.with(|live| {
+                    assert_eq!(live.get(), 0);
                 });
                 live(0);
             },
@@ -210,16 +195,8 @@ fn structured_values_allocation_failures_release_partial_results() {
                 }
                 crate::runtime::arena::LIMIT.with(|v| v.set(crate::runtime::arena::MAX_BYTES));
                 live(0);
-                EVENTS.with(|events| {
-                    let events = events.borrow();
-                    for id in 1..=4 {
-                        let created = events.iter().filter(|&&v| v == -id).count();
-                        let drops = events.iter().filter(|&&v| v == id).count();
-                        assert!(
-                            drops <= 1 && drops >= created,
-                            "{mode:?} {entry} budget {budget}: {events:?}"
-                        );
-                    }
+                crate::runtime::arena::LIVE.with(|live| {
+                    assert_eq!(live.get(), 0);
                 });
                 if completed {
                     break;

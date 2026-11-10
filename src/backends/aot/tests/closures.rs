@@ -12,16 +12,16 @@ fn concurrent_blocks_execute_relocated_entries_and_owned_results() {
             ("blocks_join", "20,10,20,20", 4),
             ("blocks_return", "40", 1),
             ("blocks_question", "40", 1),
-            ("blocks_owned", "-1,40,1", 3),
+            ("blocks_owned", "-1,40", 2),
             ("blocks_aggregate", "39", 1),
-            ("blocks_owned_result", "-1,40,1", 3),
+            ("blocks_owned_result", "-1,40", 2),
             ("blocks_place_result", "40", 1),
             ("blocks_closure_result", "39", 1),
             ("blocks_isolated_return", "40", 1),
             ("blocks_descendants", "40", 1),
             ("blocks_borrowed", "19,19", 2),
             ("blocks_mutable", "40", 1),
-            ("blocks_race", "-1,11,41,11,1", 5),
+            ("blocks_race", "-1,11,41,11", 4),
         ],
         |_| String::new(),
     );
@@ -57,20 +57,18 @@ fn closure_owning_cleanup_executes_in_standalone_native_code() {
         extern int32_t stored_work(void), stored_unused(void), stored_replace(void), stored_failure(void), stored_drop_failure(void), stored_return_drop_failure(void), stored_empty_drop(void);
         int main(void) {
             struct Case { int32_t (*call)(void); int fails, count; int32_t events[6]; } cases[] = {
-                {stored_empty_drop, 0, 1, {7}},
-                {stored_work, 0, 4, {-1,-2,2,1}}, {stored_unused, 0, 2, {-1,1}},
-                {stored_replace, 0, 4, {-1,-2,1,2}}, {stored_failure, 1, 4, {-1,-2,1,2}},
-                {stored_return_drop_failure, 1, 4, {-1,-4,4,1}},
-                {stored_drop_failure, 1, 4, {-4,-5,4,5}},
-                {lazy_skipped, 0, 4, {-1,1,-2,2}}, {lazy_consumed, 0, 2, {-1,1}},
-                {lazy_cancellation_work, 0, 4, {-1,-2,2,1}}, {lazy_error_consumed, 0, 2, {-1,1}}, {query_owned, 0, 4, {-1,-2,2,1}},
-                {query_temporary, 0, 3, {-1,1,100}}, {lazy_failure, 1, 4, {-1,-2,1,2}},
-                {unused, 0, 4, {-1,-2,1,2}}, {consume, 0, 2, {-1,1}},
-                {repeated, 0, 2, {-1,1}}, {skipped, 0, 2, {-1,1}},
-                {consumed_helper, 0, 4, {-1,1,-2,2}}, {failure, 1, 4, {-1,-2,1,2}},
-                {cancellation_work, 0, 4, {-1,-2,2,1}}, {consume_last, 0, 6, {-1,-2,-3,3,1,2}}, {consuming_failure, 1, 6, {-1,-2,-3,1,2,3}},
-                {cleanup_failure, 1, 6, {-4,-5,-1,4,5,1}}, {failure_before_cleanup_failure, 1, 6, {-4,-5,-1,4,5,1}},
-                {argument_order, 0, 4, {100,200,300,400}}, {consuming_argument_failure, 1, 2, {-1,1}}
+                {stored_empty_drop, 0, 0, {0}},
+                {stored_work, 0, 2, {-1, -2}}, {stored_unused, 0, 1, {-1}},
+                {stored_replace, 0, 2, {-1, -2}}, {stored_failure, 1, 2, {-1, -2}},
+
+                {lazy_skipped, 0, 2, {-1, -2}}, {lazy_consumed, 0, 1, {-1}},
+                {lazy_cancellation_work, 0, 2, {-1, -2}}, {lazy_error_consumed, 0, 1, {-1}}, {query_owned, 0, 2, {-1, -2}},
+                {query_temporary, 0, 2, {-1, 100}}, {lazy_failure, 1, 2, {-1, -2}},
+                {unused, 0, 2, {-1, -2}}, {consume, 0, 1, {-1}},
+                {repeated, 0, 1, {-1}}, {skipped, 0, 1, {-1}},
+                {consumed_helper, 0, 2, {-1, -2}}, {failure, 1, 2, {-1, -2}},
+                {cancellation_work, 0, 2, {-1, -2}}, {consume_last, 0, 3, {-1, -2, -3}}, {consuming_failure, 1, 3, {-1, -2, -3}}, {failure_before_cleanup_failure, 1, 3, {-4, -5, -1}},
+                {argument_order, 0, 4, {100, 200, 300, 400}}, {consuming_argument_failure, 1, 1, {-1}}
             };
             for (unsigned run = 0; run < 10; ++run) {
                 for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); ++i) {
@@ -101,19 +99,19 @@ fn suspending_closures_execute_relocated_entries_and_cleanup() {
         "suspending-closures",
         include_str!("../../../../tests/fixtures/suspending_closures.jk"),
         &[
-            ("closure_direct", "-1,100,40,1", 4),
-            ("closure_transfer", "-1,40,1", 3),
-            ("closure_nested", "-1,-2,40,1,2", 5),
-            ("closure_argument", "-1,39,40,1", 4),
+            ("closure_direct", "-1,100,40", 3),
+            ("closure_transfer", "-1,40", 2),
+            ("closure_nested", "-1,-2,40", 3),
+            ("closure_argument", "-1,39,40", 3),
             ("closure_pointer", "41", 1),
             ("closure_named", "41", 1),
-            ("closure_unused", "-1,41,1", 3),
+            ("closure_unused", "-1,41", 2),
             ("closure_reference_argument", "40", 1),
             ("closure_factory", "41", 1),
-            ("closure_borrowed", "-1,40,1", 3),
-            ("closure_borrowed_mut", "-1,40,1", 3),
-            ("closure_borrowed_reference", "-1,40,1", 3),
-            ("closure_borrowed_unused", "-1,41,1", 3),
+            ("closure_borrowed", "-1,40", 2),
+            ("closure_borrowed_mut", "-1,40", 2),
+            ("closure_borrowed_reference", "-1,40", 2),
+            ("closure_borrowed_unused", "-1,41", 2),
             ("closure_borrowed_empty", "41", 1),
             ("closure_contextual_pointer", "41", 1),
         ],
@@ -150,7 +148,7 @@ fn suspending_closures_execute_relocated_entries_and_cleanup() {
                                 made += events[i] == -id;
                                 dropped += events[i] == id;
                             }}
-                            if (made != dropped || made > 1) return 21;
+                            if (dropped != 0 || made > 1) return 21;
                         }}
                     }}
                 "#
@@ -158,7 +156,8 @@ fn suspending_closures_execute_relocated_entries_and_cleanup() {
             }
             for name in ["closure_failure", "closure_borrowed_failure"] {
                 let slots = compiler.cps_frame_slots(name).unwrap();
-                extra.push_str(&format!(r#"
+                extra.push_str(&format!(
+                    r#"
                 {{
                     extern int32_t {name}(JokyCpsFrame *);
                     ready = 0; count = 0;
@@ -167,10 +166,11 @@ fn suspending_closures_execute_relocated_entries_and_cleanup() {
                     ready = 1;
                     if ({name}(frame) != 7) return 23;
                     joky_cps_frame_free(frame);
-                    if (count != 3 || events[0] != -1 || events[1] != 40 || events[2] != 1) return 24;
+                    if (count != 2 || events[0] != -1 || events[1] != 40) return 24;
                     joky_runtime_error_clear();
                 }}
-            "#));
+            "#
+                ));
             }
             extra
         },

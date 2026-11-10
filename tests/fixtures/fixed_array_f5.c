@@ -1,12 +1,20 @@
 #include "bindings.h"
 #include "model.h"
 #include <string.h>
+#include <stdlib.h>
+#include "joky_resource.h"
 static int selected, commands, checks, drops, rotations, invalid;
 void model_reset(int32_t index) {
     selected=index;
     commands=checks=drops=rotations=invalid=0;
 }
-void model_drop(void) { ++drops; }
+static int32_t model_create(uint64_t id, void **output) {
+    (void)id;
+    *output=malloc(1);
+    return *output ? 0 : 1;
+}
+static void model_release(void *token) { free(token); ++drops; }
+const JokyResourceFactoryV1 __joky_resource_factory_v1_model_owner={1, model_create, model_release};
 int32_t model_progress(void) { return commands+checks+drops+rotations; }
 void model_command(int32_t (*out)[4], const int32_t *step) {
     if (*step<0 || *step>=MODEL_ROUNDS || *step!=commands) {invalid=1; return;}

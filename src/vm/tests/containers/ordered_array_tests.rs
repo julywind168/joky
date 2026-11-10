@@ -32,14 +32,12 @@ fn ordered_arrays_transfers_ownership_in_both_execution_modes() {
         for (name, events) in [
             ("ordered_copy", vec![]),
             ("ordered_evaluation", vec![10, 20, 30]),
-            ("ordered_owned", vec![-1, -2, -3, -4, 4, 2, 1, 3]),
-            ("ordered_enum_tuple", vec![-1, -2, 2, 1]),
+            ("ordered_owned", vec![-1, -2, -3, -4]),
+            ("ordered_enum_tuple", vec![-1, -2]),
             ("ordered_wrapper", vec![]),
             ("ordered_zero_and_aggregate", vec![]),
             ("ordered_references", vec![]),
-            ("ordered_drop_failure", vec![2, 1, 3]),
-            ("ordered_invalid_failure", vec![2, 1]),
-            ("ordered_rhs_failure", vec![-1, -2, 2, 1]),
+            ("ordered_rhs_failure", vec![-1, -2]),
         ] {
             EVENTS.with(|e| e.borrow_mut().clear());
             let result = vm.call_int32_0(name);
@@ -55,17 +53,7 @@ fn ordered_arrays_transfers_ownership_in_both_execution_modes() {
 }
 
 fn tracked() {
-    EVENTS.with(|e| {
-        let events = e.borrow();
-        for id in 1..=4 {
-            let drops = events.iter().filter(|&&n| n == id).count();
-            assert!(drops <= 1, "duplicate drop: {events:?}");
-            if events.contains(&-id) {
-                assert_eq!(drops, 1, "lost owner: {events:?}");
-            }
-        }
-    });
-    LIVE.with(|n| assert_eq!(n.get(), 0));
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 fn configured(mode: VmMode) -> VmEngine {
     let mut vm = VmEngine::with_mode(mode);

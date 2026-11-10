@@ -26,7 +26,7 @@ mod domain_schema;
 mod domains;
 mod every;
 mod when;
-pub(crate) use cleanup::{CleanupOp, DropHook, ElementCleanup};
+pub(crate) use cleanup::{CleanupOp, ElementCleanup};
 mod constants;
 mod control_flow;
 mod descriptor_locals;
@@ -121,7 +121,7 @@ pub(crate) struct FunctionInfo {
     pub instance_entry: bool,
     /// Proved synchronous, host-free single-domain or scalar pair entry.
     pub domain_entry: bool,
-    /// A suspending request with one transferable input and a hook-free value result.
+    /// A suspending request with one transferable input and a checked value result.
     pub domain_request_entry: bool,
     /// Source-visible typed Script entry, independent of the public host ABI.
     pub script_entry: bool,
@@ -487,7 +487,7 @@ pub(crate) enum Op {
 
 impl Op {
     /// Call targets for effect propagation, including indirect-call contracts.
-    /// Function values and cleanup hooks have separate propagation rules.
+    /// Function values have separate propagation rules.
     fn callees(&self) -> impl Iterator<Item = &String> {
         let (single, branches) = match self {
             Self::Call { name, .. } | Self::TaskBranch { entry: name, .. } => (Some(name), &[][..]),
@@ -519,24 +519,12 @@ impl Op {
             } => branches = scope.as_slice(),
             _ => {}
         }
-        self.cleanups()
-            .flat_map(|cleanup| {
-                let CleanupOp::Register {
-                    hooks, elements, ..
-                } = cleanup;
-                hooks
-                    .iter()
-                    .chain(elements.iter().flat_map(|element| &element.hooks))
-            })
-            .map(|hook| &hook.name)
-            .chain(single)
-            .chain(methods)
-            .chain(
-                branches
-                    .iter()
-                    .filter(|branch| branch.indirect.is_none())
-                    .map(|branch| &branch.name),
-            )
+        single.into_iter().chain(methods).chain(
+            branches
+                .iter()
+                .filter(|branch| branch.indirect.is_none())
+                .map(|branch| &branch.name),
+        )
     }
 }
 
@@ -585,7 +573,6 @@ pub(crate) struct FunctionPlan {
     captured_fields: HashMap<usize, (Slot, Vec<String>)>,
     closure_places: HashMap<usize, Slot>,
     consuming_captures: bool,
-    pub(crate) is_destructor: bool,
     unsafe_context: bool,
     pub(crate) ops: Instructions,
     current_span: Span,
@@ -1001,7 +988,7 @@ impl ModulePlan {
         }
         let mut next = 0;
         loop {
-            // Branch bodies and drop hooks can be the only callers of lazy standard-library
+            // Branch bodies can be the only callers of lazy standard-library
             // functions. Publish them before computing the dependency closure,
             // including branches created by newly instantiated generic bodies.
             let mut tasks = std::mem::take(&mut generics.borrow_mut().generated_bodies);
@@ -1161,11 +1148,8 @@ impl ModulePlan {
                 if !functions[name].may_fail
                     && body.ops.iter().any(|op| {
                         op.cleanups().any(|cleanup| {
-                            let CleanupOp::Register {
-                                hooks, elements, ..
-                            } = cleanup;
+                            let CleanupOp::Register { elements, .. } = cleanup;
                             !elements.is_empty()
-                                || hooks.iter().any(|hook| functions[&hook.name].may_fail)
                         }) || match op {
                             Op::OutboxEmit { .. }
                             | Op::Assert { .. }
@@ -1396,17 +1380,6 @@ impl FunctionPlan {
             || f.params.iter().map(|p| p.ty.parameter_slots()).sum(),
             FunctionInfo::parameter_slots,
         );
-        let is_destructor = generics
-            .borrow()
-            .members
-            .traits
-            .definitions
-            .iter()
-            .any(|d| {
-                d.is_drop
-                    && f.name
-                        .contains(&format!("joky/impl/{}/", d.self_parameter.id))
-            });
         let task_parent = generics.borrow().task_parents.get(&f.name).cloned();
         let branch_context = task_parent
             .as_ref()
@@ -1425,7 +1398,6 @@ impl FunctionPlan {
             captured_fields: Default::default(),
             closure_places: Default::default(),
             consuming_captures: false,
-            is_destructor,
             unsafe_context: false,
             ops: Instructions::default(),
             current_span: f.span,
@@ -2222,7 +2194,6 @@ impl FunctionPlan {
             return self.enum_expr(constructor, vars, functions, suspends, types, expected);
         }
         if let Some((name, info)) = self.function_value_info(expr, vars, functions, types, true)? {
-            self.check_drop_call(&name, expr.span())?;
             let mut ty = info.function_type();
             if let (Type::Function(actual), Some(Type::Function(expected))) = (&ty, expected) {
                 if actual.signature == expected.signature && actual.suspends == expected.suspends {

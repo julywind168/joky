@@ -32,8 +32,6 @@ pub(crate) struct CompiledModule {
     /// Raw CPS request entries; source visibility is checked separately.
     pub request_entries: HashMap<String, CompiledFunction>,
     pub instance_entries: HashMap<String, CompiledFunction>,
-    pub instance_hooks:
-        HashMap<String, Vec<(crate::core::ir::DropHook, crate::runtime::cleanup::Callback)>>,
     pub(crate) parallel: crate::core::ir::parallel::Effects,
     pub(crate) parallel_entries: HashMap<String, CompiledFunction>,
     _code: Arc<Mutex<OwnedCode>>,
@@ -46,10 +44,6 @@ impl CompiledModule {
     pub(crate) fn instance_test_module(
         sources: std::sync::Arc<crate::SourceMap>,
         instance_entries: HashMap<String, CompiledFunction>,
-        instance_hooks: HashMap<
-            String,
-            Vec<(crate::core::ir::DropHook, crate::runtime::cleanup::Callback)>,
-        >,
         owner: Rc<dyn Any>,
     ) -> Self {
         Self {
@@ -60,7 +54,6 @@ impl CompiledModule {
             exports: HashMap::new(),
             request_entries: HashMap::new(),
             instance_entries,
-            instance_hooks,
             parallel: Default::default(),
             parallel_entries: HashMap::new(),
             _code: Arc::new(Mutex::new(OwnedCode(None))),
@@ -83,7 +76,6 @@ impl CompiledModule {
             request_entries: exports.clone(),
             exports,
             instance_entries,
-            instance_hooks: HashMap::new(),
             parallel: Default::default(),
             parallel_entries: HashMap::new(),
             _code: Arc::new(Mutex::new(OwnedCode(None))),
@@ -324,25 +316,6 @@ pub(crate) fn compile(
                         info,
                         abi: crate::EntryAbi::Scalar,
                     },
-                )
-            })
-            .collect(),
-        instance_hooks: compiled
-            .instance_hooks
-            .into_iter()
-            .map(|(name, hooks)| {
-                (
-                    name,
-                    hooks
-                        .into_iter()
-                        .map(|(hook, id)| {
-                            (hook, unsafe {
-                                std::mem::transmute::<*const u8, crate::runtime::cleanup::Callback>(
-                                    module.get_finalized_function(id),
-                                )
-                            })
-                        })
-                        .collect(),
                 )
             })
             .collect(),

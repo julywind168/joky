@@ -1,5 +1,4 @@
 import joky/ops.{type Add}
-import joky/drop.{type Drop}
 import joky/mem
 extern fn record(value: Int32) -> Int32
 extern fn delayed_value(value: Int32) @suspends -> Int32
@@ -25,7 +24,7 @@ fn add_values() -> Int32 {
     42
 }
 struct Owned { id: Int32, text: String }
-impl Drop for Owned { fn drop(&mut self) { record(self.id); } }
+
 fn owned(id: Int32) -> Owned { record(id + 100); Owned { id: id, text: "owner" } }
 impl Add for Owned {
     fn add(self, other: Owned) -> Owned {

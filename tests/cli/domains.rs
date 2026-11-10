@@ -31,7 +31,7 @@ fn state_domain_probe_owned_snapshots_replacement_and_cancellation_run_on_all_ba
         "probe.jk",
         include_str!("../fixtures/state_domain_probe.jk"),
     );
-    work.assert_all_backends("probe.jk", &[], b"42\n77\n99\n", 0);
+    work.assert_all_backends("probe.jk", &[], b"42\n99\n", 0);
 }
 
 #[cfg(unix)]

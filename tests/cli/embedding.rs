@@ -686,14 +686,13 @@ fn owned_script_pending_results_keep_the_starting_contract() {
 
 #[test]
 #[cfg(unix)]
-fn owned_script_rejects_mismatched_and_hooked_contracts() {
-    let imports = "import joky/array.{type Array} import joky/option.{type Option} import joky/drop.{type Drop}";
+fn owned_script_rejects_mismatched_contracts() {
+    let imports = "import joky/array.{type Array} import joky/option.{type Option} ";
     for create in ["new", "interpreter"] {
         for (types, script, input, output, value) in [
             ("", "fn exchange(v:Array<String>) @suspends ->String {let bad=1/0; \"\"}", "String", "String", "\"input\""),
             ("", "fn exchange(v:String) @suspends ->Option<String> {let bad=1/0; Option.None}", "String", "String", "\"input\""),
             ("struct Item{text:String}", "struct Item{renamed:String} fn exchange(v:Array<Item>) @suspends ->Unit {let bad=1/0}", "Array<Item>", "Unit", "Array.new::<Item>()"),
-            ("struct Item{text:String}", "struct Item{text:String} impl Drop for Item{fn drop(&mut self){}} fn exchange(v:Array<Item>) @suspends ->Unit {let bad=1/0}", "Array<Item>", "Unit", "Array.new::<Item>()"),
         ] {
             let script=format!("{imports} {script}");
             let quoted=format!("{:?}",script.replace('{',"{{").replace('}',"}}"));
@@ -711,17 +710,6 @@ fn owned_script_rejects_mismatched_and_hooked_contracts() {
             let error=String::from_utf8_lossy(&output.stderr);
             assert!(error.contains("Script entry contract mismatch") || error.contains("Function `exchange` not found"),"{error}");
         }
-    }
-    for (ty, value) in [
-        ("Array<Item>", "Array.new::<Item>()"),
-        ("(Option<Item>,)", "(Option.None,)"),
-    ] {
-        let work = Workspace::new();
-        work.write("reject.jk",&format!("import joky/vm {imports} struct Item{{text:String}} impl Drop for Item{{fn drop(&mut self){{}}}} fn main() @suspends {{let h=vm.Vm.new(); h.call::<{ty},Unit>(\"exchange\",{value});}}"));
-        failure(
-            &work.cli(&["build", "reject.jk"]),
-            "Script contracts require",
-        );
     }
 }
 

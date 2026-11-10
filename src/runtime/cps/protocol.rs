@@ -311,8 +311,6 @@ pub(crate) unsafe extern "C" fn publish(scope: u64, children: *const u64, count:
         }
         let record = &(&(*frame).task_protocol)[index];
         if use_remote {
-            let remote = record.remote.as_ref().unwrap();
-            let _capture = remote.capture_guard();
             let prepared = std::mem::take(&mut (&mut (*frame).task_protocol)[index].prepared);
             let mut factories = Vec::new();
             let mut entries = Vec::new();

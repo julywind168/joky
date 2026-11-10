@@ -1,13 +1,12 @@
 import joky/time.{ type Duration }
 import joky/task
-import joky/drop.{ type Drop }
 import joky/fixed_array.{ type FixedArray }
 extern fn record(value: Int32) -> Int32
 extern fn delayed_value(value: Int32) @suspends -> Int32
 extern fn fail_now() @suspends
 
 struct Resource { id: Int32, text: String }
-impl Drop for Resource { fn drop(&mut self) { record(self.id); } }
+
 fn resource() -> Resource { let r = Resource { id: 1, text: "owned" }; record(-1); r }
 
 fn duration_values() -> Int32 {

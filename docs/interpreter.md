@@ -115,7 +115,7 @@ borrow type in the semantic plan, so source paths and permissions survive erasur
 Both registers, activation-owned storage and the module remain alive during
 interpreter time slices. Language suspension and concurrent branches still reject
 active dyn views; interpreter slicing does not extend the language lifetime rules.
-Method failure and cancellation use ordinary owner cleanup; a dyn table has no Drop entry.
+Method failure and cancellation use ordinary owner cleanup; a dyn table has no ownership cleanup entry.
 Explicit shared/exclusive reborrows copy both registers through `Reference`, retaining
 all object origins and paths in the shared semantic plan. A synchronous dyn segment
 may finish between language suspension points; it cannot carry a live view through one.
@@ -407,7 +407,7 @@ Timer primitives arm the actual polling task's monotonic deadline; idle workers
 wait on the pool condition variable without polling the parent tree. Existing
 instruction limits remain per execution; the root storage budget and live-task
 limit bound aggregate admission. Local resources, reference packets, List/Map/Set,
-FixedArray, custom Drop and unknown hosts are rejected before execution. Godot stays Local. See the
+FixedArray and unknown hosts are rejected before execution. Godot stays Local. See the
 [current capability table](task-parallel-executor.md#141-当前支持表).
 
 The following tree-polling rules describe the default Local execution mode.

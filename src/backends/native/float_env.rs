@@ -27,7 +27,7 @@ impl Effects {
         // buffer.rs: integer header/cursor operations and checked addresses,
         // never element arithmetic, ownership cleanup or user callbacks. Bounds
         // failures only construct/record the ordinary owned Error metadata.
-        // In particular Store/Truncate/Replace/Release may run cleanup hooks and
+        // In particular Store/Truncate/Replace/Release may release resources and
         // must not be admitted along with the address-only Load operations.
         let names = [
             "__joky_buffer_len",
@@ -191,7 +191,7 @@ pub(super) fn instrument<M: Module>(
             cursor.ins().call(restore, &[saved]);
         } else if external_call(cursor.func, inst) && !effects.preserves(cursor.func, inst) {
             // This includes indirect and CPS calls, as well as runtime helpers
-            // that may invoke a host poll, stop, text release or Drop hook.
+            // that may invoke a host poll, stop, text or resource release.
             cursor.goto_after_inst(inst);
             cursor.ins().call(reset, &[]);
         }

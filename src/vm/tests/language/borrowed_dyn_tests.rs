@@ -198,12 +198,11 @@ fn borrowed_dyn_v2_owners_and_arguments_clean_up_on_success_and_failure() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = lifecycle_vm(mode);
         for (entry, expected) in [
-            ("dyn_success", &[10, 8, 7][..]),
-            ("dyn_order", &[20, 22, 30, 7][..]),
-            ("dyn_failure", &[10, 8, 7][..]),
-            ("dyn_argument", &[8, 7][..]),
-            ("dyn_argument_failure", &[8, 7][..]),
-            ("dyn_argument_drop_failure", &[9, 7][..]),
+            ("dyn_success", &[10][..]),
+            ("dyn_order", &[20, 22, 30][..]),
+            ("dyn_failure", &[10][..]),
+            ("dyn_argument", &[][..]),
+            ("dyn_argument_failure", &[][..]),
         ] {
             EVENTS.with(|events| events.borrow_mut().clear());
             let result = vm.call_int32_0(entry);
@@ -256,7 +255,7 @@ fn borrowed_dyn_v2_time_slices_cancel_and_preserve_old_code() {
             assert_eq!(task.cps_result(), Some(42));
         }
         drop(task);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [10, 8, 7]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [10]));
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
         vm = lifecycle_vm(VmMode::Interpreter);
         vm.set_interpreter_limits(super::InterpreterLimits {
@@ -293,14 +292,15 @@ fn exhaustive_borrowed_dyn_v2_instruction_cancellation() {
         drop(task);
         EVENTS.with(|events| {
             let events = events.borrow();
-            for event in [10, 8, 7] {
+            {
+                let event = 10;
                 assert!(
                     events.iter().filter(|&&v| v == event).count() <= 1,
                     "boundary {boundary}: {events:?}"
                 );
             }
             if completed || events.contains(&10) {
-                assert_eq!(*events, [10, 8, 7], "boundary {boundary}");
+                assert_eq!(*events, [10], "boundary {boundary}");
             }
         });
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0, "boundary {boundary}"));
@@ -345,7 +345,8 @@ fn borrowed_dyn_v2_budget_failure_cleans_up_dynamic_frames() {
         drop(task);
         EVENTS.with(|events| {
             let events = events.borrow();
-            for event in [10, 8, 7] {
+            {
+                let event = 10;
                 assert!(events.iter().filter(|&&v| v == event).count() <= 1);
             }
         });
@@ -378,9 +379,9 @@ fn borrowed_dyn_v2_pending_cancellation_and_reachable_method_code() {
             cancelled.resume().unwrap();
             assert!(cancelled.cps_result().is_none());
         }
-        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 8, 7, 41]));
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 41]));
         drop(cancelled);
-        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 8, 7, 41]));
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 41]));
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
         EVENTS.with(|e| e.borrow_mut().clear());
         let mut old = vm.call_async("dyn_after_pending", &[]).unwrap();
@@ -394,7 +395,7 @@ fn borrowed_dyn_v2_pending_cancellation_and_reachable_method_code() {
         assert_eq!(old.cps_result(), Some(42));
         assert_eq!(new.cps_result(), Some(99));
         drop((old, new));
-        EVENTS.with(|e| assert_eq!(*e.borrow(), [41, 41, 10, 8, 7, 10, 8, 7]));
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [41, 41, 10, 10]));
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }
@@ -477,7 +478,7 @@ fn borrowed_dyn_v2_failure_keeps_first_error_during_failing_drop() {
         EVENTS.with(|e| e.borrow_mut().clear());
         let error = vm.call_int32_0("dyn_failure").unwrap_err();
         assert!(error.message().contains("zero"), "{error}");
-        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 8, 7]));
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [10]));
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }
@@ -563,7 +564,7 @@ fn borrowed_dyn_v3_synchronous_local_segments_in_tasks_clean_up() {
         let task = vm.call_async("dyn_local_task", &[]).unwrap();
         assert_eq!(task.cps_result(), Some(42));
         drop(task);
-        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 8]));
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [10]));
         READY.with(|r| r.set(false));
         EVENTS.with(|e| e.borrow_mut().clear());
         let mut task = vm.call_async("dyn_local_between_pending", &[]).unwrap();
@@ -574,7 +575,7 @@ fn borrowed_dyn_v3_synchronous_local_segments_in_tasks_clean_up() {
         }
         assert_eq!(task.cps_result(), Some(42));
         drop(task);
-        EVENTS.with(|e| assert_eq!(*e.borrow(), [41, 10, 8, 41]));
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [41, 10, 41]));
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }
@@ -597,7 +598,7 @@ fn borrowed_dyn_v3_instance_views_keep_original_owners_and_snapshots() {
                 V::Int32(42)
             );
             assert_eq!(vm.instance_bytes(), bytes);
-            EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 8, 8]));
+            EVENTS.with(|e| assert_eq!(*e.borrow(), [10]));
         }
         assert!(vm.load_source("fn invalid(v: &dyn Missing) {}").is_err());
         vm.load_source(&LIFECYCLE.replace("42 / divisor", "99 / divisor"))
@@ -623,7 +624,7 @@ fn borrowed_dyn_v3_instance_views_keep_original_owners_and_snapshots() {
             V::Int32(99)
         );
         drop(vm);
-        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 8, 10, 8, 10, 8, 7, 8, 7]));
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 10, 10]));
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }
@@ -656,7 +657,8 @@ fn dyn_memory_sweep(step: usize) {
                 }
                 EVENTS.with(|e| {
                     let events = e.borrow();
-                    for id in [10, 8, 7] {
+                    {
+                        let id = 10;
                         assert!(
                             events.iter().filter(|&&e| e == id).count() <= 1,
                             "{mode:?}/{entry}/{limit}: {events:?}"
@@ -666,9 +668,9 @@ fn dyn_memory_sweep(step: usize) {
                         assert_eq!(
                             *events,
                             if entry == "dyn_success" {
-                                vec![10, 8, 7]
+                                vec![10]
                             } else {
-                                vec![8, 7]
+                                vec![]
                             }
                         );
                     }
@@ -698,7 +700,7 @@ fn borrowed_dyn_v4_method_capacity_failure_releases_original_owner() {
         EVENTS.with(|e| e.borrow_mut().clear());
         let error = vm.call_int32_0("dyn_large_failure").unwrap_err();
         assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
-        EVENTS.with(|e| assert_eq!(*e.borrow(), [7]));
+        EVENTS.with(|e| assert!((*e.borrow()).is_empty()));
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
         assert_eq!(vm.call_int32_0("dyn_success").unwrap(), 42);
     }
@@ -736,15 +738,7 @@ fn dyn_instance_budget_sweep(step: usize) {
                 assert_eq!(vm.instance_bytes(), 0);
                 assert_eq!(vm.instance_peak_bytes(), 0);
                 crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
-                EVENTS.with(|e| {
-                    let events = e.borrow();
-                    assert_eq!(
-                        events.iter().filter(|&&e| e == 7).count(),
-                        1,
-                        "{mode:?}/{method}/{limit}: {events:?}"
-                    );
-                    assert!(events.iter().filter(|&&e| e == 8).count() <= 1);
-                });
+
                 if completed {
                     break;
                 }
@@ -809,11 +803,11 @@ fn dyn_instruction_sweep(exhaustive: bool) {
     })
     .unwrap();
     for (entry, final_events) in [
-        ("dyn_task", &[10, 8, 7][..]),
-        ("dyn_local_task", &[10, 8][..]),
-        ("dyn_argument_task", &[8, 7][..]),
-        ("dyn_order_task", &[20, 22, 30, 7][..]),
-        ("dyn_failure_task", &[10, 8, 7][..]),
+        ("dyn_task", &[10][..]),
+        ("dyn_local_task", &[10][..]),
+        ("dyn_argument_task", &[][..]),
+        ("dyn_order_task", &[20, 22, 30][..]),
+        ("dyn_failure_task", &[10][..]),
     ] {
         let mut completed = false;
         for boundary in (0..1024).step_by(if exhaustive { 1 } else { 11 }) {
@@ -899,7 +893,7 @@ fn borrowed_dyn_v4_old_table_survives_argument_evaluation_and_failed_reload() {
     }
     assert_eq!(task.cps_result(), Some(42));
     drop(task);
-    EVENTS.with(|e| assert_eq!(*e.borrow(), [20, 22, 30, 7]));
+    EVENTS.with(|e| assert_eq!(*e.borrow(), [20, 22, 30]));
     crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 

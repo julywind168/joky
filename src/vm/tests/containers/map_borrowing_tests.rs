@@ -58,7 +58,7 @@ fn map_borrowing_executes_views_replacement_and_shared_contents() {
                     assert_eq!(
                         *events.borrow(),
                         if name == "owned_views" {
-                            vec![-1, -2, 2, 1]
+                            vec![-1, -2]
                         } else {
                             vec![]
                         }
@@ -100,7 +100,7 @@ fn map_borrowing_missing_keys_report_calls_and_clean_stored_owners() {
                 assert_eq!(
                     *events.borrow(),
                     if name.contains("owner") {
-                        vec![-1, 1]
+                        vec![-1]
                     } else {
                         vec![]
                     }
@@ -199,17 +199,7 @@ fn map_borrowing_cross_module_generic_aliases_preserve_view_and_content_origins(
 }
 
 fn assert_cleaned() {
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        for id in [1, 2] {
-            let drops = events.iter().filter(|&&n| n == id).count();
-            assert!(drops <= 1, "duplicate drop: {events:?}");
-            if events.contains(&-id) {
-                assert_eq!(drops, 1, "lost owner: {events:?}");
-            }
-        }
-    });
-    LIVE.with(|n| assert_eq!(n.get(), 0));
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 #[test]
 fn map_borrowing_cancellation_and_exhaustion_clean_replaced_owners() {

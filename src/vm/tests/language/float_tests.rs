@@ -192,12 +192,7 @@ mod environment {
                     assert_eq!(testing::state(), saved, "{mode:?} resume");
                 }
                 drop(task);
-                let expected = if cancel {
-                    vec![]
-                } else {
-                    vec![0x8000000000000]
-                };
-                assert_eq!(OBSERVED.with(|v| v.borrow().clone()), expected);
+                assert!(OBSERVED.with(|v| v.borrow().is_empty()));
                 assert_eq!(STOPS.with(Cell::get), 1);
                 assert_eq!(testing::state(), saved, "{mode:?} cleanup");
             }
@@ -210,7 +205,7 @@ mod environment {
             };
             assert_eq!(value.to_bits(), 0x8000000000000);
             vm.close_instance(id).unwrap();
-            assert_eq!(OBSERVED.with(|v| v.borrow().clone()), [0x4000000000000]);
+            assert!(OBSERVED.with(|v| v.borrow().is_empty()));
             assert_eq!(testing::state(), saved, "{mode:?} instance");
             VM.with(|v| v.set(std::ptr::null()));
         }

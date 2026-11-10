@@ -1408,7 +1408,6 @@ impl VmEngine {
                                     storage_size: 0,
                                     storage: None,
                                     owners: [Some(owner)].into(),
-                                    hooks: vec![],
                                 },
                             );
                         }

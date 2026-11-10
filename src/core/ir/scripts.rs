@@ -32,9 +32,9 @@ impl FunctionPlan {
         } else {
             let contract = crate::core::script::domain_schema(ty).filter(|_| self.domain_value(ty));
             contract.ok_or_else(|| type_error(&span, ErrorCode::InvalidCall, if domain {
-                "Domain contracts require bounded values without Drop: scalars, String, Array, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"
+                "Domain contracts require bounded values: scalars, String, Array, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"
             } else {
-                "Script contracts require bounded values without Drop: scalars, String, Array, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"
+                "Script contracts require bounded values: scalars, String, Array, tuples, concrete records or enums (at most 64 contract members, 64 lanes and 8 aggregate levels)"
             }))?
         };
         if matches!(kind, CompilerIntrinsic::ScriptSchema(_)) {

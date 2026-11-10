@@ -1,10 +1,6 @@
 import joky/array
-import joky/drop.{type Drop}
-
 struct Item { id: Int32, values: Array<Int32> }
-impl Drop for Item {
-    fn drop(&mut self) { println(self.id) }
-}
+
 impl Item {
     fn stored(&self) -> Int32 { self.values[0] }
 }
@@ -18,5 +14,5 @@ fn main() {
     let last = items.take_last()
     let first = items.take_last()
     println(answer)
-    // first and last run Drop in reverse declaration order: 20, then 22.
+    // Removed elements keep their own storage until their scope ends.
 }

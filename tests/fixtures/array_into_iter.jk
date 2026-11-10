@@ -2,14 +2,13 @@ import joky/array.{type Array, type IntoIter}
 import joky/iter.{type Iterator, next, range}
 import joky/option.{type Option, Some, None}
 import joky/check.{assert}
-import joky/drop.{type Drop}
 import joky/mem
 extern fn record(x: Int32) -> Int32
 
 fn expect(ok: Bool) { assert(ok, "Array iterator mismatch") }
 struct Point { value: Int32 }
 struct Owned { id: Int32, data: Array<Int32> }
-impl Drop for Owned { fn drop(&mut self) { record(self.id); } }
+
 fn owned(id: Int32) -> Owned {
     let value = Owned { id: id, data: [id] }
     record(-id)

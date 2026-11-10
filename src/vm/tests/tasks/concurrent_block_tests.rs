@@ -8,16 +8,16 @@ const CASES: &[(&str, &[i32])] = &[
     ("blocks_join", &[20, 10, 20, 20]),
     ("blocks_return", &[40]),
     ("blocks_question", &[40]),
-    ("blocks_owned", &[-1, 40, 1]),
+    ("blocks_owned", &[-1, 40]),
     ("blocks_aggregate", &[39]),
-    ("blocks_owned_result", &[-1, 40, 1]),
+    ("blocks_owned_result", &[-1, 40]),
     ("blocks_place_result", &[40]),
     ("blocks_closure_result", &[39]),
     ("blocks_isolated_return", &[40]),
     ("blocks_descendants", &[40]),
     ("blocks_borrowed", &[19, 19]),
     ("blocks_mutable", &[40]),
-    ("blocks_race", &[-1, 11, 41, 11, 1]),
+    ("blocks_race", &[-1, 11, 41, 11]),
 ];
 
 #[test]
@@ -139,7 +139,7 @@ fn concurrent_blocks_cancel_and_fail_without_leaking_captures() {
             EVENTS.with(|e| e.borrow_mut().clear());
             let task = vm.call_async(name, &[]).unwrap();
             drop(task);
-            EVENTS.with(|e| assert_eq!(*e.borrow(), [-1, 40, 1]));
+            EVENTS.with(|e| assert_eq!(*e.borrow(), [-1, 40]));
             LIVE.with(|n| assert_eq!(n.get(), 0));
         }
         READY.with(|r| r.set(false));
@@ -148,7 +148,7 @@ fn concurrent_blocks_cancel_and_fail_without_leaking_captures() {
         READY.with(|r| r.set(true));
         assert!(task.resume().is_err());
         drop(task);
-        EVENTS.with(|e| assert_eq!(*e.borrow(), [-1, 40, 1]));
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [-1, 40]));
         LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }
@@ -176,13 +176,8 @@ fn cancellation(sweep: CancellationSweep) {
             || EVENTS.with(|e| e.borrow().clone()),
             || {
                 LIVE.with(|n| assert_eq!(n.get(), 0));
-                EVENTS.with(|e| {
-                    let e = e.borrow();
-                    let drops = e.iter().filter(|&&v| v == 1).count();
-                    assert!(drops <= 1, "{name}: {e:?}");
-                    if e.contains(&-1) {
-                        assert_eq!(drops, 1, "{name}: {e:?}");
-                    }
+                crate::runtime::arena::LIVE.with(|live| {
+                    assert_eq!(live.get(), 0);
                 });
             },
         );

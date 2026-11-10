@@ -1,8 +1,7 @@
-import joky/drop.{type Drop}
 import joky/fixed_array
 extern fn note(value: Int32)
 struct Guard { id: Int32, owned: String }
-impl Drop for Guard { fn drop(&mut self) { note(self.id); if self.id == -2 { let message = "callback cleanup failed"; assert(false, &message) } } }
+
 fn construct() -> Int32 {
     let guard = Guard { id: -1, owned: "callback" }
     let a = fixed_array.from_fn::<Int32, 4>(move |index: UInt64| { note(int32(index) + 1); 42 + guard.id + 1 })

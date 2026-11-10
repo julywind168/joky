@@ -87,9 +87,9 @@ fn conditional_patterns_release_owned_bindings_on_completion_failure_and_cancel(
             if outcome.starts_with("cancel") {
                 drop(task);
                 let expected = if outcome == "cancel_loop" {
-                    vec![90, -9, 9, -10, -10, 10]
+                    vec![90, -9, -10, -10]
                 } else {
-                    vec![90, 90, 9]
+                    vec![90, 90]
                 };
                 assert_eq!(EVENTS.with(|events| events.borrow().clone()), expected);
             } else {
@@ -107,15 +107,12 @@ fn conditional_patterns_release_owned_bindings_on_completion_failure_and_cancel(
                 assert!(task.is_finished());
                 assert_eq!(failed, outcome == "fail");
                 if failed {
-                    assert_eq!(
-                        EVENTS.with(|events| events.borrow().clone()),
-                        [90, 90, -9, 9]
-                    );
+                    assert_eq!(EVENTS.with(|events| events.borrow().clone()), [90, 90, -9]);
                 } else {
                     assert_eq!(task.cps_result(), Some(42));
                     assert_eq!(
                         EVENTS.with(|events| events.borrow().clone()),
-                        [90, 90, -9, 9, -10, -10, 10, -11, -11, 11]
+                        [90, 90, -9, -10, -10, -11, -11]
                     );
                 }
                 drop(task);

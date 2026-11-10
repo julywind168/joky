@@ -1,13 +1,7 @@
 import joky/array.{type Array}
-import joky/drop.{type Drop}
 extern fn note(value: Int32)
 struct Guard { id: Int32, text: String, fails: Bool }
-impl Drop for Guard {
-    fn drop(&mut self) {
-        note(0 - self.id)
-        if self.fails { let zero = 0; let failure = 1 / zero; }
-    }
-}
+
 fn make(id: Int32) -> Guard {
     let value = Guard { id: id, text: "owned", fails: false }
     note(id)

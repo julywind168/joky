@@ -1,10 +1,9 @@
 import joky/array.{type Array}
-import joky/drop.{type Drop}
 import joky/task
 
 extern fn record_drop(id: Int32)
 struct Owned { bytes: Array<Int32>, id: Int32 }
-impl Drop for Owned { fn drop(&mut self) { record_drop(self.id) } }
+
 fn make(id: Int32) -> Owned { Owned { bytes: [id], id: id } }
 fn hold(local: &mut Int32, value: &mut Owned) @suspends {
     let child = make(2)

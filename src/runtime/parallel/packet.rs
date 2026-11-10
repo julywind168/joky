@@ -81,14 +81,12 @@ impl Shape {
                     Shape::Product(fields)
                 }
                 Type::Record(r) if !r.indirect && r.closure.is_none() => {
-                    let mut fields = r
+                    let fields = r
                         .fields
                         .iter()
                         .map(|f| build(&f.ty, depth + 1))
                         .collect::<Result<Vec<_>, _>>()?;
-                    if r.drop_anchor().is_some() {
-                        fields.push(Shape::EmptyOwner);
-                    }
+
                     Shape::Product(fields)
                 }
                 Type::Enum(e) if !e.indirect && !e.variants.is_empty() => Shape::Sum(
@@ -329,7 +327,6 @@ pub(crate) struct Packet {
     pub(crate) words: Vec<u64>,
     owners: Vec<(usize, OwnedBuffer)>,
     place: Option<Vec<u64>>,
-    cleanup: Option<super::portable::Payload>,
     _charge: Option<Lease>,
 }
 impl Packet {
@@ -351,7 +348,6 @@ impl Packet {
             words: vec![0; lanes],
             owners: Vec::with_capacity(owners),
             place: None,
-            cleanup: None,
             _charge: charge,
         })
     }
@@ -363,45 +359,10 @@ impl Packet {
     /// here. Adopted owning lanes are cleared in the exclusively writable source.
     pub(crate) unsafe fn capture(
         shape: Shape,
-        words: Vec<u64>,
-        entry: Option<Entry>,
-        arena: &mut Arena,
-    ) -> Result<Self, Error> {
-        Self::capture_value(shape, words, entry, arena, false)
-    }
-    pub(crate) unsafe fn capture_value(
-        shape: Shape,
         mut words: Vec<u64>,
         mut entry: Option<Entry>,
         arena: &mut Arena,
-        returned: bool,
     ) -> Result<Self, Error> {
-        let portable = entry
-            .as_ref()
-            .map_or(Ok(false), |e| super::portable::Payload::needed(e, arena));
-        match portable {
-            Ok(false) => {}
-            result => {
-                let captured = (|| {
-                    result?;
-                    shape.normalize(&mut words)?;
-                    let mut packet = Self::empty(shape)?;
-                    packet.cleanup = Some(super::portable::Payload::capture(
-                        entry.as_ref().unwrap(),
-                        arena,
-                        returned,
-                    )?);
-                    packet.words = words;
-                    Ok(packet)
-                })();
-                if captured.is_err() {
-                    if let Some(entry) = entry {
-                        let _ = entry.run(arena);
-                    }
-                }
-                return captured;
-            }
-        }
         if let Some(entry) = &mut entry {
             entry.materialize();
         }
@@ -479,7 +440,6 @@ impl Packet {
                 .iter()
                 .map(|&i| NonNull::new(words[i] as *mut Buffer).map(NonNull::as_ptr))
                 .collect(),
-            hooks: vec![],
         };
         Self::capture(shape, words, Some(entry), arena)
     }
@@ -490,11 +450,6 @@ impl Packet {
         base: usize,
         key: Option<usize>,
     ) -> Result<Vec<u64>, Error> {
-        if let Some(cleanup) = self.cleanup.take() {
-            let key = key.unwrap_or(base + self.shape.owners()[0]);
-            cleanups.insert(key, cleanup.install(arena)?);
-            return Ok(self.words);
-        }
         if let Shape::Place(layout) = &self.shape {
             let destination =
                 cleanups
@@ -515,7 +470,6 @@ impl Packet {
                 storage_size: 0,
                 storage: None,
                 owners: (0..indices.len()).map(|_| None).collect(),
-                hooks: vec![],
             };
             for (index, owner) in &mut self.owners {
                 match owner.take(arena) {

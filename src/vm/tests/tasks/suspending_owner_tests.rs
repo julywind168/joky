@@ -11,16 +11,8 @@ fn reset() {
     EVENTS.with(|e| e.borrow_mut().clear());
 }
 fn check() {
-    EVENTS.with(|e| {
-        let e = e.borrow();
-        for id in [1, 2, 3, 9] {
-            let created = e.iter().filter(|&&n| n == -id).count();
-            let dropped = e.iter().filter(|&&n| n == id).count();
-            if created > 0 {
-                assert_eq!(created, dropped, "{e:?}");
-            }
-            assert!(dropped <= 1, "{e:?}");
-        }
+    crate::runtime::arena::LIVE.with(|live| {
+        assert_eq!(live.get(), 0);
     });
     crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
@@ -75,8 +67,7 @@ fn suspending_owners_move_results_and_cancel_without_replaying_drops() {
                     assert!(task.is_finished(), "{mode:?} {entry}");
                     Ok(task.cps_result())
                 })();
-                let expected_failure =
-                    ["dynamic_failure", "failed_return", "failure"].contains(&entry);
+                let expected_failure = ["dynamic_failure", "failure"].contains(&entry);
                 if !cancel {
                     assert_eq!(
                         result.is_err(),

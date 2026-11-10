@@ -2,19 +2,18 @@ import joky/fixed_array.{type FixedArray}
 import joky/array.{type Array}
 import joky/slice
 import joky/mem
-import joky/drop.{type Drop}
 type Row=FixedArray<Int32,8>
 #repr(C) struct Pair { rows:FixedArray<Row,2> }
-struct Guard { text:String }
-extern fn model_drop()
-impl Drop for Guard { fn drop(&mut self) { model_drop() } }
+struct Guard { text:String, resource: ModelResource }
+extern fn model_owner(id:UInt64) -> ModelResource
+
 unsafe extern "C" fn model_command(out:&mut FixedArray<Int32,4>, step:&Int32)
 unsafe extern "C" fn model_check(value:&Row, saved:&Row, step:&Int32)->Int32
 unsafe extern "C" fn model_rotate(value:&mut Row, delta:&Int32)->Int32
 fn identity<T>(value:T)->T {value}
 fn indirect(f:fn(Row)->Row, value:Row)->Row {f(value)}
 fn iteration(input:Row, snapshot:Row, scratch:FixedArray<Row,32>, step:Int32)->(Row,Row) {
-    let guard=Guard{text:"model"}
+    let guard=Guard{text:"model", resource:model_owner(0)}
     // Reclaimed every iteration; retaining these payloads would exceed the test budget.
     if *scratch.borrow_ref(31).borrow_ref(7)!=42 {1/0;}
     var command=fixed_array.repeat::<Int32,4>(0)

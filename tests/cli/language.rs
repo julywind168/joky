@@ -63,10 +63,7 @@ fn for_iterators_execute_in_standalone_aot() {
             .output()
             .unwrap();
         success(&output);
-        assert_eq!(
-            output.stdout,
-            b"3\n-1\n1\n-2\n2\n99\n-1\n1\n-2\n2\n-3\n3\n99\n-1\n1\n99\n42\n"
-        );
+        assert_eq!(output.stdout, b"3\n-1\n-2\n-1\n-2\n-3\n-1\n42\n");
     }
     work.write(
         "failure.jk",
@@ -76,7 +73,7 @@ fn for_iterators_execute_in_standalone_aot() {
     let output = Command::new(work.path().join("failure")).output().unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("Division by zero"));
-    assert_eq!(output.stdout, b"-1\n1\n99\n");
+    assert_eq!(output.stdout, b"-1\n");
 }
 
 #[test]
@@ -91,10 +88,10 @@ fn string_storage_probe_executes_ownership_and_failures_in_standalone_aot() {
         "success.jk",
         "import probe fn main() { probe.report(probe.success()); probe.report(probe.transfer()) }",
     );
-    work.assert_native("success.jk", &[], b"-1\n1\n42\n901\n903\n42\n", 0);
+    work.assert_native("success.jk", &[], b"-1\n42\n901\n903\n42\n", 0);
     for (entry, expected, message) in [
-        ("failure", "-2\n2\n", "Storage probe failure"),
-        ("tight_failure", "-3\n902\n3\n", "Primary probe failure"),
+        ("failure", "-2\n", "Storage probe failure"),
+        ("tight_failure", "-3\n902\n", "Primary probe failure"),
     ] {
         work.write(
             "failure.jk",
@@ -649,10 +646,9 @@ fn checked_failure_runs_and_reports_owned_messages_on_all_backends() {
     work.write("checked_failure.jk", source);
     work.assert_all_backends("checked_failure.jk", &[], b"10\n20\n42\n", 0);
     for (name, message, events) in [
-        ("check_failure", "Requested failure", "10\n20\n1\n"),
-        ("check_argument_failure", "Condition failure", "2\n"),
-        ("check_drop_failure", "Drop failure", "4\n3\n"),
-        ("check_first_failure", "First failure", "5\n"),
+        ("check_failure", "Requested failure", "10\n20\n"),
+        ("check_argument_failure", "Condition failure", ""),
+        ("check_first_failure", "First failure", ""),
         ("check_indirect", "Indirect failure", ""),
     ] {
         let source = source.replace("fn main()", "fn successful_main()")
@@ -686,13 +682,13 @@ fn panic_divergence_and_cleanup_match_all_backends() {
     );
     work.assert_all_backends("panic.jk", &["--no-prelude"], b"42\n", 0);
     for (name, message, events, suspends) in [
-        ("panic_cleanup", "Primary panic 42", "10\n2\n1\n", false),
+        ("panic_cleanup", "Primary panic 42", "10\n", false),
         ("panic_argument", "Argument failure", "11\n", false),
         ("panic_match", "Missing value", "", false),
         ("panic_both", "Both branches", "", false),
         ("panic_return", "Return operand", "", false),
         ("panic_indirect", "Indirect panic", "", false),
-        ("panic_task", "Task panic", "3\n", true),
+        ("panic_task", "Task panic", "", true),
     ] {
         let effect = if suspends { "@suspends" } else { "" };
         work.write(
@@ -1000,12 +996,11 @@ fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
-fn automatic_shared_argument_temporaries_drop_at_the_call_boundary() {
+fn automatic_shared_argument_temporaries_preserve_evaluation_and_failures() {
     let work = Workspace::new();
     let definitions = r#"
-        import joky/drop.{type Drop}
         struct Resource { text: String }
-        impl Drop for Resource { fn drop(&mut self) { println("drop") } }
+
         fn make() -> Resource { println("make"); Resource { text: "owned" } }
         fn inspect(value: &Resource) @noescape -> String { value.text.clone() }
         fn explode(value: &Resource) @noescape { 1 / 0; }
@@ -1016,16 +1011,8 @@ fn automatic_shared_argument_temporaries_drop_at_the_call_boundary() {
         "lifetime.jk",
         &format!("{definitions} fn main() {{ let result = inspect(make()); println(result) }}"),
     );
-    work.assert_all_backends("lifetime.jk", &[], b"make\ndrop\nowned\n", 0);
-    let failing_drop = definitions.replace("println(\"drop\") }", "println(\"drop\"); 1 / 0; }");
-    for (definitions, entry) in [
-        (definitions, "explode(make())"),
-        (definitions, "pair(make(), fail())"),
-        (
-            failing_drop.as_str(),
-            "let result = inspect(make()); println(result)",
-        ),
-    ] {
+    work.assert_all_backends("lifetime.jk", &[], b"make\nowned\n", 0);
+    for entry in ["explode(make())", "pair(make(), fail())"] {
         work.write(
             "failure_auto.jk",
             &format!("{definitions} fn main() {{ {entry} }}"),
@@ -1039,7 +1026,7 @@ fn automatic_shared_argument_temporaries_drop_at_the_call_boundary() {
                 .unwrap(),
         ] {
             assert!(!output.status.success(), "{output:?}");
-            assert_eq!(output.stdout, b"make\ndrop\n");
+            assert_eq!(output.stdout, b"make\n");
             assert!(
                 String::from_utf8_lossy(&output.stderr).contains("zero"),
                 "{output:?}"
@@ -1053,11 +1040,10 @@ fn automatic_shared_argument_temporaries_drop_at_the_call_boundary() {
 fn suspending_shared_arguments_keep_owners_until_completion_or_cleanup() {
     let work = Workspace::new();
     let definitions = r#"
-        import joky/drop.{type Drop}
         import joky/task
         import joky/show.{type Show}
         struct Resource { text: String }
-        impl Drop for Resource { fn drop(&mut self) { println("drop") } }
+
         fn make() -> Resource { println("make"); Resource { text: "owned" } }
         fn inspect(value: &Resource) @suspends -> String {
             task.yield_now(); task.yield_now(); value.text.clone()
@@ -1109,11 +1095,11 @@ fn suspending_shared_arguments_keep_owners_until_completion_or_cleanup() {
     );
     work.assert_all_backends(
         "async_borrow.jk", &[],
-        b"make\ndrop\nowned\nmake\nowned\nowned\nowned\ntrue\nmake\ndrop\nmake\ndrop\ncancelled\nmake\ndrop\nblock cancelled\ndrop\n", 0,
+        b"make\nowned\nmake\nowned\nowned\nowned\ntrue\nmake\nmake\ncancelled\nmake\nblock cancelled\n", 0,
     );
     for (entry, expected) in [
-        ("explode(make())", b"make\nowned\ndrop\n".as_slice()),
-        ("pair(make(), fail())", b"make\ndrop\n".as_slice()),
+        ("explode(make())", b"make\nowned\n".as_slice()),
+        ("pair(make(), fail())", b"make\n".as_slice()),
     ] {
         work.write(
             "async_failure.jk",
@@ -1280,9 +1266,8 @@ fn record_patterns_run_and_reject_invalid_patterns_on_all_frontends() {
 fn record_patterns_borrow_drop_payloads_without_moving_them() {
     let work = Workspace::new();
     let source = r#"
-        import joky/drop.{type Drop}
         struct Resource { name: String, score: Int32 }
-        impl Drop for Resource { fn drop(&mut self) { println(99) } }
+
         enum Entry { Value(Resource) }
         fn inspect(value: &Entry) -> Int32 {
             match value { Value(Resource { name, score }) => int32(name.byte_length()) + score }
@@ -1294,14 +1279,14 @@ fn record_patterns_borrow_drop_payloads_without_moving_them() {
         }
     "#;
     work.write("borrowed.jk", source);
-    work.assert_all_backends("borrowed.jk", &[], b"42\n42\n99\n", 0);
+    work.assert_all_backends("borrowed.jk", &[], b"42\n42\n", 0);
     work.write(
         "moved.jk",
         &source
             .replace("value: &Entry", "value: Entry")
             .replace("inspect(&entry)", "inspect(entry)"),
     );
-    failure(&work.cli(&["build", "moved.jk"]), "implementing Drop");
+    failure(&work.cli(&["build", "moved.jk"]), "moved");
 }
 
 #[test]
@@ -1455,7 +1440,7 @@ fn conditional_patterns_run_on_all_backends() {
         work.assert_all_backends(
             "conditional.jk",
             &[],
-            b"0\n1\n2\n3\n4\n9\n0\n1\n-1\n1\n2\n3\n-4\n4\n5\n-6\n6\n42\n",
+            b"0\n1\n2\n3\n4\n9\n0\n1\n-1\n-4\n-6\n42\n",
             0,
         );
     }
@@ -1471,7 +1456,7 @@ fn conditional_patterns_run_on_all_backends() {
             String::from_utf8_lossy(&output.stderr).contains("Division by zero"),
             "{output:?}"
         );
-        assert_eq!(output.stdout, b"9\n");
+        assert_eq!(output.stdout, b"");
     }
     success(&work.cli(&["build", "pattern_failure.jk"]));
     let output = Command::new(work.path().join("pattern_failure"))
@@ -1482,7 +1467,7 @@ fn conditional_patterns_run_on_all_backends() {
         String::from_utf8_lossy(&output.stderr).contains("Division by zero"),
         "{output:?}"
     );
-    assert_eq!(output.stdout, b"9\n");
+    assert_eq!(output.stdout, b"");
 }
 
 #[test]
@@ -1507,7 +1492,7 @@ fn tuple_members_run_on_all_backends() {
             "\nfn main() { let answer = compute(); println(&answer) }"
         });
         work.write("tuple_members.jk", &source);
-        work.assert_all_backends("tuple_members.jk", &[], b"2\n1\n3\n42\n", 0);
+        work.assert_all_backends("tuple_members.jk", &[], b"42\n", 0);
     }
     for (source, message) in [
         ("fn main() { let pair = (1, 2); let invalid = pair.2 }", "out of range"),
@@ -1525,7 +1510,6 @@ fn tuple_members_run_on_all_backends() {
         ("struct Hidden { value: Int32 } fn main() { let pair = (Hidden { value: 1 },); let invalid = pair.0.1 }", "Unknown field"),
         ("import joky/array.{type Array} fn main() { let pair = (Array.new::<Int32>(), 2); let moved = pair.0; let invalid = pair.0 }", "moved"),
         ("import joky/array.{type Array} fn main() { let pair = (Array.new::<Int32>(), 2); let view = &pair; let invalid = view.0 }", "owning field"),
-        ("import joky/array.{type Array} import joky/drop.{type Drop} struct R { values: Array<Int32> } impl Drop for R { fn drop(&mut self) {} } fn main() { let pair = (R { values: Array.new::<Int32>() },); let invalid = pair.0.values }", "implementing Drop"),
     ] {
         work.write("invalid_tuple_member.jk", source);
         failure(&work.cli(&["build", "invalid_tuple_member.jk"]), message);
@@ -1564,17 +1548,11 @@ fn indexing_cleanup_and_bounds_run_in_all_backends() {
         "fn note(value: Int32) { println(value) }",
     );
     work.write("index_cleanup.jk", &source);
-    work.assert_all_backends(
-        "index_cleanup.jk",
-        &[],
-        b"1\n2\n3\n-1\n4\n-2\n-4\n-3\n42\n",
-        0,
-    );
+    work.assert_all_backends("index_cleanup.jk", &[], b"1\n2\n3\n4\n42\n", 0);
     let declarations = source.split("fn main()").next().unwrap();
     for (entry, stdout, message) in [
-        ("failed_index", "1\n-1\n", "outside the initialized prefix"),
-        ("failed_rhs", "1\n2\n-2\n-1\n", "Division by zero"),
-        ("failed_drop", "1\n2\n-1\n-2\n", "Division by zero"),
+        ("failed_index", "1\n", "outside the initialized prefix"),
+        ("failed_rhs", "1\n2\n", "Division by zero"),
     ] {
         work.write(
             "index_failure.jk",
@@ -1691,12 +1669,7 @@ fn postfix_unwrap_cleanup_matches_native_execution() {
         "cleanup.jk",
         &format!("{source}\nfn main() {{ record(check()); }}"),
     );
-    work.assert_native(
-        "cleanup.jk",
-        &[],
-        b"-1\n-42\n42\n1\n-1\n-7\n1\n7\n99\n42\n",
-        0,
-    );
+    work.assert_native("cleanup.jk", &[], b"-1\n-42\n-1\n-7\n99\n42\n", 0);
     work.write(
         "cleanup.jk",
         &format!("{source}\nfn main() {{ force_failure(); }}"),
@@ -1704,7 +1677,7 @@ fn postfix_unwrap_cleanup_matches_native_execution() {
     success(&work.cli(&["build", "cleanup.jk"]));
     let output = Command::new(work.path().join("cleanup")).output().unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert_eq!(output.stdout, b"-1\n-7\n7\n1\n");
+    assert_eq!(output.stdout, b"-1\n-7\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("Postfix `!` on Err"));
 }
 
@@ -1738,12 +1711,7 @@ fn suspending_borrows_cleanup_in_standalone_aot() {
         "fn record_drop(id: Int32) { println(id) }",
     );
     work.write("cleanup.jk", &source);
-    work.assert_native(
-        "cleanup.jk",
-        &[],
-        b"2\n42\n1\n2\n42\n2\n42\n2\n42\n2\n42\n",
-        0,
-    );
+    work.assert_native("cleanup.jk", &[], b"", 0);
 }
 
 #[test]
@@ -1807,7 +1775,7 @@ fn ranges_execute_boundaries_and_suspending_endpoints_in_standalone_aot() {
     success(&output);
     assert_eq!(
         output.stdout,
-        b"1\n3\n42\n-99\n0\n0\n2\n2\n11\n11\n12\n12\n13\n13\n99\n42\n"
+        b"1\n3\n42\n-99\n0\n0\n2\n2\n11\n11\n12\n12\n13\n13\n42\n"
     );
     work.write(
         "failure.jk",
@@ -1816,7 +1784,7 @@ fn ranges_execute_boundaries_and_suspending_endpoints_in_standalone_aot() {
     success(&work.cli(&["build", "--no-prelude", "failure.jk"]));
     let output = Command::new(work.path().join("failure")).output().unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert_eq!(output.stdout, b"7\n99\n");
+    assert_eq!(output.stdout, b"7\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("Division by zero"));
 }
 
@@ -1840,10 +1808,7 @@ fn range_slices_execute_views_suspension_and_checked_closed_bounds_in_aot() {
     success(&work.cli(&["build", "--no-prelude", "slices.jk"]));
     let output = Command::new(work.path().join("slices")).output().unwrap();
     success(&output);
-    assert_eq!(
-        output.stdout,
-        b"0\n1\n2\n42\n-99\n-1\n-1\n0\n0\n4\n4\n99\n42\n"
-    );
+    assert_eq!(output.stdout, b"0\n1\n2\n42\n-99\n-1\n-1\n0\n0\n4\n4\n42\n");
     work.write(
         "failure.jk",
         &format!("{source}\nfn main() {{ bad_max() }}"),
@@ -1851,7 +1816,7 @@ fn range_slices_execute_views_suspension_and_checked_closed_bounds_in_aot() {
     success(&work.cli(&["build", "--no-prelude", "failure.jk"]));
     let output = Command::new(work.path().join("failure")).output().unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert_eq!(output.stdout, b"99\n");
+    assert_eq!(output.stdout, b"");
     assert!(String::from_utf8_lossy(&output.stderr).contains("Invalid inclusive slice bounds"));
 }
 
@@ -1875,10 +1840,7 @@ fn range_patterns_execute_integer_domains_owned_matches_and_suspension_in_aot() 
     success(&work.cli(&["build", "--no-prelude", "patterns.jk"]));
     let output = Command::new(work.path().join("patterns")).output().unwrap();
     success(&output);
-    assert_eq!(
-        output.stdout,
-        b"21\n31\n22\n23\n2\n42\n-99\n1\n1\n40\n40\n99\n42\n"
-    );
+    assert_eq!(output.stdout, b"2\n42\n-99\n1\n1\n40\n40\n42\n");
     work.write(
         "failure.jk",
         &format!("{source}\nfn main() {{ failure() }}"),
@@ -1886,7 +1848,7 @@ fn range_patterns_execute_integer_domains_owned_matches_and_suspension_in_aot() 
     success(&work.cli(&["build", "--no-prelude", "failure.jk"]));
     let output = Command::new(work.path().join("failure")).output().unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert_eq!(output.stdout, b"3\n99\n");
+    assert_eq!(output.stdout, b"3\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("range failure"));
 }
 
@@ -1902,13 +1864,13 @@ fn iterator_adapters_execute_and_clean_up_in_standalone_aot() {
         (
             "adapters",
             "fn main() @suspends { println(compute()); println(fields()); lazy(); cleanup(); zip_cleanup(); println(early()); println(pending()) }",
-            "42\n42\n1\n2\n3\n4\n13\n14\n13\n14\n13\n20\n21\n30\n31\n32\n1\n2\n3\n9\n1\n3\n2\n1\n2\n9\n1\n14\n3\n1\n16\n4\n2\n42\n",
+            "42\n42\n1\n2\n3\n4\n13\n14\n13\n14\n13\n20\n21\n30\n31\n32\n1\n14\n16\n42\n",
             None,
         ),
-        ("map_failure", "fn main() { fail_map() }", "1\n2\n9\n", Some("Map callback failure")),
-        ("filter_failure", "fn main() { fail_filter() }", "1\n2\n9\n", Some("Filter callback failure")),
-        ("terminals", "fn main() { terminal_cleanup() }", "1\n2\n9\n3\n4\n", None),
-        ("fold_failure", "fn main() { fail_fold() }", "1\n2\n9\n", Some("Fold callback failure")),
+        ("map_failure", "fn main() { fail_map() }", "", Some("Map callback failure")),
+        ("filter_failure", "fn main() { fail_filter() }", "", Some("Filter callback failure")),
+        ("terminals", "fn main() { terminal_cleanup() }", "", None),
+        ("fold_failure", "fn main() { fail_fold() }", "", Some("Fold callback failure")),
     ] {
         let file = format!("{name}.jk");
         work.write(&file, &format!("{source}\n{entry}"));
@@ -2729,5 +2691,5 @@ fn borrowed_owner_enums_run_in_standalone_aot() {
         "fn record_drop(id: Int32) { println(id) }",
     );
     work.write("mixed.jk", &source);
-    work.assert_native("mixed.jk", &[], b"1\n2\n", 0);
+    work.assert_native("mixed.jk", &[], b"", 0);
 }

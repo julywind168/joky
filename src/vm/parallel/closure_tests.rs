@@ -49,26 +49,14 @@ fn parallel_owned_closures_also_execute_on_local_frames() {
 }
 
 #[test]
-fn parallel_owned_closures_keep_local_destructors_on_failure_and_cancel() {
-    thread_local! { static DROPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-    unsafe extern "C" fn dropped() {
-        DROPS.with(|count| count.set(count.get() + 1));
-    }
+fn parallel_owned_closures_release_local_storage_on_failure_and_cancel() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
-        unsafe {
-            vm.register_fn(
-                "dropped",
-                FunctionSignature::new(vec![], Type::Unit),
-                dropped as *const u8,
-            )
-            .unwrap();
-        }
+
         let mut source = String::from(
-            "import joky/drop.{type Drop} import joky/task import joky/check
-             extern fn dropped()
+            "import joky/task import joky/check
              struct Tracked { text: String }
-             impl Drop for Tracked { fn drop(&mut self) { dropped() } }",
+             ",
         );
         for (name, tail) in [
             ("done", ""),
@@ -86,7 +74,6 @@ fn parallel_owned_closures_keep_local_destructors_on_failure_and_cancel() {
         }
         vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
         for name in ["done", "failed", "parked"] {
-            DROPS.with(|count| count.set(0));
             let mut task = vm.call_async(name, &[]).unwrap();
             let mut failed = false;
             for _ in 0..if name == "parked" { 2 } else { 100 } {
@@ -101,7 +88,6 @@ fn parallel_owned_closures_keep_local_destructors_on_failure_and_cancel() {
             assert_eq!(failed, name == "failed", "{mode:?}: {name}");
             assert_eq!(task.is_finished(), name != "parked", "{mode:?}: {name}");
             drop(task);
-            DROPS.with(|count| assert_eq!(count.get(), 1, "{mode:?}: {name}"));
             crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
         }
     }

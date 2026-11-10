@@ -229,48 +229,6 @@ impl FunctionPlan {
         Ok(indices)
     }
 
-    /// Reject patterns that strip an owner out of a Drop record, or that keep
-    /// expanding a field whose own type implements Drop. Binding a Drop field
-    /// whole transfers its hook with the value, and discarding every owning
-    /// field lets the record's own cleanup run untouched.
-    ///
-    /// `moves` carries `(bound, expanded)` per listed field.
-    pub(super) fn check_record_pattern_moves(
-        &self,
-        record: &Arc<RecordType>,
-        moves: &[(bool, bool)],
-        span: Span,
-    ) -> Result<(), Error> {
-        let self_drops = {
-            let ty = Type::Record(record.clone());
-            ty.is_owner() && self.has_custom_drop(&ty)
-        };
-        let forbidden = record.fields.iter().enumerate().any(|(index, field)| {
-            let (bound, expanded) = moves[index];
-            let owner = field.ty.is_owner();
-            (self_drops && owner && bound) || (owner && expanded && self.has_custom_drop(&field.ty))
-        });
-        if forbidden {
-            return Err(type_error(
-                &span,
-                ErrorCode::InvalidAssignment,
-                "Cannot move an owning field out of a record implementing Drop",
-            ));
-        }
-        Ok(())
-    }
-
-    /// Whether one pattern entry binds and/or expands its value.
-    pub(super) fn field_pattern_shape(pattern: &BindingPattern) -> (bool, bool) {
-        match pattern {
-            BindingPattern::Name { .. } => (true, false),
-            BindingPattern::Discard { .. } => (false, false),
-            BindingPattern::Sequence(_)
-            | BindingPattern::Tuple { .. }
-            | BindingPattern::Record { .. } => (true, true),
-        }
-    }
-
     pub(super) fn check_binding_pattern(
         &self,
         pattern: &BindingPattern,
@@ -404,11 +362,6 @@ impl FunctionPlan {
                     kind: BindingKind::Record(children),
                     span: *span,
                 };
-                let mut moves = vec![(false, false); record.fields.len()];
-                for (field, index) in inner.fields.iter().zip(indices.iter()) {
-                    moves[*index] = Self::field_pattern_shape(&field.pattern);
-                }
-                self.check_record_pattern_moves(&record, &moves, *span)?;
                 return Ok(checked);
             }
         };
@@ -518,7 +471,7 @@ impl FunctionPlan {
                         )?,
                     ));
                 }
-                // Shared projections never move fields or run Drop hooks.
+                // Shared projections never move fields or release owners.
                 return Ok(CheckedPattern::record(
                     Type::Record(record.clone()),
                     children,

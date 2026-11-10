@@ -32,9 +32,9 @@ fn range_patterns_resume_selected_arms_without_replaying_the_scrutinee() {
                 assert_eq!(
                     *events.borrow(),
                     if cancel {
-                        vec![-99, 1, 1, 99]
+                        vec![-99, 1, 1]
                     } else {
-                        vec![-99, 1, 1, 40, 40, 99]
+                        vec![-99, 1, 1, 40, 40]
                     }
                 )
             });
@@ -114,13 +114,8 @@ fn exhaustive_range_patterns_instruction_cancellation() {
         || EVENTS.with(|events| events.borrow().clone()),
         || {
             LIVE.with(|live| assert_eq!(live.get(), 0));
-            EVENTS.with(|events| {
-                let events = events.borrow();
-                let drops = events.iter().filter(|&&n| n == 99).count();
-                assert!(drops <= 1);
-                if events.contains(&-99) {
-                    assert_eq!(drops, 1);
-                }
+            crate::runtime::arena::LIVE.with(|live| {
+                assert_eq!(live.get(), 0);
             });
         },
     );

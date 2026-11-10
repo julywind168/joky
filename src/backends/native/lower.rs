@@ -513,16 +513,6 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_buffer_cleanup_new", vec![ptr, ptr], vec![]),
         ("__joky_buffer_cleanup_owner", vec![ptr, ptr], vec![]),
         (
-            "__joky_buffer_cleanup_guard",
-            vec![ptr, ptr, types::I32],
-            vec![],
-        ),
-        (
-            "__joky_buffer_cleanup_hook",
-            vec![ptr, ptr, ptr, ptr, ptr],
-            vec![],
-        ),
-        (
             "__joky_arena_alloc",
             vec![ptr, ptr, ptr, types::I64, ptr, ptr],
             vec![ptr],
@@ -589,20 +579,9 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![types::I32],
         ),
         ("__joky_cleanup_storage_owner", vec![ptr, ptr, ptr], vec![]),
-        (
-            "__joky_cleanup_storage_hook",
-            vec![ptr, ptr, ptr, ptr, ptr, ptr],
-            vec![],
-        ),
-        (
-            "__joky_cleanup_storage_guard",
-            vec![ptr, ptr, ptr, types::I32],
-            vec![],
-        ),
         ("__joky_cleanup_new", vec![ptr], vec![ptr]),
         ("__joky_cleanup_register", vec![ptr, ptr, ptr], vec![]),
         ("__joky_cleanup_append", vec![ptr, ptr, ptr, ptr], vec![]),
-        ("__joky_cleanup_hook", vec![ptr, ptr, ptr, ptr, ptr], vec![]),
         ("__joky_cleanup_forget", vec![ptr, ptr], vec![]),
         (
             "__joky_cleanup_extract_field",
@@ -1148,7 +1127,6 @@ fn child_at(
 fn lower_cleanup(
     builder: &mut FunctionBuilder,
     op: &CleanupOp,
-    plan: &FunctionPlan,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
     slots: &mut SlotAccess<'_>,
@@ -1157,7 +1135,6 @@ fn lower_cleanup(
     let CleanupOp::Register {
         value,
         place,
-        hooks,
         elements,
     } = op;
     let cleanup = mode.cleanup().unwrap();
@@ -1196,13 +1173,7 @@ fn lower_cleanup(
     for element in elements {
         let scalar = value.scalars().nth(element.buffer).unwrap();
         let handle = slots.read(builder, &scalar);
-        let charge = element.owners.len() * std::mem::size_of::<usize>()
-            + element.hooks.len() * std::mem::size_of::<crate::runtime::buffer::ElementHook>()
-            + element
-                .hooks
-                .iter()
-                .map(|hook| hook.guards.len() * std::mem::size_of::<(usize, i32)>())
-                .sum::<usize>();
+        let charge = element.owners.len() * std::mem::size_of::<usize>();
         let charge = builder.ins().iconst(ptr_ty, charge as i64);
         builder
             .ins()
@@ -1213,56 +1184,9 @@ fn lower_cleanup(
                 .ins()
                 .call(refs["__joky_buffer_cleanup_owner"], &[handle, offset]);
         }
-        for hook in &element.hooks {
-            let before = builder.ins().iconst(ptr_ty, hook.before as i64);
-            let offset = builder.ins().iconst(ptr_ty, hook.offset as i64);
-            let indirect = builder.ins().iconst(ptr_ty, hook.indirect as i64);
-            let callback = builder.ins().func_addr(ptr_ty, refs[&hook.name]);
-            builder.ins().call(
-                refs["__joky_buffer_cleanup_hook"],
-                &[handle, before, offset, indirect, callback],
-            );
-            for (offset, tag) in &hook.guards {
-                let offset = builder.ins().iconst(ptr_ty, *offset as i64);
-                let tag = builder.ins().iconst(types::I32, *tag as i64);
-                builder
-                    .ins()
-                    .call(refs["__joky_buffer_cleanup_guard"], &[handle, offset, tag]);
-            }
-        }
     }
-    if place.is_some() || !hooks.is_empty() {
-        let pointer = if let Some(place) = place {
-            slots.read(builder, place)
-        } else {
-            let layout = value.ty.storage_layout().unwrap();
-            let pointer = if let SlotAccess::Result { storage, .. } = &*slots {
-                *storage
-            } else if let SlotAccess::Frames { slots } = &*slots {
-                let offset = plan.cps_local_slots[&value.index] * 8;
-                builder.ins().iadd_imm_u(*slots, offset as i64)
-            } else {
-                let storage = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    layout.size.max(1) as u32,
-                    layout.align.trailing_zeros() as u8,
-                ));
-                builder.ins().stack_addr(ptr_ty, storage, 0)
-            };
-            for ((offset, _), scalar) in value
-                .ty
-                .storage_scalars()
-                .unwrap()
-                .into_iter()
-                .zip(value.scalars())
-            {
-                let bits = slots.read(builder, &scalar);
-                builder
-                    .ins()
-                    .store(MemFlagsData::new(), bits, pointer, offset as i32);
-            }
-            pointer
-        };
+    if let Some(place) = place {
+        let pointer = slots.read(builder, place);
         let size = builder
             .ins()
             .iconst(ptr_ty, value.ty.storage_layout().unwrap().size as i64);
@@ -1276,24 +1200,6 @@ fn lower_cleanup(
                 builder.ins().call(
                     refs["__joky_cleanup_storage_owner"],
                     &[cleanup, index, offset],
-                );
-            }
-        }
-        for hook in hooks {
-            let before = builder.ins().iconst(ptr_ty, hook.before as i64);
-            let offset = builder.ins().iconst(ptr_ty, hook.offset as i64);
-            let indirect = builder.ins().iconst(ptr_ty, hook.indirect as i64);
-            let callback = builder.ins().func_addr(ptr_ty, refs[&hook.name]);
-            builder.ins().call(
-                refs["__joky_cleanup_storage_hook"],
-                &[cleanup, index, before, offset, indirect, callback],
-            );
-            for (offset, tag) in &hook.guards {
-                let offset = builder.ins().iconst(ptr_ty, *offset as i64);
-                let tag = builder.ins().iconst(types::I32, *tag as i64);
-                builder.ins().call(
-                    refs["__joky_cleanup_storage_guard"],
-                    &[cleanup, index, offset, tag],
                 );
             }
         }
@@ -1414,7 +1320,6 @@ fn lower_cps_result(
 
 struct ConcurrentContext<'a> {
     data: &'a DataRefs,
-    plan: &'a FunctionPlan,
     mode: ExecMode<'a>,
     result: Option<&'a Slot>,
     kind: ConcurrentKind,
@@ -1510,7 +1415,6 @@ fn capture_lanes(
 fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_>) {
     let ConcurrentContext {
         data,
-        plan,
         mode,
         result,
         kind,
@@ -1703,7 +1607,6 @@ fn lower_concurrent(builder: &mut FunctionBuilder, context: ConcurrentContext<'_
             lower_cleanup(
                 builder,
                 cleanup,
-                plan,
                 refs,
                 ptr_ty,
                 &mut packet_access,
@@ -2170,7 +2073,7 @@ fn lower_ops(
         match op {
             Op::Place(op) => lower_place(builder, op, slots, mode, refs, ptr_ty, data, span),
             Op::Closure(_) => unreachable!("closure responsibility is erased after checking"),
-            Op::Cleanup(op) => lower_cleanup(builder, op, plan, refs, ptr_ty, slots, mode),
+            Op::Cleanup(op) => lower_cleanup(builder, op, refs, ptr_ty, slots, mode),
             Op::Buffer(op) => match op {
                 BufferOp::SwapReferences {
                     left,
@@ -2980,7 +2883,6 @@ fn lower_ops(
                     builder,
                     ConcurrentContext {
                         data,
-                        plan,
                         mode,
                         result: result.as_ref(),
                         kind: *kind,

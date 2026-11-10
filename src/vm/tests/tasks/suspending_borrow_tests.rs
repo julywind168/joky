@@ -84,18 +84,13 @@ fn suspending_borrows_clean_children_before_local_and_element_owners() {
             } else {
                 block_on(task).unwrap();
             }
-            let expected = if entry == "unstarted" {
-                vec![1]
-            } else {
-                vec![2, 42]
-            };
-            DROPS.with(|events| assert_eq!(*events.borrow(), expected, "{mode:?}: {entry}"));
+            DROPS.with(|events| assert!(events.borrow().is_empty(), "{mode:?}: {entry}"));
             clean();
         }
         for exit in 0..4 {
             DROPS.with(|events| events.borrow_mut().clear());
             block_on(vm.call_async("joined", &[exit]).unwrap()).unwrap();
-            DROPS.with(|events| assert_eq!(*events.borrow(), [2, 42], "{mode:?}: {exit}"));
+            DROPS.with(|events| assert!((*events.borrow()).is_empty(), "{mode:?}: {exit}"));
             clean();
         }
     }

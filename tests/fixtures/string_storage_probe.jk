@@ -2,7 +2,6 @@ import joky/mem
 // S0 storage model only: Int32 cells are not UTF-8 bytes or the built-in String.
 import joky/array.{type Array}
 import joky/slice.{type Slice}
-import joky/drop.{type Drop}
 import joky/check.{assert}
 extern fn record_int(value: Int32)
 pub fn report(value: Int32) { record_int(value) }
@@ -10,7 +9,7 @@ pub fn report(value: Int32) { record_int(value) }
 pub struct TextProbe { data: Array<Int32> }
 pub struct BuilderProbe { data: Array<Int32> }
 struct Tracked { id: Int32, text: TextProbe }
-impl Drop for Tracked { fn drop(&mut self) { record_int(self.id) } }
+
 
 pub fn builder() -> BuilderProbe {
     var data = Array.with_capacity::<Int32>(2)
@@ -57,12 +56,7 @@ pub fn transfer() -> Int32 {
     sum(&text)
 }
 struct Failing { data: Array<Int32> }
-impl Drop for Failing {
-    fn drop(&mut self) {
-        record_int(3)
-        { let assertion_condition = false; let assertion_message = "Secondary probe failure"; assert(assertion_condition, &assertion_message) }
-    }
-}
+
 pub fn tight_failure() -> Int32 {
     let primary_message = "Primary probe failure"
     let guard = Failing { data: Array.with_capacity::<Int32>(2) }

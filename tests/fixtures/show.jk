@@ -1,8 +1,6 @@
 import joky/show as display.{type Show}
 import joky/string.{type StringBuilder}
 import joky/array.{type Array}
-import joky/drop.{type Drop}
-
 struct Item { id: Int32, text: String }
 impl Show for Item {
     fn show(&self, output: &mut StringBuilder) @noescape {

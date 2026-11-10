@@ -686,12 +686,11 @@ mod tests {
         let source = r#"
             import joky/array.{type Array}
             import joky/fixed_array.{type FixedArray}
-            import joky/drop.{type Drop}
             import joky/map.{type Map}
             import joky/list.{type List}
             import joky/set.{type Set}
             struct Tracked { text: String }
-            impl Drop for Tracked { fn drop(&mut self) {} }
+
             struct Plain { flag: Bool, payload: (UInt8, Float64), row: FixedArray<Int32, 2> }
             struct Empty { value: Unit }
             struct Pointer { value: Ptr }

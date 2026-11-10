@@ -31,6 +31,11 @@ fn resource_owners_move_in_results_containers_and_tasks() {
             "overwrite",
             "partial",
             "unstarted",
+            "projection",
+            "field_replace",
+            "closure_capture",
+            "nested_containers",
+            "partial_record",
             "dynamic",
         ] {
             for cancel in [false, true] {
@@ -49,7 +54,7 @@ fn resource_owners_move_in_results_containers_and_tasks() {
                     Ok(task.cps_result())
                 })();
                 if !cancel {
-                    if entry == "partial" {
+                    if matches!(entry, "partial" | "partial_record") {
                         assert!(result.is_err());
                     } else {
                         assert_eq!(result.unwrap(), Some(42), "{mode:?}: {entry}");
@@ -94,6 +99,10 @@ fn cancellation(sweep: super::support::CancellationSweep) {
         "pair",
         "array_task",
         "overwrite",
+        "projection",
+        "field_replace",
+        "closure_capture",
+        "nested_containers",
         "dynamic",
         "unstarted",
     ] {

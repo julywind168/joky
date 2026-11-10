@@ -1,5 +1,4 @@
 import joky/float
-import joky/drop.{type Drop}
 extern fn dirty()
 extern fn dirty_value(value: Float64) -> Float64
 extern fn observe(value: Float64)
@@ -86,9 +85,7 @@ fn update(state: &mut State) @noescape -> Float64 {
     state.value = state.value * 0.5
     state.value
 }
-impl Drop for State {
-    fn drop(&mut self) { dirty(); observe(self.value * 0.5) }
-}
+
 fn cleanup(a: Float64) -> Float64 {
     let local = State { value: a, text: "task" }
     dirty()

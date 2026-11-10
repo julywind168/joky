@@ -1,23 +1,10 @@
 import joky/array.{type Array}
-import joky/drop.{type Drop}
 import joky/option.{type Option}
 import joky/result.{type Result}
 import joky/check.{assert}
 extern fn closure_event(value: Int32)
 struct Resource { id: Int32, data: Array<Int32> }
-impl Drop for Resource {
-    fn drop(&mut self) {
-        closure_event(self.id)
-        if self.id == 4 {
-            let message = "First closure drop failure"
-            assert(false, &message)
-        }
-        if self.id == 5 {
-            let message = "Second closure drop failure"
-            assert(false, &message)
-        }
-    }
-}
+
 fn resource(id: Int32) -> Resource {
     let value = Resource { id: id, data: Array.new::<Int32>() }
     closure_event(-id)
@@ -223,9 +210,7 @@ fn stored_return_drop_failure() -> Int32 {
     result()
 }
 struct GuardedCallback<T> { callback: T }
-impl<T> Drop for GuardedCallback<T> {
-    fn drop(&mut self) { closure_event(7) }
-}
+
 fn stored_empty_drop() -> Int32 {
     let callback = move || { 42 }
     let guard = GuardedCallback { callback }

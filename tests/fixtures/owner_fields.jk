@@ -1,12 +1,8 @@
 import joky/array.{type Array}
-import joky/drop.{type Drop}
-
 extern fn record_drop(value: Int32)
 
 struct Part<T> { flag: Bool, id: Int32, values: Array<T> }
-impl<T> Drop for Part<T> {
-    fn drop(&mut self) { let length = self.values.len(); record_drop(self.id) }
-}
+
 fn part<T>(id: Int32) -> Part<T> { Part { flag: true, id: id, values: Array.new::<T>() } }
 fn tracked<T>(id: Int32) -> Part<T> {
     let result = part::<T>(id)
@@ -55,7 +51,7 @@ fn fields_nested_replace() -> Int32 {
     p.inner.tag
 }
 struct Group { id: Int32, inner: Pack }
-impl Drop for Group { fn drop(&mut self) { record_drop(self.id) } }
+
 struct Groups { first: Part<Int32>, group: Group, last: Part<Int32> }
 fn groups() -> Groups { Groups { first: part::<Int32>(9), group: Group { id: 10, inner: pack(1) }, last: part::<Int32>(8) } }
 fn fields_subtree() -> Int32 { let p = groups(); let chosen = p.group; chosen.inner.tag }
@@ -71,7 +67,7 @@ fn fields_rhs_failure() -> Int32 {
     42
 }
 struct Bomb { id: Int32, values: Array<Int32> }
-impl Drop for Bomb { fn drop(&mut self) { record_drop(self.id); let bad = 1 / 0 } }
+
 struct BombPack { first: Part<Int32>, middle: Bomb, last: Part<Int32> }
 fn fields_drop_failure() -> Int32 {
     var p = BombPack { first: part::<Int32>(1), middle: Bomb { id: 2, values: Array.new::<Int32>() }, last: part::<Int32>(3) }
@@ -162,9 +158,7 @@ fn fields_reinitialize_failure() -> Int32 {
 }
 
 struct Tagged<T> { value: T, tag: Int32 }
-impl<T> Drop for Tagged<T> {
-    fn drop(&mut self) { record_drop(self.tag) }
-}
+
 fn fields_generic_drop() -> Int32 {
     let a = Tagged { value: 5, tag: 1 }
     let moved = a
@@ -179,9 +173,7 @@ fn fields_generic_drop() -> Int32 {
 }
 
 struct DropUnit<T> { value: T }
-impl<T> Drop for DropUnit<T> {
-    fn drop(&mut self) { record_drop(5) }
-}
+
 struct MixedDrops { first: DropUnit<Unit>, second: Tagged<String> }
 fn fields_nested_generic_drop() -> Int32 {
     let pair = MixedDrops { first: DropUnit { value: {} }, second: Tagged { value: "ok", tag: 6 } }

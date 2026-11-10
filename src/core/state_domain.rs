@@ -1,5 +1,5 @@
-//! Conservative, compiler-proved entries for hook-free owning state domains.
-use super::ir::{BufferOp, CleanupOp, FunctionInfo, FunctionPlan, Op};
+//! Conservative, compiler-proved entries for owning state domains.
+use super::ir::{BufferOp, FunctionInfo, FunctionPlan, Op};
 use crate::Type;
 use std::collections::{HashMap, HashSet};
 
@@ -82,7 +82,7 @@ pub(crate) fn constructor_eligible(info: &FunctionInfo) -> bool {
         && super::script::domain_schema(&info.signature.params[0]).is_some()
 }
 
-/// Storage hooks and the entire owning graph are checked by `infer`.
+/// The entire owning graph are checked by `infer`.
 fn migration_record(ty: &Type) -> bool {
     matches!(ty, Type::Record(r) if r.template.is_none() && r.parameters.is_empty()
         && r.arguments.is_empty() && r.closure.is_none())
@@ -119,9 +119,7 @@ fn storage_op(op: &Op, body: &FunctionPlan) -> bool {
         | Op::ReadOwner { .. }
         | Op::StoreOwner { .. } => true,
         Op::Alloc { target, .. } => super::instance::scalar(target),
-        Op::Cleanup(CleanupOp::Register {
-            hooks, elements, ..
-        }) => hooks.is_empty() && elements.iter().all(|e| e.hooks.is_empty()),
+        Op::Cleanup(_) => true,
         Op::Buffer(BufferOp::Storage { element, .. }) => {
             body.domain_storage(element) || body.domain_value(element)
         }
@@ -197,7 +195,6 @@ fn safe_bodies(
         .iter()
         .filter(|(name, body)| {
             !functions[*name].suspends
-                && !body.is_destructor
                 && body.ops.iter().all(|op| {
                     (transactional && matches!(op, Op::OutboxEmit { .. }))
                         || storage_op(op, body)

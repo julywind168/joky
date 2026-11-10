@@ -70,11 +70,10 @@ extern "C" fn record(id: i32) {
 }
 const CLEANUP: &str = r#"
 import joky/task
-import joky/drop.{type Drop}
 import joky/check
 extern fn record(id:Int32)
 struct Owner {id:Int32,text:String}
-impl Drop for Owner {fn drop(&mut self) {record(self.id)}}
+
 fn failing() @suspends {
     let owner=Owner{id:1,text:"failed child"}
     task.yield_now()
@@ -125,9 +124,7 @@ fn isolate_drains_owned_captures_and_siblings_before_handler() {
         DROPS.with(|drops| {
             let events = drops.borrow();
             assert_eq!(events.last(), Some(&4), "{mode:?}: {events:?}");
-            let mut owners = events[..events.len() - 1].to_vec();
-            owners.sort();
-            assert_eq!(owners, [1, 2, 3]);
+            assert_eq!(*events, [4]);
         });
         LIVE.with(|live| assert_eq!(live.get(), 0));
     }

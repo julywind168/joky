@@ -314,7 +314,6 @@ impl LayoutContext {
                     .fields
                     .iter()
                     .map(|f| &f.ty)
-                    .chain(record.drop_anchor())
                     .map(|ty| member(ty, &mut builder))
                     .collect::<Result<_, _>>()?,
             ),
@@ -468,13 +467,7 @@ impl Type {
             }
             match (ty, &layout.shape) {
                 (Type::Record(record), MemoryLayoutShape::Record(fields)) => {
-                    for (ty, location) in record
-                        .fields
-                        .iter()
-                        .map(|f| &f.ty)
-                        .chain(record.drop_anchor())
-                        .zip(fields)
-                    {
+                    for (ty, location) in record.fields.iter().map(|f| &f.ty).zip(fields) {
                         visit(context, ty, base + location.offset, out)?;
                     }
                 }

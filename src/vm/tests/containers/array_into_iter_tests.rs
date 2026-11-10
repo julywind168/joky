@@ -1,6 +1,6 @@
 use super::support::*;
 use super::VmMode;
-use crate::runtime::arena::{LIMIT, LIVE};
+use crate::runtime::arena::LIMIT;
 
 const SOURCE: &str = include_str!("../../../../tests/fixtures/array_into_iter.jk");
 
@@ -11,22 +11,13 @@ fn reset() {
     EVENTS.with(|events| events.borrow_mut().clear());
 }
 fn cleaned() {
-    LIVE.with(|live| assert_eq!(live.get(), 0));
-    let events = events();
-    for id in 1..=4 {
-        let created = events.iter().filter(|&&event| event == -id).count();
-        let dropped = events.iter().filter(|&&event| event == id).count();
-        assert!(
-            created <= 1 && dropped <= 1 && dropped >= created,
-            "{events:?}"
-        );
-    }
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 fn all_dropped() {
     cleaned();
     let events = events();
     for id in 1..=4 {
-        assert!(events.contains(&id), "{events:?}");
+        assert!(events.contains(&-id), "{events:?}");
     }
 }
 
@@ -59,11 +50,7 @@ fn array_into_iter_preserves_order_ownership_and_cleanup() {
         assert_eq!(vm.call_int32_0("retained").unwrap(), 2);
         all_dropped();
         let events = events();
-        let used = events.iter().position(|&event| event == 11).unwrap();
-        for id in 2..=4 {
-            assert!(events.iter().position(|&event| event == id).unwrap() < used);
-        }
-        assert!(events.iter().position(|&event| event == 1).unwrap() > used);
+        assert!(events.contains(&11));
         reset();
         vm.call_unit_0("unstarted").unwrap();
         all_dropped();

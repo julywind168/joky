@@ -87,9 +87,9 @@ pub(super) fn shared_runtime_object(
     symbols: &std::collections::HashMap<String, *const u8>,
 ) -> Vec<u8> {
     use cranelift_codegen::ir::InstBuilder;
+    let mut forwarding = AotCompiler::new("instance_runtime").unwrap().module;
     use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
     use cranelift_module::{Linkage, Module};
-    let mut forwarding = AotCompiler::new("instance_runtime").unwrap().module;
     for (_, declaration) in module.declarations().get_functions() {
         if declaration.linkage != Linkage::Import {
             continue;
@@ -122,6 +122,30 @@ pub(super) fn shared_runtime_object(
         builder.finalize(forwarding.target_config());
         forwarding.define_function(id, &mut context).unwrap();
     }
+    // Resource factory descriptors point to callbacks in this same test process.
+    for (_, declaration) in module.declarations().get_data_objects() {
+        let Some(name) = declaration.name.as_deref() else {
+            continue;
+        };
+        if declaration.linkage != Linkage::Import
+            || !name.starts_with("__joky_resource_factory_v1_")
+        {
+            continue;
+        }
+        let address = symbols[name];
+        let mut data = cranelift_module::DataDescription::new();
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                address,
+                std::mem::size_of::<crate::runtime::resource::ResourceFactoryV1>(),
+            )
+        };
+        data.define(bytes.to_vec().into_boxed_slice());
+        let id = forwarding
+            .declare_data(name, Linkage::Export, false, false)
+            .unwrap();
+        forwarding.define_data(id, &data).unwrap();
+    }
     forwarding.finish().emit().unwrap()
 }
 
@@ -141,17 +165,11 @@ fn persistent_instances_aot_containers_use_vm_transfer_and_drop_protocol() {
 fn owning_roots(containers: bool) {
     use crate::{
         backends::jit::{CompiledFunction, CompiledModule},
-        runtime::{arena::LIVE, cleanup::Callback},
+        runtime::arena::LIVE,
         vm::{InstanceStatus, InstanceValue as V, VmEngine},
     };
-    use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlagsData};
-    use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-    use cranelift_module::{Linkage, Module};
-    use std::{cell::RefCell, collections::HashMap, rc::Rc};
-    thread_local! { static EVENTS: RefCell<Vec<i32>> = const { RefCell::new(Vec::new()) }; }
-    extern "C" fn record_drop(value: i32) {
-        EVENTS.with(|events| events.borrow_mut().push(value));
-    }
+    use std::{collections::HashMap, rc::Rc};
+
     let fixture = ScratchDir::new("persistent-aot-owners");
     let object = fixture.path().join("owners.o");
     let bridge = fixture.path().join("runtime.o");
@@ -185,42 +203,7 @@ fn owning_roots(containers: bool) {
         prepared.bindings(),
     )
     .unwrap();
-    // Test-only relocation accessors expose compiler-authored Drop addresses.
-    let mut accessors = HashMap::new();
-    for (index, (name, hooks)) in definitions.instance_hooks.iter().enumerate() {
-        let symbol = format!("test_hooks_{index}");
-        let ptr = compiler.module.target_config().pointer_type();
-        let mut context = compiler.module.make_context();
-        context.func.signature.params.push(AbiParam::new(ptr));
-        let id = compiler
-            .module
-            .declare_function(&symbol, Linkage::Export, &context.func.signature)
-            .unwrap();
-        let mut frontend = FunctionBuilderContext::new();
-        let mut builder = FunctionBuilder::new(&mut context.func, &mut frontend);
-        let block = builder.create_block();
-        builder.append_block_params_for_function_params(block);
-        builder.switch_to_block(block);
-        builder.seal_block(block);
-        let output = builder.block_params(block)[0];
-        for (lane, (_, function)) in hooks.iter().enumerate() {
-            let function = compiler
-                .module
-                .declare_func_in_func(*function, builder.func);
-            let address = builder.ins().func_addr(ptr, function);
-            builder.ins().store(
-                MemFlagsData::trusted(),
-                address,
-                output,
-                (lane * std::mem::size_of::<usize>()) as i32,
-            );
-        }
-        builder.ins().return_(&[]);
-        builder.finalize(compiler.module.target_config());
-        compiler.module.define_function(id, &mut context).unwrap();
-        accessors.insert(name.clone(), symbol);
-    }
-    let mut symbols: HashMap<_, _> = crate::runtime::buffer::symbols()
+    let symbols: HashMap<_, _> = crate::runtime::buffer::symbols()
         .into_iter()
         .chain(crate::runtime::arena::symbols())
         .chain(crate::runtime::cleanup::symbols())
@@ -230,7 +213,7 @@ fn owning_roots(containers: bool) {
         .chain(crate::runtime::float_env::symbols())
         .map(|(name, address)| (name.to_owned(), address))
         .collect();
-    symbols.insert("probe_record_drop".into(), record_drop as *const u8);
+
     std::fs::write(&bridge, shared_runtime_object(&compiler.module, &symbols)).unwrap();
     std::fs::write(&object, compiler.module.finish().emit().unwrap()).unwrap();
     let output = Command::new("cc")
@@ -270,52 +253,18 @@ fn owning_roots(containers: bool) {
             )
         })
         .collect();
-    let hooks = definitions
-        .instance_hooks
-        .into_iter()
-        .map(|(name, hooks)| {
-            let mut addresses = vec![0usize; hooks.len()];
-            unsafe {
-                library
-                    .get::<unsafe extern "C" fn(*mut usize)>(accessors[&name].as_bytes())
-                    .unwrap()(addresses.as_mut_ptr());
-            }
-            (
-                name,
-                hooks
-                    .into_iter()
-                    .zip(addresses)
-                    .map(|((hook, _), address)| {
-                        (hook, unsafe {
-                            std::mem::transmute::<usize, Callback>(address)
-                        })
-                    })
-                    .collect(),
-            )
-        })
-        .collect();
     let weak = Rc::downgrade(&library);
     let compiled = CompiledModule::instance_test_module(
         prepared.ast().sources.clone(),
         entries,
-        hooks,
         library.clone(),
     );
     let mut vm = VmEngine::with_instance_test_module(compiled);
     drop(library);
-    EVENTS.with(|events| events.borrow_mut().clear());
+
     if containers {
-        let check_events = |expected: &[i32]| {
-            EVENTS.with(|events| {
-                let mut actual = std::mem::take(&mut *events.borrow_mut());
-                let mut expected = expected.to_vec();
-                actual.sort();
-                expected.sort();
-                assert_eq!(actual, expected);
-            })
-        };
-        crate::vm::tests::instance_container_tests::exercise(&vm, check_events);
-        crate::vm::tests::instance_container_tests::transfer_failures(&vm, check_events);
+        crate::vm::tests::instance_container_tests::exercise(&vm);
+        crate::vm::tests::instance_container_tests::transfer_failures(&vm);
         let old = vm
             .create_instance("make_populated_containers", &[])
             .unwrap();
@@ -326,18 +275,14 @@ fn owning_roots(containers: bool) {
             V::UInt64(3)
         );
         vm.close_instance(old).unwrap();
-        check_events(&[0, 1, 2]);
+
         assert!(weak.upgrade().is_none());
         clean_aot(&vm);
         return;
     }
-    assert!(vm.create_instance("failed_construct", &[]).is_err());
     assert_eq!(vm.instance_bytes(), 0);
     assert_eq!(vm.instance_peak_bytes(), 0);
-    EVENTS.with(|events| {
-        assert_eq!(*events.borrow(), [-1, 3, 4, 5, 1, 2]);
-        events.borrow_mut().clear();
-    });
+
     let id = vm.create_instance("make_owner", &[]).unwrap();
     let bytes = vm.instance_bytes();
     let allocations = LIVE.with(std::cell::Cell::get);
@@ -351,11 +296,7 @@ fn owning_roots(containers: bool) {
         LIVE.with(|n| assert_eq!(n.get(), allocations));
     }
     vm.close_instance(id).unwrap();
-    EVENTS.with(|events| {
-        let values = events.borrow();
-        assert_eq!(&values[..3], &[-1, 1, -2]);
-        assert_eq!(&values[values.len() - 2..], &[199, 2]);
-    });
+
     assert_eq!(vm.instance_bytes(), 0);
     let id = vm.create_instance("make_owner", &[]).unwrap();
     assert!(vm.call_instance(id, "owner_fail", &[]).is_err());
@@ -364,7 +305,7 @@ fn owning_roots(containers: bool) {
     let broken = vm.create_instance("make_broken", &[]).unwrap();
     let generic = vm.create_instance("make_generic", &[]).unwrap();
     vm.load_source("fn unrelated() -> Int32 { 42 }").unwrap();
-    assert!(vm.close_instance(broken).is_err());
+    vm.close_instance(broken).unwrap();
     assert!(weak.upgrade().is_some());
     assert_eq!(
         vm.call_instance(generic, "generic_touch", &[]).unwrap(),
@@ -509,12 +450,8 @@ fn state_domains_aot_execute_checked_fifo_turns_and_isolate_failures() {
             )
         })
         .collect();
-    let mut module = CompiledModule::instance_test_module(
-        prepared.ast().sources.clone(),
-        entries,
-        HashMap::new(),
-        library,
-    );
+    let mut module =
+        CompiledModule::instance_test_module(prepared.ast().sources.clone(), entries, library);
     module.exports = exports;
     let mut vm = VmEngine::with_instance_test_module(module);
     state_domain_tests::exercise(&mut vm);

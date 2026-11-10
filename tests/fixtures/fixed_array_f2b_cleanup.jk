@@ -1,10 +1,9 @@
-import joky/drop.{type Drop}
 import joky/fixed_array.{type FixedArray}
 import joky/array.{type Array}
 extern fn note(value: Int32)
 type Row = FixedArray<Int32,3>
 struct Guard { id:Int32, text:String }
-impl Drop for Guard { fn drop(&mut self) {note(self.id)} }
+
 fn identity(a:Row)->Row {a}
 fn exercise()->Int32 {
     var values=Array.new::<Option<Row>>()

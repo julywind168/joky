@@ -37,9 +37,9 @@ fn borrowed_dyn_v2_standalone_lifecycle_and_cancellation() {
         extern int32_t dyn_pending(JokyCpsFrame *), dyn_local_task(JokyCpsFrame *), dyn_local_between_pending(JokyCpsFrame *);
         int main(void) {{
             struct Case {{ int32_t (*call)(void); int failure, count; int32_t events[4]; }} cases[] = {{
-                {{dyn_success, 0, 3, {{10, 8, 7}}}}, {{dyn_failure, 1, 3, {{10, 8, 7}}}},
-                {{dyn_order, 0, 4, {{20, 22, 30, 7}}}}, {{dyn_argument, 0, 2, {{8, 7}}}}, {{dyn_argument_failure, 1, 2, {{8, 7}}}},
-                {{dyn_argument_drop_failure, 1, 2, {{9, 7}}}}
+                {{dyn_success, 0, 1, {{10}}}}, {{dyn_failure, 1, 1, {{10}}}},
+                {{dyn_order, 0, 3, {{20, 22, 30}}}}, {{dyn_argument, 0, 0, {{0}}}}, {{dyn_argument_failure, 1, 0, {{0}}}},
+
             }};
             for (int run = 0; run < 8; ++run) {{
                 for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); ++i) {{
@@ -50,24 +50,24 @@ fn borrowed_dyn_v2_standalone_lifecycle_and_cancellation() {
                     for (int j = 0; j < count; ++j) if (events[j] != cases[i].events[j]) return 3;
                 }}
                 count = 0; joky_runtime_error_clear(); dyn_large_failure();
-                if (!joky_runtime_error_code() || count != 1 || events[0] != 7) return 16;
+                if (!joky_runtime_error_code() || count != 0) return 16;
                 joky_runtime_print_error();
                 joky_runtime_error_clear();
                 for (int cancel = 0; cancel < 2; ++cancel) {{
                     count = 0; ready = 0; joky_runtime_error_clear();
                     JokyCpsFrame *frame = joky_cps_frame_new({slots});
                     if (dyn_pending(frame) != JOKY_CPS_PENDING) return 4;
-                    for (int i = 0; i < 3; ++i) if (dyn_pending(frame) != JOKY_CPS_PENDING || count != 4) return 5;
-                    if (events[0] != 10 || events[1] != 8 || events[2] != 7 || events[3] != 41) return 6;
+                    for (int i = 0; i < 3; ++i) if (dyn_pending(frame) != JOKY_CPS_PENDING || count != 2) return 5;
+                    if (events[0] != 10 || events[1] != 41) return 6;
                     if (!cancel) {{ ready = 1; if (dyn_pending(frame) != JOKY_CPS_COMPLETED || joky_cps_result(frame) != 42) return 7; }}
                     joky_cps_frame_free(frame);
-                    if (count != 4 || joky_runtime_error_code()) return 8;
+                    if (count != 2 || joky_runtime_error_code()) return 8;
                 }}
                 count = 0; joky_runtime_error_clear();
                 JokyCpsFrame *local = joky_cps_frame_new({local_slots});
                 if (dyn_local_task(local) != JOKY_CPS_COMPLETED || joky_cps_result(local) != 42) return 10;
                 joky_cps_frame_free(local);
-                if (count != 2 || events[0] != 10 || events[1] != 8) return 11;
+                if (count != 1 || events[0] != 10) return 11;
                 count = 0; ready = 0;
                 JokyCpsFrame *between = joky_cps_frame_new({between_slots});
                 if (dyn_local_between_pending(between) != JOKY_CPS_PENDING) return 12;
@@ -75,7 +75,7 @@ fn borrowed_dyn_v2_standalone_lifecycle_and_cancellation() {
                 if (dyn_local_between_pending(between) != JOKY_CPS_PENDING) return 13;
                 if (dyn_local_between_pending(between) != JOKY_CPS_COMPLETED || joky_cps_result(between) != 42) return 14;
                 joky_cps_frame_free(between);
-                if (count != 4 || events[0] != 41 || events[1] != 10 || events[2] != 8 || events[3] != 41 || joky_runtime_error_code()) return 15;
+                if (count != 3 || events[0] != 41 || events[1] != 10 || events[2] != 41 || joky_runtime_error_code()) return 15;
             }}
             return 0;
         }}

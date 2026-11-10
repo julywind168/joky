@@ -2,7 +2,6 @@ import joky/iter.{type Iterator, range, next}
 import joky/option.{type Option, Some, None}
 import joky/check.{assert}
 import joky/array.{type Array}
-import joky/drop.{type Drop}
 extern fn record(x: Int32) -> Int32
 
 fn expect(ok: Bool) { assert(ok, "Iterator mismatch") }
@@ -33,9 +32,9 @@ impl Iterator for Texts {
     fn next(&mut self) -> Option<String> { self.value.take() }
 }
 struct Owned { id: Int32, items: Array<Int32> }
-impl Drop for Owned { fn drop(&mut self) { record(self.id); } }
+
 struct Owners { position: Int32, items: Array<Int32> }
-impl Drop for Owners { fn drop(&mut self) { record(99); } }
+
 impl Iterator for Owners {
     type Item = Owned
     fn next(&mut self) -> Option<Owned> {

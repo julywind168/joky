@@ -165,12 +165,11 @@ impl pool::Job for NativeJob {
                 };
                 let packet = unsafe {
                     if let Some(cleanup) = self.frame.returned_cleanup.take() {
-                        Packet::capture_value(
+                        Packet::capture(
                             self.result.clone(),
                             words,
                             Some(cleanup),
                             &mut *super::arena(&mut *self.frame),
-                            true,
                         )?
                     } else {
                         Packet::returned(

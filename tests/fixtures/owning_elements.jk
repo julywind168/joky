@@ -1,13 +1,10 @@
 import joky/option.{type Option}
 import joky/result.{type Result}
 import joky/array.{type Array}
-import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
 
 struct ElementResource { id: Int32, values: Array<Int32> }
-impl Drop for ElementResource {
-    fn drop(&mut self) { record_drop(self.id) }
-}
+
 fn element_resource(id: Int32) -> ElementResource {
     var values = Array.new::<Int32>()
     values.push(id)
@@ -58,9 +55,7 @@ fn elements_nested() -> Int32 {
     if resource.id == 3 && selected.is_empty() && values.len() == 1 { 42 } else { 0 }
 }
 struct ElementPair { first: ElementResource, second: ElementResource, id: Int32 }
-impl Drop for ElementPair {
-    fn drop(&mut self) { record_drop(self.id) }
-}
+
 fn element_pair(id: Int32, first: Int32, second: Int32) -> ElementPair {
     ElementPair { first: element_resource(first), second: element_resource(second), id: id }
 }
@@ -88,12 +83,7 @@ fn elements_rhs_failure() -> Int32 {
     0
 }
 struct FailingElement { id: Int32, values: Array<Int32> }
-impl Drop for FailingElement {
-    fn drop(&mut self) {
-        record_drop(self.id)
-        if self.id == 2 { let fail = 1 << 32 }
-    }
-}
+
 fn failing_element(id: Int32) -> FailingElement { FailingElement { id: id, values: Array.new::<Int32>() } }
 fn elements_drop_failure() -> Int32 {
     var values = Array.new::<FailingElement>()
@@ -129,9 +119,7 @@ fn elements_transitions() -> Int32 {
 fn elements_task() @suspends -> Int32 { elements_transitions() }
 
 struct GenericElement<T> { data: T, values: Array<Int32> }
-impl<T> Drop for GenericElement<T> {
-    fn drop(&mut self) { record_drop(1) }
-}
+
 fn generic_element<T>(data: T) -> Array<GenericElement<T>> {
     var values = Array.new::<GenericElement<T>>()
     values.push(GenericElement { data: data, values: Array.new::<Int32>() })
@@ -147,7 +135,7 @@ fn elements_generic_metadata() -> Int32 {
 enum Message { Empty, Count(Int32), Items(Array<Int32>), Resource(ElementResource), Pair(ElementPair) }
 enum Envelope<T> { Absent, Present(T) }
 struct EnumContainer { message: Envelope<Message>, id: Int32 }
-impl Drop for EnumContainer { fn drop(&mut self) { record_drop(self.id) } }
+
 fn enum_identity<T>(value: T) -> T { value }
 fn enums_custom() -> Int32 {
     let unused = Message.Resource(element_resource(1))
@@ -235,9 +223,7 @@ fn enums_transitions() -> Int32 {
 fn enums_task() @suspends -> Int32 { enums_transitions() }
 
 struct FailingEnumContainer { message: Message, id: Int32 }
-impl Drop for FailingEnumContainer {
-    fn drop(&mut self) { record_drop(self.id); if self.id == 2 { let fail = 1 << 32 } }
-}
+
 fn enums_empty_replacement_failure() -> Int32 {
     var values = Array.new::<FailingEnumContainer>()
     values.push(FailingEnumContainer { message: Message.Empty, id: 1 })
@@ -354,7 +340,7 @@ fn tuples_overwrite() -> Int32 {
     answer
 }
 struct TupleHolder { value: (ElementResource, ElementResource), id: Int32 }
-impl Drop for TupleHolder { fn drop(&mut self) { record_drop(self.id) } }
+
 fn tuples_record() -> Int32 {
     let holder = TupleHolder { value: (element_resource(1), element_resource(2)), id: 10 }
     42

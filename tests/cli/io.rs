@@ -145,6 +145,11 @@ fn resource_owners_execute_in_standalone_aot() {
             "unstarted",
             "dynamic",
             "borrow",
+            "projection",
+            "field_replace",
+            "closure_capture",
+            "nested_containers",
+            "partial_record",
         ],
     );
 }
@@ -674,7 +679,7 @@ fn resource_program_in_standalone_aot(source: &str, entries: &[&str]) {
     }
     driver.push_str("}\nfn main() {\n");
     for entry in entries {
-        driver.push_str(&format!("for cancel in [false,true] {{ reset(); reset_stops(); let mut task=unsafe {{ Continuation::from_native(entry_{entry}, CpsFrame::new({}), Rc::new(())) }}; let mut failed=false; for _ in 0..20 {{ if task.is_finished() {{ break; }} if task.resume().is_err() {{ failed=true; break; }} if cancel {{ break; }} }} if !cancel {{ assert_eq!(failed, {}); if !failed {{ assert_eq!(task.cps_result(),Some(42)); }} }} drop(task); check(); assert!(stops().len()<=1); }}\n",compiler.cps_frame_slots(entry).unwrap(),*entry=="partial" || entry.ends_with("failure") || *entry=="invalid_pending" || *entry=="empty_success"));
+        driver.push_str(&format!("for cancel in [false,true] {{ reset(); reset_stops(); let mut task=unsafe {{ Continuation::from_native(entry_{entry}, CpsFrame::new({}), Rc::new(())) }}; let mut failed=false; for _ in 0..20 {{ if task.is_finished() {{ break; }} if task.resume().is_err() {{ failed=true; break; }} if cancel {{ break; }} }} if !cancel {{ assert_eq!(failed, {}); if !failed {{ assert_eq!(task.cps_result(),Some(42)); }} }} drop(task); check(); assert!(stops().len()<=1); }}\n",compiler.cps_frame_slots(entry).unwrap(),matches!(*entry, "partial" | "partial_record") || entry.ends_with("failure") || *entry=="invalid_pending" || *entry=="empty_success"));
     }
     driver.push_str("}\n");
     work.write("driver.rs", &driver);

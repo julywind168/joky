@@ -15,12 +15,10 @@ use std::{
     thread::{self, JoinHandle},
     time::Instant,
 };
-mod disposal;
 #[cfg(test)]
 mod scoped_tests;
 #[cfg(test)]
 mod wake_tests;
-pub(crate) use disposal::CleanupReceipt;
 pub(crate) type Output = Box<dyn Any + Send>;
 pub(crate) type Factory = Box<dyn FnOnce() -> Result<Box<dyn Job>, Error> + Send>;
 pub(crate) trait Job {
@@ -60,8 +58,6 @@ struct State {
     deadline: Option<Instant>,
 }
 struct Task {
-    #[cfg(test)]
-    polls: AtomicUsize,
     id: u64,
     worker: usize,
     shared: Arc<Shared>,
@@ -71,8 +67,6 @@ struct Task {
     cleaned: AtomicBool,
     failed: AtomicBool,
     controls_pending: AtomicUsize,
-    cleanups_pending: AtomicUsize,
-    cleanups: Mutex<Vec<disposal::Work>>,
     parent: Option<Weak<Task>>,
     group: Option<(Arc<Arbiter>, usize)>,
     state: Mutex<State>,
@@ -205,26 +199,7 @@ thread_local! {
     static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
     static CLEANING: Cell<bool> = const { Cell::new(false) };
 }
-#[cfg(test)]
-pub(crate) fn cleanup_count() -> usize {
-    CURRENT.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .unwrap()
-            .cleanups_pending
-            .load(Ordering::Acquire)
-    })
-}
-#[cfg(test)]
-pub(crate) fn poll_count() -> usize {
-    CURRENT.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .unwrap()
-            .polls
-            .load(Ordering::Acquire)
-    })
-}
+
 pub(crate) fn identity() -> Option<u64> {
     CURRENT.with(|c| c.borrow().as_ref().map(|task| task.id))
 }
@@ -251,16 +226,7 @@ pub(crate) fn children_pending() -> bool {
             .is_some_and(|task| !task.children_cleaned())
     })
 }
-/// Uninstalled captures can owe cleanup even if publication created no child.
-/// Keep failed local frames (and their group arbitration) until the drain path
-/// has run those receipts; otherwise isolate could recover before their Drop.
-pub(crate) fn cleanup_pending() -> bool {
-    CURRENT.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .is_some_and(|task| task.cleanups_pending.load(Ordering::Acquire) != 0)
-    })
-}
+
 pub(crate) fn check_cancelled() -> Result<(), Error> {
     if CLEANING.with(Cell::get) {
         return Ok(());
@@ -420,10 +386,6 @@ impl DomainSpawner {
     }
 }
 impl Handle {
-    #[cfg(test)]
-    pub(crate) fn poll_count(&self) -> usize {
-        self.0.polls.load(Ordering::Acquire)
-    }
     #[cfg(test)]
     pub(crate) fn identity(&self) -> u64 {
         self.0.id
@@ -724,8 +686,6 @@ fn publish(
         let worker = q.next_worker;
         q.next_worker = (worker + 1) % q.ready.len();
         let task = Arc::new(Task {
-            #[cfg(test)]
-            polls: AtomicUsize::new(0),
             id,
             worker,
             shared: shared.clone(),
@@ -735,8 +695,6 @@ fn publish(
             cleaned: AtomicBool::new(false),
             failed: AtomicBool::new(false),
             controls_pending: AtomicUsize::new(0),
-            cleanups_pending: AtomicUsize::new(0),
-            cleanups: Mutex::new(Vec::new()),
             parent: parent.map(Arc::downgrade),
             group: group
                 .as_ref()
@@ -840,22 +798,12 @@ fn run(shared: Arc<Shared>, worker: usize) {
         WAITING.with(|w| w.set(false));
         DEADLINE.with(|d| d.set(None));
         let _storage = Guard::enter(&task.root);
-        let disposal_error = disposal::drain(&task).err();
         let item = local.entry(task.id).or_insert_with(|| Local {
             _task: task.clone(),
             job: None,
             terminal: None,
         });
-        if let Some(error) = disposal_error {
-            task.fail(error.clone());
-            if item.terminal.as_ref().is_some_and(|r| {
-                r.as_ref()
-                    .err()
-                    .is_none_or(|e| e.code() == ErrorCode::Cancelled)
-            }) {
-                item.terminal = Some(Err(error));
-            }
-        }
+
         if item.job.is_none() && item.terminal.is_none() {
             if task.cancelled.load(Ordering::Acquire) {
                 let abandoned = { lock(&task.factory).take() };
@@ -876,8 +824,6 @@ fn run(shared: Arc<Shared>, worker: usize) {
                 item.terminal = Some(result);
             }
         }
-        #[cfg(test)]
-        task.polls.fetch_add(1, Ordering::Release);
         if item.terminal.is_some() {
             let children: Vec<_> = lock(&task.state)
                 .children
@@ -906,17 +852,7 @@ fn run(shared: Arc<Shared>, worker: usize) {
                     }
                 }
             }
-            if children_cleaned {
-                if let Err(error) = disposal::drain(&task) {
-                    if item.terminal.as_ref().is_some_and(|r| {
-                        r.as_ref()
-                            .err()
-                            .is_none_or(|e| e.code() == ErrorCode::Cancelled)
-                    }) {
-                        item.terminal = Some(Err(error));
-                    }
-                }
-            }
+
             let control_closed = if children_cleaned && task.parent.is_none() {
                 let control = lock(&shared.controls)
                     .iter()
@@ -928,7 +864,6 @@ fn run(shared: Arc<Shared>, worker: usize) {
             if children_cleaned
                 && control_closed
                 && task.controls_pending.load(Ordering::Acquire) == 0
-                && task.cleanups_pending.load(Ordering::Acquire) == 0
             {
                 let _cleaning = CleanupGuard::enter();
                 let mut item = local.remove(&task.id).unwrap();
@@ -1044,11 +979,7 @@ impl Group {
             taken: Vec::new(),
         }
     }
-    pub(crate) fn capture_guard(&self) -> disposal::CaptureGuard {
-        disposal::CaptureGuard::enter(
-            (!self.arbiter.propagate_failure).then(|| self.arbiter.clone()),
-        )
-    }
+
     pub(crate) fn publish(&mut self, factories: Vec<Factory>) -> Result<(), Error> {
         if self.selected.is_some() || self.failure.is_some() {
             return Err(invalid("Parallel scope is closed"));
@@ -1086,11 +1017,7 @@ impl Group {
                 }
             }
         }
-        if let Some(task) = CURRENT.with(|slot| slot.borrow().clone()) {
-            if let Err(error) = disposal::drain(&task) {
-                self.retain_failure(error);
-            }
-        }
+
         let failure = lock(&self.arbiter.state).failure.clone();
         if let Some(error) = failure {
             self.retain_failure(error);
@@ -1120,7 +1047,6 @@ impl Group {
         Ok(true)
     }
     /// Local cancellation must also dispose unclaimed results before recovery.
-    /// Their portable cleanup receipts belong to the consuming parent task.
     pub(crate) fn cancel_and_drain(&mut self) -> Result<bool, Error> {
         self.cancel();
         let outcome = self.poll();
@@ -1130,9 +1056,6 @@ impl Group {
         for handle in &self.handles {
             drop(handle.take());
         }
-        let cleanup = CURRENT
-            .with(|slot| slot.borrow().clone())
-            .map_or(Ok(()), |task| disposal::drain(&task));
         let failure = lock(&self.arbiter.state).failure.clone();
         if let Some(error) = failure {
             self.retain_failure(error);
@@ -1140,9 +1063,7 @@ impl Group {
         if let Err(error) = outcome {
             self.retain_failure(error);
         }
-        if let Err(error) = cleanup {
-            self.retain_failure(error);
-        }
+
         self.failure.clone().map_or(Ok(true), Err)
     }
     pub(crate) fn next_result(&self) -> Option<usize> {
@@ -1243,28 +1164,6 @@ impl Arbiter {
                     parent.wake();
                 }
             }
-        }
-    }
-
-    fn cleanup_failed(&self, error: Error) {
-        let children = {
-            let mut state = lock(&self.state);
-            if self.propagate_failure {
-                state.failure.get_or_insert(error);
-            } else {
-                crate::runtime::isolate::retain_failure(&mut state.failure, error);
-            }
-            state
-                .children
-                .iter()
-                .filter_map(Weak::upgrade)
-                .collect::<Vec<_>>()
-        };
-        for child in children {
-            child.cancel();
-        }
-        if let Some(parent) = self.parent.as_ref().and_then(Weak::upgrade) {
-            parent.wake();
         }
     }
 }

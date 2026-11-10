@@ -25,7 +25,7 @@ fn panic_diverges_and_preserves_messages_order_and_cleanup() {
                 .unwrap();
             assert_eq!(vm.call_int32_0("panic_success").unwrap(), 42);
             for (name, message, events) in [
-                ("panic_cleanup", "Primary panic 42", vec![10, 2, 1]),
+                ("panic_cleanup", "Primary panic 42", vec![10]),
                 ("panic_argument", "Argument failure", vec![11]),
                 ("panic_match", "Missing value", vec![]),
                 ("panic_both", "Both branches", vec![]),
@@ -51,7 +51,7 @@ fn panic_diverges_and_preserves_messages_order_and_cleanup() {
             let task = vm.call_async("panic_task", &[]).unwrap();
             assert!(!task.is_finished());
             drop(task);
-            EVENTS.with(|e| assert_eq!(*e.borrow(), [3]));
+            EVENTS.with(|e| assert!((*e.borrow()).is_empty()));
             LIVE.with(|n| assert_eq!(n.get(), 0));
             EVENTS.with(|e| e.borrow_mut().clear());
             let error = {
@@ -67,7 +67,7 @@ fn panic_diverges_and_preserves_messages_order_and_cleanup() {
             };
             drop(vm);
             assert_eq!(error.message(), "Task panic");
-            EVENTS.with(|e| assert_eq!(*e.borrow(), [3]));
+            EVENTS.with(|e| assert!((*e.borrow()).is_empty()));
             LIVE.with(|n| assert_eq!(n.get(), 0));
         }
     }
@@ -178,10 +178,9 @@ fn checked_failure_preserves_messages_locations_order_and_cleanup() {
             .unwrap();
         for (name, message, events) in [
             ("check_success", None, vec![10, 20]),
-            ("check_failure", Some("Requested failure"), vec![10, 20, 1]),
-            ("check_argument_failure", Some("Condition failure"), vec![2]),
-            ("check_drop_failure", Some("Drop failure"), vec![4, 3]),
-            ("check_first_failure", Some("First failure"), vec![5]),
+            ("check_failure", Some("Requested failure"), vec![10, 20]),
+            ("check_argument_failure", Some("Condition failure"), vec![]),
+            ("check_first_failure", Some("First failure"), vec![]),
             ("check_indirect", Some("Indirect failure"), vec![]),
         ] {
             EVENTS.with(|e| e.borrow_mut().clear());
@@ -229,7 +228,7 @@ fn checked_failure_preserves_messages_locations_order_and_cleanup() {
             },
         };
         assert_eq!(error.message(), "Requested failure");
-        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 20, 1]));
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 20]));
         LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }
@@ -269,9 +268,8 @@ fn checked_failure_native_call_sites_preserve_the_first_error_after_cleanup_and_
     let source = r#"
         import joky/check.{assert}
         import joky/array.{type Array}
-        import joky/drop.{type Drop}
         struct Resource { data: Array<Int32> }
-        impl Drop for Resource { fn drop(&mut self) { { let assertion_condition = false; let assertion_message = "Secondary drop failure"; assert(assertion_condition, &assertion_message) } } }
+
         fn fail() { { let assertion_condition = false; let assertion_message = "Primary failure"; assert(assertion_condition, &assertion_message) } }
         fn middle() {
             let resource = Resource { data: Array.new::<Int32>() }

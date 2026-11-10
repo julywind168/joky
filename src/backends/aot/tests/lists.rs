@@ -32,7 +32,7 @@ fn list_native_executes_public_apis_and_each_owner_cleanup() {
             let events = match entry {
                 "clear_failure" => collections::Events::Unordered(&[1, 2, 3]),
                 "replace_drop_failure" => collections::Events::Unordered(&[1, 2]),
-                _ => collections::Events::Balanced(7),
+                _ => collections::Events::Constructed(7),
             };
             collections::Case {
                 entry: name,

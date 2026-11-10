@@ -1,13 +1,10 @@
 import joky/array.{type Array}
-import joky/drop.{type Drop}
 import joky/option.{type Option}
 
 extern fn record_drop(value: Int32)
 
 struct Leaf<T> { id: Int32, values: Array<T> }
-impl<T> Drop for Leaf<T> {
-    fn drop(&mut self) { let length = self.values.len(); record_drop(self.id) }
-}
+
 fn leaf<T>(id: Int32) -> Leaf<T> { Leaf { id: id, values: Array.new::<T>() } }
 fn tracked_leaf<T>(id: Int32) -> Leaf<T> {
     let value = leaf::<T>(id)
@@ -16,15 +13,7 @@ fn tracked_leaf<T>(id: Int32) -> Leaf<T> {
 }
 
 struct Pair { tag: Int32, first: Leaf<Int32>, flag: Bool, second: Leaf<Int64>, unit: Unit }
-impl Drop for Pair {
-    fn drop(&mut self) {
-        // Both siblings must remain live until the parent's hook finishes.
-        let tag = self.tag
-        self.first.values.push(tag)
-        self.second.values.push(int64(tag))
-        record_drop(self.tag)
-    }
-}
+
 fn pair(tag: Int32) -> Pair {
     Pair { tag: tag, first: leaf::<Int32>(tag + 1), flag: true, second: leaf::<Int64>(tag + 2), unit: {} }
 }
@@ -74,7 +63,7 @@ fn multi_loop() -> Int32 {
     42
 }
 struct Envelope { left: Pair, right: Pair, tail: Leaf<Int32> }
-impl Drop for Envelope { fn drop(&mut self) { record_drop(1); self.right.first.id = 29 } }
+
 struct Wrapped { inner: Envelope }
 fn multi_nested() -> Int32 {
     let value = Wrapped { inner: Envelope { right: pair(20), tail: leaf::<Int32>(3), left: pair(10) } }
@@ -103,7 +92,7 @@ fn multi_argument_failure() -> Int32 {
     42
 }
 struct Failing { first: Leaf<Int32>, second: Leaf<Int64> }
-impl Drop for Failing { fn drop(&mut self) { record_drop(9); let bad = 1 / 0 } }
+
 fn multi_failing_hook() -> Int32 {
     let before = pair(10)
     let failed = Failing { first: leaf::<Int32>(1), second: leaf::<Int64>(2) }

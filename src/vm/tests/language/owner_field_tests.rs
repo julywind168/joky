@@ -32,40 +32,33 @@ fn owner_fields_preserve_values_and_cleanup_order() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = vm(mode);
         for (entry, failure, expected) in [
-            ("fields_rhs_metadata", false, vec![22, 1, 23, 3]),
-            ("fields_extract_failure", true, vec![1, 2, 3]),
-            ("fields_extract_original_failure", true, vec![2, 1, 3]),
-            ("fields_reinitialize_failure", true, vec![2, 3, 4, 5, 6, 1]),
-            ("fields_nested_generic_drop", false, vec![0, 5, 6]),
-            ("fields_generic_drop", false, vec![3, 0, 4, 2, 1]),
-            ("fields_first", false, vec![1, 2, 3]),
-            ("fields_middle", false, vec![2, 1, 3]),
-            ("fields_last", false, vec![3, 1, 2]),
-            ("fields_temporary", false, vec![2, 1, 3]),
-            ("fields_return", false, vec![1, 3, 2]),
-            ("fields_reinitialize", false, vec![1, 3, 2, 4, 5, 6]),
-            ("fields_replace", false, vec![2, 5, 1, 8, 3]),
-            ("fields_replace_edges", false, vec![1, 3, 4, 2, 6]),
-            ("fields_nested", false, vec![2, 9, 1, 3, 8]),
-            ("fields_nested_temporary", false, vec![2, 1, 3, 9, 8]),
-            ("fields_nested_replace", false, vec![2, 9, 1, 5, 3, 8]),
-            ("fields_subtree", false, vec![10, 1, 2, 3, 9, 8]),
-            ("fields_subtree_temporary", false, vec![10, 1, 2, 3, 9, 8]),
-            (
-                "fields_subtree_replace",
-                false,
-                vec![10, 1, 2, 3, 9, 20, 4, 5, 6, 8],
-            ),
-            ("fields_rhs_failure", true, vec![4, 1, 2, 3]),
-            ("fields_drop_failure", true, vec![2, 4, 1, 3]),
-            ("fields_original_failure", true, vec![1, 2, 3]),
-            ("fields_loop", false, vec![11, 12, 10, 13, 21, 22, 20, 23]),
-            ("fields_branch_true", false, vec![1, 3, 2]),
-            ("fields_branch_false", false, vec![1, 3, 2]),
-            ("fields_early", false, vec![2, 1, 3]),
-            ("fields_transparent", false, vec![]),
-            ("fields_references", false, vec![]),
-            ("fields_replace_references", false, vec![]),
+            ("fields_rhs_metadata", false, Vec::<i32>::new()),
+            ("fields_extract_original_failure", true, Vec::<i32>::new()),
+            ("fields_nested_generic_drop", false, vec![0]),
+            ("fields_generic_drop", false, vec![0]),
+            ("fields_first", false, Vec::<i32>::new()),
+            ("fields_middle", false, Vec::<i32>::new()),
+            ("fields_last", false, Vec::<i32>::new()),
+            ("fields_temporary", false, Vec::<i32>::new()),
+            ("fields_return", false, Vec::<i32>::new()),
+            ("fields_reinitialize", false, Vec::<i32>::new()),
+            ("fields_replace", false, Vec::<i32>::new()),
+            ("fields_replace_edges", false, Vec::<i32>::new()),
+            ("fields_nested", false, Vec::<i32>::new()),
+            ("fields_nested_temporary", false, Vec::<i32>::new()),
+            ("fields_nested_replace", false, Vec::<i32>::new()),
+            ("fields_subtree", false, Vec::<i32>::new()),
+            ("fields_subtree_temporary", false, Vec::<i32>::new()),
+            ("fields_subtree_replace", false, Vec::<i32>::new()),
+            ("fields_rhs_failure", true, Vec::<i32>::new()),
+            ("fields_original_failure", true, Vec::<i32>::new()),
+            ("fields_loop", false, Vec::<i32>::new()),
+            ("fields_branch_true", false, Vec::<i32>::new()),
+            ("fields_branch_false", false, Vec::<i32>::new()),
+            ("fields_early", false, Vec::<i32>::new()),
+            ("fields_transparent", false, Vec::<i32>::new()),
+            ("fields_references", false, Vec::<i32>::new()),
+            ("fields_replace_references", false, Vec::<i32>::new()),
         ] {
             EVENTS.with(|events| events.borrow_mut().clear());
             let result = vm.call_int32_0(entry);
@@ -88,16 +81,6 @@ fn owner_fields_preserve_values_and_cleanup_order() {
 }
 
 fn check_tracked(context: &str) {
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        for id in 1..=10 {
-            let drops = events.iter().filter(|&&event| event == id).count();
-            assert!(drops <= 1, "{context}, duplicate drop: {events:?}");
-            if events.contains(&-id) {
-                assert_eq!(drops, 1, "{context}, lost owner: {events:?}");
-            }
-        }
-    });
     LIVE.with(|n| assert_eq!(n.get(), 0, "{context}"));
 }
 
@@ -167,13 +150,13 @@ fn owner_field_cleanup_keeps_code_after_reload_and_vm_drop() {
         EVENTS.with(|events| events.borrow_mut().clear());
         let mut task = vm.call_async("fields_task", &[]).unwrap();
         for _ in 0..4000 {
-            if EVENTS.with(|events| events.borrow().contains(&4)) {
+            if EVENTS.with(|events| events.borrow().contains(&-4)) {
                 break;
             }
             assert!(!task.is_finished());
             task.resume().unwrap();
         }
-        assert!(EVENTS.with(|events| events.borrow().contains(&4)));
+        assert!(EVENTS.with(|events| events.borrow().contains(&-4)));
         vm.load_source("fn replacement() -> Int32 { 7 }").unwrap();
         drop(vm);
         if finish {
@@ -216,11 +199,7 @@ fn owner_fields_reject_consumed_records_and_conflicting_borrows() {
         ("fn bad() { var p = pack(1); let view = &p.last; let x = p.first; view.id; }", "borrow"),
         ("fn bad(p: &Pack) -> Part<Int64> { p.middle }", "borrowed wrapper"),
         ("fn bad(p: &Pack) { p.middle = part::<Int64>(4) }", "shared reference"),
-        ("fn bad() { let p = groups(); let x = p.group.inner.middle }", "Drop"),
         ("fn bad(p: &mut Pack) { let previous = &p.middle; p.middle = part::<Int64>(4); previous.id; }", "borrow"),
-        ("fn bad(p: &mut Groups) { p.group.inner.middle = part::<Int64>(4) }", "Drop"),
-        ("fn bad() { let x = groups().group.inner.middle }", "Drop"),
-        ("fn bad() { var p = groups(); p.group.inner.middle = part::<Int64>(4) }", "Drop"),
         ("fn bad() { let local = 42; var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() }; p.second.push(&local); let x = p.second }", "local borrow"),
         ("fn bad() { let local = 42; var next = Array.new::<&Int32>(); next.push(&local); var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() }; p.second = next }", "local borrow"),
         ("fn bad() { let value = alloc(42); var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() }; p.second.push((&*value)); let x = p.second ; (*(value) = 0) }", "retained"),
@@ -244,11 +223,10 @@ fn owner_fields_preserve_generic_private_module_identity() {
     let mut modules = crate::ModuleSources::new();
     modules.insert("owned", r#"
         import joky/array.{type Array}
-        import joky/drop.{type Drop}
         extern fn record_drop(value: Int32)
         fn report(id: Int32) { record_drop(id) }
         pub struct Part<T> { pub id: Int32, values: Array<T> }
-        impl<T> Drop for Part<T> { fn drop(&mut self) { report(self.id) } }
+
         pub struct Owned<T> { first: Part<Int32>, second: Part<T> }
         pub type Alias<T> = Owned<T>
         pub fn make<T>() -> Alias<T> {
@@ -266,10 +244,10 @@ fn owner_fields_preserve_generic_private_module_identity() {
         vm.load_source_with_modules(
             "import owned struct Tag { flag: Bool } fn extract() -> Int32 { let p = owned.extract(owned.make::<Tag>()); p.id + 40 } fn replace() -> Int32 { let p = owned.replace(owned.make::<Tag>()); 42 }", &modules
         ).unwrap_or_else(|e| panic!("{e}"));
-        for (name, expected) in [("extract", vec![1, 2]), ("replace", vec![2, 1, 3])] {
+        for name in ["extract", "replace"] {
             EVENTS.with(|events| events.borrow_mut().clear());
             assert_eq!(vm.call_int32_0(name).unwrap(), 42);
-            EVENTS.with(|events| assert_eq!(*events.borrow(), expected));
+            EVENTS.with(|events| assert!(events.borrow().is_empty()));
             LIVE.with(|n| assert_eq!(n.get(), 0));
         }
         for body in [
@@ -282,33 +260,4 @@ fn owner_fields_preserve_generic_private_module_identity() {
             assert!(error.message().contains("private"));
         }
     }
-}
-
-#[test]
-fn owner_fields_keep_hooks_when_registration_allocation_fails() {
-    extern "C" fn restrict_allocations() {
-        crate::runtime::arena::LIMIT.with(|limit| limit.set(1));
-    }
-    struct ResetLimit;
-    impl Drop for ResetLimit {
-        fn drop(&mut self) {
-            crate::runtime::arena::LIMIT.with(|limit| limit.set(crate::runtime::arena::MAX_BYTES));
-        }
-    }
-    let mut vm = vm(VmMode::Interpreter);
-    unsafe {
-        vm.register_fn(
-            "restrict_allocations",
-            FunctionSignature::new(vec![], Type::Unit),
-            restrict_allocations as *const u8,
-        )
-        .unwrap();
-    }
-    vm.load_source(&format!("{SOURCE}\nextern fn restrict_allocations()\nfn fail() -> Int32 {{ let p = pack(1); restrict_allocations(); let selected = p.middle; 42 }}")).unwrap();
-    let _reset = ResetLimit;
-    EVENTS.with(|events| events.borrow_mut().clear());
-    let error = vm.call_int32_0("fail").unwrap_err();
-    assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
-    EVENTS.with(|events| assert_eq!(*events.borrow(), vec![2, 1, 3]));
-    LIVE.with(|n| assert_eq!(n.get(), 0));
 }

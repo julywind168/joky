@@ -1,7 +1,5 @@
-import joky/drop.{type Drop}
-
 struct Resource { id: Int32, values: Array<Int32> }
-impl Drop for Resource { fn drop(&mut self) { println(self.id) } }
+
 fn main() {
     var values = [Some(Resource { id: 1, values: [] })]
     // Borrow the enum in place, then borrow its resource payload exclusively.
@@ -17,6 +15,6 @@ fn main() {
     // Copy payloads also become mutable references in an exclusive match.
     match &mut count { Some(n) => *n = 42, None => {} }
     match count { Some(n) => println(n), None => println(0) }
-    // Reclaim the updated resource after its last borrow; Drop prints 42 once.
+    // The resource storage is reclaimed automatically after its scope ends.
     values.pop();
 }

@@ -266,7 +266,6 @@ fn decode_owner(
                         .filter(|(_, ty)| ty.is_owner_lane())
                         .map(|(offset, _)| *offset)
                         .collect(),
-                    hooks: vec![],
                 })?;
             }
             let width = element.scalar_types().len();
@@ -518,7 +517,6 @@ pub(crate) fn input_cleanup(ty: &Type, words: &[u64]) -> Option<(usize, super::c
             storage_size: 0,
             storage: None,
             owners,
-            hooks: Vec::new(),
         },
     ))
 }

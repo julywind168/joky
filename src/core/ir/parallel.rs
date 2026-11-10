@@ -33,7 +33,7 @@ pub(crate) struct Qualification {
 
 /// This is a type/storage property, not a proof that a particular pointer or
 /// callable is transferable. Packet admission must additionally prove lifetime,
-/// code ownership, destructor effects and exclusive/shared access.
+/// code ownership and exclusive/shared access.
 fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Qualification {
     fn check(
         root: &Type,
@@ -307,7 +307,7 @@ pub(crate) fn analyse(
             if ty.contains_dyn() {
                 return None;
             }
-            packet::checked_type(ty, &resolve, &|ty| body.has_custom_drop(ty))
+            packet::checked_type(ty, &resolve)
         };
         if let Some(ret) = checked(&signature.ret) {
             if let Some(params) = signature.params.iter().map(checked).collect::<Option<_>>() {
@@ -320,8 +320,7 @@ pub(crate) fn analyse(
                 plan.functions.get(name).is_some_and(|f| {
                     let signature = scoped::signature(plan, name);
                     let owned = |ty: &Type| {
-                        packet::classify(ty, &resolve, &|_| false)
-                            .is_some_and(packet::Kind::implemented)
+                        packet::classify(ty, &resolve).is_some_and(packet::Kind::implemented)
                     };
                     signature.params.iter().all(|ty| {
                         // Cursor references and thread-bound capabilities
@@ -382,7 +381,7 @@ pub(crate) fn analyse(
                             None => &plan.functions[&branch.name].signature,
                         };
                         let owned = |ty| {
-                            packet::classify(ty, &resolve, &|_| false)
+                            packet::classify(ty, &resolve)
                                 .is_some_and(packet::Kind::implemented)
                         };
                         !signature
@@ -625,7 +624,7 @@ mod tests {
                     worker_local: true
                 }
             );
-            assert!(packet::classify(&ty, &|ty| Ok(ty.clone()), &|_| false).is_none());
+            assert!(packet::classify(&ty, &|ty| Ok(ty.clone())).is_none());
         }
         assert!(!qualify(&Type::Ptr).transfer);
         assert!(!qualify(&Type::Resource("HostResource".into())).share);
@@ -676,7 +675,7 @@ mod tests {
                 let reference = Type::reference(cursor.clone(), mutable);
                 assert!(qualify(&reference).worker_local);
                 assert!(!qualify(&reference).transfer);
-                assert!(packet::classify(&reference, &|ty| Ok(ty.clone()), &|_| false).is_none());
+                assert!(packet::classify(&reference, &|ty| Ok(ty.clone())).is_none());
             }
         }
         assert!(!qualify(&Type::BufferIterator(std::sync::Arc::new(Type::Ptr))).worker_local);
@@ -684,16 +683,15 @@ mod tests {
         assert!(!qualify(&Type::reference(Type::Int32, true)).share);
         assert!(!qualify(&Type::reference(Type::reference(Type::Int32, true), false)).transfer);
         let source = r#"
-            import joky/drop.{type Drop}
             extern fn local(value: Int32) -> Int32
             struct Box<T> { value: T }
             fn scalar_box(value: Box<Int32>) -> Int32 { value.value }
             fn opaque_box(value: Box<Ptr>) { }
             struct Tracked { value: Int32, text: String }
-            impl Drop for Tracked { fn drop(&mut self) { local(self.value); } }
-            fn destructor() @suspends { let value = Tracked { value: 1, text: "owned" }; }
+
+            fn owning_local() @suspends { let value = Tracked { value: 1, text: "owned" }; }
             fn inspect(value: &Tracked) @suspends -> Int32 { value.value }
-            fn destructor_borrow() @suspends -> Int32 {
+            fn owning_borrow() @suspends -> Int32 {
                 let value = Tracked { value: 1, text: "owned" }
                 let (a, b) = join { inspect(&value), inspect(&value) }; a + b
             }
@@ -714,7 +712,14 @@ mod tests {
             crate::core::prepared::PreparedModule::new(&ast, &types, &Default::default()).unwrap();
         let plan = prepared.plan(&Default::default()).unwrap();
         let effects = analyse(&plan, &prepared, &HashSet::new());
-        for name in ["even", "odd", "first", "scalar_box"] {
+        for name in [
+            "even",
+            "odd",
+            "first",
+            "scalar_box",
+            "owning_local",
+            "owning_borrow",
+        ] {
             effects.require(name).unwrap();
         }
         for name in [
@@ -725,14 +730,12 @@ mod tests {
             "children",
             "indirect",
             "opaque_box",
-            "destructor",
-            "destructor_borrow",
         ] {
             assert!(effects.require(name).is_err(), "{name}");
         }
         let effects = analyse(&plan, &prepared, &HashSet::from(["local".into()]));
         effects.require("children").unwrap();
-        effects.require("destructor_borrow").unwrap();
+        effects.require("owning_borrow").unwrap();
         assert!(effects.require("indirect").is_err());
     }
 }

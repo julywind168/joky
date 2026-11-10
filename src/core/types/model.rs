@@ -329,7 +329,7 @@ impl Type {
         }
         let mut ty = self;
         while let Self::Record(record) = ty {
-            if record.fields.len() != 1 || record.drop_anchor().is_some() {
+            if record.fields.len() != 1 {
                 return true;
             }
             ty = &record.fields[0].ty;
@@ -1007,8 +1007,6 @@ impl Eq for TypeParameter {}
 /// A resolved nominal type. Only repr_c records promise a C memory layout.
 #[derive(joky_image_derive::Image, Clone)]
 pub struct RecordType {
-    /// The canonical built-in Drop implementation belongs to this declaration.
-    pub(crate) custom_drop: bool,
     /// Identity installed only on the embedded Array declaration.
     pub(crate) array: bool,
     /// Identity installed only on the embedded List declaration.
@@ -1037,21 +1035,6 @@ impl std::fmt::Debug for RecordType {
             .field("name", &self.name)
             .field("id", &self.id)
             .finish()
-    }
-}
-
-impl RecordType {
-    /// A specialization without physical child owners has one trailing null
-    /// buffer lane. It keys moves and cleanup without allocating a buffer.
-    pub(crate) fn drop_anchor(&self) -> Option<&Type> {
-        if !self.custom_drop || self.indirect {
-            return None;
-        }
-        let end = self
-            .fields
-            .last()
-            .map_or(0, |f| f.offset + f.ty.scalar_types().len());
-        self.scalars.get(end)
     }
 }
 

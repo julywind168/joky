@@ -20,7 +20,7 @@ fn add_operators_dispatch_and_transfer_owners_in_source_order() {
         }
         assert_eq!(task.cps_result(), Some(42));
         drop(task);
-        EVENTS.with(|v| assert_eq!(*v.borrow(), [120, 21, 122, 300, 20, 22, 42]));
+        EVENTS.with(|v| assert_eq!(*v.borrow(), [120, 21, 122, 300]));
         clean();
         READY.with(|v| v.set(false));
         EVENTS.with(|v| v.borrow_mut().clear());
@@ -28,7 +28,7 @@ fn add_operators_dispatch_and_transfer_owners_in_source_order() {
         READY.with(|v| v.set(true));
         assert!(task.resume().is_err());
         drop(task);
-        EVENTS.with(|v| assert_eq!(*v.borrow(), [120, 21, 20]));
+        EVENTS.with(|v| assert_eq!(*v.borrow(), [120, 21]));
         clean();
         assert!(vm
             .call_int32_0("add_overflow")

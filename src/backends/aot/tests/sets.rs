@@ -26,7 +26,7 @@ fn set_native_executes_ownership_identity_and_error_paths() {
             entry: name,
             failure: error.is_some(),
             events: if drops.is_empty() {
-                collections::Events::Balanced(5)
+                collections::Events::Constructed(5)
             } else {
                 collections::Events::Unordered(drops)
             },

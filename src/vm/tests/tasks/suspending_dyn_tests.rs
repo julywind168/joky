@@ -4,26 +4,7 @@ use crate::runtime::{arena::LIVE, suspension::ContinuationStatus};
 const SOURCE: &str = include_str!("../../../../tests/fixtures/suspending_dyn.jk");
 
 fn cleaned() {
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        for id in [1, 2] {
-            let drops = events.iter().filter(|&&v| v == id).count();
-            assert!(drops <= 1, "{events:?}");
-            if events.contains(&-id) {
-                assert_eq!(drops, 1, "{events:?}");
-            }
-        }
-    });
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        if let (Some(child), Some(parent)) = (
-            events.iter().position(|&v| v == 2),
-            events.iter().position(|&v| v == 1),
-        ) {
-            assert!(child < parent, "{events:?}");
-        }
-    });
-    LIVE.with(|n| assert_eq!(n.get(), 0));
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 
 #[test]
@@ -31,13 +12,13 @@ fn suspending_dyn_resume_mutate_and_cancel() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm(SOURCE, mode);
         for (entry, expected) in [
-            ("dyn_remote", &[-1, 19, 19, 20, 0, 1][..]),
+            ("dyn_remote", &[-1, 19, 19, 20, 0][..]),
             ("dyn_memory", &[19, 19, 20, 0][..]),
-            ("dyn_result", &[-1, -2, 40, 2, 1][..]),
-            ("dyn_nested", &[-1, -2, 40, 2, 1][..]),
-            ("dyn_text", &[-1, 40, 1][..]),
-            ("dyn_argument", &[-1, 39, 40, 1][..]),
-            ("dyn_place", &[-1, 40, 1][..]),
+            ("dyn_result", &[-1, -2, 40][..]),
+            ("dyn_nested", &[-1, -2, 40][..]),
+            ("dyn_text", &[-1, 40][..]),
+            ("dyn_argument", &[-1, 39, 40][..]),
+            ("dyn_place", &[-1, 40][..]),
         ] {
             for cancel in [false, true] {
                 READY.with(|r| r.set(false));
@@ -70,7 +51,7 @@ fn suspending_dyn_resume_mutate_and_cancel() {
         READY.with(|r| r.set(true));
         assert!(task.resume().is_err());
         drop(task);
-        EVENTS.with(|e| assert_eq!(*e.borrow(), [-1, -2, 40, 2, 1]));
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [-1, -2, 40]));
         cleaned();
         EVENTS.with(|e| e.borrow_mut().clear());
         READY.with(|r| r.set(false));
@@ -201,7 +182,6 @@ fn suspending_dyn_keep_tables_alive_after_reload_and_vm_drop() {
         EVENTS.with(|e| {
             let e = e.borrow();
             assert_eq!(e.iter().filter(|&&v| v == -1).count(), 3);
-            assert_eq!(e.iter().filter(|&&v| v == 1).count(), 3);
         });
         LIVE.with(|n| assert_eq!(n.get(), 0));
     }

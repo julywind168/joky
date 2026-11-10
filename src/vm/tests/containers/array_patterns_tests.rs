@@ -27,18 +27,7 @@ fn configured(mode: VmMode) -> VmEngine {
     vm
 }
 fn cleaned() {
-    arena::LIVE.with(|n| assert_eq!(n.get(), 0));
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        for id in 1..=4 {
-            let created = events.iter().filter(|&&n| n == id).count();
-            let dropped = events.iter().filter(|&&n| n == -id).count();
-            assert!(
-                created <= 1 && dropped <= 1 && dropped >= created,
-                "owner {id}: {events:?}"
-            );
-        }
-    });
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 struct Restore(usize);
 impl Drop for Restore {

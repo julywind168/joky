@@ -148,7 +148,7 @@ impl FunctionPlan {
         }
         // Buffer elements retain shallow nominal identities. Inspect their
         // actual declarations before admitting an inline owning value: hidden
-        // references, hooks and recursive graphs must not pass a shallow check.
+        // references, resources and recursive graphs must not pass a shallow check.
         fn visit(
             plan: &FunctionPlan,
             ty: &Type,
@@ -176,13 +176,7 @@ impl FunctionPlan {
             if seen.contains(&key) {
                 return Ok(());
             }
-            if plan.has_custom_drop(&ty) {
-                return Err(type_error(
-                    &plan.current_span,
-                    ErrorCode::TypeMismatch,
-                    "FixedArray storage does not support custom Drop",
-                ));
-            }
+
             if fixed && !matches!(ty, Type::FixedArrayInit(_)) && !ty.is_fixed_array_data() {
                 return Err(type_error(
                     &plan.current_span,

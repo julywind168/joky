@@ -70,9 +70,9 @@ fn borrowed_host_io_instance_close_stops_io_before_task_and_state_cleanup() {
             vm.poll_tasks(64).unwrap();
         });
         vm.close_instance(id).unwrap();
-        host::assert_cleanup(4, false, None);
+        host::assert_cleanup(4, None);
         let events = host::events();
-        assert_eq!(events.last(), Some(&30), "{events:?}");
+        assert_eq!(events.last(), Some(&5), "{events:?}");
         assert_eq!(vm.instance_count(), 0);
         assert_eq!(vm.instance_task_count(), 0);
         assert_eq!(vm.instance_bytes(), 0);
@@ -114,10 +114,10 @@ fn borrowed_host_io_pending_io_survives_reload_and_vm_drop() {
                     assert!(std::time::Instant::now() < deadline);
                     std::thread::yield_now();
                 }
-                host::assert_cleanup(2, true, Some(10));
+                host::assert_cleanup(2, Some(10));
             } else {
                 executor.cancel_group(&group);
-                host::assert_cleanup(4, false, None);
+                host::assert_cleanup(4, None);
             }
             host::teardown();
             no_allocations();
@@ -127,7 +127,7 @@ fn borrowed_host_io_pending_io_survives_reload_and_vm_drop() {
 #[test]
 fn opaque_types_reject_ownership_and_buffer_host_abis() {
     for (source, message) in [
-        ("import joky/drop.{type Drop} struct SocketOwner { token: UInt64 } impl Drop for SocketOwner { fn drop(&mut self) {} }", "Drop requires an owning record"),
+
         ("import joky/result.{type Result, Ok} fn wrap(socket: Socket) -> Result<Socket, Int32> { Ok(socket) }", "Generic enum argument must be a Copy type or an owner"),
         ("struct Holder { socket: Socket }", "Record fields and enum payloads require a Copy value or an owner"),
         ("import joky/array.{type Array} extern fn read(bytes: &mut Array<UInt8>) @suspends -> Int32", "Buffer owners and views are not supported by the host ABI"),

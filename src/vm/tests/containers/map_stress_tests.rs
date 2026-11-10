@@ -20,6 +20,8 @@ extern "C" fn record(n: i32) {
         }
     });
 }
+use crate as joky;
+include!("../../../../tests/fixtures/lifecycle_probe_host.rs");
 fn configured(mode: VmMode, source: &str) -> VmEngine {
     let registry = std::rc::Rc::new(crate::modules::ModuleRegistry::default());
     registry
@@ -28,7 +30,10 @@ fn configured(mode: VmMode, source: &str) -> VmEngine {
         .set(crate::core::imports::map_test_library())
         .unwrap();
     let mut vm = VmEngine::with_mode_and_registry(mode, registry);
+    vm.register_resource_type("LifecycleProbe").unwrap();
     unsafe {
+        vm.register_resource_factory("lifecycle_probe", "LifecycleProbe", PROBE, None)
+            .unwrap();
         vm.register_fn(
             "record_int",
             FunctionSignature::new(vec![Type::Int32], Type::Unit),
@@ -283,7 +288,12 @@ fn map_stress_native_checks_tombstones_and_bidirectional_indices() {
         .standard
         .set(crate::core::imports::map_test_library())
         .unwrap();
-    let source = oracle::source(oracle::SEEDS[0], 2, 320, true);
+    let source = oracle::source(oracle::SEEDS[0], 2, 320, true)
+        .replace("probe: LifecycleProbe", "probe: String")
+        .replace(
+            "extern fn lifecycle_probe(id: UInt64) -> LifecycleProbe",
+            "fn lifecycle_probe(id: UInt64) -> String { \"probe\" }",
+        );
     let ast = registry
         .resolve_with_modules(
             &crate::parser::parse(&source).unwrap(),

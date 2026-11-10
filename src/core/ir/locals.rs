@@ -250,7 +250,7 @@ impl FunctionPlan {
                 Op::Local { dst, target, .. } if !target.is_place() => Some((dst.index, target)),
                 _ => None,
             };
-            for (key, target) in local.into_iter().chain(op.cleanup_storage()) {
+            for (key, target) in local.into_iter() {
                 let layout = target
                     .storage_layout()
                     .map_err(|e| type_error(span, ErrorCode::ResourceLimit, e.to_string()))?;
@@ -377,7 +377,6 @@ impl FunctionPlan {
                 },
             ));
         }
-        self.check_owner_projection(owner.ty.clone(), &path, self.current_span)?;
         let capture = self.captured_fields.get(&owner.index).cloned();
         let (root, ownership_path, detach) = if let Some((root, prefix)) = capture {
             (
@@ -842,7 +841,6 @@ impl FunctionPlan {
                 ));
             }
             if target.is_owner() {
-                self.check_owner_projection(slot_type(&binding.slot), &path, *span)?;
                 if owner.as_ref().is_some_and(|s| {
                     self.captured_owners.contains(&s.index)
                         || self.captured_fields.contains_key(&s.index)

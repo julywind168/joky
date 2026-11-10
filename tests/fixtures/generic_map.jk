@@ -3,7 +3,6 @@ import joky/array.{type Array}
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
 import joky/check.{assert}
-import joky/drop.{type Drop}
 extern fn record_int(value: Int32)
 
 fn integer32<Tag>() -> Int32 {
@@ -120,7 +119,7 @@ fn cached_rehash<Tag>() -> Int32 {
     m.get(Traced { n: 1 }).unwrap_or(0) + m.remove(Traced { n: 2 }).unwrap_or(0)
 }
 struct Resource { id: Int32, values: Array<Int32> }
-impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
+
 fn resource(id: Int32) -> Resource { var values = Array.new::<Int32>(); values.push(id); Resource { id: id, values: values } }
 struct Fallible { n: Int32, mode: Int32 }
 impl Hash for Fallible {

@@ -479,17 +479,13 @@ mod tests {
 
     #[test]
     fn scoped_rejections_include_unused_callbacks_and_cleanup() {
-        for body in [
-            "let text = \"callback\"; unchecked(&text); value",
-            r#"let guard = Guard { value: "cleanup" }; value"#,
-        ] {
+        for body in ["let text = \"callback\"; unchecked(&text); value"] {
             let source = format!(
                 r#"
                 import joky/array.{{type Array}}
-                import joky/drop.{{type Drop}}
                 extern fn unchecked(text: &String) -> Int32
                 struct Guard {{ value: String }}
-                impl Drop for Guard {{ fn drop(&mut self) {{ unchecked(&self.value); }} }}
+
                 fn safe(value: Int32) -> Int32 {{ value }}
                 fn bad(value: Int32) -> Int32 {{ {body} }}
                 fn expose() -> fn(Int32) -> Int32 {{ bad }}
@@ -517,9 +513,6 @@ mod tests {
             let reason = &rejected["main"];
             for witness in ["reader", "bad", "host reference ABI"] {
                 assert!(reason.contains(witness), "{reason}");
-            }
-            if body.contains("Guard") {
-                assert!(reason.contains("drop"), "{reason}");
             }
         }
     }

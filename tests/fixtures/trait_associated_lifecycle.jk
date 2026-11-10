@@ -1,5 +1,4 @@
 import joky/array.{type Array}
-import joky/drop.{type Drop}
 extern fn record(value: Int32) -> Int32
 extern fn pause(value: Int32) @suspends -> Int32
 
@@ -20,7 +19,7 @@ trait Factory {
     }
 }
 struct Resource { values: Array<Int32>, id: Int32 }
-impl Drop for Resource { fn drop(&mut self) { record(self.id); } }
+
 struct DropProducer {}
 impl Factory for DropProducer {
     type Item = Resource

@@ -8,13 +8,13 @@ fn suspending_dyn_execute_relocated_entries_and_cleanup() {
         "suspending-dyn",
         include_str!("../../../../tests/fixtures/suspending_dyn.jk"),
         &[
-            ("dyn_remote", "-1,19,19,20,0,1", 6),
+            ("dyn_remote", "-1,19,19,20,0", 5),
             ("dyn_memory", "19,19,20,0", 4),
-            ("dyn_result", "-1,-2,40,2,1", 5),
-            ("dyn_nested", "-1,-2,40,2,1", 5),
-            ("dyn_text", "-1,40,1", 3),
-            ("dyn_argument", "-1,39,40,1", 4),
-            ("dyn_place", "-1,40,1", 3),
+            ("dyn_result", "-1,-2,40", 3),
+            ("dyn_nested", "-1,-2,40", 3),
+            ("dyn_text", "-1,40", 2),
+            ("dyn_argument", "-1,39,40", 3),
+            ("dyn_place", "-1,40", 2),
         ],
         |compiler| {
             let mut extra = String::new();
@@ -42,7 +42,7 @@ fn suspending_dyn_execute_relocated_entries_and_cleanup() {
                                 made += events[i] == -id;
                                 dropped += events[i] == id;
                             }}
-                            if (made != dropped || made > 1) return 21;
+                            if (dropped != 0 || made > 1) return 21;
                         }}
                     }}
                 "#
@@ -58,7 +58,7 @@ fn suspending_dyn_execute_relocated_entries_and_cleanup() {
                     ready = 1;
                     if (dyn_failure(frame) != 7) return 23;
                     joky_cps_frame_free(frame);
-                    if (count != 5 || events[0] != -1 || events[1] != -2 || events[2] != 40 || events[3] != 2 || events[4] != 1) return 24;
+                    if (count != 3 || events[0] != -1 || events[1] != -2 || events[2] != 40) return 24;
                     joky_runtime_error_clear();
                 }}
             "#));

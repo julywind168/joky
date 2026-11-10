@@ -1,5 +1,7 @@
 # Map 设计与分阶段开发计划
 
+> 2026-11-10 更新：本文涉及自定义 `joky/drop.Drop` 的设计、限制与验收为历史记录；该能力已撤回。当前自动清理规则及迁移见[撤回说明](custom-drop-withdrawal-review.md)。
+
 状态：M0–M7、P-error 与 P-key 均已完成，首版 Map 已通过稳定性与性能基线验收。后续能力见第 6 节。
 基线为 `cbe8f30`，Array 已具备拥有型元素、元素与切片借用、
 `swap_remove/remove/insert/truncate/clear/swap`。本计划以 **同步、无序的哈希 Map** 为目标，

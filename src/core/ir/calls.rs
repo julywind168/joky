@@ -443,7 +443,6 @@ impl FunctionPlan {
                 types,
             );
         }
-        self.check_drop_call(&name, *span)?;
         if info.extern_abi == crate::core::builtins::ExternAbi::C && !self.unsafe_context {
             return Err(type_error(
                 span,
@@ -859,7 +858,6 @@ impl FunctionPlan {
                 .map(|value| CleanupOp::Register {
                     value: value.clone(),
                     place: None,
-                    hooks: vec![],
                     elements: vec![],
                 });
             planned.push(ConcurrentBranch {
@@ -885,7 +883,6 @@ impl FunctionPlan {
                 branch.cleanup = Some(CleanupOp::Register {
                     value: value.clone(),
                     place: None,
-                    hooks: vec![],
                     elements: vec![],
                 });
             }

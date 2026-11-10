@@ -84,9 +84,8 @@ impl Kind {
 pub(crate) fn classify(
     root: &Type,
     resolve: &impl Fn(&Type) -> Result<Type, Error>,
-    has_drop: &impl Fn(&Type) -> bool,
 ) -> Option<Kind> {
-    checked_type(root, resolve, has_drop).map(|ty| Kind::of(&ty))
+    checked_type(root, resolve).map(|ty| Kind::of(&ty))
 }
 
 /// Freeze the same concrete layouts that admission checks. Buffer elements in
@@ -94,14 +93,13 @@ pub(crate) fn classify(
 pub(super) fn checked_type(
     root: &Type,
     resolve: &impl Fn(&Type) -> Result<Type, Error>,
-    has_drop: &impl Fn(&Type) -> bool,
 ) -> Option<Type> {
     // Copy only the paths to resolved identities. Other fields (including
     // shared aggregate DAGs) keep the module's original layout nodes.
     fn visit(
         ty: &mut Type,
         resolve: &impl Fn(&Type) -> Result<Type, Error>,
-        has_drop: &impl Fn(&Type) -> bool,
+
         depth: usize,
         remaining: &mut usize,
     ) -> Option<bool> {
@@ -114,15 +112,12 @@ pub(super) fn checked_type(
         if changed {
             *ty = resolve(ty).ok()?;
         }
-        if matches!(ty, Type::Enum(ref e) if e.compact)
-            || has_drop(ty)
-            || ty.storage_layout().is_err()
-        {
+        if matches!(ty, Type::Enum(ref e) if e.compact) || ty.storage_layout().is_err() {
             return None;
         }
         let mut child = |source: &Type| {
             let mut layout = source.clone();
-            let updated = visit(&mut layout, resolve, has_drop, depth + 1, remaining)?;
+            let updated = visit(&mut layout, resolve, depth + 1, remaining)?;
             changed |= updated;
             Some(updated.then_some(layout))
         };
@@ -194,7 +189,7 @@ pub(super) fn checked_type(
         Some(changed)
     }
     let mut ty = root.clone();
-    visit(&mut ty, resolve, has_drop, 0, &mut 65_536)?;
+    visit(&mut ty, resolve, 0, &mut 65_536)?;
     Some(ty)
 }
 
@@ -207,7 +202,6 @@ mod tests {
     #[test]
     fn task_packet_kinds_check_nominal_children_and_preserve_transport_gate() {
         let source = r#"
-            import joky/drop.{type Drop}
             import joky/option.{type Option}
             import joky/result.{type Result}
             import joky/array.{type Array}
@@ -220,7 +214,7 @@ mod tests {
             struct Box<T> { value: T }
             struct Marker<T> { value: Int32 }
             struct Tracked { text: String }
-            impl Drop for Tracked { fn drop(&mut self) { } }
+
             type Alias = Box<(Int8, String)>
             fn scalar(value: Int32) { }
             fn text(value: String) { }
@@ -298,14 +292,14 @@ mod tests {
             ("borrowed", None),
             ("pointer", None),
             ("phantom", None),
-            ("tracked", None),
-            ("inactive_drop", None),
+            ("tracked", Some(Kind::Record)),
+            ("inactive_drop", Some(Kind::Enum)),
             ("container", Some(Kind::Record)),
             ("array_value", Some(Kind::Array)),
             ("array_pointer", None),
             ("array_reference", None),
             ("array_phantom", None),
-            ("array_drop", None),
+            ("array_drop", Some(Kind::Array)),
             ("array_map", Some(Kind::Array)),
             ("array_list", Some(Kind::Array)),
             ("array_set", Some(Kind::Array)),
@@ -313,7 +307,7 @@ mod tests {
             ("list_pointer", None),
             ("list_reference", None),
             ("list_phantom", None),
-            ("list_drop", None),
+            ("list_drop", Some(Kind::List)),
             ("list_map", Some(Kind::List)),
             ("list_set", Some(Kind::List)),
             ("array_fixed", Some(Kind::Array)),
@@ -322,10 +316,10 @@ mod tests {
             ("map_key_pointer", None),
             ("map_value_reference", None),
             ("map_phantom", None),
-            ("map_drop", None),
+            ("map_drop", Some(Kind::Map)),
             ("set_pointer", None),
             ("set_reference", None),
-            ("set_drop", None),
+            ("set_drop", Some(Kind::Set)),
             ("callable", Some(Kind::Function)),
         ] {
             let signature = &plan.functions[name].signature;
@@ -335,9 +329,7 @@ mod tests {
             if let Ok(packet) = packet {
                 // The host has only the frozen signature, without the module's
                 // nominal table. Every admitted child must already be concrete.
-                let kind = classify(&packet.params[0], &|ty| Ok(ty.clone()), &|ty| {
-                    plan.bodies[name].has_custom_drop(ty)
-                });
+                let kind = classify(&packet.params[0], &|ty| Ok(ty.clone()));
                 assert_eq!(kind, expected, "{name} frozen packet");
             }
             let words = encode(signature).unwrap();

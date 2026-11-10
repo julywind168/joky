@@ -19,7 +19,7 @@ impl Default for Locals {
 }
 
 impl Locals {
-    /// Transferred cleanup hooks can outlive the activation that stored their bytes.
+    /// Transferred cleanup descriptors can outlive the activation that stored their bytes.
     pub(super) fn keep_alive(&self) -> Rc<std::cell::RefCell<Arena>> {
         self.arena.clone()
     }
@@ -417,41 +417,6 @@ pub(super) unsafe fn write_scalar(ptr: *mut u8, value: &Value) {
         Value::Ptr(value) | Value::Reference(value) => ptr.cast::<*mut u8>().write_unaligned(value),
         _ => unreachable!("validated Copy memory"),
     }
-}
-
-/// Snapshot a complete owner for destructor metadata, separate from Copy locals.
-pub(super) fn snapshot(
-    key: usize,
-    value: &crate::core::ir::Slot,
-    slots: &[Value],
-    locals: &mut Locals,
-) -> Result<*mut u8, Error> {
-    let layout = value
-        .ty
-        .storage_layout()
-        .map_err(|e| abi_error(e.to_string()))?;
-    let pointer = if let Some(pointer) = locals.pointers.get(&key) {
-        *pointer
-    } else {
-        let pointer = locals
-            .arena
-            .borrow_mut()
-            .allocate(layout.size, layout.align)?;
-        locals.pointers.insert(key, pointer);
-        pointer
-    };
-    for ((offset, _), scalar) in value
-        .ty
-        .storage_scalars()
-        .unwrap()
-        .into_iter()
-        .zip(value.scalars())
-    {
-        unsafe {
-            write_scalar(pointer.as_ptr().add(offset), &slots[scalar.index]);
-        }
-    }
-    Ok(pointer.as_ptr())
 }
 
 pub(super) fn moved_owner(op: &Instruction) -> Option<OwnerTransfer> {

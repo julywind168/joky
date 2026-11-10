@@ -32,7 +32,6 @@ fn map_borrow_iter_runs_stable_entries_and_cleans_owners_in_standalone_aot() {
         .collect();
     assert_eq!(events[0], 42);
     for id in [1, 2] {
-        assert_eq!(events.iter().filter(|&&n| n == id).count(), 3);
         assert_eq!(events.iter().filter(|&&n| n == -id).count(), 3);
     }
     assert_eq!(
@@ -73,7 +72,7 @@ fn map_borrow_iter_runs_stable_entries_and_cleans_owners_in_standalone_aot() {
         assert_eq!(
             events,
             if body.starts_with("consume") {
-                vec![-2, -1, 1, 2]
+                vec![-2, -1]
             } else {
                 vec![]
             }
@@ -115,7 +114,7 @@ fn slice_borrow_iter_runs_subranges_and_map_columns_in_standalone_aot() {
     assert_eq!(events[0], 42);
     for id in 1..=4 {
         let count = if id <= 2 { 3 } else { 1 };
-        assert_eq!(events.iter().filter(|&&n| n == id).count(), count);
+
         assert_eq!(events.iter().filter(|&&n| n == -id).count(), count);
     }
     assert_eq!(
@@ -150,7 +149,7 @@ fn slice_borrow_iter_runs_subranges_and_map_columns_in_standalone_aot() {
         .map(|n| n.parse().unwrap())
         .collect();
     events.sort();
-    assert_eq!(events, [-2, -1, 1, 2]);
+    assert_eq!(events, [-2, -1]);
 }
 
 #[test]
@@ -186,7 +185,6 @@ fn array_borrow_iter_runs_with_live_element_views_in_standalone_aot() {
         .collect();
     assert_eq!(events[0], 42);
     for id in 1..=4 {
-        assert_eq!(events.iter().filter(|&&n| n == id).count(), 6);
         assert_eq!(events.iter().filter(|&&n| n == -id).count(), 6);
     }
     assert_eq!(
@@ -221,7 +219,7 @@ fn array_borrow_iter_runs_with_live_element_views_in_standalone_aot() {
                 .map(|n| n.parse().unwrap())
                 .collect();
             events.sort();
-            assert_eq!(events, [-4, -3, -2, -1, 1, 2, 3, 4, 11]);
+            assert_eq!(events, [-4, -3, -2, -1, 11]);
         }
     }
 }
@@ -274,7 +272,6 @@ fn array_into_iter_runs_and_cleans_remaining_items_in_standalone_aot() {
             .collect();
         assert_eq!(events[0], 42);
         for id in 1..=4 {
-            assert_eq!(events.iter().filter(|&&event| event == id).count(), 6);
             assert_eq!(events.iter().filter(|&&event| event == -id).count(), 6);
         }
         assert_eq!(
@@ -308,7 +305,7 @@ fn array_into_iter_runs_and_cleans_remaining_items_in_standalone_aot() {
         .map(|line| line.parse().unwrap())
         .collect();
     events.sort();
-    assert_eq!(events, [-4, -3, -2, -1, 1, 2, 3, 4, 11]);
+    assert_eq!(events, [-4, -3, -2, -1, 11]);
 }
 
 #[test]
@@ -480,7 +477,7 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
 fn array_sort_is_stable_and_preserves_owners_on_all_backends() {
     let work = Workspace::new();
     work.write("sort.jk", include_str!("../fixtures/array_sort.jk"));
-    work.assert_all_backends("sort.jk", &["--no-prelude"], b"sorted\nD\nB\nC\nA\nE\n", 0);
+    work.assert_all_backends("sort.jk", &["--no-prelude"], b"sorted\n", 0);
     work.write(
         "float.jk",
         "fn bad() { var values = [1.0, 0.0]; values.sort() }",
@@ -502,7 +499,7 @@ fn array_replace_runs_in_standalone_aot() {
     work.assert_native(
         "array_replace.jk",
         &[],
-        b"42\n42\n42\n-1\n-2\n-3\n-4\n3\n4\n1\n2\n42\n-1\n-2\n2\n1\n42\n",
+        b"42\n42\n42\n-1\n-2\n-3\n-4\n42\n-1\n-2\n42\n",
         0,
     );
 }
@@ -724,7 +721,7 @@ fn existing_primitives_run_in_all_backends() {
         "primitives.jk",
         include_str!("../fixtures/json_primitives.jk"),
     );
-    work.assert_all_backends("primitives.jk", &[], b"42\n", 0);
+    work.assert_all_backends("primitives.jk", &[], b"", 0);
 }
 
 #[test]
@@ -735,7 +732,7 @@ fn recursive_owners_run_in_all_backends() {
         "recursive.jk",
         include_str!("../fixtures/json_recursive_owners.jk"),
     );
-    work.assert_all_backends("recursive.jk", &[], b"1\n2\n", 0);
+    work.assert_all_backends("recursive.jk", &[], b"", 0);
     let source = include_str!("../fixtures/recursive_owner_cleanup.jk").replace(
         "extern fn record_drop(value: Int32)",
         "fn record_drop(value: Int32) { println(value) }",
@@ -744,12 +741,7 @@ fn recursive_owners_run_in_all_backends() {
         "transfers.jk",
         &format!("{source}\nfn main() {{ probe(); }}"),
     );
-    work.assert_all_backends(
-        "transfers.jk",
-        &[],
-        b"-1\n-2\n-3\n-4\n3\n2\n-5\n5\n-100\n4\n1\n",
-        0,
-    );
+    work.assert_all_backends("transfers.jk", &[], b"-1\n-2\n-3\n-4\n-5\n-100\n", 0);
 }
 
 #[test]
@@ -955,12 +947,7 @@ fn array_sequence_cleanup_runs_in_all_backends() {
         "fn note(value: Int32) { println(value) }",
     );
     work.write("array_cleanup.jk", &source);
-    work.assert_all_backends(
-        "array_cleanup.jk",
-        &[],
-        b"1\n2\n3\n4\n-3\n-2\n-1\n-4\n42\n1\n3\n-3\n-1\n42\n",
-        0,
-    );
+    work.assert_all_backends("array_cleanup.jk", &[], b"1\n2\n3\n4\n42\n1\n3\n42\n", 0);
     let failed = format!(
         "{}\nfn main() {{ failed_init(); }}",
         source.split("fn main()").next().unwrap()
@@ -978,7 +965,7 @@ fn array_sequence_cleanup_runs_in_all_backends() {
     );
     for output in outputs {
         assert_eq!(output.status.code(), Some(1), "{output:?}");
-        assert_eq!(output.stdout, b"1\n-1\n", "{output:?}");
+        assert_eq!(output.stdout, b"1\n", "{output:?}");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains("Division by zero"),
             "{output:?}"
@@ -1010,14 +997,13 @@ fn array_spread_cleanup_runs_in_all_backends() {
     work.assert_all_backends(
         "spread_cleanup.jk",
         &[],
-        b"1\n2\n3\n4\n-3\n-2\n-1\n-4\n42\n1\n2\n3\n4\n-4\n-2\n-1\n-3\n42\n1\n2\n3\n-2\n-1\n-3\n42\n",
+        b"1\n2\n3\n4\n42\n1\n2\n3\n4\n42\n1\n2\n3\n42\n",
         0,
     );
     let declarations = source.split("fn main()").next().unwrap();
     for (entry, stdout) in [
-        ("failed_source", "1\n2\n3\n4\n-4\n-3\n-2\n-1\n"),
-        ("failed_after", "1\n2\n-2\n-1\n"),
-        ("failed_drop", "2\n1\n3\n-3\n-2\n-1\n"),
+        ("failed_source", "1\n2\n3\n4\n"),
+        ("failed_after", "1\n2\n"),
     ] {
         work.write(
             "spread_failure.jk",
@@ -1058,13 +1044,13 @@ fn check_owned_map_cli_cases(additional_cases: bool) {
     // Share specializations within the same groups as the VM tests.
     let groups: &[(&[&str], &str)] = if additional_cases {
         &[
-            (&["nested_values"], "-6\n-7\n7\n6\n42\n"),
+            (&["nested_values"], "-6\n-7\n42\n"),
             (&["arrays", "reuse_budget"], "42\n42\n"),
         ]
     } else {
         &[(
             &["transitions", "return_move"],
-            "-1\n-2\n101\n102\n-3\n-4\n3\n4\n-5\n-90\n5\n2\n1\n42\n-8\n8\n42\n",
+            "-1\n-2\n101\n102\n-3\n-4\n-5\n-90\n42\n-8\n42\n",
         )]
     };
     for (names, expected) in groups {
@@ -1078,11 +1064,8 @@ fn check_owned_map_cli_cases(additional_cases: bool) {
     if additional_cases {
         return;
     }
-    for (name, expected, message) in [
-        ("clear_failure", "3\n2\n1\n", "Map Drop failure"),
-        ("replacement_drop_failure", "2\n4\n", "Map Drop failure"),
-        ("runtime_failure", "-1\n1\n", "Map operation failure"),
-    ] {
+    {
+        let (name, expected, message) = ("runtime_failure", "-1\n", "Map operation failure");
         work.write(
             "failure.jk",
             &format!("{prefix} fn main() {{ {name}::<Unit>(); }}"),
@@ -1162,7 +1145,7 @@ fn check_generic_map_cli_cases(additional_cases: bool) {
         );
         let assert_failure = |output: std::process::Output| {
             assert!(!output.status.success());
-            assert_eq!(output.stdout, b"2\n1\n");
+            assert!(output.stdout.is_empty());
             assert!(String::from_utf8_lossy(&output.stderr).contains(message));
         };
         assert_failure(work.cli(&["run", "failure.jk"]));
@@ -1184,7 +1167,7 @@ fn check_map_borrowing_cli_cases(additional_cases: bool) {
         .to_owned();
     for (name, expected) in [
         ("copy_views", "42\n"),
-        ("owned_views", "-1\n-2\n2\n1\n42\n"),
+        ("owned_views", "-1\n-2\n42\n"),
         ("nested_views", "42\n"),
         ("reference_values", "42\n"),
         ("shared_aggregate", "42\n"),
@@ -1220,7 +1203,7 @@ fn check_map_borrowing_cli_cases(additional_cases: bool) {
             assert_eq!(
                 output.stdout,
                 if name.contains("owner") {
-                    b"-1\n1\n".as_slice()
+                    b"-1\n".as_slice()
                 } else {
                     b""
                 }
@@ -1258,10 +1241,7 @@ fn check_map_iteration_cli_cases(additional_cases: bool) {
         ("copy_views", "42\n"),
         ("consuming", "42\n"),
         ("batches", "42\n"),
-        (
-            "owned_pipeline",
-            "-1\n-2\n-3\n1\n-4\n2\n3\n900\n901\n4\n42\n",
-        ),
+        ("owned_pipeline", "-1\n-2\n-3\n-4\n900\n901\n42\n"),
         ("references", "42\n"),
         ("unbounded", "42\n"),
         ("protocol_free_export", "101\n102\n42\n"),
@@ -1275,38 +1255,14 @@ fn check_map_iteration_cli_cases(additional_cases: bool) {
         );
         work.assert_all_backends("map_iteration.jk", &[], expected.as_bytes(), 0);
     }
-    if additional_cases {
-        return;
-    }
-    work.write(
-        "failure.jk",
-        &format!("{prefix} fn main() {{ drop_failure::<Unit>(); }}"),
-    );
-    let assert_failure = |output: std::process::Output| {
-        assert!(!output.status.success(), "{output:?}");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("Batch drop failure"));
-        let events: Vec<i32> = String::from_utf8(output.stdout)
-            .unwrap()
-            .lines()
-            .map(|s| s.parse().unwrap())
-            .collect();
-        assert_eq!(&events[..7], &[-1, 101, -2, -3, -4, 101, 1]);
-        let mut remaining = events[7..].to_vec();
-        remaining.sort();
-        assert_eq!(remaining, vec![2, 3, 4]);
-    };
-    assert_failure(work.cli(&["run", "failure.jk"]));
-    assert_failure(work.cli(&["run", "--interpreter", "failure.jk"]));
-    success(&work.cli(&["build", "failure.jk"]));
-    assert_failure(Command::new(work.path().join("failure")).output().unwrap());
 }
 
 #[cfg(unix)]
 fn check_map_stress_in_standalone_aot(steps: i32) {
     use map_stress_oracle as oracle;
     let work = Workspace::new();
-    let mut source = recording_cli_source(&oracle::source(oracle::SEEDS[0], 0, 0, false));
-    source.push_str("\nfn main() {");
+    let mut source = oracle::source(oracle::SEEDS[0], 0, 0, false);
+    source.push_str("\nfn run_model() -> Int32 {");
     for distribution in 0..3 {
         for seed in oracle::SEEDS {
             source.push_str(&format!(
@@ -1314,9 +1270,48 @@ fn check_map_stress_in_standalone_aot(steps: i32) {
             ));
         }
     }
-    source.push('}');
-    work.write("stress.jk", &source);
-    success(&work.cli(&["build", "stress.jk"]));
+    source.push_str("42 }");
+    let mut compiler = joky::aot::AotCompiler::new("map_model").unwrap();
+    compiler.register_resource_type("LifecycleProbe").unwrap();
+    compiler
+        .register_resource_factory("lifecycle_probe", "LifecycleProbe")
+        .unwrap();
+    compiler
+        .compile_module(&joky::parser::parse(&source).unwrap())
+        .unwrap();
+    compiler.write_object(&work.path().join("model.o")).unwrap();
+    let mut driver = include_str!("../fixtures/lifecycle_probe_host.rs").to_owned();
+    driver.push_str(
+        r#"
+fn record(n:i32) { println!("{n}"); }
+#[no_mangle] pub extern "C" fn record_int(n:i32) { record(n); }
+extern "C" { fn run_model() -> i32; }
+fn main() { assert_eq!(unsafe {run_model()},42); }
+"#,
+    );
+    work.write("driver.rs", &driver);
+    let library = runtime_archive().with_extension("rlib");
+    success(
+        &Command::new("rustc")
+            .arg("--edition=2021")
+            .arg(work.path().join("driver.rs"))
+            .arg("--extern")
+            .arg(format!("joky={}", library.display()))
+            .arg("-L")
+            .arg(format!(
+                "dependency={}",
+                library.parent().unwrap().display()
+            ))
+            .arg("-C")
+            .arg(format!(
+                "link-arg={}",
+                work.path().join("model.o").display()
+            ))
+            .arg("-o")
+            .arg(work.path().join("stress"))
+            .output()
+            .unwrap(),
+    );
     let output = Command::new(work.path().join("stress")).output().unwrap();
     success(&output);
     let events: Vec<i32> = String::from_utf8(output.stdout)

@@ -1,5 +1,7 @@
 # 匿名函数与闭包开发计划
 
+> 2026-11-10 更新：本文涉及自定义 `joky/drop.Drop` 的设计、限制与验收为历史记录；该能力已撤回。当前自动清理规则及迁移见[撤回说明](custom-drop-withdrawal-review.md)。
+
 状态：2026-10-07，C0 设计核对基线 `a2026fb`。**C0 已冻结；C1–C6 已完成验收，同步局部首版完成。**
 首版支持同步局部匿名函数、借用/move 捕获、Fn/FnMut/FnOnce 与 Option/Result 回调。
 实现规则见 [language.md](language.md#同步匿名函数与闭包)，阶段证据见第 10 节。

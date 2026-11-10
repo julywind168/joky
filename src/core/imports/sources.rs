@@ -44,7 +44,6 @@ pub(super) enum SourceKind {
     FixedArrayLibrary,
     BufferStorage,
     BufferLibrary,
-    DropTrait,
     Operators,
     Equality,
     Check,
@@ -364,13 +363,6 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
-        kind: SourceKind::DropTrait,
-        path: "joky/drop",
-        source: include_str!("../../stdlib/drop.jk"),
-        reexport_imports: false,
-        implicit: ImplicitImports::None,
-    },
-    SourceDefinition {
         kind: SourceKind::BufferStorage,
         path: "joky/internal/buffer",
         source: include_str!("../../stdlib/internal/buffer.jk"),
@@ -521,6 +513,10 @@ impl StandardCache {
         module: &Module,
         prelude: bool,
     ) -> Result<StandardLibrary, Error> {
+        if let Some(import) = module.imports.iter().find(|i| i.path == "joky/drop") {
+            return Err(error(import.span, ErrorCode::InvalidImport,
+                "joky/drop has been removed; use explicit lifecycle methods for business actions; owned fields and host resources are released automatically"));
+        }
         #[cfg(test)]
         if let Some(library) = self.fixture.get() {
             return Ok(library.clone());
@@ -754,7 +750,6 @@ impl StandardLibrary {
             }
         }
         for declaration in &mut module.traits {
-            declaration.is_drop = kind == SourceKind::DropTrait;
             declaration.is_add = kind == SourceKind::Operators && declaration.name == "Add";
             declaration.is_eq = kind == SourceKind::Equality && declaration.name == "Eq";
             let name = declaration.name.clone();

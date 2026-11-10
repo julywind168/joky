@@ -510,27 +510,6 @@ fn turn(s:&mut State)->String {{s.n+=1; "{}"}}
 }
 
 #[test]
-fn owned_text_domain_request_rebinding_rejects_new_drop_contracts() {
-    let source = "import joky/drop.{type Drop} struct Packet{text:String} fn echo(input:Packet) @suspends ->Packet {input} fn retain(){let f=echo;}";
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(source).unwrap();
-        let old = vm.current.as_ref().unwrap().clone();
-        assert!(source::request_info(&old, "echo").is_some());
-        vm.load_source(&format!(
-            "{source} impl Drop for Packet {{fn drop(&mut self) {{}}}} "
-        ))
-        .unwrap();
-        let next = vm.current.as_ref().unwrap();
-        assert!(source::request_info(next, "echo").is_none());
-        assert!(!code::admits(&old, next, "echo", true));
-        assert!(next
-            .prepare_domain_call("echo", &[1, 0], vm.interpreter_limits())
-            .is_err());
-    }
-}
-
-#[test]
 fn owned_array_domain_packets_rebind_without_retaining_input_pointers() {
     const SOURCE: &str = r#"
 import joky/array.{type Array}

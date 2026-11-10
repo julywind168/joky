@@ -1,7 +1,6 @@
 import joky/iter.{type Range, type Step, range, range_inclusive}
 import joky/option.{type Option, Some, None}
 import joky/check.{assert}
-import joky/drop.{type Drop}
 import joky/integer
 extern fn record(x: Int32) -> Int32
 extern fn delayed_value(x: Int32) @suspends -> Int32
@@ -78,7 +77,7 @@ fn compute() -> Int32 {
     42
 }
 struct Guard { id: Int32, text: String }
-impl Drop for Guard { fn drop(&mut self) { record(self.id); } }
+
 fn pending() @suspends -> Int32 {
     let guard = Guard { id: 99, text: "guard" }
     record(-99)

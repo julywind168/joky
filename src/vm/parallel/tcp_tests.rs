@@ -429,7 +429,6 @@ fn parallel_tcp_borrowed_groups_stay_local_but_reference_packets_are_rejected() 
     vm.load_source(
         r#"
         import joky/tcp.{type TcpListener, type TcpStream}
-        import joky/drop.{type Drop}
         fn inspect(listener: &TcpListener) @suspends {}
         fn shared(listener: TcpListener) @suspends {
             join { inspect(&listener), inspect(&listener) }
@@ -437,7 +436,7 @@ fn parallel_tcp_borrowed_groups_stay_local_but_reference_packets_are_rejected() 
         fn capture(listener: &TcpListener) @suspends { scope { branch { inspect(listener) } } }
         fn captured_owner(listener: TcpListener) @suspends { capture(&listener) }
         struct Tracked { stream: TcpStream }
-        impl Drop for Tracked { fn drop(&mut self) {} }
+
         fn consume(value: Tracked) @suspends {}
         fn custom(value: Tracked) @suspends {
             scope { branch { consume(value) } }
@@ -446,7 +445,9 @@ fn parallel_tcp_borrowed_groups_stay_local_but_reference_packets_are_rejected() 
     )
     .unwrap();
     vm.parallel_signature("shared").unwrap();
-    for entry in ["captured_owner", "custom"] {
+    vm.parallel_signature("custom").unwrap();
+    {
+        let entry = "captured_owner";
         assert!(vm.parallel_signature(entry).is_err(), "{entry}");
     }
 }

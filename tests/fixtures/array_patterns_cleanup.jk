@@ -1,9 +1,8 @@
 import joky/array.{type Array}
-import joky/drop.{type Drop}
 import joky/fixed_array.{type FixedArray}
 extern fn note(value: Int32)
 struct Guard { id: Int32, text: String }
-impl Drop for Guard { fn drop(&mut self) { note(0 - self.id) } }
+
 fn make(id: Int32) -> Guard {
     let value = Guard { id: id, text: "owned" }
     note(id)

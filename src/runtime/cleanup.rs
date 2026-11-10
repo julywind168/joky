@@ -7,102 +7,15 @@ use std::collections::BTreeMap;
 mod owners;
 use owners::Owners;
 
-pub(crate) type Callback = unsafe extern "C" fn(*mut u8, *mut Arena);
-
-pub(crate) type InterpretedCallback = std::rc::Rc<dyn Fn(*mut u8, &mut Arena) -> Result<(), Error>>;
-
-/// Immutable code evidence, without a worker-local interpreter or activation.
-#[derive(Clone)]
-pub(crate) enum PortableCallback {
-    Native(Callback),
-    Interpreted {
-        code: std::sync::Arc<crate::backends::interp::FrozenEntry>,
-        name: String,
-    },
-}
-impl PortableCallback {
-    unsafe fn run(&self, data: *mut u8, arena: &mut Arena) -> Result<(), Error> {
-        match self {
-            Self::Native(callback) => {
-                super::error::checked(|| callback(data, arena)).map_err(|error| {
-                    match super::parallel::pool::code::<crate::vm::parallel::Code>().as_deref() {
-                        Some(crate::vm::parallel::Code::Native(code)) => {
-                            error.with_sources(&code.sources)
-                        }
-                        _ => error,
-                    }
-                })
-            }
-            Self::Interpreted { code, name } => {
-                crate::backends::interp::cleanup_call(&code.instantiate()?, name, data, arena)
-            }
-        }
-    }
-}
-
-pub(crate) enum Hook {
-    Native {
-        data: *mut u8,
-        callback: Callback,
-    },
-    Interpreted {
-        data: *mut u8,
-        callback: InterpretedCallback,
-    },
-    Portable {
-        data: *mut u8,
-        callback: PortableCallback,
-    },
-}
-
-// Hooks may create new owners whose cleanup invokes more hooks. Bound this
-// runtime reentrancy independently of the language call stack on both backends.
-thread_local! {
-    static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-struct Depth;
-impl Drop for Depth {
-    fn drop(&mut self) {
-        DEPTH.with(|depth| depth.set(depth.get() - 1));
-    }
-}
-impl Hook {
-    pub(crate) unsafe fn run(self, arena: &mut Arena) -> Result<(), Error> {
-        let _cleaning = super::parallel::pool::CleanupGuard::enter();
-        let entered = DEPTH.with(|depth| {
-            if depth.get() >= 32 {
-                false
-            } else {
-                depth.set(depth.get() + 1);
-                true
-            }
-        });
-        if !entered {
-            return Err(Error::new_with_code(
-                crate::ErrorPhase::Runtime,
-                crate::ErrorCode::ResourceLimit,
-                "Destructor nesting limit exceeded",
-            ));
-        }
-        let _depth = Depth;
-        match self {
-            Self::Native { data, callback } => super::error::checked(|| callback(data, arena)),
-            Self::Interpreted { data, callback } => callback(data, arena),
-            Self::Portable { data, callback } => callback.run(data, arena),
-        }
-    }
-}
-
 pub(crate) struct Entry {
-    /// Interpreter storage must outlive a transferred descriptor, even without hooks.
+    /// Interpreter storage must outlive a transferred descriptor, after the source activation ends.
     pub keep_alive: Option<std::rc::Rc<std::cell::RefCell<Arena>>>,
     /// Complete inline layout, retained when a field descriptor is detached.
     pub storage_size: usize,
-    /// Borrowed storage is read when cleanup runs, after enclosing Drop hooks.
+    /// Borrowed storage is read when cleanup runs, using the current owning lanes.
     pub storage: Option<(*mut u8, super::buffer::ElementCleanup)>,
-    // Handle-only entries have no inline storage or source-defined Drop hooks.
+    // Handle-only entries have no inline storage.
     pub owners: Owners,
-    pub hooks: Vec<(usize, Hook)>,
 }
 
 impl Entry {
@@ -115,30 +28,21 @@ impl Entry {
         }
     }
 
-    /// Run hooks and release child owners, continuing after the first error.
+    /// Release child owners, continuing after the first error.
     ///
     /// # Safety
-    /// Child handles are unique live owners in arena. Hook bytes and callback
-    /// code remain alive for the call on the task's execution thread.
+    /// Child handles are unique live owners in arena. Descriptor storage remains
+    /// alive for the call on the task's execution thread.
     pub(crate) unsafe fn run(mut self, arena: &mut Arena) -> Result<(), Error> {
         if let Some((data, descriptor)) = self.storage.take() {
             return descriptor.run(data, arena);
         }
         let mut error = None;
-        let mut hooks = self.hooks.into_iter().peekable();
-        for (index, owner) in self.owners.into_iter().enumerate() {
-            while hooks.peek().is_some_and(|(before, _)| *before == index) {
-                if let Err(next) = hooks.next().unwrap().1.run(arena) {
-                    error.get_or_insert(next);
-                }
-            }
-            if let Some(owner) = owner {
-                if let Err(next) = Buffer::release(arena, owner) {
-                    error.get_or_insert(next);
-                }
+        for owner in self.owners.into_iter().flatten() {
+            if let Err(next) = Buffer::release(arena, owner) {
+                error.get_or_insert(next);
             }
         }
-        debug_assert!(hooks.next().is_none());
         error.map_or(Ok(()), Err)
     }
 }
@@ -217,11 +121,11 @@ impl Cleanups {
         self.entries.remove(&slot)
     }
 
-    /// Run a complete owner's hooks and release all buffers, even after failure.
+    /// Release a complete owner's buffers, even after failure.
     ///
     /// # Safety
-    /// Entries must hold unique live buffers from this arena. Callback code and
-    /// data must remain live until removal, with the declared destructor ABI.
+    /// Entries must hold unique live buffers from this arena. Descriptor storage
+    /// must remain live until removal.
     pub(crate) unsafe fn run(&mut self, slot: usize, arena: &mut Arena) -> Result<(), Error> {
         let Some(entry) = self.entries.remove(&slot) else {
             return Ok(());
@@ -229,53 +133,30 @@ impl Cleanups {
         entry.run(arena)
     }
 
-    /// Detach complete owning subtrees; Drop ancestors are rejected by the IR.
+    /// Detach complete owning subtrees with disjoint cleanup responsibility.
     pub(crate) fn take_fields(&mut self, slot: usize, first: usize, count: usize) -> Entry {
         let entry = self.entries.get_mut(&slot).expect("registered owner");
         if let Some((data, descriptor)) = &mut entry.storage {
-            let mut selected = super::buffer::ElementCleanup {
+            let selected = super::buffer::ElementCleanup {
                 owners: descriptor.owners[first..first + count].to_vec(),
-                hooks: vec![],
             };
             descriptor.owners[first..first + count].fill(usize::MAX);
-            descriptor.hooks.retain(|hook| {
-                if (first..first + count).contains(&hook.before) {
-                    let mut hook = hook.clone();
-                    hook.before -= first;
-                    selected.hooks.push(hook);
-                    false
-                } else {
-                    true
-                }
-            });
             return Entry {
                 keep_alive: entry.keep_alive.clone(),
                 storage_size: entry.storage_size,
                 storage: Some((*data, selected)),
                 owners: Default::default(),
-                hooks: vec![],
             };
         }
         let owners = entry.owners[first..first + count]
             .iter_mut()
             .map(Option::take)
             .collect();
-        let mut hooks = Vec::new();
-        let mut remaining = Vec::new();
-        for (index, hook) in entry.hooks.drain(..) {
-            if (first..first + count).contains(&index) {
-                hooks.push((index - first, hook));
-            } else {
-                remaining.push((index, hook));
-            }
-        }
-        entry.hooks = remaining;
         Entry {
             keep_alive: None,
             storage_size: 0,
             storage: None,
             owners,
-            hooks,
         }
     }
 
@@ -309,12 +190,6 @@ impl Cleanups {
         {
             *destination = source;
         }
-        entry.hooks.extend(
-            next.hooks
-                .into_iter()
-                .map(|(index, hook)| (first + index, hook)),
-        );
-        entry.hooks.sort_by_key(|(index, _)| *index);
         Ok(())
     }
 
@@ -333,7 +208,7 @@ impl Cleanups {
         }
         let mut error = None;
         // run removes entries but leaves declaration order intact. Copy each key
-        // before callbacks; no temporary list or entry borrow spans a destructor.
+        // before callbacks; no temporary list or entry borrow spans resource release.
         for index in (0..self.order.len()).rev() {
             let slot = self.order[index];
             if (start..start + width).contains(&slot) {
@@ -385,7 +260,6 @@ unsafe extern "C" fn register(frame: *mut NativeFrame, slot: usize, owner: *mut 
             storage_size: 0,
             storage: None,
             owners: [std::ptr::NonNull::new(owner).map(std::ptr::NonNull::as_ptr)].into(),
-            hooks: Vec::new(),
         },
     );
 }
@@ -405,23 +279,6 @@ unsafe extern "C" fn append(
         .unwrap()
         .owners
         .push(std::ptr::NonNull::new(owner).map(std::ptr::NonNull::as_ptr));
-}
-
-#[export_name = "__joky_cleanup_hook"]
-unsafe extern "C" fn hook(
-    frame: *mut NativeFrame,
-    slot: usize,
-    before: usize,
-    data: *mut u8,
-    callback: Callback,
-) {
-    (*frame)
-        .entries
-        .entries
-        .get_mut(&slot)
-        .unwrap()
-        .hooks
-        .push((before, Hook::Native { data, callback }));
 }
 
 #[export_name = "__joky_cleanup_forget"]
@@ -487,7 +344,7 @@ pub(crate) unsafe extern "C" fn finish(frame: *mut NativeFrame) {
     }
 }
 
-/// An owning return is published only after every local destructor succeeds.
+/// An owning return is published only after local cleanup completes.
 /// Keep its cleanup responsibility until that point, including native failures.
 #[export_name = "__joky_cleanup_finish_return"]
 pub(crate) unsafe extern "C" fn finish_return(frame: *mut NativeFrame, slot: usize) {
@@ -538,50 +395,7 @@ unsafe extern "C" fn storage_owner(frame: *mut NativeFrame, slot: usize, offset:
         .owners
         .push(offset);
 }
-#[export_name = "__joky_cleanup_storage_hook"]
-unsafe extern "C" fn storage_hook(
-    frame: *mut NativeFrame,
-    slot: usize,
-    before: usize,
-    offset: usize,
-    indirect: usize,
-    callback: Callback,
-) {
-    (*frame)
-        .entries
-        .entries
-        .get_mut(&slot)
-        .unwrap()
-        .storage
-        .as_mut()
-        .unwrap()
-        .1
-        .hooks
-        .push(super::buffer::ElementHook {
-            before,
-            offset,
-            indirect: indirect != 0,
-            guards: vec![],
-            callback: super::buffer::ElementCallback::Native(callback),
-        });
-}
-#[export_name = "__joky_cleanup_storage_guard"]
-unsafe extern "C" fn storage_guard(frame: *mut NativeFrame, slot: usize, offset: usize, tag: i32) {
-    (*frame)
-        .entries
-        .entries
-        .get_mut(&slot)
-        .unwrap()
-        .storage
-        .as_mut()
-        .unwrap()
-        .1
-        .hooks
-        .last_mut()
-        .unwrap()
-        .guards
-        .push((offset, tag));
-}
+
 #[export_name = "__joky_memory_swap"]
 unsafe extern "C" fn swap(left: *mut u8, right: *mut u8, size: usize) {
     // Disjoint live capabilities and their layout are proven by the IR.
@@ -594,19 +408,16 @@ unsafe extern "C" fn swap_buffer(left: *mut Buffer, right: *mut Buffer) {
     Buffer::swap(left, right);
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 18] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 15] {
     [
         ("__joky_memory_swap", swap as *const u8),
         ("__joky_buffer_swap", swap_buffer as *const u8),
         ("__joky_cleanup_storage_v2", storage as *const u8),
         ("__joky_cleanup_snapshot", snapshot as *const u8),
         ("__joky_cleanup_storage_owner", storage_owner as *const u8),
-        ("__joky_cleanup_storage_hook", storage_hook as *const u8),
-        ("__joky_cleanup_storage_guard", storage_guard as *const u8),
         ("__joky_cleanup_new", new as *const u8),
         ("__joky_cleanup_register", register as *const u8),
         ("__joky_cleanup_append", append as *const u8),
-        ("__joky_cleanup_hook", hook as *const u8),
         ("__joky_cleanup_forget", forget as *const u8),
         ("__joky_cleanup_extract_field", extract_field as *const u8),
         ("__joky_cleanup_replace_field", replace_field as *const u8),

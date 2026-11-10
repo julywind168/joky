@@ -515,8 +515,7 @@ pub unsafe extern "C" fn task_join(frame: *mut CpsFrame) -> i32 {
             scope.fail(error.clone());
             // Error propagation retains this scope for the worker-root or
             // isolate subtree barrier; dropping it here could free a reader's source.
-            if super::parallel::pool::children_pending() || super::parallel::pool::cleanup_pending()
-            {
+            if super::parallel::pool::children_pending() {
                 super::error::record_error(error);
                 return RUNTIME_ERROR;
             }
@@ -602,13 +601,13 @@ pub(crate) unsafe extern "C" fn finish(frame: *mut CpsFrame) {
     // Generated failure returns can arrive while remote children are still in
     // their polling/stop callbacks. Keep the worker root intact for Job::drop;
     // retaining its arena alone would not prevent explicit owner destruction.
-    // Unpublished portable captures also keep their arbitration until cleanup
+    // Unpublished owning captures also keep their arbitration until cleanup
     // receipts are drained, even when no remote child was created.
     // Failure propagates through the retained CPS call chain to the worker root.
     // Successful helpers still release normally; scope-local cancellation needs
     // its own drain protocol before admitting borrowed remote inputs.
     if ((*frame).state != DONE || super::error::joky_runtime_error_code() != 0)
-        && (super::parallel::pool::children_pending() || super::parallel::pool::cleanup_pending())
+        && (super::parallel::pool::children_pending())
     {
         (*frame).state = FAILED;
         return;
@@ -638,7 +637,7 @@ pub(crate) unsafe extern "C" fn finish_place(frame: *mut CpsFrame, slot: usize) 
     });
 }
 
-/// Publish an owning return only after local destructors succeed.
+/// Publish an owning return only after local cleanup completes.
 /// # Safety
 /// The live frame owns the checked return registration in its cleanup table.
 #[export_name = "__joky_cps_finish_return_v1"]
@@ -1046,7 +1045,6 @@ pub unsafe extern "C" fn joky_cps_set_text_input_v2(
             storage_size: 0,
             storage: None,
             owners: [Some(owner)].into(),
-            hooks: vec![],
         },
     );
     (&mut (*frame).slots)[index] = owner as usize as u64;

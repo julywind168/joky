@@ -1,4 +1,3 @@
-import joky/drop.{type Drop}
 import joky/fixed_array.{type FixedArray}
 import joky/task
 extern fn record(value: Int32) -> Int32
@@ -6,9 +5,7 @@ extern fn delayed_value(value: Int32) @suspends -> Int32
 extern fn fail_now() @suspends
 
 struct Resource { id: Int32, text: String }
-impl Drop for Resource {
-    fn drop(&mut self) { record(self.id); }
-}
+
 fn resource(id: Int32) -> Resource {
     let value = Resource { id, text: "owned capture" }
     record(-id)

@@ -46,17 +46,7 @@ fn configured(mode: VmMode, source: &str) -> VmEngine {
 }
 
 fn assert_cleaned() {
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        for id in 1..=4 {
-            let drops = events.iter().filter(|&&event| event == id).count();
-            assert!(drops <= 1, "duplicate drop: {events:?}");
-            if events.contains(&-id) {
-                assert_eq!(drops, 1, "lost resource: {events:?}");
-            }
-        }
-    });
-    LIVE.with(|live| assert_eq!(live.get(), 0));
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 
 #[test]

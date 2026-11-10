@@ -64,18 +64,27 @@ fn owned_dyn_values_preserve_storage_dispatch_and_frozen_code() {
     }
 }
 #[test]
-fn owned_dyn_rejects_unqualified_methods_destructors_and_host_packets() {
+fn owned_dyn_rejects_unqualified_methods_and_host_packets() {
     unsafe extern "C" fn local() -> i32 {
         1
     }
-    for source in [
-        "trait Read { fn read(&self) @noescape -> Int32; fn unused(&self) @noescape -> Int32 } struct A { n: Int32 } impl Read for A { fn read(&self) -> Int32 { 1 } fn unused(&self) -> Int32 { local() } } fn main() @suspends { let v: dyn Read = A { n: 1 }; v.read(); }",
-        "import joky/drop.{type Drop} trait Read { fn read(&self) @noescape -> Int32 } struct A { text: String } impl Read for A { fn read(&self) -> Int32 { 1 } } impl Drop for A { fn drop(&mut self) { local(); } } fn main() @suspends { let v: dyn Read = A { text: \"x\" }; v.read(); }",
-    ] {
+    {
+        let source = "trait Read { fn read(&self) @noescape -> Int32; fn unused(&self) @noescape -> Int32 } struct A { n: Int32 } impl Read for A { fn read(&self) -> Int32 { 1 } fn unused(&self) -> Int32 { local() } } fn main() @suspends { let v: dyn Read = A { n: 1 }; v.read(); }";
         let mut vm = VmEngine::new();
-        unsafe { vm.register_fn("local", FunctionSignature::new(vec![], Type::Int32), local as *const u8).unwrap(); }
-        vm.load_source(&format!("{source} extern fn local() -> Int32")).unwrap();
-        let error = vm.prepare_parallel_task("main", vec![], vec![]).err().expect("reject Local target");
+        unsafe {
+            vm.register_fn(
+                "local",
+                FunctionSignature::new(vec![], Type::Int32),
+                local as *const u8,
+            )
+            .unwrap();
+        }
+        vm.load_source(&format!("{source} extern fn local() -> Int32"))
+            .unwrap();
+        let error = vm
+            .prepare_parallel_task("main", vec![], vec![])
+            .err()
+            .expect("reject Local target");
         assert!(error.message().contains("local"), "{error}");
     }
     let mut vm = VmEngine::new();

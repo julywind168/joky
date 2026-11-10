@@ -27,7 +27,6 @@ pub(crate) struct CompiledDefinitions {
     /// Raw CPS entries for checked requests, without public host ABI wrappers.
     pub request_entries: HashMap<String, (FuncId, FunctionInfo)>,
     pub instance_entries: HashMap<String, (FuncId, FunctionInfo)>,
-    pub instance_hooks: HashMap<String, Vec<(crate::core::ir::DropHook, FuncId)>>,
     /// Whether any compiled body, exported or internal, needs the native
     /// runtime. Private module functions can fail or suspend without being
     /// reachable from an export, so this must not be inferred from `exports`.
@@ -282,7 +281,7 @@ pub(crate) fn compile<M: Module>(
     }
     // Runtime-backed definitions have private direct-call bodies. All published
     // IDs and function addresses retain the protected entry, including CPS
-    // descriptors and Drop hooks. Scalar-only objects keep their runtime-free ABI.
+    // descriptors. Scalar-only objects keep their runtime-free ABI.
     let mut float_bodies = HashMap::new();
     for name in &names {
         let info = &functions[*name];
@@ -691,7 +690,6 @@ pub(crate) fn compile<M: Module>(
         requires_runtime = true;
     }
     let mut instance_entries = HashMap::new();
-    let mut instance_hooks = HashMap::new();
     for name in &names {
         let name = *name;
         let info = &functions[name];
@@ -711,19 +709,7 @@ pub(crate) fn compile<M: Module>(
         module
             .define_function(id, &mut ctx)
             .map_err(|e| compile_error(e.to_string()))?;
-        if crate::core::instance::constructor(info) {
-            instance_hooks.insert(
-                name.clone(),
-                plan.bodies[name]
-                    .instance_hooks(&info.signature.ret)
-                    .into_iter()
-                    .map(|hook| {
-                        let id = ids[&hook.name];
-                        (hook, id)
-                    })
-                    .collect(),
-            );
-        }
+
         instance_entries.insert(name.clone(), (id, info.clone()));
     }
     let request_entries = names
@@ -754,7 +740,6 @@ pub(crate) fn compile<M: Module>(
         request_entries,
         exports,
         instance_entries,
-        instance_hooks,
         requires_runtime,
     })
 }

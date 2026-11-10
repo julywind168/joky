@@ -348,7 +348,6 @@ impl Parser<'_> {
         self.impl_target = None;
         self.impl_trait = None;
         Ok(TraitDef {
-            is_drop: false,
             is_add: false,
             is_eq: false,
             public,

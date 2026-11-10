@@ -6,7 +6,6 @@ pub use config::{ExecutionMode, TaskExecutor};
 pub(crate) mod packet;
 pub(crate) mod place;
 pub(crate) mod pool;
-mod portable;
 pub(crate) mod scoped;
 mod storage;
 pub use pool::{ParallelExecutor, ParallelSubmitter};
@@ -361,7 +360,7 @@ impl Drop for OwnedBuffer {
     fn drop(&mut self) {
         if let Some(owner) = self.owner.take() {
             let mut arena = super::arena::Arena::with_storage(self.root.clone());
-            // Admission excludes hooks; cleanup cannot invoke user code.
+            // Cleanup cannot invoke user Joky code.
             unsafe { super::buffer::Buffer::release(&mut arena, owner.as_ptr()) }
                 .expect("admitted owner cleanup");
         }
@@ -410,10 +409,7 @@ mod tests {
         unsafe {
             outer
                 .as_mut()
-                .configure(ElementCleanup {
-                    owners: vec![0],
-                    hooks: vec![],
-                })
+                .configure(ElementCleanup { owners: vec![0] })
                 .unwrap();
             outer
                 .as_ref()

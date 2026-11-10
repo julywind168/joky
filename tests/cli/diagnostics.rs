@@ -421,10 +421,9 @@ fn interpolation_diagnostics_and_runtime_failure_match_all_backends() {
     work.write("failure.jk", r#"
         import joky/show.{type Show}
         import joky/string.{type StringBuilder}
-        import joky/drop.{type Drop}
         import joky/io.{println}
         struct Resource { text: String }
-        impl Drop for Resource { fn drop(&mut self) { let event = "drop"; println(&event) } }
+
         impl Show for Resource { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(&self.text); 1 / 0; } }
         fn make() -> Resource { Resource { text: "owned" } }
         fn main() { let message = "{make()}"; println(&message) }
@@ -436,7 +435,7 @@ fn interpolation_diagnostics_and_runtime_failure_match_all_backends() {
         Command::new(work.path().join("failure")).output().unwrap(),
     ] {
         assert!(!output.status.success());
-        assert_eq!(output.stdout, b"drop\n");
+        assert_eq!(output.stdout, b"");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains("zero"),
             "{output:?}"

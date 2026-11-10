@@ -535,9 +535,8 @@ fn task_pool_generated_branches_overlap_and_cancel_on_all_backends() {
         0
     }
     const SOURCE: &str = r#"
-        import joky/drop.{type Drop}
         struct Guard { zero: Int32, text: String }
-        impl Drop for Guard { fn drop(&mut self) { 1 / self.zero; } }
+
         extern fn overlap() @suspends
         fn consume(text: String) { }
         fn leaf(n: Int32) @suspends -> Int32 {
@@ -693,13 +692,12 @@ fn task_pool_generated_branches_overlap_and_cancel_on_all_backends() {
             }
             task.wait().unwrap();
             let result = task.take_result();
-            if matches!(name, "cleanup_race" | "cancel_cleanup" | "cancel_body") {
+            if matches!(name, "cancel_cleanup" | "cancel_body") {
+                assert_eq!(result.err().unwrap().code(), crate::ErrorCode::Cancelled);
+            } else if name == "cleanup_race" {
                 assert_eq!(
-                    result
-                        .err()
-                        .expect("loser cleanup must fail race")
-                        .message(),
-                    "Division by zero"
+                    result.unwrap().into_value(),
+                    TaskValue::String("winner".into())
                 );
             } else {
                 let TaskValue::Scalar(InstanceValue::Int32(value)) = result.unwrap().into_value()
@@ -1811,7 +1809,7 @@ fn fixed_array_collections_on_all_backends() {
 }
 
 #[test]
-fn scoped_borrow_custom_drop_on_all_backends() {
+fn scoped_borrow_owning_records_on_all_backends() {
     scoped_borrow_cases(
         include_str!("../../../../tests/fixtures/scoped_borrow_drop.jk"),
         &[

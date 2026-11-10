@@ -31,13 +31,11 @@ fn array_management_transfers_ownership_in_both_execution_modes() {
             .unwrap_or_else(|e| panic!("{mode:?}: {e} {:?}", e.span()));
         for (name, events) in [
             ("manage_copy", vec![]),
-            ("manage_owned", vec![-1, -2, -3, 1, 2, 3, -4, 4]),
-            ("manage_enum_tuple", vec![-1, -2, 1, 2]),
+            ("manage_owned", vec![-1, -2, -3, -4]),
+            ("manage_enum_tuple", vec![-1, -2]),
             ("manage_wrapper", vec![]),
             ("manage_zero_and_aggregate", vec![]),
             ("manage_references", vec![]),
-            ("manage_clear_failure", vec![3, 2, 1]),
-            ("manage_truncate_failure", vec![3, 2, 1]),
             ("manage_budget", vec![]),
             ("manage_evaluation", vec![10, 20, 30]),
         ] {
@@ -55,17 +53,7 @@ fn array_management_transfers_ownership_in_both_execution_modes() {
 }
 
 fn tracked() {
-    EVENTS.with(|e| {
-        let events = e.borrow();
-        for id in 1..=4 {
-            let drops = events.iter().filter(|&&n| n == id).count();
-            assert!(drops <= 1, "duplicate drop: {events:?}");
-            if events.contains(&-id) {
-                assert_eq!(drops, 1, "lost owner: {events:?}");
-            }
-        }
-    });
-    LIVE.with(|n| assert_eq!(n.get(), 0));
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 fn configured(mode: VmMode) -> VmEngine {
     let mut vm = VmEngine::with_mode(mode);

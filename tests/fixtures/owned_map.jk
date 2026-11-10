@@ -1,10 +1,9 @@
 import joky/map.{type Map}
 import joky/array.{type Array}
-import joky/drop.{type Drop}
 import joky/check.{assert}
 extern fn record_int(value: Int32)
 struct Resource { id: Int32, first: Array<Int32>, second: Array<UInt64> }
-impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
+
 fn resource(id: Int32) -> Resource {
     var first = Array.with_capacity::<Int32>(1); first.push(id)
     let result = Resource { id: id, first: first, second: Array.with_capacity::<UInt64>(1) }
@@ -66,9 +65,7 @@ fn return_move<Tag>() -> Int32 {
     match old { Some(a) => a.first.get(0).unwrap_or(0) + 34, None => 0 }
 }
 struct Failing { id: Int32, data: Array<Int32> }
-impl Drop for Failing {
-    fn drop(&mut self) { record_int(self.id); { let assertion_condition = self.id != 2; let assertion_message = "Map Drop failure"; assert(assertion_condition, &assertion_message) } }
-}
+
 fn clear_failure<Tag>() -> Int32 {
     var m = Map.new::<Int32, Failing>()
     m.insert(1, Failing { id: 1, data: Array.new::<Int32>() })

@@ -359,74 +359,12 @@ mod tests {
     }
 
     #[test]
-    fn task_result_drain_keeps_first_cleanup_error_and_never_delivers() {
-        use crate::runtime::cleanup::{Entry, Hook};
-        unsafe extern "C" fn fail(data: *mut u8, _: *mut crate::runtime::arena::Arena) {
-            record_error(Error::new_with_code(
-                ErrorPhase::Runtime,
-                ErrorCode::ResourceLimit,
-                if data.is_null() {
-                    "First cleanup failure"
-                } else {
-                    "Second cleanup failure"
-                },
-            ));
-        }
-        let mut frame = CpsFrame::new(0);
-        unsafe {
-            for index in 0..3 {
-                let child = super::super::child_at(&mut frame, index, 0);
-                if index != 0 {
-                    (*super::super::cleanup(child)).entries.insert(
-                        0,
-                        Entry {
-                            keep_alive: None,
-                            storage_size: 0,
-                            storage: None,
-                            owners: [None].into(),
-                            hooks: vec![(
-                                0,
-                                Hook::Native {
-                                    data: if index == 1 {
-                                        std::ptr::null_mut()
-                                    } else {
-                                        std::ptr::dangling_mut()
-                                    },
-                                    callback: fail,
-                                },
-                            )],
-                        },
-                    );
-                }
-            }
-            assert_eq!(open(&mut frame, 1, 3), 0);
-            result(&mut frame, 0, 1);
-            assert_eq!(next(&mut frame), 0);
-            assert_eq!(polled(&mut frame, 0, 0), 0);
-            for attempt in 0..2 {
-                let error = crate::runtime::error::checked(|| drain(&mut frame)).unwrap_err();
-                assert_eq!(
-                    error.message(),
-                    "First cleanup failure",
-                    "attempt {attempt}"
-                );
-                assert!(frame.children.is_empty());
-                assert!(frame.concurrent.as_ref().unwrap().drain_finished());
-            }
-            let error = crate::runtime::error::checked(|| take(&mut frame, 0)).unwrap_err();
-            assert_eq!(error.message(), "First cleanup failure");
-            crate::runtime::error::checked(|| super::super::release_children(&mut frame)).unwrap();
-        }
-        assert!(frame.concurrent.is_none());
-        assert!(frame.concurrent_results.is_empty());
-    }
-
-    #[test]
     fn task_result_packets_cleanup_active_before_published() {
-        use crate::runtime::cleanup::{Entry, Hook};
+        use crate::runtime::cleanup::Entry;
         thread_local! { static DROPS: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) }; }
-        unsafe extern "C" fn drop_value(data: *mut u8, _: *mut crate::runtime::arena::Arena) {
-            DROPS.with(|drops| drops.borrow_mut().push(data.cast::<u64>().read()));
+        unsafe extern "C" fn drop_value(data: *mut std::ffi::c_void) {
+            let value = *Box::from_raw(data.cast::<u64>());
+            DROPS.with(|drops| drops.borrow_mut().push(value));
         }
         let mut frame = CpsFrame::new(0);
         unsafe {
@@ -437,21 +375,25 @@ mod tests {
             for index in 0..2 {
                 let packet = result(&mut frame, index, 1);
                 (&mut (*packet).slots)[0] = index as u64 + 1;
-                let data = (*packet).slots.as_mut_ptr().cast();
+                let resource = crate::runtime::resource::OwnedResource::from_token(
+                    std::ptr::NonNull::new_unchecked(
+                        Box::into_raw(Box::new(index as u64 + 1)).cast(),
+                    ),
+                    drop_value,
+                )
+                .unwrap();
+                let owner = crate::runtime::buffer::Buffer::external(
+                    &mut *super::super::arena(packet),
+                    resource,
+                )
+                .unwrap();
                 (*super::super::cleanup(packet)).entries.insert(
                     0,
                     Entry {
                         keep_alive: None,
                         storage_size: 0,
                         storage: None,
-                        owners: [None].into(),
-                        hooks: vec![(
-                            0,
-                            Hook::Native {
-                                data,
-                                callback: drop_value,
-                            },
-                        )],
+                        owners: [Some(owner.as_ptr())].into(),
                     },
                 );
                 assert_eq!(next(&mut frame), index as i64);

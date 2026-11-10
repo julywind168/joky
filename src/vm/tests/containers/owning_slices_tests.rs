@@ -30,15 +30,14 @@ fn owning_slices_transfer_ownership_in_both_execution_modes() {
         vm.load_source_with_modules(SOURCE, &modules())
             .unwrap_or_else(|e| panic!("{mode:?}: {e} {:?}", e.span()));
         for (name, events) in [
-            ("slice_shared", vec![-1, -2, -3, -4, 4, 3, 2, 1]),
-            ("slice_mutable", vec![-1, -2, -3, -4, -5, 2, 5, 13, 4, 1]),
+            ("slice_shared", vec![-1, -2, -3, -4]),
+            ("slice_mutable", vec![-1, -2, -3, -4, -5]),
             ("slice_wrapper", vec![]),
-            ("slice_enum", vec![-1, 42]),
-            ("slice_tuple", vec![-1, -2, -3, -4, 2, 1, 3, 4]),
-            ("slice_empty", vec![-1, 1]),
-            ("slice_bounds", vec![-1, 1]),
-            ("slice_sub_bounds", vec![-1, 1]),
-            ("slice_drop_failure", vec![1, 2, 3]),
+            ("slice_enum", vec![-1]),
+            ("slice_tuple", vec![-1, -2, -3, -4]),
+            ("slice_empty", vec![-1]),
+            ("slice_bounds", vec![-1]),
+            ("slice_sub_bounds", vec![-1]),
         ] {
             EVENTS.with(|e| e.borrow_mut().clear());
             let result = vm.call_int32_0(name);
@@ -54,17 +53,7 @@ fn owning_slices_transfer_ownership_in_both_execution_modes() {
 }
 
 fn tracked() {
-    EVENTS.with(|e| {
-        let events = e.borrow();
-        for id in 1..=4 {
-            let drops = events.iter().filter(|&&n| n == id).count();
-            assert!(drops <= 1, "duplicate drop: {events:?}");
-            if events.contains(&-id) {
-                assert_eq!(drops, 1, "lost owner: {events:?}");
-            }
-        }
-    });
-    LIVE.with(|n| assert_eq!(n.get(), 0));
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 fn configured(mode: VmMode) -> VmEngine {
     let mut vm = VmEngine::with_mode(mode);

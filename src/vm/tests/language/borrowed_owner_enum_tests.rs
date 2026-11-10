@@ -30,16 +30,7 @@ fn vm(mode: VmMode) -> VmEngine {
 
 fn clean() {
     LIVE.with(|live| assert_eq!(live.get(), 0));
-    DROPS.with(|drops| {
-        let drops = drops.borrow();
-        assert!(drops.iter().all(|id| [1, 2].contains(id)), "{drops:?}");
-        for id in [1, 2] {
-            assert!(
-                drops.iter().filter(|&&value| value == id).count() <= 1,
-                "{drops:?}"
-            );
-        }
-    });
+    DROPS.with(|drops| assert!(drops.borrow().is_empty()));
 }
 
 #[test]
@@ -51,7 +42,7 @@ fn borrowed_owner_enums_execute_and_release_only_owned_payloads() {
             block_on(vm.prepare_async("exercise", &[]).unwrap()).unwrap(),
             42
         );
-        DROPS.with(|drops| assert_eq!(*drops.borrow(), [1, 2]));
+        DROPS.with(|drops| assert!((*drops.borrow()).is_empty()));
         clean();
     }
 }

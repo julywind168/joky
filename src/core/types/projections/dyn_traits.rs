@@ -26,11 +26,7 @@ impl TypeRegistry {
                 error(ErrorCode::UnknownType, "Unknown dyn trait identity").with_span(view.span)
             })?;
         let bad = |message: String| error(ErrorCode::TypeMismatch, message).with_span(view.span);
-        if declaration.is_drop {
-            return Err(bad(
-                "The built-in Drop protocol cannot be used as dyn".into()
-            ));
-        }
+
         let scope = declaration.scope.as_ref().map_or(root, |s| &s.imports);
         let mut names = BTreeSet::new();
         let mut equalities = Vec::new();

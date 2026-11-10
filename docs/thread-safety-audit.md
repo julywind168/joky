@@ -1,5 +1,7 @@
 # S6 线程安全边界审计记录
 
+> 2026-11-10 更新：本文涉及自定义 `joky/drop.Drop` 的设计、限制与验收为历史记录；该能力已撤回。当前自动清理规则及迁移见[撤回说明](custom-drop-withdrawal-review.md)。
+
 日期：2026-10-30。代码基线：`68d08e1`；路线状态修正：`c023bbf`。
 本记录完成[线程安全路线 S6](thread-safety-roadmap.md#s6安全边界审计与验收)要求的系统性边界核对，
 覆盖编译准入、跨线程传输、共享状态、宿主证据和取消清理。检查方法是沿创建、移交、访问、停止、
@@ -35,7 +37,7 @@
 | 边界 | 创建与使用权限 | 失败、取消与最终释放 |
 | --- | --- | --- |
 | 普通拥有图 | [OwnedBuffer](../src/runtime/parallel/mod.rs) 捕获前遍历实际 Buffer 图，要求并行存储、合格资源、无 Local 清理状态；只允许同一 Storage root 安装。`take` 消耗唯一 owner 并更新任务来源。 | [Packet](../src/runtime/parallel/packet.rs) 每转移一个 owner 才清除来源对应清理项；部分安装把已安装 owner 纳入接收清理。未领取的无用户析构包可以在丢包线程释放；来源不重复释放。 |
-| 带用户 Drop 的拥有图 | [portable.rs](../src/runtime/parallel/portable.rs) 冻结 Descriptor 与 PortableCallback，保留 Storage、预算和 CleanupReceipt；不是把本地 Rc 回调直接标成 Send。 | [disposal.rs](../src/runtime/parallel/pool/disposal.rs) 把未安装包交给所属任务 worker 执行析构。返回包的 receipt 属于消费方父任务，避免生产方等待自己已交出的结果；清理失败回到对应失败边界。receipt 归还前不得完成任务清理。 |
+| 带用户 Drop 的拥有图 | `portable.rs`（已随 Drop 撤回删除） 冻结 Descriptor 与 PortableCallback，保留 Storage、预算和 CleanupReceipt；不是把本地 Rc 回调直接标成 Send。 | `disposal.rs`（已随 Drop 撤回删除） 把未安装包交给所属任务 worker 执行析构。返回包的 receipt 属于消费方父任务，避免生产方等待自己已交出的结果；清理失败回到对应失败边界。receipt 归还前不得完成任务清理。 |
 | 闭包、拥有 dyn | 环境中的 owner 仍走上述包协议；[Buffer::DynDispatch](../src/runtime/buffer.rs) 只含冻结 native 表或 Arc 解释器表，代码由任务根保活。前端检查所有目标、具体元素及析构依赖。 | 正常结果、未领取结果、取消和析构失败都沿统一 owning/portable 清理链；宿主根结果不开放任意 dyn、闭包或语言析构包，因此不能把需要 worker 执行的 Drop 留给任意宿主线程。 |
 | 普通只读借用 | [Shape::source / Range](../src/runtime/parallel/scoped.rs) 校验当前任务的实际分配来源，或该任务收到的有效 Loan；同属一个大 Storage root 不足以授权。Scope 保留根和代码。 | 子树全部 cleaned 后来源才可销毁。接收 Loan 和 Buffer 头属于接收 worker；重借用保留原始来源 scope。取消不撤销仍在使用的数据，而是先停止所有读者。 |
 | String、聚合和嵌套容器视图 | [graph.rs](../src/runtime/parallel/scoped/graph.rs) 按受检布局递归冻结中间指针表、清零 owning lanes，再安装本地视图；只共享稳定的叶子数据。检查 enum 活跃分支、长度、布局与图遍历上限。 | 安装失败只清理已建的本地视图，不取得来源的销毁权。含自定义 Drop 的来源仍由源任务在读者结束后析构；视图不复制并执行来源 Drop。 |

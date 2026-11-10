@@ -45,7 +45,6 @@ pub(crate) struct Buffer {
     // terminal traversal needs no allocation, even after budget exhaustion.
     release_parent: *mut Self,
     release_owner: usize,
-    release_hook: usize,
     release_active: bool,
 }
 
@@ -178,90 +177,40 @@ pub(crate) struct OwningGraph {
     pub metadata: usize,
 }
 
-#[derive(Clone)]
-pub(crate) enum ElementCallback {
-    Native(super::cleanup::Callback),
-    Interpreted(super::cleanup::InterpretedCallback),
-    Portable(super::cleanup::PortableCallback),
-}
-impl ElementCallback {
-    pub(crate) fn portable(&self) -> Option<super::cleanup::PortableCallback> {
-        match self {
-            Self::Native(callback) => Some(super::cleanup::PortableCallback::Native(*callback)),
-            Self::Portable(callback) => Some(callback.clone()),
-            Self::Interpreted(_) => None,
-        }
-    }
-}
-#[derive(Clone)]
-pub(crate) struct ElementHook {
-    pub before: usize,
-    pub offset: usize,
-    pub indirect: bool,
-    pub guards: Vec<(usize, i32)>,
-    pub callback: ElementCallback,
-}
 #[derive(Clone, Default)]
 pub(crate) struct ElementCleanup {
     pub owners: Vec<usize>,
-    pub hooks: Vec<ElementHook>,
 }
 impl ElementCleanup {
     /// Logical descriptor entries, excluding allocator capacity and pinned code.
     pub(crate) fn metadata_bytes(&self) -> Option<usize> {
-        self.owners
-            .len()
-            .checked_mul(std::mem::size_of::<usize>())
-            .and_then(|n| {
-                n.checked_add(
-                    self.hooks
-                        .len()
-                        .checked_mul(std::mem::size_of::<ElementHook>())?,
-                )
-            })
-            .and_then(|n| {
-                self.hooks.iter().try_fold(n, |n, hook| {
-                    n.checked_add(
-                        hook.guards
-                            .len()
-                            .checked_mul(std::mem::size_of::<(usize, i32)>())?,
-                    )
-                })
-            })
+        self.owners.len().checked_mul(std::mem::size_of::<usize>())
     }
 
-    /// Build cleanup for an initialized element, testing outer tags first.
+    /// Build cleanup for an initialized element; inactive owner lanes are null.
     ///
     /// # Safety
     /// Data must address a live element with the descriptor's byte layout,
-    /// including valid Int32 tag and buffer lanes. Its uniquely owned buffers,
-    /// hook bytes and callback code must remain live on this task thread.
+    /// including null inactive lanes and uniquely owned live buffers.
+    /// The storage must remain live on this task thread.
     pub(crate) unsafe fn entry(&self, data: *mut u8) -> super::cleanup::Entry {
         super::cleanup::Entry {
             keep_alive: None,
             storage_size: 0,
             storage: Some((data, self.clone())),
             owners: Default::default(),
-            hooks: vec![],
         }
     }
 
-    /// Run current children after their enclosing hooks, which may replace them.
+    /// Release the current child owners.
     /// The caller must uphold the same live storage contract as `entry`.
     pub(crate) unsafe fn run(&self, data: *mut u8, arena: &mut Arena) -> Result<(), Error> {
         let mut error = None;
-        let mut hooks = self.hooks.iter().peekable();
-        for (index, offset) in self.owners.iter().enumerate() {
+        for offset in &self.owners {
             if *offset == usize::MAX {
                 continue;
             }
-            while hooks.peek().is_some_and(|hook| hook.before == index) {
-                if let Some(callback) = hooks.next().unwrap().bind(data) {
-                    if let Err(next) = callback.run(arena) {
-                        error.get_or_insert(next);
-                    }
-                }
-            }
+
             let owner = data.add(*offset).cast::<*mut Buffer>().read_unaligned();
             if !owner.is_null() {
                 if let Err(next) = Buffer::release(arena, owner) {
@@ -290,44 +239,7 @@ impl ElementCleanup {
                         .map(NonNull::as_ptr)
                 })
                 .collect(),
-            hooks: self
-                .hooks
-                .iter()
-                .filter_map(|hook| hook.bind(data).map(|callback| (hook.before, callback)))
-                .collect(),
         }
-    }
-}
-
-impl ElementHook {
-    unsafe fn bind(&self, data: *mut u8) -> Option<super::cleanup::Hook> {
-        if !self
-            .guards
-            .iter()
-            .all(|(offset, tag)| data.add(*offset).cast::<i32>().read_unaligned() == *tag)
-        {
-            return None;
-        }
-        let pointer = data.add(self.offset);
-        let data = if self.indirect {
-            pointer.cast::<*mut u8>().read_unaligned()
-        } else {
-            pointer
-        };
-        Some(match &self.callback {
-            ElementCallback::Native(callback) => super::cleanup::Hook::Native {
-                data,
-                callback: *callback,
-            },
-            ElementCallback::Interpreted(callback) => super::cleanup::Hook::Interpreted {
-                data,
-                callback: callback.clone(),
-            },
-            ElementCallback::Portable(callback) => super::cleanup::Hook::Portable {
-                data,
-                callback: callback.clone(),
-            },
-        })
     }
 }
 
@@ -362,7 +274,6 @@ impl Buffer {
             failed_descriptor: false,
             release_parent: std::ptr::null_mut(),
             release_owner: 0,
-            release_hook: 0,
             release_active: false,
             dynamic: None,
             resource: None,
@@ -511,7 +422,7 @@ impl Buffer {
             || self
                 .cleanup
                 .as_ref()
-                .is_some_and(|cleanup| !cleanup.owners.is_empty() || !cleanup.hooks.is_empty())
+                .is_some_and(|cleanup| !cleanup.owners.is_empty())
             || self.failed_store.is_some()
         {
             return Err(bounds_error("Text requires plain initialized byte storage"));
@@ -664,8 +575,7 @@ impl Buffer {
         {
             return None;
         }
-        // Element hooks remain on the frozen source owner. Borrowed headers
-        // carry only a loan and never inherit cleanup callbacks. The storage
+        // Borrowed headers carry only a loan and never take ownership. The storage
         // offsets must still match the compiler-certified element graph.
         if !origin
             .cleanup
@@ -762,7 +672,6 @@ impl Buffer {
             failed_descriptor: false,
             release_parent: std::ptr::null_mut(),
             release_owner: 0,
-            release_hook: 0,
             release_active: false,
             dynamic: None,
             resource: None,
@@ -848,7 +757,7 @@ impl Buffer {
     }
 
     /// Move the initialized prefix into empty, preallocated storage. All checks
-    /// precede mutation; no source hook, allocation or suspension occurs here.
+    /// precede mutation; no allocation or suspension occurs here.
     ///
     /// # Safety
     /// Both pointers must identify live, exclusively borrowed buffers in the
@@ -898,7 +807,7 @@ impl Buffer {
     }
 
     /// Old elements are detached before callbacks; subsequent failures cannot
-    /// retry their hooks. The caller stops before writing a replacement on error.
+    /// release them twice. The caller stops before writing a replacement on error.
     ///
     /// # Safety
     /// This buffer and all initialized child owners belong to arena, with no
@@ -913,8 +822,8 @@ impl Buffer {
         let data = self.load(index)?;
         if let Some(cleanup) = &self.cleanup {
             let entry = cleanup.entry(data);
-            // Hooks observe the original bytes. Clear owner lanes afterward so
-            // terminal cleanup skips the detached element even if a hook failed.
+            // Clear owner lanes after releasing the original child handles so
+            // terminal cleanup skips the detached element even if resource release failed.
             let result = entry.run(arena);
             for offset in &cleanup.owners {
                 data.add(*offset)
@@ -934,7 +843,7 @@ impl Buffer {
     /// # Safety
     /// Initialized child handles must be unique owners in arena, all views must
     /// have ended, and installed callbacks/code must remain live on this task's
-    /// thread. No source access may follow a failed destructor.
+    /// thread. No source access may follow a failed release.
     pub(crate) unsafe fn truncate_owned(
         &mut self,
         arena: &mut Arena,
@@ -1079,31 +988,6 @@ impl Buffer {
         arena: &Arena,
         owner: *mut Self,
     ) -> Result<(), Error> {
-        Self::validate_parallel_value(arena, owner, false)
-    }
-
-    pub(crate) unsafe fn has_user_cleanup(
-        arena: &Arena,
-        owners: impl IntoIterator<Item = *mut Self>,
-    ) -> Result<bool, Error> {
-        Ok(Self::owning_allocations(arena, owners)?
-            .buffers
-            .iter()
-            .any(|p| {
-                p.as_ref()
-                    .cleanup
-                    .as_ref()
-                    .is_some_and(|c| !c.hooks.is_empty())
-            }))
-    }
-
-    /// The caller pins qualified code and guarantees worker-side disposal when
-    /// admitting portable callbacks. Ordinary buffer packets remain hook-free.
-    pub(crate) unsafe fn validate_parallel_value(
-        arena: &Arena,
-        owner: *mut Self,
-        callbacks: bool,
-    ) -> Result<(), Error> {
         if arena.parallel_root().is_none() {
             return Err(bounds_error("Owner has no parallel storage root"));
         }
@@ -1117,12 +1001,6 @@ impl Buffer {
                 || buffer.release_active
                 || buffer.failed_descriptor
                 || buffer.failed_store.is_some()
-                || buffer.cleanup.as_ref().is_some_and(|cleanup| {
-                    cleanup
-                        .hooks
-                        .iter()
-                        .any(|h| !callbacks || h.callback.portable().is_none())
-                })
             {
                 return Err(bounds_error("Buffer has Local cleanup or resource state"));
             }
@@ -1130,7 +1008,7 @@ impl Buffer {
         Ok(())
     }
 
-    /// Deep-copy a validated hook-free graph, preserving capacity and descriptors.
+    /// Deep-copy a validated owning graph, preserving capacity and descriptors.
     /// No destination owner refers to source storage, even on partial failure.
     ///
     /// # Safety
@@ -1162,14 +1040,8 @@ impl Buffer {
                     || original.failed_store.is_some()
                     || original.failed_descriptor
                     || original.release_active
-                    || original
-                        .cleanup
-                        .as_ref()
-                        .is_some_and(|c| !c.hooks.is_empty())
                 {
-                    return Err(bounds_error(
-                        "Snapshot requires a live hook-free owning graph",
-                    ));
+                    return Err(bounds_error("Snapshot requires a live owning graph"));
                 }
                 let copy = Self::allocate(
                     destination,
@@ -1185,10 +1057,7 @@ impl Buffer {
                         .try_reserve_exact(cleanup.owners.len())
                         .map_err(|_| capacity_error())?;
                     owners.extend_from_slice(&cleanup.owners);
-                    (*copy).configure(ElementCleanup {
-                        owners,
-                        hooks: Vec::new(),
-                    })?;
+                    (*copy).configure(ElementCleanup { owners })?;
                 }
                 if original.element.size() != 0 {
                     std::ptr::copy_nonoverlapping(
@@ -1285,7 +1154,6 @@ impl Buffer {
                     continue;
                 }
                 buffer.release_owner = 0;
-                buffer.release_hook = 0;
                 buffer.release_active = true;
             }
             let cleanup = buffer.cleanup.as_ref().unwrap();
@@ -1299,20 +1167,7 @@ impl Buffer {
                 continue;
             }
             let data = buffer.address(buffer.len);
-            if let Some(hook) = cleanup
-                .hooks
-                .get(buffer.release_hook)
-                .filter(|hook| hook.before == buffer.release_owner)
-            {
-                let callback = hook.bind(data);
-                buffer.release_hook += 1;
-                if let Some(callback) = callback {
-                    if let Err(next) = callback.run(arena) {
-                        error.get_or_insert(next);
-                    }
-                }
-                continue;
-            }
+
             let child = data.add(offset).cast::<*mut Self>().read_unaligned();
             buffer.release_owner += 1;
             if !child.is_null() {
@@ -1922,48 +1777,8 @@ unsafe extern "C" fn cleanup_owner(buffer: *mut Buffer, offset: usize) {
         buffer.cleanup.as_mut().unwrap().owners.push(offset);
     }
 }
-#[export_name = "__joky_buffer_cleanup_hook"]
-unsafe extern "C" fn cleanup_hook(
-    buffer: *mut Buffer,
-    before: usize,
-    offset: usize,
-    indirect: usize,
-    callback: super::cleanup::Callback,
-) {
-    let Some(buffer) = buffer.as_mut().filter(|buffer| !buffer.failed_descriptor) else {
-        return;
-    };
-    buffer.cleanup.as_mut().unwrap().hooks.push(ElementHook {
-        before,
-        offset,
-        indirect: indirect != 0,
-        guards: Vec::new(),
-        callback: ElementCallback::Native(callback),
-    });
-}
 
-/// Append an enclosing enum tag condition to the last element hook.
-///
-/// # Safety
-/// Buffer is null or a live, uniquely owned control block whose last hook has
-/// been installed. Offset addresses an Int32 tag in its element layout. The
-/// descriptor and callback code must remain live; callers serialize task access.
-#[export_name = "__joky_buffer_cleanup_guard"]
-unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32) {
-    if let Some(buffer) = buffer.as_mut().filter(|buffer| !buffer.failed_descriptor) {
-        buffer
-            .cleanup
-            .as_mut()
-            .unwrap()
-            .hooks
-            .last_mut()
-            .unwrap()
-            .guards
-            .push((offset, tag));
-    }
-}
-
-pub(crate) fn symbols() -> [(&'static str, *const u8); 52] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 50] {
     [
         (
             "__joky_buffer_password_needs_rehash",
@@ -2028,8 +1843,6 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 52] {
         ("__joky_buffer_swap_elements", swap_elements as *const u8),
         ("__joky_buffer_cleanup_new", cleanup_new as *const u8),
         ("__joky_buffer_cleanup_owner", cleanup_owner as *const u8),
-        ("__joky_buffer_cleanup_hook", cleanup_hook as *const u8),
-        ("__joky_buffer_cleanup_guard", cleanup_guard as *const u8),
         ("__joky_buffer_allocate", allocate as *const u8),
         ("__joky_buffer_release", release as *const u8),
         ("__joky_buffer_slice", slice as *const u8),

@@ -1,10 +1,9 @@
-import joky/drop.{type Drop}
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 
 extern fn record(n: Int32) -> Int32
 struct Resource { text: String, id: Int32 }
-impl Drop for Resource { fn drop(&mut self) { record(self.id); } }
+
 fn make(ok: Bool) -> Result<Resource, Resource> {
     if ok { let value = Resource { text: "success", id: 42 }; record(-42); Ok(value) }
     else { let value = Resource { text: "failure", id: 7 }; record(-7); Err(value) }

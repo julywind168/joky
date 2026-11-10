@@ -49,7 +49,6 @@ pub(super) fn input(
                             .map(|(offset, _)| *offset)
                             .collect()
                     },
-                    hooks: vec![],
                 })?;
             }
             for value in elements {

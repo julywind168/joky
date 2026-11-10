@@ -11,7 +11,6 @@ fn code_dependencies_execute_indirect_methods_and_cleanup_in_all_backends() {
         .insert(
             "dependencies",
             r#"
-        import joky/drop.{type Drop}
         fn increment(value: Int32) -> Int32 { value + 1 }
         pub fn callback() -> fn(Int32) -> Int32 { increment }
         pub trait Read { fn read(&self) @noescape -> Int32 }
@@ -19,8 +18,8 @@ fn code_dependencies_execute_indirect_methods_and_cleanup_in_all_backends() {
         impl Read for Value { fn read(&self) -> Int32 { self.number } }
         pub fn value() -> Value { Value { number: 41 } }
         pub struct Owner { text: String, divisor: Int32 }
-        fn cleanup(divisor: Int32) { let checked = 42 / divisor }
-        impl Drop for Owner { fn drop(&mut self) { cleanup(self.divisor) } }
+        pub fn cleanup(divisor: Int32) { let checked = 42 / divisor }
+
         pub fn owner(divisor: Int32) -> Owner { Owner { text: "cleanup", divisor: divisor } }
     "#,
         )
@@ -34,7 +33,7 @@ fn code_dependencies_execute_indirect_methods_and_cleanup_in_all_backends() {
             let callback = d.callback()
             callback(view.read())
         }
-        fn failure() -> Int32 { let owner = d.owner(0); 42 }
+        fn failure() -> Int32 { let owner = d.owner(0); d.cleanup(0); 42 }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
@@ -760,40 +759,4 @@ fn generic_instances_are_cached_nominally_and_keep_failure_effects_internal() {
     let mut second_names: Vec<_> = second.functions.keys().collect();
     second_names.sort();
     assert_eq!(first_names, second_names);
-}
-
-#[test]
-fn generic_drop_copy_arguments_retain_owner_restrictions() {
-    let prefix = r#"
-        import joky/drop.{type Drop as Finalize}
-        import joky/arena.{type Arena}
-        import joky/fixed_array.{type FixedArray}
-        struct W<T> { v: T }
-        impl<T> Finalize for W<T> { fn drop(&mut self) {} }
-        struct Plain { n: Int32 }
-        fn dup<T: Copy>(x: T) -> (T, T) { (x, x) }
-    "#;
-    for (body, diagnostic) in [
-        (
-            "fn bad() { let a = W { v: {} }; let c = a; let d = a }",
-            "moved",
-        ),
-        ("fn bad(a: W<Int32>) { dup::<W<Int32>>(a); }", "Copy"),
-        ("fn bad() { alloc(W { v: Plain { n: 1 } }); }", "Copy"),
-        (
-            "fn bad() { let arena = Arena.new(); arena.alloc(W { v: Some(1) }); }",
-            "Copy",
-        ),
-        (
-            "fn bad(a: W<FixedArray<Int32, 2>>) {}",
-            "FixedArray storage does not support custom Drop",
-        ),
-    ] {
-        let error = crate::core::prepared::check_source(
-            &format!("{prefix}{body}"),
-            &crate::ModuleSources::new(),
-        )
-        .unwrap_err();
-        assert!(error.message().contains(diagnostic), "{body}: {error}");
-    }
 }

@@ -45,7 +45,7 @@ fn run_groups(groups: Vec<crate::string_collection_model::Group>) {
                 for (int id = 1; id < 100; id++) {
                     int expected = 0;
                     for (size_t i = 0; i < length; i++) if (ids[i] == id) expected++;
-                    if (created[id] != expected || dropped[id] != expected) return 0;
+                    if (created[id] != expected || dropped[id] != 0) return 0;
                 }
                 return 1;
             }

@@ -5,7 +5,6 @@ import joky/element.{type Element}
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
 import joky/check.{assert}
-import joky/drop.{type Drop}
 extern fn record_int(value: Int32)
 
 fn view<K: Copy + Eq + Hash, V: Copy>(m: &Map<K, V>, key: K) -> &Element<V> { map.borrow(m, key) }
@@ -28,7 +27,7 @@ fn copy_views<Tag>() -> Int32 {
     result
 }
 struct Resource { id: Int32, values: Array<Int32> }
-impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
+
 fn resource(id: Int32, n: Int32) -> Resource {
     var values = Array.new::<Int32>(); values.push(n)
     let value = Resource { id: id, values: values }

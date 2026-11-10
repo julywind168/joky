@@ -1,6 +1,5 @@
 import joky/array.{type Array}
 import joky/ord.{type Ord}
-import joky/drop.{type Drop}
 import joky/task
 import joky/integer
 import joky/float
@@ -11,9 +10,7 @@ struct Row { key: Int32, label: String }
 impl Ord for Row {
     fn cmp(&self, other: &Self) @noescape -> Int32 { Ord.cmp(&self.key, &other.key) }
 }
-impl Drop for Row {
-    fn drop(&mut self) { println(&self.label) }
-}
+
 
 fn extrema<T: Ord>(low: T, high: T) {
     var pair = [high, low]

@@ -128,7 +128,6 @@ impl FunctionPlan {
             .map(|value| CleanupOp::Register {
                 value: value.clone(),
                 place: None,
-                hooks: vec![],
                 elements: vec![],
             });
         let state = self.state_count;

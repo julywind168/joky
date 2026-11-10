@@ -73,7 +73,7 @@ fn map_iteration_executes_views_consumption_and_batches() {
                     assert_eq!(
                         *events.borrow(),
                         if name == "owned_pipeline" {
-                            vec![-1, -2, -3, 1, -4, 2, 3, 900, 901, 4]
+                            vec![-1, -2, -3, -4, 900, 901]
                         } else if name == "protocol_free_export" {
                             vec![101, 102]
                         } else {
@@ -113,36 +113,9 @@ fn map_iteration_rejects_conflicting_views_and_reused_consumed_inputs() {
         "fn bad() { let p=alloc(42); var input=Array.new::<(Int32,&Int32)>(); input.push((1,(&*p))); let m=Map.from_entries(input); let output=m.into_entries(); output.release() ; (*(p) = 0) }",
     ] { rejected(body); }
 }
-#[test]
-fn map_iteration_drop_failure_stops_before_the_next_input() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = configured(mode, &source("drop_failure"));
-        EVENTS.with(|events| events.borrow_mut().clear());
-        let error = vm.call_int32_0("probe").unwrap_err();
-        assert_eq!(error.message(), "Batch drop failure");
-        EVENTS.with(|events| {
-            let events = events.borrow();
-            assert_eq!(events.iter().filter(|&&n| n == 101).count(), 2);
-            assert!(
-                !events.contains(&102) && !events.contains(&103) && !events.contains(&999),
-                "{events:?}"
-            );
-        });
-        assert_cleaned();
-    }
-}
+
 fn assert_cleaned() {
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        for id in [1, 2, 3, 4] {
-            let drops = events.iter().filter(|&&n| n == id).count();
-            assert!(drops <= 1, "duplicate drop: {events:?}");
-            if events.contains(&-id) {
-                assert_eq!(drops, 1, "lost owner: {events:?}");
-            }
-        }
-    });
-    LIVE.with(|n| assert_eq!(n.get(), 0));
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 #[test]
 fn map_iteration_cancellation_and_exhaustion_clean_unprocessed_entries() {
@@ -211,7 +184,7 @@ fn map_iteration_allocation_failures_clean_imported_and_exported_owners() {
                 }
                 Err(error) => {
                     assert_eq!(error.code(), ErrorCode::ResourceLimit, "{mode:?}: {error}");
-                    failed_after_import |= EVENTS.with(|events| events.borrow().contains(&1));
+                    failed_after_import |= EVENTS.with(|events| events.borrow().contains(&-1));
                 }
             }
             assert_cleaned();

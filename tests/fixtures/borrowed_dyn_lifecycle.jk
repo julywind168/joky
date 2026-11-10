@@ -1,5 +1,4 @@
 import joky/array.{type Array}
-import joky/drop.{type Drop}
 extern fn record(value: Int32) -> Int32
 trait Factory {
     type Item
@@ -13,14 +12,9 @@ trait Factory {
     fn consume(&self, item: Self.Item, divisor: Int32) @noescape -> Int32
 }
 struct Resource { values: Array<Int32>, id: Int32 }
-impl Drop for Resource {
-    fn drop(&mut self) {
-        record(self.id);
-        if self.id == 9 { let n: Int8 = 127; n + 1; }
-    }
-}
+
 struct Producer { values: Array<Int32>, id: Int32 }
-impl Drop for Producer { fn drop(&mut self) { record(self.id); } }
+
 impl Factory for Producer {
     type Item = Resource
     fn make(&self) -> Resource { Resource { values: Array.new::<Int32>(), id: 8 } }

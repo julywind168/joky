@@ -1,7 +1,6 @@
 import joky/string
 import joky/check.{assert, panic}
 import joky/option.{type Option, Some, None}
-import joky/drop.{type Drop}
 fn expect(ok: Bool) { assert(ok, "Range pattern mismatch") }
 extern fn record(x: Int32) -> Int32
 extern fn delayed_value(x: Int32) @suspends -> Int32
@@ -26,7 +25,7 @@ fn correlated(flag: Bool, x: UInt8) -> Int32 {
     }
 }
 struct Item { id: Int32, text: String }
-impl Drop for Item { fn drop(&mut self) { record(self.id); } }
+
 enum Packet { Data((Int32, Item)), Empty }
 fn consume(packet: Packet) -> Int32 {
     match packet {

@@ -8,7 +8,6 @@ extern "C" fn record(id: i32) {
 const OWNERS: &str = r#"
     import joky/clone.{type Clone}
     import joky/array.{type Array}
-    import joky/drop.{type Drop}
     import joky/check
     extern fn record(id: Int32)
     struct Resource { id: Int32, text: String }
@@ -17,7 +16,7 @@ const OWNERS: &str = r#"
         record(-id)
         resource
     }
-    impl Drop for Resource { fn drop(&mut self) { record(self.id) } }
+
     impl Clone for Resource {
         fn clone(&self) -> Self {
             if self.id == 2 { check.panic("clone failed") }
@@ -58,17 +57,7 @@ fn vm(mode: VmMode) -> VmEngine {
     vm
 }
 fn cleaned() {
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        for id in [1, 2, 3, 11, 13] {
-            let count = events.iter().filter(|&&event| event == id).count();
-            assert!(count <= 1, "duplicate cleanup: {events:?}");
-            if events.contains(&-id) {
-                assert_eq!(count, 1, "lost owner: {events:?}");
-            }
-        }
-    });
-    crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 #[test]
 fn service_ergonomics_clone_failure_cleans_partial_copies() {

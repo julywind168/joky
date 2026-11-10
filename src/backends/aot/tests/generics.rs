@@ -413,17 +413,15 @@ fn fixed_array_f2a_aot_cleans_callbacks_on_failure_and_empty_input() {
         static int32_t events[16]; static unsigned count;
         void note(int32_t value) { if (count < 16) events[count++] = value; }
         int main(void) {
-            if (construct() != 42 || count != 5 || events[0] != 1 || events[3] != 4 || events[4] != -1) return 1;
+            if (construct() != 42 || count != 4 || events[0] != 1 || events[3] != 4) return 1;
             count = 0;
-            if (zero_env() != 42 || count != 1 || events[0] != -1) return 2;
+            if (zero_env() != 42 || count != 0) return 2;
             count = 0; fail_init();
-            if (!joky_runtime_error_code() || count != 4 || events[0] != 1 || events[2] != 3 || events[3] != -1) return 3;
+            if (!joky_runtime_error_code() || count != 3 || events[0] != 1 || events[2] != 3) return 3;
             joky_runtime_error_clear(); count = 0;
-            if (early() != 42 || count != 1 || events[0] != -1) return 4;
+            if (early() != 42 || count != 0) return 4;
             count = 0; assignment_fail();
             if (!joky_runtime_error_code() || count != 3 || events[0] != 1 || events[2] != 3) return 5;
-            joky_runtime_error_clear(); count = 0; fail_cleanup();
-            if (!joky_runtime_error_code() || count != 2 || events[0] != 1 || events[1] != -2) return 6;
             joky_runtime_error_clear(); return 0;
         }
     "#).unwrap();
@@ -495,9 +493,9 @@ fn fixed_array_f2b_aot_cleans_nested_initialization_failure() {
         static int32_t events[16]; static unsigned count;
         void note(int32_t value) { if (count<16) events[count++]=value; }
         int main(void) {
-            if (exercise()!=42 || count!=5 || events[0]!=1 || events[3]!=4 || events[4]!=-1) return 1;
+            if (exercise()!=42 || count != 4 || events[0] != 1 || events[3] != 4) return 1;
             count=0; fail_init();
-            if (!joky_runtime_error_code() || count!=4 || events[0]!=1 || events[2]!=3 || events[3]!=-1) return 2;
+            if (!joky_runtime_error_code() || count != 3 || events[0] != 1 || events[2] != 3) return 2;
             joky_runtime_error_clear(); return 0;
         }
     "#,
@@ -545,9 +543,9 @@ fn fixed_array_f3_aot_cleans_views_after_success_and_failure() {
         static int32_t events[16]; static unsigned count;
         void note(int32_t value) { if(count<16) events[count++]=value; }
         int main(void) {
-            if(exercise()!=42 || count!=5 || events[0]!=1 || events[3]!=4 || events[4]!=-1) return 1;
+            if(exercise()!=42 || count != 4 || events[0] != 1 || events[3] != 4) return 1;
             count=0; failure();
-            if(!joky_runtime_error_code() || count!=2 || events[0]!=1 || events[1]!=-1) return 2;
+            if(!joky_runtime_error_code() || count != 1 || events[0] != 1) return 2;
             joky_runtime_error_clear();
             return payload_reuse()!=42 || headers()!=42 || references()!=42 || escaping_headers()!=42 || joky_runtime_error_code();
         }

@@ -4,7 +4,7 @@ use super::*;
 pub(super) enum Events<'a> {
     Exact(&'a [i32]),
     Unordered(&'a [i32]),
-    Balanced(i32),
+    Constructed(i32),
 }
 
 pub(super) struct Case<'a> {
@@ -60,9 +60,9 @@ void record_int(int32_t value) { if (count < 65536) events[count] = value; ++cou
                     harness.push_str(&format!("for (int i = 0; i < count; ++i) {{ int seen = 0, wanted = 0; for (int j = 0; j < count; ++j) {{ seen += events[j] == expected[i]; wanted += expected[j] == expected[i]; }} if (seen != wanted) {{ fprintf(stderr, \"{entry}: owner %d count=%d expected=%d\\n\", expected[i], seen, wanted); return 4; }} }}\n"));
                 }
             }
-            Events::Balanced(max) => {
+            Events::Constructed(max) => {
                 harness.push_str(&format!("for (int i = 0; i < count; ++i) {{ int n = events[i]; if (!((n >= -{max} && n <= -1) || (n >= 1 && n <= {max}) || n == 100 || n == 101)) {{ fprintf(stderr, \"{entry}: unexpected event %d\\n\", n); return 5; }} }}\n"));
-                harness.push_str(&format!("for (int id = 1; id <= {max}; ++id) {{ int created = 0, dropped = 0; for (int i = 0; i < count; ++i) {{ created += events[i] == -id; dropped += events[i] == id; }} if (created != dropped || created > 1) {{ fprintf(stderr, \"{entry}: owner %d created=%d dropped=%d\\n\", id, created, dropped); return 6; }} }}\n"));
+                harness.push_str(&format!("for (int id = 1; id <= {max}; ++id) {{ int created = 0, dropped = 0; for (int i = 0; i < count; ++i) {{ created += events[i] == -id; dropped += events[i] == id; }} if (dropped != 0 || created > 1) {{ fprintf(stderr, \"{entry}: owner %d created=%d dropped=%d\\n\", id, created, dropped); return 6; }} }}\n"));
             }
         }
         if case.failure {

@@ -602,7 +602,6 @@ pub struct ImplDef {
 /// A static capability. Self is a rigid parameter in requirement signatures.
 #[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct TraitDef {
-    pub(crate) is_drop: bool,
     pub(crate) is_add: bool,
     pub(crate) is_eq: bool,
     pub public: bool,

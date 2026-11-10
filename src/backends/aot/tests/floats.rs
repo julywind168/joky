@@ -143,8 +143,7 @@ fn check_float_environment(level: &str) {
                     CHECK(joky_cps_result(f) == UINT64_C(0x10000000000000));
                 }
                 joky_cps_frame_free(f);
-                CHECK(stops == 1 && drops == !cancel);
-                if (!cancel) CHECK(observed == UINT64_C(0x8000000000000));
+                CHECK(stops == 1 && drops == 0);
                 CHECK(env() == HOSTILE);
             }
             CHECK(!reentry_failed && !joky_runtime_error_code());

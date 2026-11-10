@@ -1,5 +1,7 @@
 # List / Set 设计与分阶段开发计划
 
+> 2026-11-10 更新：本文涉及自定义 `joky/drop.Drop` 的设计、限制与验收为历史记录；该能力已撤回。当前自动清理规则及迁移见[撤回说明](custom-drop-withdrawal-review.md)。
+
 状态：LS0、List L1–L4、Set S1–S3 与 LS1 联合开发验收已完成。LS0 起点为 `e75787e`。
 本文将同步可变链表 `List<T>` 与无序哈希集合 `Set<T>` 纳入同一轮容器开发；
 LS0 已冻结首版接口、表示和类型准入；List 和 Set 已实现，公开用法见 [List](language.md#可变-list) 与 [Set](language.md#无序-set)。

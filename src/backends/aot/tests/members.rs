@@ -344,9 +344,9 @@ fn trait_defaults_associated_owners_execute_native_lifecycle() {
         int main(void) {{
             for (int run = 0; run < 3; ++run) {{
                 count = 0;
-                if (default_discard() != 42 || count != 1 || events[0] != 7) return 1;
+                if (default_discard() != 42 || count != 0) return 1;
                 count = 0; (void)default_failure();
-                if (!joky_runtime_error_code() || count != 1 || events[0] != 7) return 2;
+                if (!joky_runtime_error_code() || count != 0) return 2;
                 joky_runtime_error_clear();
                 count = 0; ready = 0;
                 JokyCpsFrame *frame = joky_cps_frame_new({slots});

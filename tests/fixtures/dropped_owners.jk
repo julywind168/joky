@@ -1,12 +1,8 @@
 import joky/array.{type Array}
-import joky/drop.{type Drop}
-
 extern fn record_drop(value: Int32)
 
 struct Resource { id: Int32, values: Array<Int32> }
-impl Drop for Resource {
-    fn drop(&mut self) { record_drop(self.id) }
-}
+
 fn resource(id: Int32) -> Resource { Resource { id: id, values: Array.new::<Int32>() } }
 fn moved(value: Resource) -> Resource { value }
 fn drop_scope() -> Int32 {
@@ -52,13 +48,13 @@ fn drop_task() @suspends -> Int32 { drop_scope() }
 
 fn drop_early() -> Int32 { drop_return(true) }
 struct Outer { id: Int32, inner: Resource }
-impl Drop for Outer { fn drop(&mut self) { record_drop(self.id) } }
+
 fn drop_nested() -> Int32 {
     let value = Outer { id: 1, inner: resource(2) }
     42
 }
 struct Generic<T> { id: Int32, values: Array<T> }
-impl<T> Drop for Generic<T> { fn drop(&mut self) { record_drop(self.id) } }
+
 fn drop_generic() -> Int32 {
     let value = Generic { id: 4, values: Array.new::<Int32>() }
     42
@@ -66,7 +62,7 @@ fn drop_generic() -> Int32 {
 fn drop_discard() -> Int32 { resource(5); 42 }
 fn drop_partial() -> Int32 { let value = Outer { inner: resource(2), id: 1 / 0 }; 42 }
 struct Fails { id: Int32, values: Array<Int32> }
-impl Drop for Fails { fn drop(&mut self) { record_drop(self.id); let bad = 1 / 0 } }
+
 fn drop_failing_hook() -> Int32 {
     let first = resource(1)
     let second = Fails { id: 2, values: Array.new::<Int32>() }
@@ -99,7 +95,7 @@ fn drop_return_failure() -> Resource {
 fn drop_failed_return() -> Int32 { let value = drop_return_failure(); 42 }
 
 struct Leading { inner: Resource, extra: Int64, flag: Bool }
-impl Drop for Leading { fn drop(&mut self) { if self.flag { record_drop(int32(self.extra)) } } }
+
 fn drop_leading_owner() -> Int32 {
     let value = Leading { inner: resource(2), extra: 1, flag: true }
     42
@@ -130,9 +126,7 @@ fn drop_original_failure() -> Int32 {
 }
 
 struct Changes { inner: Resource, id: Int32 }
-impl Drop for Changes {
-    fn drop(&mut self) { record_drop(self.id); self.inner.id = 9; self.inner.values.push(42) }
-}
+
 fn drop_mutated_child() -> Int32 {
     let value = Changes { inner: resource(2), id: 1 }
     42

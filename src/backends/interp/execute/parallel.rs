@@ -279,7 +279,6 @@ impl Execution {
             None
         };
         let mut group = pool::Group::new(kind);
-        let _capture = group.capture_guard();
         let publication = (|| {
             let mut factories = Vec::new();
             for (target, args, _, _) in &branches {
@@ -326,14 +325,7 @@ impl Execution {
             }
             None
         };
-        let _capture = frame
-            .remote_scopes
-            .as_ref()
-            .unwrap()
-            .groups
-            .last()
-            .unwrap()
-            .capture_guard();
+
         let factory = self.remote_factory(module, target, &args, scope)?;
         let frame = self.frame_mut(self.current);
         frame

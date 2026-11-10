@@ -152,59 +152,43 @@ fn closure_owning_cleanup_success_skip_consume_and_failure() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = owner_vm(mode);
         for (name, expected, error) in [
-            ("stored_empty_drop", vec![7], None),
-            ("stored_work", vec![-1, -2, 2, 1], None),
-            ("stored_unused", vec![-1, 1], None),
-            ("stored_replace", vec![-1, -2, 1, 2], None),
+            ("stored_work", vec![-1, -2], None),
+            ("stored_unused", vec![-1], None),
+            ("stored_replace", vec![-1, -2], None),
             (
                 "stored_failure",
-                vec![-1, -2, 1, 2],
+                vec![-1, -2],
                 Some("Stored closure failure"),
             ),
-            (
-                "stored_return_drop_failure",
-                vec![-1, -4, 4, 1],
-                Some("First closure drop failure"),
-            ),
-            (
-                "stored_drop_failure",
-                vec![-4, -5, 4, 5],
-                Some("First closure drop failure"),
-            ),
-            ("unused", vec![-1, -2, 1, 2], None),
-            ("lazy_skipped", vec![-1, 1, -2, 2], None),
-            ("lazy_consumed", vec![-1, 1], None),
-            ("lazy_cancellation_work", vec![-1, -2, 2, 1], None),
-            ("lazy_error_consumed", vec![-1, 1], None),
-            ("query_owned", vec![-1, -2, 2, 1], None),
-            ("query_temporary", vec![-1, 1, 100], None),
-            ("lazy_failure", vec![-1, -2, 1, 2], Some("Closure failure")),
-            ("consume", vec![-1, 1], None),
-            ("repeated", vec![-1, 1], None),
-            ("skipped", vec![-1, 1], None),
-            ("consumed_helper", vec![-1, 1, -2, 2], None),
-            ("failure", vec![-1, -2, 1, 2], Some("Closure failure")),
-            ("cancellation_work", vec![-1, -2, 2, 1], None),
-            ("consume_last", vec![-1, -2, -3, 3, 1, 2], None),
+            ("unused", vec![-1, -2], None),
+            ("lazy_skipped", vec![-1, -2], None),
+            ("lazy_consumed", vec![-1], None),
+            ("lazy_cancellation_work", vec![-1, -2], None),
+            ("lazy_error_consumed", vec![-1], None),
+            ("query_owned", vec![-1, -2], None),
+            ("query_temporary", vec![-1, 100], None),
+            ("lazy_failure", vec![-1, -2], Some("Closure failure")),
+            ("consume", vec![-1], None),
+            ("repeated", vec![-1], None),
+            ("skipped", vec![-1], None),
+            ("consumed_helper", vec![-1, -2], None),
+            ("failure", vec![-1, -2], Some("Closure failure")),
+            ("cancellation_work", vec![-1, -2], None),
+            ("consume_last", vec![-1, -2, -3], None),
             ("argument_order", vec![100, 200, 300, 400], None),
             (
                 "consuming_argument_failure",
-                vec![-1, 1],
+                vec![-1],
                 Some("Closure failure"),
             ),
             (
                 "consuming_failure",
-                vec![-1, -2, -3, 1, 2, 3],
+                vec![-1, -2, -3],
                 Some("Closure failure"),
             ),
             (
-                "cleanup_failure",
-                vec![-4, -5, -1, 4, 5, 1],
-                Some("First closure drop failure"),
-            ),
-            (
                 "failure_before_cleanup_failure",
-                vec![-4, -5, -1, 4, 5, 1],
+                vec![-4, -5, -1],
                 Some("Closure failure"),
             ),
         ] {
@@ -231,15 +215,8 @@ fn cancellation(sweep: super::support::CancellationSweep) {
             || EVENTS.with(|e| e.borrow_mut().clear()),
             || EVENTS.with(|e| e.borrow().clone()),
             || {
-                EVENTS.with(|e| {
-                    let e = e.borrow();
-                    for id in [1, 2] {
-                        let drops = e.iter().filter(|&&v| v == id).count();
-                        assert!(drops <= 1, "duplicate {e:?}");
-                        if e.contains(&-id) {
-                            assert_eq!(drops, 1, "lost {e:?}");
-                        }
-                    }
+                crate::runtime::arena::LIVE.with(|live| {
+                    assert_eq!(live.get(), 0);
                 });
                 crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
             },
@@ -278,7 +255,7 @@ fn closure_interpreter_keeps_old_entries_alive_across_reload() {
     }
     assert_eq!(task.cps_result(), Some(42));
     drop(task);
-    EVENTS.with(|e| assert_eq!(*e.borrow(), [-1, -2, 2, 1]));
+    EVENTS.with(|e| assert_eq!(*e.borrow(), [-1, -2]));
     crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 
@@ -362,15 +339,8 @@ fn closure_instruction_budget_failure_releases_initialized_resources() {
         if let Ok(value) = result {
             assert_eq!(value, 42);
         }
-        EVENTS.with(|e| {
-            let e = e.borrow();
-            for id in [1, 2] {
-                let drops = e.iter().filter(|&&v| v == id).count();
-                assert!(drops <= 1, "budget {budget}: {e:?}");
-                if e.contains(&-id) {
-                    assert_eq!(drops, 1, "budget {budget}: {e:?}");
-                }
-            }
+        crate::runtime::arena::LIVE.with(|live| {
+            assert_eq!(live.get(), 0);
         });
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0, "budget {budget}"));
     }

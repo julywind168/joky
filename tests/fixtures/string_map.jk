@@ -3,7 +3,6 @@ import joky/map.{type Map}
 import joky/array.{type Array}
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
-import joky/drop.{type Drop}
 import joky/check.{assert}
 import joky/string
 import joky/slice
@@ -62,13 +61,7 @@ impl Hash for Key {
         7
     }
 }
-impl Drop for Key {
-    fn drop(&mut self) {
-        record_drop(self.id)
-        let message = "String key Drop failure"
-        assert(self.fail != 3, &message)
-    }
-}
+
 fn collision_growth<Tag>() -> Int32 {
     var m = Map.new::<Key, Int32>()
     m.insert(key(1, "a", 0), 20)

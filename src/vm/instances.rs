@@ -5,7 +5,7 @@ use crate::{
     core::{instance, ir::FunctionInfo},
     runtime::{
         arena::{Arena, Budget},
-        buffer::{Buffer, ElementCallback, ElementCleanup, ElementHook},
+        buffer::{Buffer, ElementCleanup},
     },
     Error, ErrorCode, ErrorPhase, Type,
 };
@@ -280,7 +280,7 @@ impl Instances {
 }
 
 impl LoadedModule {
-    fn root_cleanup(&self, constructor: &str, ty: &Type) -> Result<ElementCleanup, Error> {
+    fn root_cleanup(ty: &Type) -> Result<ElementCleanup, Error> {
         let owners = ty
             .storage_scalars()
             .map_err(|e| invalid(e.to_string()))?
@@ -288,35 +288,7 @@ impl LoadedModule {
             .filter(|(_, ty)| ty.is_owner_lane())
             .map(|(offset, _)| offset)
             .collect();
-        let hooks = match self {
-            Self::Jit(module) => module.instance_hooks[constructor]
-                .iter()
-                .map(|(hook, callback)| ElementHook {
-                    before: hook.before,
-                    offset: hook.offset,
-                    indirect: hook.indirect,
-                    guards: hook.guards.clone(),
-                    callback: ElementCallback::Native(*callback),
-                })
-                .collect(),
-            Self::Interpreter(module) => interp::instance_hooks(module, constructor)
-                .iter()
-                .map(|hook| {
-                    let name = hook.name.clone();
-                    let module = module.clone();
-                    ElementHook {
-                        before: hook.before,
-                        offset: hook.offset,
-                        indirect: hook.indirect,
-                        guards: hook.guards.clone(),
-                        callback: ElementCallback::Interpreted(Rc::new(move |data, arena| {
-                            interp::cleanup_call(&module, &name, data, arena)
-                        })),
-                    }
-                })
-                .collect(),
-        };
-        Ok(ElementCleanup { owners, hooks })
+        Ok(ElementCleanup { owners })
     }
     pub(super) fn instance_info(&self, name: &str) -> Result<FunctionInfo, Error> {
         match self {
@@ -473,7 +445,7 @@ impl VmEngine {
             .checked_add(1)
             .ok_or_else(|| error(ErrorCode::ResourceLimit, "Instance IDs exhausted"))?;
         self.instances.next.set(next);
-        let descriptor = module.root_cleanup(constructor, &info.signature.ret)?;
+        let descriptor = LoadedModule::root_cleanup(&info.signature.ret)?;
         let mut storage = self
             .instances
             .allocate(&info.signature.ret, &module, &descriptor)?;

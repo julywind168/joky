@@ -34,3 +34,37 @@ fn overwrite() @suspends -> Int32 {
     task.yield_now()
     borrowed(&socket)
 }
+
+struct Nested { pair: Pair, tail: Socket }
+fn projection() @suspends -> Int32 {
+    let outer = Nested { pair: pair_value(), tail: make(3) }
+    let selected = outer.pair.a
+    task.yield_now()
+    borrowed(&selected)
+}
+fn field_replace() @suspends -> Int32 {
+    var value = pair_value()
+    value.a = make(3)
+    let old = mem.replace(&mut value.b, make(4))
+    mem.drop(old)
+    task.yield_now()
+    borrowed(&value.a)
+}
+fn closure_capture() @suspends -> Int32 {
+    let value = pair_value()
+    let callback = move || { pair_inspect(value) }
+    task.yield_now()
+    callback()
+}
+fn nested_containers() @suspends -> Int32 {
+    var values = Array.new::<Array<Socket>>()
+    values.push(array_value())
+    values.push([make(3)])
+    task.yield_now()
+    values.clear()
+    42
+}
+fn partial_record() @suspends -> Int32 {
+    let value = Nested { tail: make(1), pair: Pair { tag: 1, a: make(2), b: make(99) } }
+    42
+}

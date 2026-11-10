@@ -1,9 +1,6 @@
 //! Typed time values, exact timer deadlines and structured timeout cleanup.
 use super::{support::*, VmMode};
-use crate::runtime::{
-    arena::LIVE,
-    executor::{Clock, HostExecutor, TaskGroup},
-};
+use crate::runtime::executor::{Clock, HostExecutor, TaskGroup};
 use std::{
     cell::Cell,
     rc::Rc,
@@ -17,14 +14,7 @@ impl Clock for ManualClock {
     }
 }
 fn cleaned() {
-    EVENTS.with(|e| {
-        let e = e.borrow();
-        assert!(e.iter().filter(|&&v| v == 1).count() <= 1, "{e:?}");
-        if e.contains(&-1) {
-            assert_eq!(e.iter().filter(|&&v| v == 1).count(), 1, "{e:?}");
-        }
-    });
-    LIVE.with(|n| assert_eq!(n.get(), 0));
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
 #[test]
 fn duration_values_and_timeout_ownership() {

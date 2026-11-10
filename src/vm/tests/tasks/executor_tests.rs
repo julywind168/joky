@@ -244,7 +244,6 @@ fn host_executor_budget_is_fair_and_groups_are_not_reusable_after_close() {
 const INSTANCE: &str = r#"import joky/mem
 
 import joky/task
-import joky/drop.{type Drop}
 struct State { count: Int32, text: String }
 fn create() -> State { State { count: 0, text: "state" } }
 fn add(self: &mut State, n: Int32) @noescape -> Int32 { self.count = self.count + n; self.count }
@@ -266,7 +265,7 @@ extern fn event(n: Int32)
 extern fn close_owner()
 extern fn hold(value: &mut Int32) @suspends
 fn held() @suspends { change(1); let temp = "task"; let value = alloc(42); hold(value); temp.release() }
-impl Drop for State { fn drop(&mut self) { event(99) } }
+
 fn flow() @suspends -> Int32 { let n = change(1); wait(); change(n) }
 fn closing() @suspends { scope { branch { wait() }; close_owner(); task.yield_now() } }
 fn bad() @suspends { task.yield_now(); let n = 1 / 0 }
@@ -315,7 +314,7 @@ fn instance_tasks_close_reentrantly_and_fail_without_leaking_state() {
         assert_eq!(vm.instance_count(), 0);
         assert_eq!(vm.instance_bytes(), 0);
         assert_eq!(vm.instance_task_count(), 0);
-        assert_eq!(EVENTS.with(|v| v.borrow().clone()), [99]);
+        assert!(EVENTS.with(|v| v.borrow().is_empty()));
         let id = vm.create_instance("create", &[]).unwrap();
         vm.spawn_instance_task(id, "flow", &[]).unwrap();
         vm.spawn_instance_task(id, "bad", &[]).unwrap();
@@ -355,7 +354,7 @@ fn instance_tasks_stop_hosts_before_dropping_task_and_instance_owners() {
             } else {
                 vm.close_instance(id).unwrap();
             }
-            assert_eq!(EVENTS.with(|v| v.borrow().clone()), [90, 99]);
+            assert_eq!(EVENTS.with(|v| v.borrow().clone()), [90]);
             token.wake();
             assert_eq!(vm.poll_tasks(10).unwrap().polled, 0);
             assert_eq!(vm.instance_bytes(), 0);
@@ -505,10 +504,10 @@ fn instance_task_failure_keeps_its_owner_during_reentrant_batch_cleanup() {
         assert!(vm.instance_error(failed).unwrap().is_some());
         assert!(vm.call_instance(failed, "read", &[]).is_err());
         assert_eq!(vm.call_instance(caller, "read", &[]).unwrap(), V::Int32(0));
-        assert_eq!(EVENTS.with(|v| v.borrow().clone()), [99, 99]);
+        assert!(EVENTS.with(|v| v.borrow().is_empty()));
         vm.close_instance(failed).unwrap(); // failed State must not drop twice.
         vm.close_instance(caller).unwrap();
-        assert_eq!(EVENTS.with(|v| v.borrow().clone()), [99, 99, 99]);
+        assert!(EVENTS.with(|v| v.borrow().is_empty()));
         assert_eq!(vm.instance_bytes(), 0);
         assert_eq!(vm.instance_task_count(), 0);
         FAILED_OWNER.with(|v| v.set(None));
@@ -529,7 +528,7 @@ fn instance_tasks_failed_or_closed_state_access_keeps_arena_until_hosts_stop() {
             vm.poll_tasks(1).unwrap();
             vm.spawn_instance_task(id, method, &[]).unwrap();
             vm.poll_tasks(1).unwrap();
-            assert_eq!(EVENTS.with(|v| v.borrow().clone()), [90, 99]);
+            assert_eq!(EVENTS.with(|v| v.borrow().clone()), [90]);
             assert_eq!(vm.instance_bytes(), 0);
             assert_eq!(vm.instance_task_count(), 0);
             if method == "fail_flow" {
@@ -695,29 +694,9 @@ fn instance_tasks_defer_owner_destruction_requested_inside_stop() {
         CLOSE_IN_STOP.with(|v| v.set(true));
         assert!(vm.cancel_instance_task(task));
         CLOSE_IN_STOP.with(|v| v.set(false));
-        assert_eq!(EVENTS.with(|v| v.borrow().clone()), [90, 99]);
+        assert_eq!(EVENTS.with(|v| v.borrow().clone()), [90]);
         assert_eq!(vm.instance_count(), 0);
         assert_eq!(vm.instance_bytes(), 0);
-        LIVE.with(|n| assert_eq!(n.get(), 0));
-        ACTIVE_VM.with(|v| v.set(std::ptr::null()));
-    }
-}
-
-#[test]
-fn instance_tasks_vm_shutdown_rejects_new_roots_from_destructors() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        // Keep the address stable while Drop calls the native probe.
-        let vm = Box::new(vm(mode, INSTANCE));
-        let id = vm.create_instance("create", &[]).unwrap();
-        ACTIVE_VM.with(|v| v.set(&*vm));
-        vm.spawn_instance_task(id, "held", &[]).unwrap();
-        vm.poll_tasks(1).unwrap();
-        SHUTDOWN_PROBE.with(|v| v.set(true));
-        SHUTDOWN_DENIED.with(|v| v.set(false));
-        drop(vm);
-        SHUTDOWN_PROBE.with(|v| v.set(false));
-        assert!(SHUTDOWN_DENIED.with(Cell::get));
-        assert_eq!(EVENTS.with(|v| v.borrow().clone()), [90, 99]);
         LIVE.with(|n| assert_eq!(n.get(), 0));
         ACTIVE_VM.with(|v| v.set(std::ptr::null()));
     }
@@ -758,7 +737,7 @@ fn instance_identity_is_scoped_to_poll_and_disposal_for_each_owner() {
             )
             .unwrap();
         }
-        vm.load_source("import joky/drop.{type Drop} struct State { n: Int32, text: String } fn create() -> State { State { n: 0, text: \"owned\" } } extern fn identity_cleanup() impl Drop for State { fn drop(&mut self) { identity_cleanup() } } extern fn probe(n: &Int32) @suspends fn work() @suspends { let n = alloc(42); probe(n) }").unwrap();
+        vm.load_source("struct State { n: Int32, text: String } fn create() -> State { State { n: 0, text: \"owned\" } } extern fn identity_cleanup()  extern fn probe(n: &Int32) @suspends fn work() @suspends { let n = alloc(42); probe(n) }").unwrap();
         let a = vm.create_instance("create", &[]).unwrap();
         let b = vm.create_instance("create", &[]).unwrap();
         let ta = vm.spawn_instance_task(a, "work", &[]).unwrap();
@@ -772,7 +751,7 @@ fn instance_identity_is_scoped_to_poll_and_disposal_for_each_owner() {
         assert_eq!(super::current_instance_id(), None);
         assert_eq!(
             IDENTITIES.with(|ids| ids.borrow().clone()),
-            [Some(a), Some(b), Some(a), Some(b), Some(b)]
+            [Some(a), Some(b), Some(a), Some(b)]
         );
         vm.close_instance(a).unwrap();
     }

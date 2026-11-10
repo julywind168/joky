@@ -97,15 +97,10 @@ fn scoped_borrow_nested_groups_forward_received_views() {
 }
 
 fn input_engine(mode: VmMode) -> VmEngine {
-    unsafe extern "C" fn cleanups(frame: *mut CpsFrame) -> i32 {
-        (*frame).result = crate::runtime::parallel::pool::cleanup_count() as u64;
-        0
-    }
     let source = format!(
         r#"{SOURCE}
-        extern fn cleanups() @suspends -> Int32
         struct Input {{ text: String }}
-        impl Drop for Input {{ fn drop(&mut self) {{}} }}
+
         fn with_input(text: &String, input: Input) @suspends -> Int32 {{ text_size(text) }}
         fn dynamic_inputs() @suspends -> Int32 {{
             let result = isolate {{
@@ -119,7 +114,6 @@ fn input_engine(mode: VmMode) -> VmEngine {
                 }}
                 12
             }}
-            if cleanups() != 0 {{ return -2 }}
             match result {{ Ok(value) => value, Err(_) => -1 }}
         }}
         fn isolated_inputs() @suspends -> Int32 {{
@@ -131,22 +125,12 @@ fn input_engine(mode: VmMode) -> VmEngine {
                 }}
                 a + b
             }}
-            if cleanups() != 0 {{ return -2 }}
             match result {{ Ok(value) => value, Err(_) => -1 }}
         }}
     "#
     );
     let mut vm = VmEngine::with_mode(mode);
-    unsafe {
-        vm.register_parallel_suspending_fn(
-            "cleanups",
-            FunctionSignature::new(vec![], Type::Int32),
-            cleanups,
-            0,
-            Arc::new(()),
-        )
-        .unwrap();
-    }
+
     vm.load_source(&source).unwrap();
     vm
 }
@@ -310,10 +294,10 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
         .replace("task.yield_now()", "checkpoint()");
     let fixed_collections = include_str!("../../../tests/fixtures/fixed_array_collections.jk")
         .replace("task.yield_now()", "checkpoint()");
-    let custom_drop = include_str!("../../../tests/fixtures/scoped_borrow_drop.jk")
+    let owning_records = include_str!("../../../tests/fixtures/scoped_borrow_drop.jk")
         .replace("task.yield_now()", "checkpoint()");
     for (source, cases) in [
-        (custom_drop, vec![("main", 42), ("dynamic", 42)]),
+        (owning_records, vec![("main", 42), ("dynamic", 42)]),
         (
             fixed_collections,
             vec![("main", 42), ("dynamic", 42), ("transferred", 42)],
@@ -411,115 +395,6 @@ fn exhaustive_scoped_borrow_cancellation_checkpoints() {
                 assert!(complete);
             }
         }
-    }
-}
-
-#[test]
-fn scoped_borrow_isolate_does_not_hide_fatal_source_cleanup() {
-    static STARTED: AtomicBool = AtomicBool::new(false);
-    unsafe extern "C" fn fatal_drop(_: *const u8) -> i32 {
-        crate::runtime::error::record_error(Error::new_with_code(
-            ErrorPhase::Abi,
-            ErrorCode::AbiError,
-            "fatal source cleanup",
-        ));
-        0
-    }
-    unsafe extern "C" fn reader(_: *mut CpsFrame) -> i32 {
-        STARTED.store(true, Ordering::Release);
-        1
-    }
-    unsafe extern "C" fn fail(_: *mut CpsFrame) -> i32 {
-        if !STARTED.load(Ordering::Acquire) {
-            return 1;
-        }
-        crate::runtime::error::record_error(Error::new_with_code(
-            ErrorPhase::Runtime,
-            ErrorCode::RuntimeError,
-            "recoverable sibling failure",
-        ));
-        3
-    }
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        STARTED.store(false, Ordering::Release);
-        let mut vm = VmEngine::with_mode(mode);
-        for (name, callback) in [
-            ("reader", reader as crate::runtime::cps::CpsEntry),
-            ("fail", fail),
-        ] {
-            unsafe {
-                vm.register_parallel_suspending_fn(
-                    name,
-                    FunctionSignature::new(vec![], Type::Unit),
-                    callback,
-                    0,
-                    Arc::new(()),
-                )
-                .unwrap();
-            }
-        }
-        let host = Host {
-            name: "fatal_drop".into(),
-            signature: FunctionSignature::new(
-                vec![Type::reference(Type::String, false)],
-                Type::Int32,
-            ),
-            code: crate::runtime::parallel::HostCode::TextView(fatal_drop),
-            _owner: Arc::new(()),
-        };
-        unsafe {
-            vm.register_owned_text_fn(
-                "fatal_drop",
-                host.signature.clone(),
-                fatal_drop as *const u8,
-                Some(std::rc::Rc::new(host)),
-            )
-            .unwrap();
-        }
-        vm.load_source(
-            r#"
-            import joky/task
-            import joky/drop.{type Drop}
-            extern fn fatal_drop(text: &String) -> Int32
-            struct Source { text: String }
-            impl Drop for Source { fn drop(&mut self) { fatal_drop(&self.text); } }
-            extern fn reader() @suspends
-            extern fn fail() @suspends
-            fn borrowed(source: &Source) @suspends { reader() }
-            fn sibling(source: &Source) @suspends { fail() }
-            fn root() @suspends -> Int32 {
-                let result = isolate {
-                    let source = Source { text: "source" }
-                    join { borrowed(&source), sibling(&source) }
-                }
-                99
-            }
-        "#,
-        )
-        .unwrap_or_else(|e| panic!("{e}"));
-        let budget = TaskBudget::new(4 << 20);
-        let mut pool = ParallelExecutor::new(3, 16).unwrap();
-        let task = vm
-            .prepare_parallel_task("root", vec![], vec![budget.clone()])
-            .unwrap()
-            .submit(&pool)
-            .unwrap();
-        wait(|| task.is_finished());
-        let error = task
-            .take_result()
-            .err()
-            .unwrap_or_else(|| panic!("{mode:?}: fatal cleanup was recovered"));
-        assert_eq!(error.code(), ErrorCode::AbiError, "{mode:?}: {error}");
-        assert_eq!(
-            crate::runtime::parallel::scoped::observations(task.identity())
-                .iter()
-                .filter(|o| o.source)
-                .count(),
-            2
-        );
-        drop(task);
-        pool.wait_closed();
-        assert_eq!(budget.used(), 0);
     }
 }
 

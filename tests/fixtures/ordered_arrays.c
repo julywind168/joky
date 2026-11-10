@@ -12,14 +12,13 @@ int main(void) {
     struct Case { int32_t (*call)(void); int failure, count; int32_t events[12]; } cases[] = {
         {ordered_copy, 0, 0, {0}},
         {ordered_evaluation, 0, 3, {10, 20, 30}},
-        {ordered_owned, 0, 8, {-1, -2, -3, -4, 4, 2, 1, 3}},
-        {ordered_enum_tuple, 0, 4, {-1, -2, 2, 1}},
+        {ordered_owned, 0, 4, {-1, -2, -3, -4}},
+        {ordered_enum_tuple, 0, 2, {-1, -2}},
         {ordered_wrapper, 0, 0, {0}},
         {ordered_zero_and_aggregate, 0, 0, {0}},
         {ordered_references, 0, 0, {0}},
-        {ordered_drop_failure, 1, 3, {2, 1, 3}},
-        {ordered_invalid_failure, 1, 2, {2, 1}},
-        {ordered_rhs_failure, 1, 4, {-1, -2, 2, 1}},
+
+        {ordered_rhs_failure, 1, 2, {-1, -2}},
     };
     for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         count = 0;

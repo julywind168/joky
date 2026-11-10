@@ -4,7 +4,7 @@ use super::{VmEngine, VmMode};
 use crate::runtime::arena::LIVE;
 
 const SOURCE: &str = include_str!("../../../../tests/fixtures/for_iterators.jk");
-const EXPECTED: &[i32] = &[3, -1, 1, -2, 2, 99, -1, 1, -2, 2, -3, 3, 99, -1, 1, 99];
+const EXPECTED: &[i32] = &[3, -1, -2, -1, -2, -3, -1];
 
 #[test]
 fn for_into_iter_converts_once_and_preserves_generic_protocol_selection() {
@@ -140,16 +140,16 @@ fn for_iterators_resume_cancel_and_fail_without_replaying_next() {
             }
             drop(task);
             let expected = if cancel {
-                &[-1, 11, 11, 1, 99][..]
+                &[-1, 11, 11][..]
             } else {
-                &[-1, 11, 11, 1, -2, 12, 12, 2, 99][..]
+                &[-1, 11, 11, -2, 12, 12][..]
             };
             EVENTS.with(|events| assert_eq!(*events.borrow(), expected));
             LIVE.with(|live| assert_eq!(live.get(), 0));
         }
         EVENTS.with(|events| events.borrow_mut().clear());
         assert!(vm.call_unit_0("force_failure").is_err());
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [-1, 1, 99]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [-1]));
         LIVE.with(|live| assert_eq!(live.get(), 0));
     }
 }
@@ -283,9 +283,9 @@ fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
                 "lazy",
                 vec![1, 2, 3, 4, 13, 14, 13, 14, 13, 20, 21, 30, 31, 32],
             ),
-            ("cleanup", vec![1, 2, 3, 9]),
-            ("zip_cleanup", vec![1, 3, 2]),
-            ("terminal_cleanup", vec![1, 2, 9, 3, 4]),
+            ("cleanup", vec![]),
+            ("zip_cleanup", vec![]),
+            ("terminal_cleanup", vec![]),
         ] {
             EVENTS.with(|events| events.borrow_mut().clear());
             vm.call_unit_0(name).unwrap();
@@ -294,12 +294,12 @@ fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
         }
         EVENTS.with(|events| events.borrow_mut().clear());
         assert_eq!(vm.call_int32_0("early").unwrap(), 1);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 9]));
+        EVENTS.with(|events| assert!((*events.borrow()).is_empty()));
         for name in ["fail_map", "fail_filter", "fail_fold"] {
             EVENTS.with(|events| events.borrow_mut().clear());
             let error = vm.call_unit_0(name).unwrap_err();
             assert!(error.to_string().contains("callback failure"), "{error}");
-            EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2, 9], "{mode:?} {name}"));
+            EVENTS.with(|events| assert!((*events.borrow()).is_empty(), "{mode:?} {name}"));
             LIVE.with(|live| assert_eq!(live.get(), 0));
         }
         EVENTS.with(|events| events.borrow_mut().clear());
@@ -309,7 +309,7 @@ fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
         }
         assert_eq!(task.cps_result(), Some(42));
         drop(task);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [14, 3, 1, 16, 4, 2]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [14, 16]));
         LIVE.with(|live| assert_eq!(live.get(), 0));
     }
 }

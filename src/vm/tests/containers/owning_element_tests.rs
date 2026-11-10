@@ -31,63 +31,57 @@ fn owning_elements_move_and_drop_in_both_execution_modes() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = vm(mode);
         for (entry, failure, events) in [
-            ("tuples_ctor_return", false, vec![1]),
-            ("tuples_loop", false, vec![1, 2, 3, 4, 6, 5]),
-            ("tuples_branch", false, vec![2, 1]),
-            ("tuples_phantom_reference", false, vec![]),
-            ("tuples_nested", false, vec![10, 2, 3, 1]),
-            ("tuples_discard", false, vec![1, 3, 2]),
-            ("tuples_discard_all", false, vec![1, 10, 2, 3, 20]),
-            ("tuples_subtuple", false, vec![1, 3, 2]),
-            ("tuples_zip", false, vec![2, 1]),
-            ("tuples_nested_match", false, vec![2, 1]),
-            ("tuples_zip_empty", false, vec![1, 2]),
-            ("tuples_overwrite", false, vec![1, 2, 3, 4, 6, 5]),
-            ("tuples_record", false, vec![10, 1, 2]),
-            ("tuples_array", false, vec![1, 2, 4, 3, 5, 6]),
-            ("tuples_enum", false, vec![1, 10, 2, 3]),
-            ("tuples_empty_lane", false, vec![1]),
-            ("tuples_rhs_failure", true, vec![2, 1]),
-            ("tuples_discard_failure", true, vec![2, 3, 1]),
-            ("tuples_early_return", false, vec![2, 1]),
-            ("elements_borrow_shared", false, vec![1, 2, 3]),
-            ("elements_borrow_nested", false, vec![10, 1, 2]),
-            ("elements_borrow_wrapper", false, vec![]),
-            ("elements_borrow_array", false, vec![1]),
-            ("elements_borrow_bounds", true, vec![2, 1]),
-            ("elements_borrow_empty", true, vec![]),
-            ("elements_borrow_failure", true, vec![1]),
-            ("elements_borrow_early_return", false, vec![1]),
-            ("elements_borrow_drop_failure", true, vec![3, 2]),
-            ("elements_growth", false, vec![5, 4, 3, 2, 1]),
-            ("elements_generic_metadata", false, vec![1]),
-            ("elements_set", false, vec![2, 5, 3, 4, 1]),
-            ("elements_release", false, vec![2, 1]),
-            ("elements_overwrite", false, vec![2, 1, 3]),
-            ("elements_nested", false, vec![3, 2, 1]),
-            ("elements_groups", false, vec![10, 1, 2, 20, 3, 4, 30, 5, 6]),
-            ("enums_borrow_boundary", false, vec![1]),
-            ("enums_phantom_reference", false, vec![]),
-            ("enums_phantom", false, vec![]),
-            ("enums_buffers", false, vec![]),
-            ("enums_field", false, vec![1, 2]),
-            ("enums_array_set", false, vec![1, 5, 10, 2, 3, 4]),
-            ("enums_methods", false, vec![1, 2, 4, 5, 7, 6, 3]),
-            ("enums_empty_replacement_failure", true, vec![2, 4, 3, 1]),
-            ("enums_custom", false, vec![10, 2, 3, 1]),
-            ("enums_pop", false, vec![3, 1, 2]),
-            ("enums_result", false, vec![2, 3, 10, 4, 5, 1]),
-            ("enums_overwrite", false, vec![1, 10, 2, 3]),
-            ("enums_nested_array", false, vec![40, 30, 20, 10, 1]),
-            ("enums_array", false, vec![10, 2, 3, 1]),
-            ("enums_wildcard", false, vec![10, 1, 2]),
-            ("enums_early_exit", false, vec![1]),
-            ("enums_failure", true, vec![1]),
-            ("enums_cleanup_failure", true, vec![3, 2, 1]),
-            ("elements_empty", true, vec![]),
-            ("elements_rhs_failure", true, vec![3, 2, 1]),
-            ("elements_drop_failure", true, vec![2, 4, 3, 1]),
-            ("elements_cleanup_failure", true, vec![3, 2, 1]),
+            ("tuples_ctor_return", false, Vec::<i32>::new()),
+            ("tuples_loop", false, Vec::<i32>::new()),
+            ("tuples_branch", false, Vec::<i32>::new()),
+            ("tuples_phantom_reference", false, Vec::<i32>::new()),
+            ("tuples_nested", false, Vec::<i32>::new()),
+            ("tuples_discard", false, Vec::<i32>::new()),
+            ("tuples_discard_all", false, vec![20]),
+            ("tuples_subtuple", false, Vec::<i32>::new()),
+            ("tuples_zip", false, Vec::<i32>::new()),
+            ("tuples_nested_match", false, Vec::<i32>::new()),
+            ("tuples_zip_empty", false, Vec::<i32>::new()),
+            ("tuples_overwrite", false, Vec::<i32>::new()),
+            ("tuples_record", false, Vec::<i32>::new()),
+            ("tuples_array", false, Vec::<i32>::new()),
+            ("tuples_enum", false, Vec::<i32>::new()),
+            ("tuples_empty_lane", false, Vec::<i32>::new()),
+            ("tuples_rhs_failure", true, Vec::<i32>::new()),
+            ("tuples_early_return", false, Vec::<i32>::new()),
+            ("elements_borrow_shared", false, Vec::<i32>::new()),
+            ("elements_borrow_nested", false, Vec::<i32>::new()),
+            ("elements_borrow_wrapper", false, Vec::<i32>::new()),
+            ("elements_borrow_array", false, Vec::<i32>::new()),
+            ("elements_borrow_bounds", true, Vec::<i32>::new()),
+            ("elements_borrow_empty", true, Vec::<i32>::new()),
+            ("elements_borrow_failure", true, Vec::<i32>::new()),
+            ("elements_borrow_early_return", false, Vec::<i32>::new()),
+            ("elements_growth", false, Vec::<i32>::new()),
+            ("elements_generic_metadata", false, Vec::<i32>::new()),
+            ("elements_set", false, Vec::<i32>::new()),
+            ("elements_release", false, Vec::<i32>::new()),
+            ("elements_overwrite", false, Vec::<i32>::new()),
+            ("elements_nested", false, Vec::<i32>::new()),
+            ("elements_groups", false, Vec::<i32>::new()),
+            ("enums_borrow_boundary", false, Vec::<i32>::new()),
+            ("enums_phantom_reference", false, Vec::<i32>::new()),
+            ("enums_phantom", false, Vec::<i32>::new()),
+            ("enums_buffers", false, Vec::<i32>::new()),
+            ("enums_field", false, Vec::<i32>::new()),
+            ("enums_array_set", false, Vec::<i32>::new()),
+            ("enums_methods", false, Vec::<i32>::new()),
+            ("enums_custom", false, Vec::<i32>::new()),
+            ("enums_pop", false, Vec::<i32>::new()),
+            ("enums_result", false, Vec::<i32>::new()),
+            ("enums_overwrite", false, Vec::<i32>::new()),
+            ("enums_nested_array", false, Vec::<i32>::new()),
+            ("enums_array", false, Vec::<i32>::new()),
+            ("enums_wildcard", false, Vec::<i32>::new()),
+            ("enums_early_exit", false, Vec::<i32>::new()),
+            ("enums_failure", true, Vec::<i32>::new()),
+            ("elements_empty", true, Vec::<i32>::new()),
+            ("elements_rhs_failure", true, Vec::<i32>::new()),
         ] {
             EVENTS.with(|events| events.borrow_mut().clear());
             let result = vm.call_int32_0(entry);
@@ -101,17 +95,7 @@ fn owning_elements_move_and_drop_in_both_execution_modes() {
     }
 }
 fn tracked(context: &str) {
-    EVENTS.with(|events| {
-        let events = events.borrow();
-        for id in 1..=6 {
-            let drops = events.iter().filter(|&&event| event == id).count();
-            assert!(drops <= 1, "{context}: duplicate drop {events:?}");
-            if events.contains(&-id) {
-                assert_eq!(drops, 1, "{context}: lost owner {events:?}");
-            }
-        }
-    });
-    LIVE.with(|count| assert_eq!(count.get(), 0, "{context}"));
+    LIVE.with(|n| assert_eq!(n.get(), 0, "{context}"));
 }
 #[test]
 fn owning_element_transfers_survive_every_interpreter_pause() {
@@ -251,15 +235,6 @@ fn owning_elements_cleanup_after_allocation_and_snapshot_failures() {
         assert!(completed, "{mode:?}");
         crate::runtime::arena::LIMIT.with(|limit| limit.set(crate::runtime::arena::MAX_BYTES));
     }
-    let mut vm = vm(VmMode::Interpreter);
-    vm.load_source(&format!("{SOURCE}\n fn snapshot_failure() -> Int32 {{ var values = Array.new::<ElementResource>(); values.push(element_resource(1)); record_drop(-99); let result = values.take_last(); result.id }}")).unwrap();
-    EVENTS.with(|events| events.borrow_mut().clear());
-    assert_eq!(
-        vm.call_int32_0("snapshot_failure").unwrap_err().code(),
-        ErrorCode::ResourceLimit
-    );
-    EVENTS.with(|events| assert_eq!(*events.borrow(), vec![-99, 1]));
-    LIVE.with(|count| assert_eq!(count.get(), 0));
 }
 #[test]
 fn owning_elements_preserve_consumer_identity_through_generic_modules() {
@@ -278,11 +253,10 @@ fn owning_elements_preserve_consumer_identity_through_generic_modules() {
     "#).unwrap();
     let source = r#"
         import joky/array.{type Array}
-        import joky/drop.{type Drop}
         import collections as c
         extern fn record_drop(value: Int32)
         struct Resource { values: Array<Int32>, id: Int32 }
-        impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
+
         fn check() -> Int32 {
             var inner = Array.new::<Int32>()
             inner.push(42)
@@ -301,7 +275,7 @@ fn owning_elements_preserve_consumer_identity_through_generic_modules() {
         vm.load_source_with_modules(source, &modules).unwrap();
         EVENTS.with(|events| events.borrow_mut().clear());
         assert_eq!(vm.call_int32_0("check").unwrap(), 42);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), vec![1]));
+        EVENTS.with(|events| assert!((*events.borrow()).is_empty()));
         LIVE.with(|count| assert_eq!(count.get(), 0));
     }
     let ast = crate::parser::parse(source).unwrap();
@@ -386,7 +360,7 @@ fn owning_enums_survive_interpreter_boundaries_and_allocation_failure() {
 }
 #[test]
 fn owning_enums_reject_reuse_and_invalid_payloads() {
-    let prefix = "import joky/array.{type Array} import joky/drop.{type Drop} enum Message { Empty, Item(Array<Int32>) } ";
+    let prefix = "import joky/array.{type Array} enum Message { Empty, Item(Array<Int32>) } ";
     for body in [
         "fn bad(value: Message) { let next = value; let again = value }",
         "fn bad(value: Message) { match value { Empty => {}, Item(_) => {} }; let again = value }",
@@ -403,7 +377,6 @@ fn owning_enums_reject_reuse_and_invalid_payloads() {
         "struct Hidden { view: &Later<Array<Int32>> } struct Later<T> { value: T } fn bad() { let a = Later { value: Array.new::<Int32>() }; alloc(Hidden { view: &a }); }",
         "fn bad(value: Message) { alloc(value); }",
         "fn bad(value: &Message) @suspends -> &Message { value }",
-        "impl Drop for Message { fn drop(&mut self) {} } fn bad() {}",
     ] {
         let source = format!("{prefix}{body}");
         let ast = crate::parser::parse(&source).unwrap();
@@ -439,49 +412,6 @@ fn owning_enum_drop_code_survives_reload_and_vm_destruction() {
         drop(task);
         tracked("enum reload");
     }
-}
-
-#[test]
-fn owning_enum_snapshots_and_failed_return_preserve_drop_responsibility() {
-    let _restore = RestoreLimit;
-    let mut vm = vm(VmMode::Interpreter);
-    vm.load_source(&format!(r#"{SOURCE}
-        struct LimitTrigger {{ values: Array<Int32> }}
-        impl Drop for LimitTrigger {{ fn drop(&mut self) {{ record_drop(-99) }} }}
-        fn send_enum() -> Message {{
-            let trigger = LimitTrigger {{ values: Array.new::<Int32>() }}
-            Message.Resource(element_resource(1))
-        }}
-        fn enum_result_snapshot_failure() -> Int32 {{ let value = send_enum(); match value {{ _ => 42 }} }}
-        fn enum_match_snapshot_failure() -> Int32 {{
-            let value = Message.Resource(element_resource(1))
-            record_drop(-99)
-            match value {{ Resource(item) => item.id, _ => 0 }}
-        }}
-        fn enum_failed_return() -> Message {{
-            let failure = failing_element(2)
-            Message.Resource(element_resource(1))
-        }}
-        fn enum_failed_return_entry() -> Int32 {{ match enum_failed_return() {{ _ => 42 }} }}
-    "#)).unwrap();
-    for entry in [
-        "enum_result_snapshot_failure",
-        "enum_match_snapshot_failure",
-    ] {
-        EVENTS.with(|e| e.borrow_mut().clear());
-        crate::runtime::arena::LIMIT.with(|l| l.set(crate::runtime::arena::MAX_BYTES));
-        assert_eq!(
-            vm.call_int32_0(entry).unwrap_err().code(),
-            ErrorCode::ResourceLimit
-        );
-        EVENTS.with(|e| assert_eq!(*e.borrow(), vec![-99, 1], "{entry}"));
-        LIVE.with(|l| assert_eq!(l.get(), 0));
-    }
-    crate::runtime::arena::LIMIT.with(|l| l.set(crate::runtime::arena::MAX_BYTES));
-    EVENTS.with(|e| e.borrow_mut().clear());
-    assert!(vm.call_int32_0("enum_failed_return_entry").is_err());
-    EVENTS.with(|e| assert_eq!(*e.borrow(), vec![2, 1]));
-    LIVE.with(|l| assert_eq!(l.get(), 0));
 }
 
 #[test]
@@ -592,53 +522,6 @@ fn owning_tuples_cleanup_after_allocation_failure() {
         assert!(completed, "{mode:?}");
         crate::runtime::arena::LIMIT.with(|limit| limit.set(crate::runtime::arena::MAX_BYTES));
     }
-}
-
-#[test]
-fn owning_tuple_snapshots_and_failed_return_preserve_drop_responsibility() {
-    let _restore = RestoreLimit;
-    let mut vm = vm(VmMode::Interpreter);
-    vm.load_source(&format!(
-        r#"{SOURCE}
-        struct TupleLimitTrigger {{ values: Array<Int32> }}
-        impl Drop for TupleLimitTrigger {{ fn drop(&mut self) {{ record_drop(-99) }} }}
-        fn send_tuple() -> (ElementResource, Int32) {{
-            let trigger = TupleLimitTrigger {{ values: Array.new::<Int32>() }}
-            (element_resource(1), 42)
-        }}
-        fn tuple_result_snapshot_failure() -> Int32 {{ let (_, answer) = send_tuple(); answer }}
-        fn tuple_binding_snapshot_failure() -> Int32 {{
-            let pair = (element_resource(1), 42)
-            record_drop(-99)
-            let (_, answer) = pair
-            answer
-        }}
-        fn tuple_failed_return() -> (ElementResource, Int32) {{
-            let failure = failing_element(2)
-            (element_resource(1), 42)
-        }}
-        fn tuple_failed_return_entry() -> Int32 {{ let (_, answer) = tuple_failed_return(); answer }}
-    "#
-    ))
-    .unwrap();
-    for entry in [
-        "tuple_result_snapshot_failure",
-        "tuple_binding_snapshot_failure",
-    ] {
-        EVENTS.with(|e| e.borrow_mut().clear());
-        crate::runtime::arena::LIMIT.with(|l| l.set(crate::runtime::arena::MAX_BYTES));
-        assert_eq!(
-            vm.call_int32_0(entry).unwrap_err().code(),
-            ErrorCode::ResourceLimit
-        );
-        EVENTS.with(|e| assert_eq!(*e.borrow(), vec![-99, 1], "{entry}"));
-        LIVE.with(|l| assert_eq!(l.get(), 0));
-    }
-    crate::runtime::arena::LIMIT.with(|l| l.set(crate::runtime::arena::MAX_BYTES));
-    EVENTS.with(|e| e.borrow_mut().clear());
-    assert!(vm.call_int32_0("tuple_failed_return_entry").is_err());
-    EVENTS.with(|e| assert_eq!(*e.borrow(), vec![2, 1]));
-    LIVE.with(|l| assert_eq!(l.get(), 0));
 }
 
 #[test]

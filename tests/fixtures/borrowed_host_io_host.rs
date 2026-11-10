@@ -218,7 +218,7 @@ pub fn await_partial(mut drive: impl FnMut()) {
         std::thread::yield_now();
     }
 }
-pub fn assert_cleanup(stop_event: i32, packet: bool, parent: Option<i32>) {
+pub fn assert_cleanup(stop_event: i32, parent: Option<i32>) {
     assert!(!active());
     let events = events();
     assert_eq!(events.iter().filter(|&&n| (2..=4).contains(&n)).count(), 1);
@@ -232,17 +232,6 @@ pub fn assert_cleanup(stop_event: i32, packet: bool, parent: Option<i32>) {
     let stop = events.iter().position(|&n| n == stop_event).unwrap();
     let close = events.iter().position(|&n| n == 5).unwrap();
     assert!(stop < close, "{events:?}");
-    assert_eq!(
-        events.iter().filter(|&&n| n == 21).count(),
-        usize::from(stop_event == 2)
-    );
-    if stop_event == 2 {
-        assert!(close < events.iter().position(|&n| n == 21).unwrap());
-    }
-    assert_eq!(
-        events.iter().filter(|&&n| n == 20).count(),
-        usize::from(packet)
-    );
     if let Some(parent) = parent {
         assert!(close < events.iter().position(|&n| n == parent).unwrap());
     }
@@ -277,7 +266,7 @@ pub fn check_suite(mut prepare: impl FnMut(&str) -> Continuation) {
         }
         if entry == "startup_failure" {
             assert!(first.completed[0].result.is_err());
-            assert_cleanup(3, false, None);
+            assert_cleanup(3, None);
             continue;
         }
         assert!(active());
@@ -330,7 +319,7 @@ pub fn check_suite(mut prepare: impl FnMut(&str) -> Continuation) {
             "timeout" => Some(11),
             _ => None,
         };
-        assert_cleanup(stopped, entry == "data", parent);
+        assert_cleanup(stopped, parent);
         for (event, expected_entry) in [(12, "eof"), (13, "domain_error")] {
             assert_eq!(
                 events().iter().filter(|&&n| n == event).count(),
@@ -365,7 +354,7 @@ pub fn check_suite(mut prepare: impl FnMut(&str) -> Continuation) {
         executor.poll(1).unwrap();
     });
     assert!(executor.cancel_group(&group));
-    assert_cleanup(4, false, None);
+    assert_cleanup(4, None);
     stale.wake();
     deliver_readiness();
     assert_eq!(executor.poll(1).unwrap().polled, 0);
