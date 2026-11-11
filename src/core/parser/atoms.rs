@@ -100,6 +100,13 @@ impl Parser<'_> {
                     span: self.span(start, self.last_span.end()),
                 })
             }
+            TokenKind::ByteLit(value) => {
+                self.advance();
+                Ok(Expr::Literal {
+                    literal: Literal::UInt8(value),
+                    span: self.last_span,
+                })
+            }
             // Both binding kinds require an initializer and allow an annotation.
             TokenKind::Let | TokenKind::Var => {
                 let mutable = self.peek() == &TokenKind::Var;

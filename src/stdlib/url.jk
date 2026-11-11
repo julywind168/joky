@@ -41,23 +41,26 @@ impl Show for DecodeError {
 }
 
 fn unreserved(byte: UInt8) -> Bool {
-    (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) ||
-        (byte >= 48 && byte <= 57) || byte == 45 || byte == 46 || byte == 95 || byte == 126
+    match byte {
+        b'A' ..= b'Z' | b'a' ..= b'z' | b'0' ..= b'9' => true,
+        b'-' | b'.' | b'_' | b'~' => true,
+        _ => false
+    }
 }
 
 fn digit(value: UInt8) -> UInt8 {
     if value < 10 {
-        48 + value
+        b'0' + value
     } else {
-        65 + value - 10
+        b'A' + value - 10
     }
 }
 
 fn nibble(byte: UInt8) -> UInt8 {
     match byte {
-        48 ..= 57 => byte - 48,
-        65 ..= 70 => byte - 65 + 10,
-        97 ..= 102 => byte - 97 + 10,
+        b'0' ..= b'9' => byte - b'0',
+        b'A' ..= b'F' => byte - b'A' + 10,
+        b'a' ..= b'f' => byte - b'a' + 10,
         _ => 16
     }
 }
@@ -70,7 +73,7 @@ pub fn encode_component(text: &String) -> String {
         if unreserved(value) {
             output.push(value)
         } else {
-            output.push(37)
+            output.push(b'%')
             output.push(digit(value >> 4))
             output.push(digit(value & 15))
         }
@@ -88,7 +91,7 @@ fn decode_range(
     var index = start
     while index < end {
         let byte = bytes[index]
-        if byte == 37 {
+        if byte == b'%' {
             if end - index < 3 {
                 return Err(InvalidEscape(index))
             }
@@ -101,8 +104,8 @@ fn decode_range(
             index += 3
         } else {
             output.push(
-                if plus_as_space && byte == 43 {
-                    uint8(32)
+                if plus_as_space && byte == b'+' {
+                    b' '
                 } else {
                     byte
                 }
@@ -132,12 +135,12 @@ pub fn parse_query(query: &String) -> Result<Array<(String, String)>, DecodeErro
     var start: UInt64 = 0
     while start < length {
         var end = start
-        while end < length && bytes[end] != 38 {
+        while end < length && bytes[end] != b'&' {
             end += 1
         }
         if end > start {
             var separator = start
-            while separator < end && bytes[separator] != 61 {
+            while separator < end && bytes[separator] != b'=' {
                 separator += 1
             }
             let name = decode_range(bytes, start, separator, true)?

@@ -208,6 +208,14 @@ fn format_keeps_negative_patterns_and_attribute_literals_together() {
 }
 
 #[test]
+fn format_preserves_byte_literals_and_range_patterns() {
+    assert_format(
+        r"fn f(n:UInt8)->UInt8{match n{b'a'..=b'z'=>b'\xAf',_=>b'\0'}}",
+        "fn f(n: UInt8) -> UInt8 {\n    match n {\n        b'a' ..= b'z' => b'\\xAf',\n        _ => b'\\0'\n    }\n}\n",
+    );
+}
+
+#[test]
 fn format_open_slice_bounds() {
     assert_format(
         "fn f() { let a = [1, 2, 3]; let full = &a[ .. ]; let prefix = &a[ .. 1 ]; let tail = &a[ 1 .. ] }",

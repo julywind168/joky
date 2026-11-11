@@ -70,6 +70,7 @@ pub(crate) enum TokenKind {
     Interpolated(Vec<InterpolationPart>),
     SqlTemplate(Vec<InterpolationPart>),
     CharLit(char),
+    ByteLit(u8),
 
     // Punctuation.
     LBracket,   // [
@@ -212,6 +213,7 @@ impl std::fmt::Display for TokenKind {
             Self::DurationLit(ns) => return write!(f, "`{ns}ns`"),
             Self::StrLit(s) => return write!(f, "`{s:?}`"),
             Self::CharLit(c) => return write!(f, "`{c:?}`"),
+            Self::ByteLit(value) => return write!(f, "`b'\\x{value:02x}'`"),
             Self::Interpolated(_) => return f.write_str("an interpolated string"),
             Self::SqlTemplate(_) => return f.write_str("an SQL template"),
             Self::CompoundAssign(op) => match op {
@@ -566,8 +568,30 @@ impl<'a> Lexer<'a> {
         ))
     }
 
-    fn read_char(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
+    fn read_hex_byte(&mut self, start: usize, line: usize) -> Result<u8, Diagnostic> {
+        let mut value = 0;
+        for _ in 0..2 {
+            let Some(digit) = self.peek().and_then(|ch| ch.to_digit(16)) else {
+                return Err(Diagnostic::at(
+                    line,
+                    start..self.byte_pos,
+                    "Byte escape requires exactly two hexadecimal digits after \\x",
+                ));
+            };
+            self.advance();
+            value = value * 16 + digit as u8;
+        }
+        Ok(value)
+    }
+
+    fn read_char(&mut self, start: usize, byte: bool) -> Result<TokenKind, Diagnostic> {
         let line = self.line;
+        let cardinality = if byte {
+            self.advance(); // b prefix
+            "Byte literal must contain exactly one byte"
+        } else {
+            "Character literal must contain exactly one Unicode scalar"
+        };
         self.advance();
         let value = match self.advance() {
             Some('\\') => {
@@ -580,22 +604,30 @@ impl<'a> Lexer<'a> {
                     Some('\'') => '\'',
                     Some('"') => '"',
                     Some('\\') => '\\',
-                    Some('u') => self.read_unicode_escape(escape_start, line)?,
+                    Some('x') if byte => char::from(self.read_hex_byte(escape_start, line)?),
+                    Some('u') if !byte => self.read_unicode_escape(escape_start, line)?,
                     _ => {
                         return Err(Diagnostic::at(
                             line,
                             escape_start..self.byte_pos,
-                            "Invalid character escape",
+                            if byte {
+                                "Invalid byte escape"
+                            } else {
+                                "Invalid character escape"
+                            },
                         ))
                     }
                 }
             }
             Some('\n' | '\r' | '\'') | None => {
+                return Err(Diagnostic::at(line, start..self.byte_pos, cardinality))
+            }
+            Some(ch) if byte && !ch.is_ascii() => {
                 return Err(Diagnostic::at(
                     line,
-                    start..self.byte_pos,
-                    "Character literal must contain exactly one Unicode scalar",
-                ))
+                    self.byte_pos - ch.len_utf8()..self.byte_pos,
+                    "Byte literal requires an ASCII character or a \\xNN escape",
+                ));
             }
             Some(ch) => ch,
         };
@@ -610,14 +642,14 @@ impl<'a> Lexer<'a> {
                     break;
                 }
             }
-            return Err(Diagnostic::at(
-                line,
-                start..self.byte_pos,
-                "Character literal must contain exactly one Unicode scalar",
-            ));
+            return Err(Diagnostic::at(line, start..self.byte_pos, cardinality));
         }
         self.advance();
-        Ok(TokenKind::CharLit(value))
+        Ok(if byte {
+            TokenKind::ByteLit(value as u8)
+        } else {
+            TokenKind::CharLit(value)
+        })
     }
 
     /// Read the next token.
@@ -640,10 +672,11 @@ impl<'a> Lexer<'a> {
                 self.read_sql_string(start)?
             }
             Some('r') if self.raw_string_prefix() => self.read_string(start)?,
+            Some('b') if self.peek2() == Some('\'') => self.read_char(start, true)?,
             Some(c) if c.is_alphabetic() || c == '_' => self.read_ident_or_keyword(),
             Some(c) if c.is_ascii_digit() => self.read_number(start)?,
             Some('"') => self.read_string(start)?,
-            Some('\'') => self.read_char(start)?,
+            Some('\'') => self.read_char(start, false)?,
             Some('[') => {
                 self.advance();
                 TokenKind::LBracket
@@ -1036,6 +1069,43 @@ mod tests {
         for source in ["\"中\\u{41\nnext\"", "\"中\\u{41\rnext\"", "\"中\\u{41"] {
             let error = Lexer::tokenize(source).unwrap_err();
             assert_eq!(error.span.slice(source), Some(r"\u{41"));
+        }
+    }
+
+    #[test]
+    fn byte_literals_preserve_values_and_source_spans() {
+        for (literal, byte) in [
+            ("b'A'", b'A'),
+            (r"b'\''", b'\''),
+            (r"b'\\'", b'\\'),
+            (r"b'\n'", b'\n'),
+            (r"b'\r'", b'\r'),
+            (r"b'\t'", b'\t'),
+            (r"b'\0'", 0),
+            (r"b'\x00'", 0),
+            (r"b'\xFf'", 255),
+        ] {
+            let source = format!("// 中🙂\n{literal}");
+            let tokens = Lexer::tokenize(&source).unwrap();
+            assert_eq!(tokens[0].kind, TokenKind::ByteLit(byte));
+            assert_eq!(tokens[0].span.slice(&source), Some(literal));
+            assert_eq!(tokens[0].line, 2);
+        }
+        for (literal, marked, message) in [
+            ("b''", "b''", "exactly one byte"),
+            ("b'ab'", "b'ab'", "exactly one byte"),
+            ("b'é'", "é", "requires an ASCII character"),
+            (r"b'\x0'", r"\x0", "exactly two hexadecimal digits"),
+            (r"b'\xgg'", r"\x", "exactly two hexadecimal digits"),
+            (r"b'\x123'", r"b'\x123'", "exactly one byte"),
+            (r"b'\u{41}'", r"\u", "Invalid byte escape"),
+            ("b'a", "b'a", "exactly one byte"),
+        ] {
+            let source = format!("// 中🙂\n{literal}");
+            let error = Lexer::tokenize(&source).unwrap_err();
+            assert_eq!(error.span.slice(&source), Some(marked), "{literal}");
+            assert_eq!(error.line, 2);
+            assert!(error.message.contains(message), "{error}");
         }
     }
 

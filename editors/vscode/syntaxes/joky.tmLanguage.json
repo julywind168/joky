@@ -79,6 +79,9 @@
           "include": "#string"
         },
         {
+          "include": "#byte"
+        },
+        {
           "include": "#character"
         }
       ]
@@ -112,6 +115,21 @@
       "patterns": [
         {
           "include": "#string-content"
+        }
+      ]
+    },
+    "byte": {
+      "begin": "\\bb'",
+      "end": "'|$",
+      "name": "string.quoted.single.byte.joky",
+      "patterns": [
+        {
+          "match": "\\\\(?:[nrt0\\'\"\\\\]|x[0-9a-fA-F]{2})",
+          "name": "constant.character.escape.joky"
+        },
+        {
+          "match": "\\\\.",
+          "name": "invalid.illegal.escape.joky"
         }
       ]
     },

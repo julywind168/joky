@@ -149,6 +149,7 @@ impl Parser<'_> {
                 | TokenKind::True
                 | TokenKind::False
                 | TokenKind::CharLit(_)
+                | TokenKind::ByteLit(_)
                 | TokenKind::StrLit(_)
         ) {
             let negative = self.peek() == &TokenKind::Minus;
@@ -165,11 +166,12 @@ impl Parser<'_> {
                 TokenKind::True if !negative => Literal::Bool(true),
                 TokenKind::False if !negative => Literal::Bool(false),
                 TokenKind::CharLit(value) if !negative => Literal::Rune(value as u32),
+                TokenKind::ByteLit(value) if !negative => Literal::UInt8(value),
                 _ => return Err(self.error("Expected an integer after '-' in pattern".into())),
             };
             self.advance();
             if matches!(self.peek(), TokenKind::DotDot | TokenKind::DotDotEq) {
-                if !matches!(literal, Literal::Integer { .. }) {
+                if !matches!(literal, Literal::Integer { .. } | Literal::UInt8(_)) {
                     return Err(self.error("Range patterns require integer literal bounds".into()));
                 }
                 let inclusive = self.peek() == &TokenKind::DotDotEq;
@@ -179,16 +181,22 @@ impl Parser<'_> {
                     self.format_role(format::Role::Prefix);
                     self.advance();
                 }
-                let TokenKind::IntLit(magnitude) = self.peek().clone() else {
-                    return Err(self.error("Range patterns require integer literal bounds".into()));
+                let end = match self.peek() {
+                    TokenKind::IntLit(magnitude) => Literal::Integer {
+                        magnitude: *magnitude,
+                        negative,
+                    },
+                    TokenKind::ByteLit(value) if !negative => Literal::UInt8(*value),
+                    _ => {
+                        return Err(
+                            self.error("Range patterns require integer literal bounds".into())
+                        )
+                    }
                 };
                 self.advance();
                 PayloadPattern::Range {
                     start: literal,
-                    end: Literal::Integer {
-                        magnitude,
-                        negative,
-                    },
+                    end,
                     inclusive,
                     span: self.span(start, self.last_span.end()),
                 }

@@ -380,6 +380,53 @@ fn rune_storage_conversions_and_rejections_match_all_backends() {
 }
 
 #[test]
+#[cfg(unix)]
+fn byte_literals_execute_as_uint8_values_and_patterns_on_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "bytes.jk",
+        r#"
+        import joky/task
+        const ZERO: UInt8 = b'0'
+        enum Packet { Data(UInt8), Empty }
+
+        fn kind(value: UInt8) -> Int32 {
+            match value {
+                b'\0' | b'\xFF' => 1,
+                b'0' ..= b'9' => 2,
+                b'A' .. b'Z' => 3,
+                _ => 0
+            }
+        }
+
+        fn high_bit(value: UInt8) -> Int32 {
+            match value {
+                b'\x00' .. b'\x80' => 0,
+                128 ..= b'\xff' => 1
+            }
+        }
+
+        fn last() @suspends -> UInt8 {
+            let value = b'\xFF'
+            task.yield_now()
+            value
+        }
+
+        fn main() @suspends {
+            let bytes = [ZERO + 1, b'9', b'A', b'Z', b'\t', last()]
+            for byte in &bytes { println(kind(*byte)) }
+            println(high_bit(b'\x7f'))
+            println(high_bit(bytes[5]))
+            println(match Packet.Data(b'Q') { Data(b'Q') => 7, _ => 0 })
+            println(match &bytes { [b'1', b'9', ..] => 8, _ => 0 })
+            println("{b'\x41'}")
+        }
+        "#,
+    );
+    work.assert_all_backends("bytes.jk", &[], b"2\n2\n3\n0\n0\n1\n0\n1\n7\n8\n65\n", 0);
+}
+
+#[test]
 fn interpreter_runtime_error_reports_source_and_call_trace() {
     let work = Workspace::new();
     work.write(

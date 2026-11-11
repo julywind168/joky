@@ -103,6 +103,15 @@ test('strings distinguish escapes, literal braces and interpolation', () => {
   closed(result);
 });
 
+test('byte literals include the prefix and distinguish hexadecimal escapes', () => {
+  const result = tokenize("let a = b'\\xFF'; let text = \"{b'A'}\"; let rune = '\\u{41}'");
+  has(result, 0, "b'", 'string.quoted.single.byte');
+  has(result, 0, '\\xFF', 'constant.character.escape');
+  has(result, 0, "b'A'", 'string.quoted.single.byte');
+  has(result, 0, '\\u{41}', 'constant.character.escape');
+  closed(result);
+});
+
 test('interpolation balances records, nested strings and comments across lines', () => {
   const result = tokenize('let text = "before {\n  /* } */ if true { "inner {value}" } else { r#"}"# }\n} after"\nlet done = 1');
   has(result, 1, 'if', 'keyword.control');

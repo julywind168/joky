@@ -33,6 +33,17 @@ pub(super) struct IntegerRange {
 }
 
 fn range_endpoint(literal: &Literal, ty: &Type, span: Span) -> Result<(Constant, i128), Error> {
+    if let Literal::UInt8(value) = literal {
+        return if *ty == Type::UInt8 {
+            Ok((Constant::UInt8(*value), i128::from(*value)))
+        } else {
+            Err(type_error(
+                &span,
+                ErrorCode::InvalidPattern,
+                format!("Byte literal range bounds require UInt8, got {ty}"),
+            ))
+        };
+    }
     let Literal::Integer {
         magnitude,
         negative,
@@ -392,6 +403,9 @@ impl FunctionPlan {
                     }
                     Literal::Bool(value) => (Type::Bool, Constant::Bool(*value), u64::from(*value)),
                     Literal::Rune(value) => (Type::Rune, Constant::Rune(*value), u64::from(*value)),
+                    Literal::UInt8(value) => {
+                        (Type::UInt8, Constant::UInt8(*value), u64::from(*value))
+                    }
                     _ => {
                         return Err(type_error(
                             &span,

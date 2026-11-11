@@ -70,6 +70,7 @@ impl Parser<'_> {
                 | TokenKind::True
                 | TokenKind::False
                 | TokenKind::CharLit(_)
+                | TokenKind::ByteLit(_)
                 | TokenKind::StrLit(_)
         ) {
             return self

@@ -54,18 +54,18 @@ impl Show for V7Error {
 
 fn nibble(byte: UInt8) -> UInt64 {
     match byte {
-        48 ..= 57 => uint64(byte - 48),
-        65 ..= 70 => uint64(byte - 65 + 10),
-        97 ..= 102 => uint64(byte - 97 + 10),
+        b'0' ..= b'9' => uint64(byte - b'0'),
+        b'A' ..= b'F' => uint64(byte - b'A' + 10),
+        b'a' ..= b'f' => uint64(byte - b'a' + 10),
         _ => 16
     }
 }
 
 fn digit(value: UInt8) -> UInt8 {
     if value < 10 {
-        48 + value
+        b'0' + value
     } else {
-        97 + value - 10
+        b'a' + value - 10
     }
 }
 
@@ -135,7 +135,7 @@ impl Uuid {
         for i in uint64(0) .. 36 {
             let byte = *slice.borrow_ref(bytes, i)
             if i == 8 || i == 13 || i == 18 || i == 23 {
-                if byte != 45 {
+                if byte != b'-' {
                     return Err(ParseError.InvalidByte(i))
                 }
             } else {
@@ -157,7 +157,7 @@ impl Uuid {
         var output = Array.with_capacity::<UInt8>(36)
         for i in uint64(0) .. 16 {
             if i == 4 || i == 6 || i == 8 || i == 10 {
-                output.push(45)
+                output.push(b'-')
             }
             let word = if i < 8 {
                 self.high

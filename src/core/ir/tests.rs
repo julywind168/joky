@@ -645,6 +645,38 @@ fn enum_diagnostics_point_to_patterns_payloads_and_incompatible_arm_values() {
 }
 
 #[test]
+fn byte_literals_require_uint8_in_expressions_and_patterns() {
+    for (source, code) in [
+        ("fn f() -> Int32 { b'a' }", ErrorCode::TypeMismatch),
+        (
+            "fn f(n: Rune) { match n { b'a' => {}, _ => {} } }",
+            ErrorCode::InvalidPattern,
+        ),
+        (
+            "fn f(n: Int32) { match n { 0..=b'a' => {}, _ => {} } }",
+            ErrorCode::InvalidPattern,
+        ),
+        (
+            "fn f(n: UInt8) { match n { b'a' => {}, 97 => {}, _ => {} } }",
+            ErrorCode::UnreachableCode,
+        ),
+        (
+            r"fn f(n: UInt8) { match n { b'\x80'..b'\x80' => {}, _ => {} } }",
+            ErrorCode::InvalidPattern,
+        ),
+    ] {
+        let types = TypeRegistry::default();
+        let ast = types
+            .resolve_aliases(&crate::parser::parse(source).unwrap())
+            .unwrap();
+        let error = ModulePlan::with_import_layouts_and_types(&ast, &HashMap::new(), &types)
+            .err()
+            .unwrap();
+        assert_eq!(error.code(), code, "{source}: {error}");
+    }
+}
+
+#[test]
 fn match_alternatives_validate_coverage_and_locate_invalid_patterns() {
     for (source, marked, code) in [
         (

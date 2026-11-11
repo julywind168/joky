@@ -124,7 +124,7 @@ fn error(kind: NumberErrorKind, offset: UInt64) -> NumberError {
 }
 
 fn digit(byte: UInt8) -> Bool {
-    byte >= 48 && byte <= 57
+    byte >= b'0' && byte <= b'9'
 }
 
 fn byte_at(bytes: &slice.Slice<UInt8>, index: UInt64) -> UInt8 {
@@ -338,7 +338,10 @@ fn decode_error(kind: DecodeErrorKind, offset: UInt64) -> DecodeError {
 }
 
 fn whitespace(byte: UInt8) -> Bool {
-    byte == 32 || byte == 9 || byte == 10 || byte == 13
+    match byte {
+        b' ' | b'\t' | b'\n' | b'\r' => true,
+        _ => false
+    }
 }
 
 fn skip_space(input: &slice.Slice<UInt8>, start: UInt64) -> UInt64 {
@@ -396,16 +399,12 @@ fn literal(
 }
 
 fn hex_digit(byte: UInt8) -> UInt32 {
-    if byte >= 48 && byte <= 57 {
-        return uint32(byte - 48)
+    match byte {
+        b'0' ..= b'9' => uint32(byte - b'0'),
+        b'A' ..= b'F' => uint32(byte - b'A') + 10,
+        b'a' ..= b'f' => uint32(byte - b'a') + 10,
+        _ => 16
     }
-    if byte >= 65 && byte <= 70 {
-        return uint32(byte - 65) + 10
-    }
-    if byte >= 97 && byte <= 102 {
-        return uint32(byte - 97) + 10
-    }
-    16
 }
 
 fn hex_quad(
@@ -492,13 +491,13 @@ fn read_string(
     while offset < length {
         let byte = byte_at(bytes, offset)
         let source_offset = offset
-        if byte == 34 {
+        if byte == b'"' {
             return Ok((builder.finish(), offset + 1))
         }
         if byte < 32 {
             return Err(decode_error(DecodeErrorKind.UnexpectedToken, offset))
         }
-        let scalar = if byte == 92 {
+        let scalar = if byte == b'\\' {
             offset = offset + 1
             if offset == length {
                 return Err(decode_error(DecodeErrorKind.UnexpectedEof, offset))
@@ -506,14 +505,14 @@ fn read_string(
             let escaped = byte_at(bytes, offset)
             offset = offset + 1
             match escaped {
-                117 => {
+                b'u' => {
                     let scalar = hex_quad(input, offset, source_offset)?
                     offset += 4
                     if scalar >= 0xd800 && scalar <= 0xdbff {
-                        if length - offset < 2 || byte_at(bytes, offset) != 92 || byte_at(
+                        if length - offset < 2 || byte_at(bytes, offset) != b'\\' || byte_at(
                             bytes,
                             offset + 1
-                        ) != 117 {
+                        ) != b'u' {
                             return Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
                         }
                         let second = hex_quad(input, offset + 2, offset)?
@@ -528,12 +527,12 @@ fn read_string(
                         scalar
                     }
                 },
-                34 | 92 | 47 => uint32(escaped),
-                98 => 8,
-                102 => 12,
-                110 => 10,
-                114 => 13,
-                116 => 9,
+                b'"' | b'\\' | b'/' => uint32(escaped),
+                b'b' => 8,
+                b'f' => 12,
+                b'n' => 10,
+                b'r' => 13,
+                b't' => 9,
                 _ => return Err(decode_error(DecodeErrorKind.InvalidEscape, source_offset))
             }
         } else {

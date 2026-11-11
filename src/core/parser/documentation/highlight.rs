@@ -56,7 +56,7 @@ fn highlight(
         let next = tokens.get(index + 1).map(|t| &t.kind);
         let category = match &token.kind {
             Eof => continue,
-            StrLit(_) | CharLit(_) => "string",
+            StrLit(_) | CharLit(_) | ByteLit(_) => "string",
             IntLit(_) | FloatLit(_) | DurationLit(_) | TupleIndex(_) | True | False => "constant",
             At | Hash => "annotation",
             Ident(name) => {

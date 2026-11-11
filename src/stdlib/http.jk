@@ -305,9 +305,12 @@ enum ReadFailure { Bad, Network, HeadLimit, BodyLimit, Timeout, Stopped, Unsuppo
 
 // HTTP token characters: ASCII letters, digits and the permitted punctuation.
 fn token(b: UInt8) -> Bool {
-    (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || (b >= 48 && b <= 57) ||
-        b == 33 || b == 35 || b == 36 || b == 37 || b == 38 || b == 39 || b == 42 ||
-        b == 43 || b == 45 || b == 46 || b == 94 || b == 95 || b == 96 || b == 124 || b == 126
+    match b {
+        b'A' ..= b'Z' | b'a' ..= b'z' | b'0' ..= b'9' => true,
+        b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' => true,
+        b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~' => true,
+        _ => false
+    }
 }
 
 // ASCII type/subtype followed by optional token or quoted-string parameters.
@@ -318,7 +321,7 @@ fn valid_media_type(value: &String) -> Bool {
     while i < n && token(bytes[i]) {
         i += 1
     }
-    if i == 0 || i == n || bytes[i] != 47 {
+    if i == 0 || i == n || bytes[i] != b'/' {
         return false
     }
     i += 1
@@ -330,31 +333,31 @@ fn valid_media_type(value: &String) -> Bool {
         return false
     }
     while i < n {
-        while i < n && (bytes[i] == 32 || bytes[i] == 9) {
+        while i < n && (bytes[i] == b' ' || bytes[i] == b'\t') {
             i += 1
         }
-        if i == n || bytes[i] != 59 {
+        if i == n || bytes[i] != b';' {
             return false
         }
         i += 1
-        while i < n && (bytes[i] == 32 || bytes[i] == 9) {
+        while i < n && (bytes[i] == b' ' || bytes[i] == b'\t') {
             i += 1
         }
         let name = i
         while i < n && token(bytes[i]) {
             i += 1
         }
-        if i == name || i == n || bytes[i] != 61 {
+        if i == name || i == n || bytes[i] != b'=' {
             return false
         }
         i += 1
-        if i < n && bytes[i] == 34 {
+        if i < n && bytes[i] == b'"' {
             i += 1
-            while i < n && bytes[i] != 34 {
-                if bytes[i] == 92 {
+            while i < n && bytes[i] != b'"' {
+                if bytes[i] == b'\\' {
                     i += 1
                 }
-                if i == n || (bytes[i] < 32 && bytes[i] != 9) || bytes[i] > 126 {
+                if i == n || (bytes[i] < b' ' && bytes[i] != b'\t') || bytes[i] > b'~' {
                     return false
                 }
                 i += 1
@@ -507,12 +510,12 @@ fn request_line(bytes: Array<UInt8>) -> Result<(Method, String), ReadFailure> {
 
 fn header(var bytes: Array<UInt8>) -> Result<Header, ReadFailure> {
     var i: UInt64 = 0
-    while i < bytes.len() && bytes[i] != 58 {
+    while i < bytes.len() && bytes[i] != b':' {
         let b = bytes[i]
         if !token(b) {
             return Err(ReadFailure.Bad)
         }
-        if b >= 65 && b <= 90 {
+        if b >= b'A' && b <= b'Z' {
             bytes[i] = b + 32
         }
         i += 1
@@ -522,15 +525,15 @@ fn header(var bytes: Array<UInt8>) -> Result<Header, ReadFailure> {
     }
     var start = i + 1
     var end = bytes.len()
-    while start < end && (bytes[start] == 32 || bytes[start] == 9) {
+    while start < end && (bytes[start] == b' ' || bytes[start] == b'\t') {
         start += 1
     }
-    while end > start && (bytes[end - 1] == 32 || bytes[end - 1] == 9) {
+    while end > start && (bytes[end - 1] == b' ' || bytes[end - 1] == b'\t') {
         end -= 1
     }
     for j in start .. end {
         let b = bytes[j]
-        if (b < 32 && b != 9) || b > 126 {
+        if (b < b' ' && b != b'\t') || b > b'~' {
             return Err(ReadFailure.Bad)
         }
     }
@@ -544,10 +547,10 @@ fn content_length(value: &String) -> Result<UInt64, ReadFailure> {
     }
     var n: UInt64 = 0
     for b in value.bytes() {
-        if *b < 48 || *b > 57 {
+        if *b < b'0' || *b > b'9' {
             return Err(ReadFailure.Bad)
         }
-        n = n * 10 + uint64(*b - 48)
+        n = n * 10 + uint64(*b - b'0')
         if n > BODY_LIMIT {
             return Err(ReadFailure.BodyLimit)
         }
@@ -1550,10 +1553,10 @@ fn chunked_body(io: &mut Wire, limit: UInt64) @suspends -> Result<Array<UInt8>, 
         var n: UInt64 = 0
         for b in &digits {
             let digit = match *b {
-                48 ..= 57 => *b - 48,
-                65 ..= 70 => *b - 55,
-                97 ..= 102 => *b - 87,
-                59 => return Err(UnsupportedFraming),
+                b'0' ..= b'9' => *b - b'0',
+                b'A' ..= b'F' => *b - b'A' + 10,
+                b'a' ..= b'f' => *b - b'a' + 10,
+                b';' => return Err(UnsupportedFraming),
                 _ => return Err(InvalidResponse)
             }
             n = n * 16 + uint64(digit)

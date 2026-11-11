@@ -37,23 +37,22 @@ impl Show for DecodeError {
 
 fn digit(value: UInt8, upper: Bool) -> UInt8 {
     if value < 10 {
-        48 + value
+        b'0' + value
     } else {
-        (
-            if upper {
-            uint8(65)
+        let first = if upper {
+            b'A'
         } else {
-            uint8(97)
+            b'a'
         }
-        ) + value - 10
+        first + value - 10
     }
 }
 
 fn nibble(byte: UInt8) -> UInt8 {
     match byte {
-        48 ..= 57 => byte - 48,
-        65 ..= 70 => byte - 65 + 10,
-        97 ..= 102 => byte - 97 + 10,
+        b'0' ..= b'9' => byte - b'0',
+        b'A' ..= b'F' => byte - b'A' + 10,
+        b'a' ..= b'f' => byte - b'a' + 10,
         _ => 16
     }
 }
