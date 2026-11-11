@@ -502,11 +502,7 @@ fn resolve_calls(
             )?;
             for arm in arms {
                 let mut branch = locals.clone();
-                if let Some(pattern) = arm.pattern.payload() {
-                    let mut names = Vec::new();
-                    pattern.names(&mut names);
-                    branch.extend(names);
-                }
+                branch.extend(arm.pattern.binding_names());
                 if let Some(guard) = &mut arm.guard {
                     resolve_calls(
                         guard,

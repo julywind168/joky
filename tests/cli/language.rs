@@ -2080,6 +2080,102 @@ fn match_alternatives_share_guards_and_bodies_on_all_backends() {
 }
 
 #[test]
+#[cfg(unix)]
+fn match_alternatives_bind_selected_payloads_on_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "alternative_bindings.jk",
+        r#"
+        import joky/fixed_array.{type FixedArray}
+        import joky/task
+
+        enum Message { A((Int32, String)), B((String, Int32)), C(String) }
+        enum Parts { Head(FixedArray<Int32, 2>), Tail(FixedArray<Int32, 2>) }
+        enum Tagged { Prefix(FixedArray<String, 2>), Suffix(FixedArray<String, 2>) }
+        enum Either<T> { First(T), Second(T) }
+
+        fn bump(input: &mut Message) {
+            match input {
+                A((rank, name)) | B((name, rank)) => {
+                    *rank = *rank + 1
+                    *name = "updated"
+                },
+                C(_) => {}
+            }
+        }
+
+        fn take(input: Message) @suspends -> String {
+            match input {
+                A((rank, name)) | B((name, rank)) if {
+                    println(rank)
+                    task.yield_now()
+                    name.byte_length() > 2
+                } => { task.yield_now(); name },
+                A((_, name)) | B((name, _)) | C(name) => name
+            }
+        }
+
+        fn overlap() -> Int32 {
+            var seen = 0
+            let result = match (5, 6) {
+                (n, 6) | (5, n) if { seen += n; false } => 999,
+                _ => 10
+            }
+            seen + result
+        }
+
+        fn fixed_tail(input: Parts) -> Int32 {
+            match input { Head([_, ..tail]) | Tail([..tail, _]) => tail.get(0)! }
+        }
+
+        fn tagged(input: Tagged) -> String {
+            match input {
+                Prefix(["tag", text]) | Suffix([text, "tag"]) => text,
+                Prefix([text, _]) | Suffix([_, text]) => text
+            }
+        }
+
+        fn pick<T>(input: Either<T>) -> T {
+            match input { First(value) | Second(value) => value }
+        }
+
+        fn shadow(input: Either<Int32>) -> Int32 {
+            let value = 30
+            let get = || {
+                match input { First(value) | Second(value) => value }
+            }
+            value + get()
+        }
+
+        fn main() @suspends {
+            var first = Message.A((20, "hi"))
+            bump(&mut first)
+            println(take(first))
+            println(take(Message.B(("x", 30))))
+            var second = Message.B(("yes", 40))
+            bump(&mut second)
+            println(take(second))
+            println(take(Message.C("last")))
+            println(overlap())
+            println(fixed_tail(Parts.Head([0, 42])))
+            println(fixed_tail(Parts.Tail([43, 0])))
+            println(tagged(Tagged.Prefix(["tag", "prefix"])))
+            println(tagged(Tagged.Suffix(["suffix", "tag"])))
+            println(tagged(Tagged.Prefix(["miss", "unused"])))
+            println(pick(Either.Second("generic")))
+            println(shadow(Either.First(12)))
+        }
+        "#,
+    );
+    work.assert_all_backends(
+        "alternative_bindings.jk",
+        &[],
+        b"21\nupdated\n30\nx\n41\nupdated\nlast\n15\n42\n43\nprefix\nsuffix\nmiss\ngeneric\n42\n",
+        0,
+    );
+}
+
+#[test]
 fn range_patterns_execute_integer_domains_owned_matches_and_suspension_in_aot() {
     let work = Workspace::new();
     let source = include_str!("../fixtures/range_patterns.jk")

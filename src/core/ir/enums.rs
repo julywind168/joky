@@ -474,14 +474,18 @@ impl FunctionPlan {
             }
         };
         let (matched_type, borrowed) = self.match_type(&value.ty, types, input.span())?;
-        let pattern = self.check_match_pattern(pattern, &matched_type, types)?;
-        if pattern.binds() {
+        if let Some(alternative) = pattern
+            .alternatives()
+            .iter()
+            .find(|alternative| !alternative.binding_names().is_empty())
+        {
             return Err(type_error(
-                &pattern.span,
+                &alternative.span(),
                 ErrorCode::InvalidPattern,
                 "An `is` pattern cannot introduce bindings; use `_` to ignore a payload",
             ));
         }
+        let pattern = self.check_match_pattern(pattern, &matched_type, borrowed, types)?;
         if let Some(mutable) = borrowed {
             value.ty = Type::reference(matched_type, mutable);
             value = self.reference_value(Some(value), false)?.unwrap();
@@ -491,7 +495,7 @@ impl FunctionPlan {
         let failure = self.label_count;
         let exit = failure + 1;
         self.label_count += 2;
-        self.test_match_arm(&pattern, &value, borrowed.is_some(), failure)?;
+        self.test_match_arm(&pattern, &value, borrowed.is_some(), Some(failure))?;
         self.emit(Op::Literal(result.clone(), Constant::Bool(true)));
         self.emit(Op::Jump(exit));
         self.emit(Op::Label(failure));
@@ -540,7 +544,7 @@ impl FunctionPlan {
             )
         })?;
         let (matched_type, borrowed) = self.match_type(&value.ty, types, span)?;
-        let pattern = self.check_match_pattern(&binding.pattern, &matched_type, types)?;
+        let pattern = self.check_match_pattern(&binding.pattern, &matched_type, borrowed, types)?;
         if let Some(mutable) = borrowed {
             value.ty = Type::reference(matched_type, mutable);
             value = self.reference_value(Some(value), false)?.unwrap();
@@ -558,7 +562,7 @@ impl FunctionPlan {
         let failure = self.label_count;
         let success = failure + 1;
         self.label_count += 2;
-        self.test_match_arm(&pattern, &value, borrowed.is_some(), failure)?;
+        self.test_match_arm(&pattern, &value, borrowed.is_some(), Some(failure))?;
         self.emit(Op::Jump(success));
         self.emit(Op::Label(failure));
         if temporary {
@@ -667,10 +671,10 @@ impl FunctionPlan {
             // Both explicit bodies remain type checked even if the first
             // pattern is irrefutable; no user-written redundant arm is accepted.
             arms.iter()
-                .map(|arm| self.check_match_pattern(&arm.pattern, &matched_type, types))
+                .map(|arm| self.check_match_pattern(&arm.pattern, &matched_type, borrowed, types))
                 .collect::<Result<Vec<_>, _>>()?
         } else {
-            patterns::validate(self, &matched_type, arms, *span, types)?
+            patterns::validate(self, &matched_type, borrowed, arms, *span, types)?
         };
         let hint = [false, true].into_iter().find_map(|default| {
             arms.iter().zip(&patterns).find_map(|(arm, pattern)| {
@@ -704,11 +708,11 @@ impl FunctionPlan {
             let next = if arm_index + 1 < arms.len() {
                 let next = self.label_count;
                 self.label_count += 1;
-                self.test_match_arm(&pattern, &value, borrowed.is_some(), next)?;
                 Some(next)
             } else {
                 None
             };
+            let choice = self.test_match_arm(&pattern, &value, borrowed.is_some(), next)?;
             self.local_scopes.push(Vec::new());
             if value.ty.is_owner() || value.ty.is_place() {
                 self.local_scopes.last_mut().unwrap().push(value.clone());
@@ -716,6 +720,11 @@ impl FunctionPlan {
             if let Some(guard) = &arm.guard {
                 // Preview bindings through a shared borrow. Only the selected
                 // arm may detach owners or acquire mutable payload references.
+                pattern
+                    .validate_alternative_bindings(Some(false))
+                    .map_err(|error| {
+                        error.with_help("The guard previews bindings through a shared borrow")
+                    })?;
                 self.local_scopes.push(Vec::new());
                 let root = if borrowed.is_some() {
                     let root = self.slot(Type::reference(matched_type.clone(), false))?;
@@ -748,14 +757,7 @@ impl FunctionPlan {
                     self.sequence_value_reference(&value, false)?
                 };
                 let mut preview = vars.clone();
-                self.bind_borrowed_pattern(
-                    &pattern,
-                    &root,
-                    0,
-                    &mut Vec::new(),
-                    false,
-                    &mut preview,
-                )?;
+                self.bind_match_arm(&pattern, &root, true, choice.as_ref(), &mut preview)?;
                 let condition = self.expr(guard, &mut preview, functions, suspends, types)?;
                 let Flow::Value(condition) = condition else {
                     return Err(unreachable_error(&arm.body));
@@ -778,18 +780,13 @@ impl FunctionPlan {
                 });
                 self.emit(Op::Label(selected));
             }
-            if borrowed.is_some() {
-                self.bind_borrowed_pattern(
-                    &pattern,
-                    &value,
-                    0,
-                    &mut Vec::new(),
-                    false,
-                    &mut local,
-                )?;
-            } else {
-                self.bind_match_pattern(&pattern, Some(value.clone()), None, &mut local)?;
-            }
+            self.bind_match_arm(
+                &pattern,
+                &value,
+                borrowed.is_some(),
+                choice.as_ref(),
+                &mut local,
+            )?;
             let flow =
                 self.expr_expected(&arm.body, &mut local, functions, suspends, types, expected)?;
             // Copy metadata may still address the consumed enum's payload.

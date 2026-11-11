@@ -489,11 +489,10 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                 visit(value, scopes, walk);
                 for arm in arms {
                     scopes.push(std::collections::HashSet::new());
-                    let mut names = Vec::new();
-                    if let Some(pattern) = arm.pattern.payload() {
-                        pattern.names(&mut names);
-                    }
-                    scopes.last_mut().expect("outermost layer").extend(names);
+                    scopes
+                        .last_mut()
+                        .expect("outermost layer")
+                        .extend(arm.pattern.binding_names());
                     if let Some(guard) = &arm.guard {
                         scopes.push(std::collections::HashSet::new());
                         visit(guard, scopes, walk);

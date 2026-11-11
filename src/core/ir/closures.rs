@@ -109,11 +109,7 @@ fn walk_free(
                 descend(value, bound)?;
                 for arm in arms {
                     let mut inner = bound.clone();
-                    if let Some(p) = arm.pattern.payload() {
-                        let mut names = Vec::new();
-                        p.names(&mut names);
-                        inner.extend(names);
-                    }
+                    inner.extend(arm.pattern.binding_names());
                     if let Some(guard) = &arm.guard {
                         descend(guard, &mut inner.clone())?;
                     }

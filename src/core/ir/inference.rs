@@ -721,7 +721,12 @@ impl FunctionPlan {
                         let mut local = vars.clone();
                         self.hint_work
                             .observe(
-                                self.check_match_pattern(&arm.pattern, &matched_type, types),
+                                self.check_match_pattern(
+                                    &arm.pattern,
+                                    &matched_type,
+                                    borrowed,
+                                    types,
+                                ),
                                 arm.pattern.span(),
                             )?
                             .hints(&mut local, borrowed);
@@ -856,7 +861,9 @@ impl FunctionPlan {
                     vars.remove(&name);
                 }
                 if let Some((ty, borrowed)) = matched {
-                    if let Ok(pattern) = self.check_match_pattern(&binding.pattern, &ty, types) {
+                    if let Ok(pattern) =
+                        self.check_match_pattern(&binding.pattern, &ty, borrowed, types)
+                    {
                         pattern.hints(vars, borrowed);
                     }
                 }

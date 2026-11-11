@@ -246,11 +246,12 @@ impl Instruction<'_> {
                 state.insert(dst.index, Reference::default());
             }
             Op::EndLocal(local) => {
-                let roots: Set = state[&local.index]
-                    .origins
-                    .iter()
-                    .map(|origin| origin.root)
-                    .collect();
+                // A pattern test can reach scope exit without creating the
+                // temporary place on this path.
+                let Some(value) = state.get(&local.index) else {
+                    return Ok(());
+                };
+                let roots: Set = value.origins.iter().map(|origin| origin.root).collect();
                 if alive.iter().any(|index| {
                     state
                         .get(index)

@@ -286,6 +286,7 @@ while / if 条件中的序列使用括号，例如 `while (advance(); ready()) {
 
 `if let Pattern = value` 与 `while let Pattern = value` 复用枚举 `match` 模式与移动/借用规则。
 `let Pattern = value else { ... }` 在成功后引入当前作用域的绑定，失败块必须退出控制流。
+`match` 的 `A(x) | B(x)` 共用绑定 `x`，各备选模式的绑定名称、类型和绑定方式必须一致。
 `value is Pattern` 返回 Bool，可用 `|` 写备选模式，模式不引入绑定。
 `if let` 只匹配一次，成功绑定只在 then 块有效；支持 else 与 else if let，分支结果规则与 if 一致。
 `while let` 每轮重新求值，失败退出；绑定限本轮，循环返回 Unit，支持 break / continue / return。

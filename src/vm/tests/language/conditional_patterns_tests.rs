@@ -7,6 +7,80 @@ use crate::ErrorCode;
 const SOURCE: &str = include_str!("../../../../tests/fixtures/conditional_patterns.jk");
 
 #[test]
+fn match_alternatives_release_owned_payloads_on_completion_and_cancellation() {
+    let source = r#"
+        import joky/array.{type Array}
+        extern fn record(value: Int32) -> Int32
+        extern fn delayed_value(value: Int32) @suspends -> Int32
+        enum Packet {
+            A((Int32, Array<Int32>, Array<Int32>)),
+            B((Array<Int32>, Array<Int32>, Int32))
+        }
+
+        fn run(select: Int32) @suspends -> Int32 {
+            let packet = if select == 0 { Packet.A((12, [30], [99])) } else {
+                Packet.B(([99], [30], 13))
+            }
+            match packet {
+                A((n, kept, _)) | B((_, kept, n)) if delayed_value(record(n)) == 13 => {
+                    delayed_value(record(kept[0]))
+                    42
+                },
+                A((_, kept, _)) | B((_, kept, _)) => {
+                    delayed_value(record(kept[0] + 1))
+                    43
+                }
+            }
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        for (select, guard, body, result) in [(0, 12, 30, 42), (1, 13, 31, 43)] {
+            for cancel_after in [Some(2), Some(4), None] {
+                READY.with(|ready| ready.set(false));
+                EVENTS.with(|events| events.borrow_mut().clear());
+                let mut task = vm.call_async("run", &[select]).unwrap();
+                for _ in 0..20 {
+                    if EVENTS.with(|events| events.borrow().len()) == 2 {
+                        break;
+                    }
+                    task.resume().unwrap();
+                }
+                EVENTS.with(|events| assert_eq!(*events.borrow(), [guard, guard]));
+                assert!(!task.is_finished());
+                LIVE.with(|live| assert!(live.get() > 0));
+                if cancel_after != Some(2) {
+                    READY.with(|ready| ready.set(true));
+                    for _ in 0..20 {
+                        if EVENTS.with(|events| events.borrow().len()) == 4 {
+                            break;
+                        }
+                        task.resume().unwrap();
+                    }
+                    EVENTS.with(|events| assert_eq!(*events.borrow(), [guard, guard, body, body]));
+                    assert!(!task.is_finished());
+                }
+                if cancel_after.is_none() {
+                    for _ in 0..20 {
+                        if task.is_finished() {
+                            break;
+                        }
+                        task.resume().unwrap();
+                    }
+                    assert_eq!(task.cps_result(), Some(result));
+                }
+                drop(task);
+                let expected = [guard, guard, body, body];
+                EVENTS.with(|events| {
+                    assert_eq!(*events.borrow(), expected[..cancel_after.unwrap_or(4)])
+                });
+                LIVE.with(|live| assert_eq!(live.get(), 0));
+            }
+        }
+    }
+}
+
+#[test]
 fn is_pattern_rejects_bindings_and_invalid_patterns() {
     for (source, code, message) in [
         (

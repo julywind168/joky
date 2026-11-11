@@ -537,7 +537,8 @@ impl Inference<'_> {
                     let mut names = tracked.clone();
                     if let Some((ty, borrowed)) = &matched {
                         if let Ok(pattern) =
-                            self.plan.check_match_pattern(&arm.pattern, ty, self.types)
+                            self.plan
+                                .check_match_pattern(&arm.pattern, ty, *borrowed, self.types)
                         {
                             let mut bindings = HashMap::new();
                             pattern.hints(&mut bindings, *borrowed);
@@ -554,10 +555,13 @@ impl Inference<'_> {
                     }
                     if let Some(guard) = &arm.guard {
                         let mut preview = local.clone();
-                        if let Some((ty, _)) = &matched {
-                            if let Ok(pattern) =
-                                self.plan.check_match_pattern(&arm.pattern, ty, self.types)
-                            {
+                        if let Some((ty, borrowed)) = &matched {
+                            if let Ok(pattern) = self.plan.check_match_pattern(
+                                &arm.pattern,
+                                ty,
+                                *borrowed,
+                                self.types,
+                            ) {
                                 pattern.hints(&mut preview, Some(false));
                             }
                         }

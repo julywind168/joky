@@ -1,7 +1,7 @@
 //! Typed recursive patterns, bounded coverage analysis, and consuming bindings.
 use super::*;
 use crate::parser::ast::{MatchArm, Pattern, PayloadPattern};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 pub(super) struct CheckedPattern {
     pub(super) ty: Type,
@@ -73,7 +73,7 @@ impl CheckedPattern {
         Self { ty, kind, span }
     }
 
-    fn alternatives(&self) -> &[Self] {
+    pub(super) fn alternatives(&self) -> &[Self] {
         match &self.kind {
             Kind::Or(alternatives) => alternatives,
             _ => std::slice::from_ref(self),
@@ -81,35 +81,91 @@ impl CheckedPattern {
     }
 
     pub(super) fn hints(&self, vars: &mut HashMap<String, Binding>, borrowed: Option<bool>) {
+        self.visit_bindings(borrowed, &mut |name, ty, _| {
+            if let Some(ty) = ty {
+                vars.insert(name.to_owned(), payload_binding(&ty, 0));
+            }
+        });
+    }
+
+    fn visit_bindings(
+        &self,
+        borrowed: Option<bool>,
+        visit: &mut impl FnMut(&str, Option<Type>, bool),
+    ) {
         match &self.kind {
             Kind::Any(Some(name)) => {
-                let ty = if borrowed.is_some_and(|mutable| mutable || self.ty.is_owner()) {
-                    Type::reference(self.ty.clone(), borrowed.unwrap())
-                } else {
-                    self.ty.clone()
-                };
-                vars.insert(name.clone(), payload_binding(&ty, 0));
+                let loan = borrowed.filter(|&mutable| mutable || self.ty.is_owner());
+                let ty = loan.map_or_else(
+                    || self.ty.clone(),
+                    |mutable| Type::reference(self.ty.clone(), mutable),
+                );
+                visit(name, Some(ty), loan.is_some());
             }
-            Kind::Literal(..) | Kind::String(_) | Kind::Range(_) | Kind::Or(_) => {}
+            Kind::Any(None) | Kind::Literal(..) | Kind::String(_) | Kind::Range(_) => {}
+            Kind::Or(alternatives) => alternatives[0].visit_bindings(borrowed, visit),
             Kind::Sequence(p) => {
                 for child in p.prefix.iter().chain(&p.suffix) {
-                    child.hints(vars, borrowed);
+                    child.visit_bindings(borrowed, visit);
                 }
                 if let Some(Some(name)) = &p.rest {
-                    if let Some(ty) = p.rest_type(&self.ty, borrowed) {
-                        vars.insert(name.clone(), payload_binding(&ty, 0));
-                    }
+                    visit(name, p.rest_type(&self.ty, borrowed), borrowed.is_some());
                 }
             }
-            Kind::Any(None) => {}
-            Kind::Tuple(elements) => elements.iter().for_each(|p| p.hints(vars, borrowed)),
+            Kind::Tuple(elements) => elements
+                .iter()
+                .for_each(|p| p.visit_bindings(borrowed, visit)),
             Kind::Variant { payload, .. } => {
                 if let Some(payload) = payload {
-                    payload.hints(vars, borrowed);
+                    payload.visit_bindings(borrowed, visit);
                 }
             }
-            Kind::Record(fields) => fields.iter().for_each(|(_, p)| p.hints(vars, borrowed)),
+            Kind::Record(fields) => fields
+                .iter()
+                .for_each(|(_, p)| p.visit_bindings(borrowed, visit)),
         }
+    }
+
+    fn binding_signature(&self, borrowed: Option<bool>) -> BTreeMap<String, (Option<Type>, bool)> {
+        let mut bindings = BTreeMap::new();
+        self.visit_bindings(borrowed, &mut |name, ty, loan| {
+            bindings.insert(name.to_owned(), (ty, loan));
+        });
+        bindings
+    }
+
+    pub(super) fn validate_alternative_bindings(
+        &self,
+        borrowed: Option<bool>,
+    ) -> Result<(), Error> {
+        let Kind::Or(alternatives) = &self.kind else {
+            return Ok(());
+        };
+        if !alternatives.iter().any(Self::binds) {
+            return Ok(());
+        }
+        let first = alternatives[0].binding_signature(borrowed);
+        for alternative in &alternatives[1..] {
+            let bindings = alternative.binding_signature(borrowed);
+            if first.keys().ne(bindings.keys()) {
+                return Err(type_error(
+                    &alternative.span,
+                    ErrorCode::InvalidPattern,
+                    "Match alternatives must bind the same names",
+                ));
+            }
+            if let Some((name, _)) = first
+                .iter()
+                .find(|(name, binding)| bindings.get(*name) != Some(*binding))
+            {
+                return Err(type_error(
+                    &alternative.span,
+                    ErrorCode::InvalidPattern,
+                    format!("Binding `{name}` must have the same type and binding mode in every match alternative"),
+                ));
+            }
+        }
+        Ok(())
     }
     fn storage_children(&self) -> Result<Vec<(&Self, usize)>, Error> {
         use crate::memory_layout::MemoryLayoutShape;
@@ -170,7 +226,8 @@ impl CheckedPattern {
 
     pub(super) fn binds(&self) -> bool {
         match &self.kind {
-            Kind::Literal(..) | Kind::String(_) | Kind::Range(_) | Kind::Or(_) => false,
+            Kind::Literal(..) | Kind::String(_) | Kind::Range(_) => false,
+            Kind::Or(alternatives) => alternatives[0].binds(),
             Kind::Sequence(p) => {
                 p.rest.as_ref().is_some_and(Option::is_some)
                     || p.prefix.iter().chain(&p.suffix).any(Self::binds)
@@ -210,6 +267,7 @@ impl FunctionPlan {
         &self,
         pattern: &Pattern,
         ty: &Type,
+        borrowed: Option<bool>,
         types: &TypeRegistry,
     ) -> Result<CheckedPattern, Error> {
         let Pattern::Or { alternatives, span } = pattern else {
@@ -224,23 +282,11 @@ impl FunctionPlan {
         }
         let alternatives = alternatives
             .iter()
-            .map(|alternative| {
-                let checked = self.check_match_alternative(alternative, ty, types)?;
-                if checked.binds() {
-                    return Err(type_error(
-                        &checked.span,
-                        ErrorCode::InvalidPattern,
-                        "Match alternatives cannot introduce bindings",
-                    ));
-                }
-                Ok(checked)
-            })
-            .collect::<Result<_, _>>()?;
-        Ok(CheckedPattern::nested(
-            ty.clone(),
-            Kind::Or(alternatives),
-            *span,
-        ))
+            .map(|alternative| self.check_match_alternative(alternative, ty, types))
+            .collect::<Result<Vec<_>, _>>()?;
+        let pattern = CheckedPattern::nested(ty.clone(), Kind::Or(alternatives), *span);
+        pattern.validate_alternative_bindings(borrowed)?;
+        Ok(pattern)
     }
 
     fn check_match_alternative(
@@ -508,32 +554,147 @@ impl FunctionPlan {
         pattern: &CheckedPattern,
         value: &Slot,
         borrowed: bool,
-        failure: usize,
-    ) -> Result<(), Error> {
-        let test = |plan: &mut Self, alternative, failure| {
-            if borrowed {
-                plan.borrowed_pattern_tests(alternative, value, 0, failure)
-            } else {
-                plan.match_pattern_tests(alternative, value.index, failure)
-            }
-        };
+        failure: Option<usize>,
+    ) -> Result<Option<Slot>, Error> {
         let (last, preceding) = pattern.alternatives().split_last().unwrap();
+        let choice = (!preceding.is_empty() && pattern.binds())
+            .then(|| self.slot(Type::UInt64))
+            .transpose()?;
+        if failure.is_none() && choice.is_none() {
+            return Ok(None);
+        }
         if preceding.is_empty() {
-            return test(self, last, failure);
+            self.test_match_alternative(last, value, borrowed, failure.unwrap())?;
+            return Ok(None);
         }
         let matched = self.label_count;
         self.label_count += 1;
-        for alternative in preceding {
+        for (index, alternative) in preceding.iter().enumerate() {
             let next = self.label_count;
             self.label_count += 1;
-            test(self, alternative, next)?;
+            self.test_match_alternative(alternative, value, borrowed, next)?;
+            if let Some(choice) = &choice {
+                self.emit(Op::Literal(choice.clone(), Constant::UInt64(index as u64)));
+            }
             self.emit(Op::Jump(matched));
             self.emit(Op::Label(next));
         }
-        test(self, last, failure)?;
+        if let Some(failure) = failure {
+            self.test_match_alternative(last, value, borrowed, failure)?;
+        }
         self.current_span = pattern.span;
+        if let Some(choice) = &choice {
+            self.emit(Op::Literal(
+                choice.clone(),
+                Constant::UInt64(preceding.len() as u64),
+            ));
+        }
         self.emit(Op::Label(matched));
+        Ok(choice)
+    }
+
+    fn test_match_alternative(
+        &mut self,
+        pattern: &CheckedPattern,
+        value: &Slot,
+        borrowed: bool,
+        failure: usize,
+    ) -> Result<(), Error> {
+        if borrowed {
+            self.borrowed_pattern_tests(pattern, value, 0, failure)
+        } else if value.ty.is_place() && value.ty.is_owner() {
+            // Reading an owning field from a place moves it. Test through a
+            // view so a failed alternative leaves the entire input available.
+            let root = self.sequence_value_reference(value, false)?;
+            self.borrowed_pattern_tests(pattern, &root, 0, failure)
+        } else {
+            self.match_pattern_tests(pattern, value.index, failure)
+        }
+    }
+
+    pub(super) fn bind_match_arm(
+        &mut self,
+        pattern: &CheckedPattern,
+        value: &Slot,
+        borrowed: bool,
+        choice: Option<&Slot>,
+        vars: &mut HashMap<String, Binding>,
+    ) -> Result<(), Error> {
+        if !pattern.binds() {
+            return Ok(());
+        }
+        let Some(choice) = choice else {
+            return self.bind_match_alternative(pattern, value, borrowed, vars);
+        };
+
+        // Give the selected payloads common storage before compiling the guard
+        // or body. An unselected projection is never borrowed or moved.
+        let joined = self.label_count;
+        self.label_count += 1;
+        let alternatives = pattern.alternatives();
+        let mut slots = BTreeMap::new();
+        for (index, alternative) in alternatives.iter().enumerate() {
+            self.current_span = alternative.span;
+            let next = if index + 1 < alternatives.len() {
+                let next = self.label_count;
+                self.label_count += 1;
+                let ordinal = self.pattern_u64(index as u64)?;
+                self.pattern_compare(choice.clone(), ordinal, BinOp::Eq, next)?;
+                Some(next)
+            } else {
+                None
+            };
+
+            self.local_scopes.push(Vec::new());
+            let mut bindings = HashMap::new();
+            self.bind_match_alternative(alternative, value, borrowed, &mut bindings)?;
+            if index == 0 {
+                for (name, binding) in bindings.into_iter().collect::<BTreeMap<_, _>>() {
+                    let slot = self.snapshot(&binding.slot)?;
+                    self.escape_owner(&Flow::Value(slot.clone()));
+                    slots.insert(name, slot);
+                }
+            } else {
+                for (name, dst) in &slots {
+                    if let (Some(dst), Some(src)) = (dst, &bindings[name].slot) {
+                        self.emit(Op::Copy(dst.clone(), src.clone()));
+                    }
+                }
+            }
+            self.end_local_scope();
+            if let Some(next) = next {
+                self.emit(Op::Jump(joined));
+                self.emit(Op::Label(next));
+            }
+        }
+        self.current_span = pattern.span;
+        self.emit(Op::Label(joined));
+        for (name, slot) in slots {
+            let binding = self.local_binding(
+                &name,
+                Binding {
+                    slot,
+                    mutable: false,
+                    place: None,
+                },
+            )?;
+            vars.insert(name, binding);
+        }
         Ok(())
+    }
+
+    fn bind_match_alternative(
+        &mut self,
+        pattern: &CheckedPattern,
+        value: &Slot,
+        borrowed: bool,
+        vars: &mut HashMap<String, Binding>,
+    ) -> Result<(), Error> {
+        if borrowed {
+            self.bind_borrowed_pattern(pattern, value, 0, &mut Vec::new(), false, vars)
+        } else {
+            self.bind_match_pattern(pattern, Some(value.clone()), None, vars)
+        }
     }
 
     pub(super) fn match_pattern_tests(
@@ -1328,6 +1489,7 @@ fn useful(
 fn validate_integer_literals(
     plan: &FunctionPlan,
     ty: &Type,
+    borrowed: Option<bool>,
     domain: u128,
     arms: &[MatchArm],
     span: Span,
@@ -1355,7 +1517,7 @@ fn validate_integer_literals(
                     "Match coverage analysis exceeds 65536 steps",
                 )
             })?;
-        let pattern = plan.check_match_pattern(&arm.pattern, ty, types)?;
+        let pattern = plan.check_match_pattern(&arm.pattern, ty, borrowed, types)?;
         for alternative in pattern.alternatives() {
             let useful = !complete
                 && match &alternative.kind {
@@ -1395,6 +1557,7 @@ fn validate_integer_literals(
 pub(super) fn validate(
     plan: &FunctionPlan,
     ty: &Type,
+    borrowed: Option<bool>,
     arms: &[MatchArm],
     span: Span,
     types: &TypeRegistry,
@@ -1416,7 +1579,15 @@ pub(super) fn validate(
                 Pattern::Variant { .. } | Pattern::Or { .. } => false,
             })
         {
-            return validate_integer_literals(plan, ty, 1u128 << integer.bits(), arms, span, types);
+            return validate_integer_literals(
+                plan,
+                ty,
+                borrowed,
+                1u128 << integer.bits(),
+                arms,
+                span,
+                types,
+            );
         }
     }
     let mut budget = 65_536;
@@ -1438,7 +1609,7 @@ pub(super) fn validate(
                 "Unreachable match arm after complete coverage",
             ));
         }
-        let pattern = plan.check_match_pattern(&arm.pattern, ty, types)?;
+        let pattern = plan.check_match_pattern(&arm.pattern, ty, borrowed, types)?;
         let covered = matrix.len();
         for alternative in pattern.alternatives() {
             let coverage = alternative.coverage();

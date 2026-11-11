@@ -1474,7 +1474,7 @@ pub struct SequencePattern<P> {
 impl Pattern {
     pub(crate) fn binding_names(&self) -> Vec<String> {
         let mut names = Vec::new();
-        if let Some(payload) = self.payload() {
+        if let Some(payload) = self.alternatives().first().and_then(Self::payload) {
             payload.names(&mut names);
         }
         names

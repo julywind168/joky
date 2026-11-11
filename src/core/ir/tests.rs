@@ -696,7 +696,22 @@ fn match_alternatives_validate_coverage_and_locate_invalid_patterns() {
         ),
         (
             "enum E { A(Int32), B } fn f(e: E) { match e { A(value) | B => {} } }",
-            "A(value)",
+            "B",
+            ErrorCode::InvalidPattern,
+        ),
+        (
+            "enum E { A(Int32), B(Int32) } fn f(e: E) { match e { A(x) | B(y) => {} } }",
+            "B(y)",
+            ErrorCode::InvalidPattern,
+        ),
+        (
+            "enum E { A(Int32), B(Bool) } fn f(e: E) { match e { A(x) | B(x) => {} } }",
+            "B(x)",
+            ErrorCode::InvalidPattern,
+        ),
+        (
+            "enum E { A(&String), B(String) } fn f(e: &E) { match e { A(x) | B(x) => {} } }",
+            "B(x)",
             ErrorCode::InvalidPattern,
         ),
     ] {
