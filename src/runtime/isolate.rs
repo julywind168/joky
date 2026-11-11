@@ -37,13 +37,16 @@ pub(crate) fn code(error: &Error) -> Option<u64> {
 /// Preserve the first recoverable error, but never let it hide an ABI violation
 /// or cancellation reported by a later cleanup in the same isolated subtree.
 pub(crate) fn retain_failure(failure: &mut Option<Error>, error: Error) {
-    if failure.is_none()
-        || failure
-            .as_ref()
-            .is_some_and(|e| e.code() == ErrorCode::Cancelled)
-            && error.code() != ErrorCode::Cancelled
-        || code(&error).is_none() && failure.as_ref().is_some_and(|e| code(e).is_some())
-    {
+    if replaces_failure(failure.as_ref().map(Error::code), error.code()) {
         *failure = Some(error);
     }
+}
+
+// Shared with the native channel so an emergency error can be compared by
+// category without materializing a heap-backed Error during cleanup.
+pub(crate) fn replaces_failure(previous: Option<ErrorCode>, next: ErrorCode) -> bool {
+    let fatal = |code| matches!(code, ErrorCode::Cancelled | ErrorCode::AbiError);
+    previous.is_none()
+        || previous == Some(ErrorCode::Cancelled) && next != ErrorCode::Cancelled
+        || fatal(next) && previous.is_some_and(|old| !fatal(old))
 }

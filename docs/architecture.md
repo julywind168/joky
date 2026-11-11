@@ -2733,7 +2733,8 @@ Cranelift 0.137.1 的内置 stack-limit 检查产生机器陷阱；本提案要�
 间接调用点先保留辅助入口空间；具体正文的检查发生在目标入口，已经交付的拥有参数由拒绝分支释放。
 普通 owner lane 直接释放 Buffer，place 参数按类型描述清理；正常调用继续使用既有 cleanup 登记。
 两个出口都恢复入口保存的浮点环境。栈失败通过 `ResourceLimit` 和原有失败返回约定传播，不使用机器 trap 或 unwind。
-已知直调带调用表达式位置；入口拒绝带目标声明位置，并在生成调用方传播时追加调用位置。
+已知直调带调用表达式位置；入口拒绝带目标声明位置。栈超限传播只保留最近一个调用位置及其余位置的省略计数，
+完整诊断在返回受检 Rust 边界或显式读取／打印时物化，见[最小报错路径与退出预算](#最小报错路径与退出预算)。
 
 私有运行时符号 `__joky_native_stack_room_v1` 在实际执行线程查询 pthread 的栈上下界并缓存；
 每次检查验证 SP 仍在该区间内，区间失效则重新查询。不能确认区间、需求加法溢出或空间不足均拒绝执行正文。
@@ -2742,7 +2743,8 @@ Cranelift 0.137.1 的内置 stack-limit 检查产生机器陷阱；本提案要�
 但上述新 helper 要求 macOS arm64 的标量 AOT 对象也链接同版本 `libjoky.a`；使用 `requires_runtime()` 判断，
 不要沿用“纯整数对象必然无需 runtime”的假设。
 
-**运行时和宿主边界。** 当前将 256 KiB 留给检查、错误记录和运行时／清理调用，它是当前实现的准入预算，
+**运行时和宿主边界。** 当前仍将 256 KiB 留给检查、错误记录和运行时／清理调用；其中 64 KiB 用作已测试退出链的
+紧急预算，另留 192 KiB runtime 余量。总量未增加，具体证据与限制见[退出预算](#最小报错路径与退出预算)。这是当前实现的准入预算，
 不是任意宿主回调或所有清理路径的空间上界证明，也不是把原型的 128 KiB 直接提升为通用保证。
 已验证的清理包含普通 String、记录、拥有数组及常数空间的资源 release 回调；Buffer 的嵌套元素释放沿现有迭代遍历执行。
 原生宿主调用仍须提供能执行小型入口和运行时的 C 栈空间；不能把入口检查解释为从已经耗尽的宿主栈中恢复。
@@ -2788,7 +2790,7 @@ CLI 回归 `native_stack_cli_reports_limit_in_ordinary_builds` 覆盖普通 JIT�
 #### 阶段 1 栈预算审查
 
 2026-11-11，基于 `427d526a` 审查。下表和反汇编数据保留该提交的状态；后续修复见
-[place 遍历迭代化进展](#place-遍历迭代化进展)。结论：**256 KiB 是当前保留额度，尚不是完整运行时调用链的已证明上界**。
+[place 遍历迭代化进展](#place-遍历迭代化进展)和[最小报错路径与退出预算](#最小报错路径与退出预算)。结论：**256 KiB 是当前保留额度，尚不是完整运行时调用链的已证明上界**。
 生成代码的最终帧描述与三个 4 KiB 辅助帧额度已有编译检查，但该检查不覆盖 Rust 编译的 runtime、
 系统库或宿主函数。不能用生成包装帧的限制推导这些被调用函数的大小，也不能靠增加一个固定常量完成验收。
 
@@ -2888,10 +2890,11 @@ copy 与 dispose 的 `walk` 实例直接帧分别为 6,256 和 6,448 字节，�
 遍历本身不申请堆内存，也不进行递归调用。移动仍清零源 owner lane，快照保留源 owner，自移动不改变值；
 字段／数组遍历次序保持原实现，枚举 tag 会复制，padding 和非活动载荷不会复制。
 清理继续在 release 前清空 owner lane，保留首错并处理剩余 owner；部分初始化的零 lane 和空数组可安全排空。
-这些约束不限制资源 release 回调自身的栈或重入；阶段 1 的报错预算和严格宿主准入仍未完成。
+这些约束不限制资源 release 回调自身的栈或重入；后续报错预算进展见下节，严格宿主准入仍未完成。
 
 回归位于 [place/traversal_tests.rs](../src/runtime/place/traversal_tests.rs)：最大聚合深度的实际编译器描述符
-在隔离子进程的 64 KiB 线程栈中执行快照、移动、自移动、owner 扫描和重复清理，并在清理前把任务分配预算设为零。
+在隔离子进程中申请 64 KiB 线程栈，执行快照、移动、自移动、owner 扫描和重复清理，并在清理前把任务分配预算设为零。
+该旧测试使用线程 builder，macOS 可能增加实际栈空间；严格限制实际映射大小的退出链测试见下节，不能把申请值当成实测上界。
 另用 16 层记录／数组与枚举、空数组组合验证移动、替换、字段构造失败及失败后复用，执行 JIT、解释器和真实独立 AOT。
 已执行的定向检查：
 
@@ -2905,6 +2908,60 @@ copy 与 dispose 的 `walk` 实例直接帧分别为 6,256 和 6,448 字节，�
 `./scripts/check.sh` 完整通过：fmt、Clippy（所有 target，warnings 作为错误）、默认 Debug 测试
 （核心 1898 项、CLI 366 项及其余二进制／集成／文档测试），以及 while／Map 的三后端短输入正确性检查。
 文档链接与 `git diff --check` 通过；未运行 Release、全量 stress、其他平台执行或性能测量。
+
+#### 最小报错路径与退出预算
+
+栈不足现在经 [runtime/error.rs](../src/runtime/error.rs) 的内联 `StackLimit` 状态传播：
+固定 `ResourceLimit` 类别、主 Span、最近一个调用 Span 和饱和递增的省略计数。
+`room` 不再构造消息，`call_failed` 不再为该错误增长 Vec；C 的 code/start/end/clear 只操作状态。
+首错、Cancelled 替换及 isolate 的致命错误优先级保持不变，嵌套受检调用与 panic 退出仍恢复外层错误状态。
+普通错误继续保留原有调用位置集合，不受这项截断限制。
+
+`checked` 等生成调用返回、恢复外层通道后才生成 `Error`；`current_error` 与 C `print_error` 是会分配的显式诊断读取，
+宿主须在生成代码退出且具备足够栈空间后调用。省略数在 Error help／C 打印中可见，主消息和错误位置不变。
+CPS 排空中的诊断读取可能仍分配，属于阶段 2，不包含在本次同步紧急路径保证内。
+公开 ABI 不变，编译器、runtime 与原生产物仍需配套。
+
+[runtime/native_stack.rs](../src/runtime/native_stack.rs) 将原有总预留拆成 `EMERGENCY_BUDGET = 64 KiB`
+和 `RUNTIME_HEADROOM = 192 KiB`，准入阈值保持 256 KiB。64 KiB 是以下限定调用链的受限执行预算，
+192 KiB 是尚未逐项核算的 runtime／系统调用余量；**二者相加不是完整 runtime、系统库或任意宿主调用的上界证明**。
+
+[budget_tests.rs](../src/runtime/native_stack/budget_tests.rs) 在隔离子进程中用 mmap 建立恰好 64 KiB 的 pthread 栈，
+低端增加不可访问保护页，并读取实际 pthread 边界检查可用量。直接设置映射，避免系统为 stack_size 请求增加空间。
+同一线程重复两次执行下列调用链，覆盖冷 TLS 与缓存复用；操作结束检查 FP 状态和 Local Arena 零存活分配。
+
+| 覆盖路径 | 构造与断言 |
+| --- | --- |
+| 冷 admission／错误传播 | pthread 边界查询、TLS、拒绝、10,000 次调用位置传播、primitive 查询与清除 |
+| FP | hostile FP 环境下 enter／restore，失败清理后逐寄存器核对 |
+| 普通登记与 Buffer | 64 项登记覆盖 inline／BTreeMap 容器，1,024 层拥有 Buffer 树释放 |
+| place 与部分构造 | 编译器最大 256 层描述符，一个已初始化 owner 和一个零 lane，经 cleanup::finish 释放 |
+| 已知资源回调 | 显式 Arena 区域、SHA 与 HMAC stream 的 runtime 固定 release |
+| Local 退出 | 清理前任务分配预算设为零，释放所有 owner、元数据和 Arena，包含实际系统 dealloc 调用 |
+
+这验证上述输入及当前构建的完整退出链，不是所有登记数量、系统分配器状态或工具链的形式证明；
+没有覆盖任意宿主 release、自定义 Clock、VM shutdown／重入、所有 std intrinsic 或 CPS／worker。
+严格准入仍须按真实执行及退出依赖拒绝未覆盖路径，不能因测试了几种内置资源就接收任意拥有资源。
+
+普通库集成测试 [native_stack_error.rs](../tests/native_stack_error.rs) 安装 Rust 全局分配监测，
+在新线程的冷／热检查、10,000 次传播、primitive 查询和清除期间均要求零分配／扩容。
+它链接非 `cfg(test)` runtime，监测 Rust allocator，不声称能观察 pthread 内部的 libc 分配；显式诊断物化不在监测区间。
+生成代码回归同时核对普通 JIT 与独立 AOT 的受控失败、截断提示、两种拒绝出口、恰好一次资源释放、FP 和浅调用恢复；
+嵌套 place 的组合行为继续覆盖解释器。
+
+本轮验证平台为 macOS arm64，rustc 1.99.0：
+
+- `cargo test --test native_stack_error`：普通 runtime 的冷／热零分配探针通过。
+- `cargo test --lib -- native_stack_ stack_limit_ runtime::error::tests isolate place_traversal_nested_moves`：
+  29 项通过、2 项穷举按默认规则跳过，包含生成代码三后端组合、同步栈拒绝和 isolate 错误优先级。
+- `CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test --lib --test native_stack_error -- native_stack_emergency_budget native_stack_failure_propagation stack_limit_`：
+  未优化 Debug 的 4 项通过，包含真实 64 KiB 映射栈、错误状态及普通 runtime 零分配；没有依赖优化消除调用栈。
+- `cargo test --lib -- --ignored exhaustive_task_fixed_array_local_budget_failures exhaustive_task_fixed_array_owned_budgets exhaustive_isolate_cancellation`：
+  3 项通过，覆盖 Local 分配失败、跨 worker 拥有值预算和逐指令 isolate 取消。
+
+`./scripts/check.sh` 完整通过：fmt、Clippy（所有 target，warnings 作为错误）、默认 Debug 测试
+（核心 1901 项、CLI 366 项及其余二进制／集成／文档测试）、while／Map 三后端短输入正确性。
+文档文件链接、本文新增锚点和 `git diff --check` 通过。未运行 Release、全量 stress、其他平台或性能测量。
 
 #### 原生栈保护的三个生产验收阶段
 

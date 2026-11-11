@@ -2,12 +2,16 @@
 //!
 //! This protects generated synchronous frames, not arbitrary host code. Host
 //! callbacks must return within the reserved runtime/cleanup stack budget.
-use crate::{Error, ErrorCode, ErrorPhase, SourceId, Span};
+use crate::{SourceId, Span};
 use std::cell::Cell;
 
-/// Space kept out of generated bodies for runtime calls and iterative cleanup.
-/// This is an execution contract, not a bound on arbitrary host callbacks.
-pub(crate) const RESERVE: usize = 256 * 1024;
+/// Budget exercised by cold admission, deferred failure and Local cleanup on
+/// a real small pthread stack. It excludes arbitrary host callbacks and CPS.
+pub(crate) const EMERGENCY_BUDGET: usize = 64 * 1024;
+/// Additional margin for runtime/system calls that have no per-helper frame
+/// descriptor yet. This is headroom, not evidence of bounded host stack use.
+const RUNTIME_HEADROOM: usize = 192 * 1024;
+pub(crate) const RESERVE: usize = EMERGENCY_BUDGET + RUNTIME_HEADROOM;
 
 thread_local! {
     static BOUNDS: Cell<Option<(usize, usize)>> = const { Cell::new(None) };
@@ -45,13 +49,8 @@ pub extern "C" fn room(sp: usize, bytes: usize, source: u64, start: usize, end: 
             .is_some_and(|need| sp - low >= need)
     });
     if !fits {
-        super::error::record_error(
-            Error::new_with_code(
-                ErrorPhase::Runtime,
-                ErrorCode::ResourceLimit,
-                "Native stack limit exceeded",
-            )
-            .with_span(Span::new(start, end.max(start)).with_source(SourceId::from_raw(source))),
+        super::error::record_stack_limit(
+            Span::new(start, end.max(start)).with_source(SourceId::from_raw(source)),
         );
     }
     i32::from(fits)
@@ -60,6 +59,7 @@ pub extern "C" fn room(sp: usize, bytes: usize, source: u64, start: usize, end: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ErrorCode;
 
     #[test]
     fn native_stack_rejects_unknown_bounds_and_overflowing_requirements() {
@@ -82,3 +82,6 @@ mod tests {
         assert_eq!(super::super::error::checked(|| room(sp, 0, 0, 0, 1)), Ok(1));
     }
 }
+
+#[cfg(test)]
+mod budget_tests;

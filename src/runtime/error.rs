@@ -7,10 +7,74 @@ use crate::{Error, ErrorCode, ErrorPhase, Span};
 use std::cell::RefCell;
 
 thread_local! {
-    static ERROR: RefCell<Option<Error>> = const { RefCell::new(None) };
+    static ERROR: RefCell<Option<Failure>> = const { RefCell::new(None) };
 }
 
-struct Boundary(Option<Error>);
+// The emergency variant stays inline until a checked Rust boundary or an
+// explicit diagnostic query. Generated failure propagation only reads/writes
+// these fixed fields; it never grows an error message or call-site vector.
+#[derive(Clone)]
+enum Failure {
+    Reported(Error),
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    StackLimit(StackLimit),
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[derive(Clone, Copy)]
+struct StackLimit {
+    span: Span,
+    caller: Option<Span>,
+    omitted: usize,
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+impl StackLimit {
+    fn materialize(&self) -> Error {
+        let mut error = Error::new_with_code(
+            crate::ErrorPhase::Runtime,
+            crate::ErrorCode::ResourceLimit,
+            "Native stack limit exceeded",
+        )
+        .with_span(self.span);
+        if let Some(caller) = self.caller {
+            error.push_native_call_site(caller);
+        }
+        if self.omitted != 0 {
+            error = error.with_help(format!(
+                "{} further native call sites omitted after stack exhaustion",
+                self.omitted,
+            ));
+        }
+        error
+    }
+}
+
+impl Failure {
+    fn code(&self) -> crate::ErrorCode {
+        match self {
+            Self::Reported(error) => error.code(),
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            Self::StackLimit(_) => crate::ErrorCode::ResourceLimit,
+        }
+    }
+    fn span(&self) -> Option<Span> {
+        match self {
+            Self::Reported(error) => error.span(),
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            Self::StackLimit(error) => Some(error.span),
+        }
+    }
+    fn into_error(self) -> Error {
+        match self {
+            Self::Reported(error) => error,
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            Self::StackLimit(error) => error.materialize(),
+        }
+    }
+}
+
+struct Boundary(Option<Failure>);
 
 impl Drop for Boundary {
     fn drop(&mut self) {
@@ -25,7 +89,7 @@ pub(crate) fn checked<T>(call: impl FnOnce() -> T) -> Result<T, Error> {
     let error = ERROR.with(|error| error.borrow_mut().take());
     drop(boundary);
     match error {
-        Some(error) => Err(error),
+        Some(error) => Err(error.into_error()),
         None => Ok(value),
     }
 }
@@ -83,8 +147,10 @@ pub(crate) unsafe extern "C" fn assert_failed_v2(
 }
 
 /// Preserve the selected failure while a task drains its descendants.
+/// This explicit diagnostic read may allocate; synchronous emergency cleanup
+/// uses the primitive queries instead. CPS draining has a separate stack budget.
 pub(crate) fn current_error() -> Option<Error> {
-    ERROR.with(|error| error.borrow().clone())
+    ERROR.with(|error| error.borrow().clone().map(Failure::into_error))
 }
 
 /// Report a structured failure from a synchronous or suspending Rust host callback.
@@ -92,24 +158,30 @@ pub(crate) fn current_error() -> Option<Error> {
 /// promptly afterwards; generated callers will discard the ordinary result.
 /// Do not clear this channel inside a host callback.
 pub fn record_error(value: Error) {
+    record(Failure::Reported(value));
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub(crate) fn record_stack_limit(span: Span) {
+    record(Failure::StackLimit(StackLimit {
+        span,
+        caller: None,
+        omitted: 0,
+    }));
+}
+
+fn record(value: Failure) {
     ERROR.with(|error| {
         let mut error = error.borrow_mut();
-        // Isolated recovery may retain an earlier recoverable error while
-        // destroying sources. A later ABI violation must still escape it.
-        if super::isolate::active() {
-            super::isolate::retain_failure(&mut error, value);
-            return;
-        }
-        // Cancellation starts unwinding; a real cleanup failure must remain
-        // observable (in particular when draining a successful race's loser).
-        if error
-            .as_ref()
-            .is_some_and(|old| old.code() == ErrorCode::Cancelled)
-            && value.code() != ErrorCode::Cancelled
-        {
-            *error = Some(value);
+        let previous = error.as_ref().map(Failure::code);
+        let replace = if super::isolate::active() {
+            super::isolate::replaces_failure(previous, value.code())
         } else {
-            error.get_or_insert(value);
+            previous.is_none()
+                || previous == Some(ErrorCode::Cancelled) && value.code() != ErrorCode::Cancelled
+        };
+        if replace {
+            *error = Some(value);
         }
     });
 }
@@ -117,12 +189,18 @@ pub fn record_error(value: Error) {
 /// Attach a generated synchronous caller before unwinding its owned values.
 #[export_name = "__joky_runtime_call_failed"]
 pub extern "C" fn call_failed(source: u64, start: usize, end: usize) {
-    ERROR.with(|error| {
-        if let Some(error) = error.borrow_mut().as_mut() {
-            error.push_native_call_site(
-                Span::new(start, end.max(start)).with_source(crate::SourceId::from_raw(source)),
-            );
+    let span = Span::new(start, end.max(start)).with_source(crate::SourceId::from_raw(source));
+    ERROR.with(|error| match error.borrow_mut().as_mut() {
+        Some(Failure::Reported(error)) => error.push_native_call_site(span),
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        Some(Failure::StackLimit(error)) => {
+            if error.caller.is_none() {
+                error.caller = Some(span);
+            } else {
+                error.omitted = error.omitted.saturating_add(1);
+            }
         }
+        None => {}
     });
 }
 
@@ -159,7 +237,7 @@ pub extern "C" fn joky_runtime_error_start() -> usize {
         error
             .borrow()
             .as_ref()
-            .and_then(Error::span)
+            .and_then(Failure::span)
             .map_or(0, Span::start)
     })
 }
@@ -171,7 +249,7 @@ pub extern "C" fn joky_runtime_error_end() -> usize {
         error
             .borrow()
             .as_ref()
-            .and_then(Error::span)
+            .and_then(Failure::span)
             .map_or(0, Span::end)
     })
 }
@@ -179,27 +257,34 @@ pub extern "C" fn joky_runtime_error_end() -> usize {
 /// Print the native failure without clearing it. Never treats a failed value as zero.
 #[no_mangle]
 pub extern "C" fn joky_runtime_print_error() {
-    use std::io::Write;
-    ERROR.with(|error| {
-        if let Some(error) = error.borrow().as_ref() {
-            let mut stderr = std::io::stderr().lock();
+    fn print(error: &Error) {
+        use std::io::Write;
+        let mut stderr = std::io::stderr().lock();
+        let _ = writeln!(
+            stderr,
+            "error: {} (bytes {}..{})",
+            error,
+            error.span().map_or(0, Span::start),
+            error.span().map_or(0, Span::end)
+        );
+        for span in error.native_call_sites() {
             let _ = writeln!(
                 stderr,
-                "error: {} (bytes {}..{})",
-                error,
-                error.span().map_or(0, Span::start),
-                error.span().map_or(0, Span::end)
+                "  called at source {} (bytes {}..{})",
+                span.source_id().raw(),
+                span.start(),
+                span.end()
             );
-            for span in error.native_call_sites() {
-                let _ = writeln!(
-                    stderr,
-                    "  called at source {} (bytes {}..{})",
-                    span.source_id().raw(),
-                    span.start(),
-                    span.end()
-                );
-            }
         }
+        for help in error.help() {
+            let _ = writeln!(stderr, "  note: {help}");
+        }
+    }
+    ERROR.with(|error| match error.borrow().as_ref() {
+        Some(Failure::Reported(error)) => print(error),
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        Some(Failure::StackLimit(error)) => print(&error.materialize()),
+        None => {}
     });
 }
 
@@ -239,6 +324,88 @@ pub(crate) fn symbols() -> impl IntoIterator<Item = (&'static str, *const u8)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn stack_limit_defers_bounded_diagnostics_and_restores_nested_state() {
+        let outer = Span::new(1, 3);
+        record_stack_limit(outer);
+        let failure = checked(|| {
+            record_stack_limit(Span::new(10, 20));
+            assert_eq!(checked(|| 42), Ok(42));
+            assert!(std::panic::catch_unwind(|| checked(|| panic!("boundary test"))).is_err());
+            for site in 0..10_000 {
+                call_failed(7, site, site + 1);
+            }
+            assert_eq!(joky_runtime_error_code(), 1);
+            assert_eq!(
+                (joky_runtime_error_start(), joky_runtime_error_end()),
+                (10, 20)
+            );
+            // Neither nested boundaries nor primitive queries materialize it.
+            ERROR.with(|error| assert!(matches!(*error.borrow(), Some(Failure::StackLimit(_)))));
+        })
+        .unwrap_err();
+        assert_eq!(failure.code(), ErrorCode::ResourceLimit);
+        assert_eq!(failure.span(), Some(Span::new(10, 20)));
+        assert_eq!(
+            failure.native_call_sites(),
+            &[Span::new(0, 1).with_source(crate::SourceId::from_raw(7))]
+        );
+        assert!(failure.help()[0].contains("9999"));
+        ERROR.with(|error| match error.borrow().as_ref().unwrap() {
+            Failure::StackLimit(error) => assert_eq!(error.span, outer),
+            Failure::Reported(_) => panic!("outer failure was materialized"),
+        });
+        joky_runtime_error_clear();
+    }
+
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn stack_limit_preserves_first_error_and_isolate_fatal_priority() {
+        let reported = |code| Error::new_with_code(ErrorPhase::Runtime, code, "reported");
+        for isolated in [false, true] {
+            let _guard = isolated.then(super::super::isolate::Guard::enter);
+            for first in [
+                ErrorCode::RuntimeError,
+                ErrorCode::Cancelled,
+                ErrorCode::AbiError,
+            ] {
+                let failure = checked(|| {
+                    record_error(reported(first));
+                    record_stack_limit(Span::new(3, 9));
+                })
+                .unwrap_err();
+                assert_eq!(
+                    failure.code(),
+                    if first == ErrorCode::Cancelled {
+                        ErrorCode::ResourceLimit
+                    } else {
+                        first
+                    }
+                );
+            }
+            for next in [
+                ErrorCode::RuntimeError,
+                ErrorCode::Cancelled,
+                ErrorCode::AbiError,
+            ] {
+                let failure = checked(|| {
+                    record_stack_limit(Span::new(3, 9));
+                    record_error(reported(next));
+                })
+                .unwrap_err();
+                assert_eq!(
+                    failure.code(),
+                    if isolated && next != ErrorCode::RuntimeError {
+                        next
+                    } else {
+                        ErrorCode::ResourceLimit
+                    }
+                );
+            }
+        }
+    }
 
     #[test]
     fn shift_and_division_errors_keep_the_first_failure_and_restore_outer_state() {

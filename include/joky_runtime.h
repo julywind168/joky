@@ -19,6 +19,11 @@ extern "C" {
  * callbacks. It cannot recover a host stack overflow or protect arbitrary host
  * recursion. CPS/worker cleanup coverage is a separate contract.
  * Error offsets refer to the failing module's source, including after reload.
+ * Native stack exhaustion records fixed-size state. Generated propagation and
+ * code/start/end/clear do not allocate its diagnostic; only the nearest caller
+ * is retained, with a count of further omitted call sites.
+ * print_error materializes the diagnostic and may allocate. Call it after
+ * generated code has returned and enough host stack is available.
  * Queries do not clear the error. Host callbacks must return promptly after a
  * generated callback fails; do not clear an unhandled failure or unwind.
  */

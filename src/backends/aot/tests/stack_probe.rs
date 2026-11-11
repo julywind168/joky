@@ -166,6 +166,11 @@ fn exercise(entry: Entry, source: &str, owns_resource: bool, rejected_entry: Opt
                         let err = result.unwrap_err();
                         assert_eq!(err.code(), ErrorCode::ResourceLimit);
                         assert!(err.span().unwrap().slice(source).is_some());
+                        assert_eq!(err.native_call_sites().len(), 1);
+                        assert!(err
+                            .help()
+                            .iter()
+                            .any(|note| note.contains("call sites omitted")));
                         if let Some(span) = rejected_entry {
                             assert_eq!(
                                 err.span(),
@@ -377,6 +382,7 @@ fn native_stack_sync_production() {
     let output = Command::new(program).output().unwrap();
     assert!(output.status.success(), "{output:?}");
     assert!(String::from_utf8_lossy(&output.stderr).contains("Native stack limit exceeded"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("call sites omitted"));
 }
 
 #[test]
