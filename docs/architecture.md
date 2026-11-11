@@ -2748,6 +2748,7 @@ Cranelift 0.137.1 的内置 stack-limit 检查产生机器陷阱；本提案要�
 它们保持各自显式的宿主 ABI／任务契约，尚不能作为“整个调用链受保护”的入口使用。
 当前没有对任意宿主调用实施栈预算验证或自动拒绝；因此阶段 1 中“受保护执行不得静默进入未覆盖路径”的
 严格准入要求尚未完成，不能仅凭下面的同步回归勾选整个阶段。阶段 2 再扩展这些路径的执行与清理保护。
+运行时与 std 的具体依赖见[阶段 1 栈预算审查](#阶段-1-栈预算审查)。
 
 | 路径 | 普通 JIT | 独立 AOT | 阶段 1 验收责任 |
 | --- | --- | --- | --- |
@@ -2781,6 +2782,89 @@ CLI 回归 `native_stack_cli_reports_limit_in_ordinary_builds` 覆盖普通 JIT�
   通过 3 项，包括共享 runtime 的 JIT→AOT 互操作，以及拥有数组与并发拥有闭包的两项预算失败穷举。
 - 最终 `cargo fmt -- --check`、`cargo clippy --all-targets -- -D warnings`、`git diff --check` 通过。
   未运行 Release、全部 stress、其他平台或性能测量；上述穷举不代表 CPS 栈保护已经完成。
+
+#### 阶段 1 栈预算审查
+
+2026-11-11，基于 `427d526a` 审查。结论：**256 KiB 是当前保留额度，尚不是完整运行时调用链的已证明上界**。
+生成代码的最终帧描述与三个 4 KiB 辅助帧额度已有编译检查，但该检查不覆盖 Rust 编译的 runtime、
+系统库或宿主函数。不能用生成包装帧的限制推导这些被调用函数的大小，也不能靠增加一个固定常量完成验收。
+
+**执行与退出路径。** 下表区分源码结构已有的约束和仍缺少的字节级证据；“有限深度”不等于“已纳入栈预算”。
+
+| 路径与源码依据 | 已确认的结构 | 栈预算仍需补足的部分 |
+| --- | --- | --- |
+| [栈检查 `room`／`bounds`](../src/runtime/native_stack.rs) | TLS 缓存命中后比较区间；冷路径查询执行线程的 pthread 栈 | helper 自身、首次 TLS 访问及 pthread 调用都发生在判断返回之前；公开入口必须先有执行这些代码的空间 |
+| [FP enter／restore](../src/runtime/float_env.rs) | arm64 使用 FPCR/FPSR 寄存器读写，无数据相关递归 | Rust helper 的最终帧仍需与生成入口分别计入 |
+| [错误记录与传播](../src/runtime/error.rs)、[Error](../src/core/error.rs) | `record_error` 保留首错；调用方逐层返回并追加位置，没有递归构造整条回溯 | 初次构造消息会分配 String；`push_native_call_site` 的 Box／Vec 会分配或扩容。当前失败路径仍依赖系统分配器，并非无分配的紧急报错路径 |
+| [普通清理登记](../src/runtime/cleanup.rs) | `Cleanups::finish` 按登记逆序循环；移除登记后再释放，`ElementCleanup::run` 循环处理 owner lanes | 登记容器、描述符销毁及各子调用的实际帧；不能只统计 `finish` 的直接帧 |
+| [String／Buffer 树释放](../src/runtime/buffer.rs) | `Buffer::release` 用 `release_parent` 和游标迭代走树，数据树深度不增加 release 的 Rust 递归层数；Local Arena 释放循环查找并 dealloc | 资源回调、元数据释放、系统 dealloc；Parallel Arena 分支另属阶段 2。此结论只覆盖遍历算法，不覆盖任意节点附带的宿主资源 |
+| [FixedArray／place 清理](../src/runtime/place.rs)、[描述符生成](../src/core/ir/fixed_arrays.rs) | `dispose → owners::walk` 按 CopyNode 类型结构递归；数组长度增加循环次数，嵌套类型增加调用深度。`copy_fields::visit` 也递归 | [布局检查](../src/core/types/memory_layout.rs) 将聚合深度限制为 256，叶节点还可能多一层；尚未把该深度与 walker、叶端 Buffer 释放的最终帧合并成预算 |
+| [资源释放](../src/runtime/resource.rs) | `OwnedResource::drop` 先使事件失效，再调用保存的 release 指针；创建失败后也可能释放已取得的 token | `ResourceFactoryV1` 只校验版本和回调存在，没有栈预算或禁止重入的运行时门禁。任意 release 的空间无法由 Joky 的帧描述推出 |
+
+两个拒绝出口都依赖上述清理：已知直调在拥有实参交接前拒绝，进入调用方的 `failure_return → cleanup::finish`；
+间接入口已经拥有参数，`reject_arguments` 直接释放 owner lanes，place 参数进入 `__joky_place_dispose`。
+后者不会新建 cleanup 登记，但仍会经过描述符递归和可能的资源 release。两种出口不能只验其中一种。
+
+**现有产物的帧抽查。** 使用上一轮 Cargo 测试留下的 macOS arm64 静态 runtime，
+`target/debug/deps/libjoky-b009eda54ccb72d4.a`，SHA-256 为
+`80f8d9e660c217ce404271ef8f751c166494b8b22e009322474b0da0ebb8f971`。
+该轮使用 rustc 1.99.0；仓库 Test profile 为 opt-level 1，保留 Debug 断言。
+以 `llvm-nm` 定位 Joky 原生对象、`ar p` 提取，再用 `llvm-objdump --disassemble-symbols` 检查函数序言。
+这些是特定现有产物的直接帧观测，**不含被调用函数，也不能外推到未优化 Dev、Release 或其他工具链**。
+
+| 符号／实例 | 序言中的栈扣减 |
+| --- | --- |
+| `__joky_native_stack_room_v1` | `0x120`，288 字节 |
+| `__joky_cleanup_finish` | `0xf0`，240 字节 |
+| `__joky_buffer_release` | `0x150`，336 字节 |
+| `__joky_place_dispose` | `0xd0`，208 字节 |
+| `place::owners::walk` 的 `dispose` 实例 | 每层 `0x130`，304 字节 |
+
+例如仅 256 层 walker 的直接帧就是 77,824 字节，叶端释放、错误报告和系统调用还没有计入。
+这不是已经证明某个程序会溢出，也不能反过来用“仍小于 256 KiB”宣称整个退出链安全。
+验收需要覆盖实际允许的最大描述符深度、冷／热 helper 路径和目标构建模式，或消除这类按类型深度增长的机器栈。
+
+**std 宿主调用盘点。** 去除行注释后按多行 `extern fn` 声明及 `@suspends` 标记统计，
+当前 `src/stdlib/**/*.jk` 有 33 个同步声明、180 个挂起声明。计数按声明而非唯一绑定，
+不包含宿主动态注册的模块，也不包含编译器 intrinsic，因此不能把它当作全部原生调用的白名单。
+
+| 同步声明所属模块 | 数量 | 实际依赖与准入结论 |
+| --- | --- | --- |
+| [io](../src/stdlib/io.jk)、[log](../src/stdlib/log.jk) | 3 | [output::write](../src/stdlib/output.rs) 使用 stdio 锁、写入／flush；测试上下文还可捕获输出。调用链包含 Rust 标准库、系统 I/O 和错误格式化，尚无字节预算；`catch_unwind` 不捕获机器栈溢出 |
+| [internal/time](../src/stdlib/internal/time.jk) | 3 | `clock` 读取运行时身份，`unix_micros` 查询系统时间；`ticks → executor::now` 则可能调用宿主实现的 [Clock::now](../src/runtime/executor.rs)。不能因为统一经过 time 模块就全部视为固定系统叶调用 |
+| [domain](../src/stdlib/domain.jk) 的 `__domain_module` | 1 | 注册的 placeholder 返回 0，正常源码调用由编译器 intrinsic 处理。应审查 lowering 后真正发出的调用，不能按源码 extern 名称计入宿主回调 |
+| [vm](../src/stdlib/vm.jk) | 26 | 包括创建、加载／重载、同步调用、迁移和查询；[managed 适配器](../src/stdlib/vm/managed.rs) 可进入编译器或另一 VM。最后一个 VM owner 的释放也会 shutdown 并销毁状态，不能按“内置资源”统一视为固定空间 release |
+
+其余显式 extern 位于 admission、domain、fs、internal/resolve、internal/time、outbox、password、postgres、
+process、shutdown、task、tcp、testing、tls、vm，均按挂起声明归入阶段 2。
+但“创建／使用 API 会挂起”不意味着资源只能在挂起函数里释放；同步函数取得拥有参数后仍可能沿自动清理进入该资源的 release。
+
+还必须覆盖不经过 extern 声明的入口：
+
+- String、Array／List／Map、迭代器以及 FixedArray 通过 [内部 buffer intrinsic](../src/stdlib/internal/buffer.jk)、
+  text／place 操作进入分配、拷贝及清理 helper。普通同步 `Op::Call` 的 preflight 不等于每个 intrinsic 都有独立预算；
+  [native lowering](../src/backends/native/lower.rs) 中这些直接 helper 调用目前依靠共同的保留额度。
+- float 文本转换、crypto、random 和 password 格式检查会进入 Rust 库或系统随机源，不能只按标量参数／返回值判断安全。
+  [流式 SHA/HMAC](../src/runtime/buffer/crypto/streaming.rs) 与 [显式 Arena](../src/runtime/explicit_arena.rs) 也使用资源 release，
+  但回调实现由 runtime 固定，可逐个审查；这与任意宿主工厂注册的 release 不同。
+- 宿主注册的 Scalar／TextView／TextFfi／Borrowing／C／ResourceFactory 等同步 ABI 都需纳入入口分类；
+  [BindingSpec](../src/core/resolver.rs) 目前只有名称、签名、符号和挂起标记，不能提供栈需求证明。
+
+**收口顺序。** 先取得最小可核算路径，再扩展 std；本次没有新增语言语法、公开宿主 ABI 或保护模式。
+
+1. 优先将 `place::owners` 与相关 copy 遍历改成有界、可核算的迭代状态；所需工作区在准入前准备或使用明确的固定额度，
+   不能在栈失败后临时分配无界工作队列。覆盖嵌套数组／记录／枚举、空数组、未初始化和已移动 lanes，
+   并保留两种拒绝出口的恰好一次清理责任。
+2. 给栈不足的首错建立最小报错路径：审查能否先保存错误码与 Span，退出危险深度后再物化消息／调用位置；
+   同时核算冷 TLS、FP、Local Arena 释放及系统调用的构建相关预算。数据结构有界和已有浅层测试都不能代替这一步。
+3. 在编译／加载内部记录调用与退出的准入依赖，先覆盖已核算 helper 和不含未知资源的同步路径。
+   自定义 Clock、VM 嵌套执行、未知 extern 与资源回调保持未覆盖；间接调用／dyn 也必须验证目标资格，不能只看签名。
+   未知资源应在接收拥有值或创建／采纳 token **之前**解决准入，不能等到失败清理时拒绝 release 而造成泄漏。
+4. 在剩余栈接近阈值时分别触发普通返回、调用前拒绝、拥有入口拒绝与构造失败；核对最大描述符深度、
+   首错／位置、FP 恢复、资源释放和线程复用。继续用普通 JIT 与真实独立 AOT，按修改范围验证，不提前扩大到阶段 2。
+
+本次仅做源码审查、声明盘点和现有产物反汇编；检查文档链接与 `git diff --check`，没有运行 Cargo、重建 runtime 或新增行为验证。
+阶段 1 仍未验收，上述建议不能视作已实现的严格准入规则。
 
 #### 原生栈保护的三个生产验收阶段
 

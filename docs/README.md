@@ -37,7 +37,7 @@
 - [文件运行时设计与开发计划](file-runtime.md)
 - [for 与迭代器分阶段开发计划](for-iterators.md)
 - [语言核心审查修复计划](core-review-fixes.md)（K0–K4 修复项与 D1–D8 待决策设计项）
-- [原生栈保护的三个生产验收阶段](architecture.md#原生栈保护的三个生产验收阶段)
+- [原生栈保护的三个生产验收阶段](architecture.md#原生栈保护的三个生产验收阶段)（含[阶段 1 栈预算与 std 宿主调用审查](architecture.md#阶段-1-栈预算审查)）
 - [自定义 Drop 撤回依赖与迁移审查](custom-drop-withdrawal-review.md)（撤回范围、实现与源码迁移）
 
 ## 开发记录与专项验收
