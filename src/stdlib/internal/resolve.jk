@@ -52,22 +52,12 @@ pub fn lookup<T>(
     var error: UInt64 = 0
     let bytes = __dns_lookup(host, port, &mut error)
     if error != 0 {
-        let kind = if error == 1 {
-            ErrorKind.InvalidInput
-        } else {
-            if error == 2 {
-                ErrorKind.Busy
-            } else {
-                if error == 3 {
-                    ErrorKind.NoAddresses
-                } else {
-                    if error == 4 {
-                        ErrorKind.LimitExceeded
-                    } else {
-                        ErrorKind.SystemFailure
-                    }
-                }
-            }
+        let kind = match error {
+            1 => ErrorKind.InvalidInput,
+            2 => ErrorKind.Busy,
+            3 => ErrorKind.NoAddresses,
+            4 => ErrorKind.LimitExceeded,
+            _ => ErrorKind.SystemFailure
         }
         let message = match String.from_utf8(bytes) {
             Ok(text) => text,
