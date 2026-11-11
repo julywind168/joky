@@ -35,6 +35,7 @@ Usage: joky run [options] [<file.jk> | <project-dir> | joky.toml] [-- <program-a
 Options:
   --interpreter     Use the register bytecode interpreter instead of JIT
   --no-prelude      Disable implicit standard-library imports
+  --strict-native-stack  Require budgeted synchronous native paths (macOS arm64)
   --parallel        Enable checked Parallel execution (default: 1 worker)
   --task-workers N  Enable Parallel with 1..256 workers
   -q, --quiet       Hide startup progress
@@ -57,6 +58,7 @@ Usage: joky build [options] [<file.jk> | <project-dir> | joky.toml]
 Options:
   -o, --output <path>  Output executable or project bundle directory
   --no-prelude        Disable implicit standard-library imports
+  --strict-native-stack  Require budgeted synchronous native paths (macOS arm64)
   --parallel          Enable checked Parallel execution (default: 1 worker)
   --task-workers N    Enable Parallel with 1..256 workers; set a startup default
   -h, --help           Show this help

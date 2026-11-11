@@ -17,24 +17,33 @@ thread_local! {
 enum Failure {
     Reported(Error),
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    StackLimit(StackLimit),
+    Deferred(DeferredNative),
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
-struct StackLimit {
+struct DeferredNative {
+    target_rejected: bool,
     span: Span,
     caller: Option<Span>,
     omitted: usize,
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-impl StackLimit {
+impl DeferredNative {
     fn materialize(&self) -> Error {
         let mut error = Error::new_with_code(
             crate::ErrorPhase::Runtime,
-            crate::ErrorCode::ResourceLimit,
-            "Native stack limit exceeded",
+            if self.target_rejected {
+                ErrorCode::InvalidCall
+            } else {
+                ErrorCode::ResourceLimit
+            },
+            if self.target_rejected {
+                "Native indirect target is outside strict stack admission"
+            } else {
+                "Native stack limit exceeded"
+            },
         )
         .with_span(self.span);
         if let Some(caller) = self.caller {
@@ -42,7 +51,7 @@ impl StackLimit {
         }
         if self.omitted != 0 {
             error = error.with_help(format!(
-                "{} further native call sites omitted after stack exhaustion",
+                "{} further native call sites omitted during native failure propagation",
                 self.omitted,
             ));
         }
@@ -55,21 +64,27 @@ impl Failure {
         match self {
             Self::Reported(error) => error.code(),
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            Self::StackLimit(_) => crate::ErrorCode::ResourceLimit,
+            Self::Deferred(error) => {
+                if error.target_rejected {
+                    ErrorCode::InvalidCall
+                } else {
+                    ErrorCode::ResourceLimit
+                }
+            }
         }
     }
     fn span(&self) -> Option<Span> {
         match self {
             Self::Reported(error) => error.span(),
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            Self::StackLimit(error) => Some(error.span),
+            Self::Deferred(error) => Some(error.span),
         }
     }
     fn into_error(self) -> Error {
         match self {
             Self::Reported(error) => error,
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            Self::StackLimit(error) => error.materialize(),
+            Self::Deferred(error) => error.materialize(),
         }
     }
 }
@@ -163,7 +178,18 @@ pub fn record_error(value: Error) {
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub(crate) fn record_stack_limit(span: Span) {
-    record(Failure::StackLimit(StackLimit {
+    record(Failure::Deferred(DeferredNative {
+        target_rejected: false,
+        span,
+        caller: None,
+        omitted: 0,
+    }));
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub(crate) fn record_unadmitted_target(span: Span) {
+    record(Failure::Deferred(DeferredNative {
+        target_rejected: true,
         span,
         caller: None,
         omitted: 0,
@@ -193,7 +219,7 @@ pub extern "C" fn call_failed(source: u64, start: usize, end: usize) {
     ERROR.with(|error| match error.borrow_mut().as_mut() {
         Some(Failure::Reported(error)) => error.push_native_call_site(span),
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        Some(Failure::StackLimit(error)) => {
+        Some(Failure::Deferred(error)) => {
             if error.caller.is_none() {
                 error.caller = Some(span);
             } else {
@@ -283,7 +309,7 @@ pub extern "C" fn joky_runtime_print_error() {
     ERROR.with(|error| match error.borrow().as_ref() {
         Some(Failure::Reported(error)) => print(error),
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        Some(Failure::StackLimit(error)) => print(&error.materialize()),
+        Some(Failure::Deferred(error)) => print(&error.materialize()),
         None => {}
     });
 }
@@ -294,6 +320,11 @@ pub(crate) fn symbols() -> impl IntoIterator<Item = (&'static str, *const u8)> {
         (
             "__joky_native_stack_room_v1",
             super::native_stack::room as *const u8,
+        ),
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        (
+            "__joky_native_stack_target_v1",
+            super::native_stack::target as *const u8,
         ),
         ("__joky_runtime_call_failed", call_failed as *const u8),
         (
@@ -343,7 +374,7 @@ mod tests {
                 (10, 20)
             );
             // Neither nested boundaries nor primitive queries materialize it.
-            ERROR.with(|error| assert!(matches!(*error.borrow(), Some(Failure::StackLimit(_)))));
+            ERROR.with(|error| assert!(matches!(*error.borrow(), Some(Failure::Deferred(_)))));
         })
         .unwrap_err();
         assert_eq!(failure.code(), ErrorCode::ResourceLimit);
@@ -354,7 +385,7 @@ mod tests {
         );
         assert!(failure.help()[0].contains("9999"));
         ERROR.with(|error| match error.borrow().as_ref().unwrap() {
-            Failure::StackLimit(error) => assert_eq!(error.span, outer),
+            Failure::Deferred(error) => assert_eq!(error.span, outer),
             Failure::Reported(_) => panic!("outer failure was materialized"),
         });
         joky_runtime_error_clear();

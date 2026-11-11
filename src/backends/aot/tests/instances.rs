@@ -201,6 +201,7 @@ fn owning_roots(containers: bool) {
         &plan,
         "probe_",
         prepared.bindings(),
+        false,
     )
     .unwrap();
     let symbols: HashMap<_, _> = crate::runtime::buffer::symbols()
@@ -357,6 +358,7 @@ fn state_domains_aot_execute_checked_fifo_turns_and_isolate_failures() {
         &plan,
         "probe_",
         prepared.bindings(),
+        false,
     )
     .unwrap();
     let symbols = crate::runtime::buffer::symbols()

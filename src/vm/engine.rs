@@ -33,6 +33,7 @@ pub(super) enum LoadedModule {
 
 pub struct VmEngine {
     mode: VmMode,
+    strict_native_stack: bool,
     files: Option<crate::runtime::fs::FileService>,
     module_sources: crate::ModuleSources,
     script_contracts: HashMap<String, (String, String)>,
@@ -180,6 +181,7 @@ impl VmEngine {
         let domains = executor.domains();
         Self {
             mode,
+            strict_native_stack: false,
             files: None,
             module_sources: Default::default(),
             script_contracts: Default::default(),
@@ -216,6 +218,30 @@ impl VmEngine {
 
     pub fn mode(&self) -> VmMode {
         self.mode
+    }
+
+    /// Require closed, budgeted synchronous native paths for every loaded export.
+    /// Configure before the first successful load. Unsupported calls, ownership
+    /// and runtime helpers fail at load time; indirect targets are checked before
+    /// argument transfer. Available only for macOS AArch64 JIT execution.
+    pub fn set_strict_native_stack(&mut self, enabled: bool) -> Result<(), Error> {
+        if self.next_version != 1 {
+            return Err(runtime_error(
+                ErrorCode::InvalidState,
+                "Cannot change native stack policy after loading code",
+            ));
+        }
+        if enabled
+            && (self.mode != VmMode::Jit
+                || !cfg!(all(target_os = "macos", target_arch = "aarch64")))
+        {
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                "Strict native stack admission requires macOS AArch64 JIT",
+            ));
+        }
+        self.strict_native_stack = enabled;
+        Ok(())
     }
 
     /// Enable or disable the default prelude for subsequent source loads.
@@ -696,6 +722,7 @@ impl VmEngine {
         ast: &parser::ast::Module,
     ) -> Result<(LoadedModule, u64), Error> {
         let mut staging = Self::with_mode_and_registry(self.mode, self.registry.clone());
+        staging.strict_native_stack = self.strict_native_stack;
         staging.hosts = self.hosts.clone();
         staging.types = self.types.clone();
         staging.next_version = self.next_version;
@@ -1100,6 +1127,7 @@ impl VmEngine {
                     &layouts,
                     dependencies,
                     version,
+                    self.strict_native_stack,
                 )?;
                 compiled.files = self.files.clone();
                 let compiled = Rc::new(compiled);

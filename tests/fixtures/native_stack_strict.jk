@@ -1,0 +1,43 @@
+fn increment(value: Int32) -> Int32 { value + 1 }
+fn invoke(callback: fn(Int32) -> Int32, value: Int32) -> Int32 { callback(value) }
+fn indirect_run() -> Int32 { invoke(increment, 41) }
+
+struct Offset { value: Int32 }
+trait Adjust { fn apply(&self, value: Int32) @noescape -> Int32 }
+impl Adjust for Offset {
+    fn apply(&self, value: Int32) @noescape -> Int32 { self.value + value }
+}
+fn dyn_run() -> Int32 {
+    let offset = Offset { value: 2 }
+    let view: &dyn Adjust = &offset
+    view.apply(40)
+}
+
+fn consume(value: Int32, text: String) -> Int32 {
+    if value == 0 { return 42 }
+    let next: fn(Int32, String) -> Int32 = consume
+    next(value - 1, text)
+}
+fn owned_invoke(callback: fn(Int32, String) -> Int32, value: Int32) -> Int32 {
+    callback(value, "owned")
+}
+fn owned_run(value: Int32) -> Int32 { owned_invoke(consume, value) }
+
+fn owned_failure(value: Int32) -> Int32 {
+    let text = "owned"
+    42 / value
+}
+
+fn scalar_probe(address: UInt64) -> Int32 {
+    let callback: fn(Int32) -> Int32 = increment
+    callback(41)
+}
+fn owned_probe(address: UInt64) -> Int32 {
+    let callback: fn(Int32, String) -> Int32 = consume
+    callback(0, "owned")
+}
+fn dyn_probe(address: UInt64) -> Int32 {
+    let offset = Offset { value: 2 }
+    let view: &dyn Adjust = &offset
+    view.apply(40)
+}

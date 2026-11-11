@@ -126,6 +126,9 @@ joky doc --open
 解释器执行限额不覆盖编译阶段或原生回调，其他执行与嵌入限制见[已知边界](docs/architecture.md#已知边界)。
 文件服务支持读写、重命名、删除文件和列出目录。能力由宿主提供，CLI 启用本机实现，嵌入缺省为 Unsupported；Godot 验证适配器不提供文件服务。
 
+macOS arm64 的 `run` / `build` 可加 `--strict-native-stack`，只接受已纳入同步栈预算的调用与清理路径。
+默认关闭；首批范围较窄，I/O、任务和宿主资源等会明确拒绝，详见[严格同步准入](docs/architecture.md#严格同步准入的首批范围)。
+
 ## 验证
 
 开发者使用 `./scripts/check.sh` 运行格式、Clippy、Debug 测试和三后端短输入基准正确性检查。

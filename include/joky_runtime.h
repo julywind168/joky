@@ -18,10 +18,14 @@ extern "C" {
  * bodies; hosts must supply stack space for the ABI entry and bounded runtime
  * callbacks. It cannot recover a host stack overflow or protect arbitrary host
  * recursion. CPS/worker cleanup coverage is a separate contract.
+ * Optional strict admission is selected when compiling, not through this ABI.
+ * It rejects unbudgeted dependencies and checks actual indirect entry addresses
+ * before ownership transfer. Unknown targets report InvalidCall without calling
+ * them. Public C adapters are not a language function-value ABI.
  * Error offsets refer to the failing module's source, including after reload.
- * Native stack exhaustion records fixed-size state. Generated propagation and
- * code/start/end/clear do not allocate its diagnostic; only the nearest caller
- * is retained, with a count of further omitted call sites.
+ * Native stack exhaustion and unknown strict targets record fixed-size state.
+ * Generated propagation and code/start/end/clear do not allocate the diagnostic;
+ * only the nearest caller is retained, with a count of further omitted sites.
  * print_error materializes the diagnostic and may allocate. Call it after
  * generated code has returned and enough host stack is available.
  * Queries do not clear the error. Host callbacks must return promptly after a

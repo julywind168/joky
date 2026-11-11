@@ -173,6 +173,7 @@ pub(crate) fn compile(
     layouts: &HashMap<String, usize>,
     dependencies: Vec<Rc<dyn Any>>,
     version: ModuleId,
+    strict_native_stack: bool,
 ) -> Result<CompiledModule, Error> {
     let plan = prepared.plan(layouts)?;
     let mut builder = JITBuilder::with_flags(
@@ -267,7 +268,7 @@ pub(crate) fn compile(
     }
     let mut code = OwnedCode(Some(JITModule::new(builder)));
     let module = code.0.as_mut().unwrap();
-    let compiled = native::compile(module, &plan, "", prepared.bindings())?;
+    let compiled = native::compile(module, &plan, "", prepared.bindings(), strict_native_stack)?;
     module
         .finalize_definitions()
         .map_err(|error| compile_error(error.to_string()))?;
@@ -366,7 +367,7 @@ pub(crate) fn compile_with_registry(
     types: &crate::TypeRegistry,
 ) -> Result<CompiledModule, Error> {
     let prepared = PreparedModule::new(ast, types, bindings)?;
-    compile(&prepared, symbols, layouts, dependencies, version)
+    compile(&prepared, symbols, layouts, dependencies, version, false)
 }
 
 fn compile_error(message: impl Into<String>) -> Error {

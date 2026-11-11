@@ -145,6 +145,7 @@ impl Artifact {
                         &HashMap::from([("probe_dispatch".into(), 1)]),
                         vec![],
                         ModuleId(0),
+                        false,
                     )
                     .unwrap(),
                 );

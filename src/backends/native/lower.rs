@@ -18,7 +18,8 @@ use cranelift_frontend::{FunctionBuilder, Switch, Variable};
 use cranelift_module::{FuncId, Linkage, Module};
 use std::collections::HashMap;
 
-pub(super) struct DataRefs {
+pub(super) struct DataRefs<'a> {
+    pub admitted_targets: Option<&'a HashMap<String, Vec<String>>>,
     pub stack_frames: HashMap<String, GlobalValue>,
     pub stack_protected: bool,
     pub checkpoints: bool,
@@ -438,6 +439,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
     let ptr = module.target_config().pointer_type();
     let mut ids = HashMap::new();
     for (name, params, returns) in [
+        (
+            "__joky_native_stack_target_v1",
+            vec![types::I32, types::I64, ptr, ptr],
+            vec![types::I32],
+        ),
         (
             "__joky_native_stack_room_v1",
             vec![ptr, ptr, types::I64, ptr, ptr],
@@ -1324,7 +1330,7 @@ fn lower_cps_result(
 }
 
 struct ConcurrentContext<'a> {
-    data: &'a DataRefs,
+    data: &'a DataRefs<'a>,
     mode: ExecMode<'a>,
     result: Option<&'a Slot>,
     kind: ConcurrentKind,
@@ -3035,6 +3041,33 @@ fn lower_ops(
                     let ready = builder.create_block();
                     let failed = builder.create_block();
                     builder.ins().brif(room, ready, &[], failed, &[]);
+                    builder.switch_to_block(failed);
+                    failure_return(builder, refs, mode.frame(), mode.cleanup());
+                    builder.switch_to_block(ready);
+                }
+                if let (Some(admitted), Some(target)) = (data.admitted_targets, indirect) {
+                    let address = slots.read(builder, target);
+                    let mut accepted = builder.ins().iconst(types::I8, 0);
+                    for candidate in &admitted[name] {
+                        let expected = builder.ins().func_addr(ptr_ty, refs[candidate]);
+                        let equal = builder.ins().icmp(IntCC::Equal, address, expected);
+                        accepted = builder.ins().bor(accepted, equal);
+                    }
+                    let accepted = builder.ins().uextend(types::I32, accepted);
+                    let source = builder
+                        .ins()
+                        .iconst(types::I64, span.source_id().raw() as i64);
+                    let start = builder.ins().iconst(ptr_ty, span.start() as i64);
+                    let end = builder.ins().iconst(ptr_ty, span.end() as i64);
+                    let accepted = helper(
+                        builder,
+                        refs,
+                        "__joky_native_stack_target_v1",
+                        &[accepted, source, start, end],
+                    );
+                    let ready = builder.create_block();
+                    let failed = builder.create_block();
+                    builder.ins().brif(accepted, ready, &[], failed, &[]);
                     builder.switch_to_block(failed);
                     failure_return(builder, refs, mode.frame(), mode.cleanup());
                     builder.switch_to_block(ready);

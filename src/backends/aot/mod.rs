@@ -10,6 +10,7 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 use std::{collections::HashMap, path::Path, rc::Rc};
 
 pub struct AotCompiler {
+    strict_native_stack: bool,
     parallel: crate::core::ir::parallel::Effects,
     parallel_hosts: HashMap<String, (crate::FunctionSignature, usize)>,
     sources: std::sync::Arc<crate::SourceMap>,
@@ -167,6 +168,7 @@ impl AotCompiler {
         let builder = ObjectBuilder::new(isa, name, default_libcall_names())
             .map_err(|e| compile_error(e.to_string()))?;
         Ok(Self {
+            strict_native_stack: false,
             parallel: Default::default(),
             parallel_hosts: Default::default(),
             sources: Default::default(),
@@ -179,6 +181,28 @@ impl AotCompiler {
             types: registry.types().clone(),
             registry,
         })
+    }
+
+    /// Require closed, budgeted synchronous paths in this native object.
+    /// Must be selected before compilation; unknown calls and cleanup dependencies
+    /// are rejected before an object can be emitted. macOS AArch64 only.
+    pub fn set_strict_native_stack(&mut self, enabled: bool) -> Result<(), Error> {
+        if !matches!(self.state, CompilationState::New) {
+            return Err(Error::new_with_code(
+                ErrorPhase::Compile,
+                ErrorCode::InvalidState,
+                "Cannot change native stack policy after compilation has started",
+            ));
+        }
+        if enabled && !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            return Err(Error::new_with_code(
+                ErrorPhase::Compile,
+                ErrorCode::InvalidCall,
+                "Strict native stack admission requires macOS AArch64",
+            ));
+        }
+        self.strict_native_stack = enabled;
+        Ok(())
     }
 
     /// Configure implicit imports before compiling a source module.
@@ -415,6 +439,7 @@ impl AotCompiler {
             &plan,
             &self.symbol_prefix,
             prepared.bindings(),
+            self.strict_native_stack,
         )
         .map_err(|error| error.with_sources(ast.sources()))?;
         for (name, (signature, slots)) in &self.parallel_hosts {

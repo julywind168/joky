@@ -51,6 +51,7 @@ impl Effects {
             "joky_runtime_error_code",
             "__joky_task_checkpoint_v1",
             "__joky_native_stack_room_v1",
+            "__joky_native_stack_target_v1",
         ];
         Self {
             preserving: names.iter().map(|name| helpers[*name].as_u32()).collect(),

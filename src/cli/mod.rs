@@ -28,8 +28,8 @@ Usage:
   joky doc [--std] [--open] [-o <directory>]
   joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture] [--timeout-ms N] [<file.jk> | <project-dir> | joky.toml]
   joky check [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
-  joky run [-q | -v] [--interpreter] [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-- <program-args>...]
-  joky build [--no-prelude] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
+  joky run [-q | -v] [--interpreter] [--no-prelude] [--strict-native-stack] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-- <program-args>...]
+  joky build [--no-prelude] [--strict-native-stack] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
   joky explain-parallel [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
   joky fmt [--check] [<file.jk> | <directory> | joky.toml]
   joky fmt [--check] --stdin
@@ -54,6 +54,7 @@ Options:
   --stdin             Read fmt input from stdin; write formatted source to stdout
   --interpreter       Execute 'run' or 'test' with the register bytecode interpreter
   --no-prelude        Disable implicit standard-library imports
+  --strict-native-stack  Require budgeted synchronous native paths (macOS arm64)
   --parallel          Enable checked Parallel execution (default: 1 worker)
   --task-workers N    Enable Parallel with 1..256 workers; build sets a startup default
   -q, --quiet         Hide run startup progress (errors are still reported)
@@ -105,12 +106,14 @@ enum Command {
         arguments: Vec<OsString>,
         prelude: bool,
         mode: ExecutionMode,
+        strict_native_stack: bool,
     },
     Build {
         source: PathBuf,
         output: Option<PathBuf>,
         prelude: bool,
         mode: ExecutionMode,
+        strict_native_stack: bool,
     },
 }
 
@@ -182,6 +185,7 @@ impl Command {
         let mut interpreter = false;
         let mut progress = None;
         let mut prelude = true;
+        let mut strict_native_stack = false;
         let mut parallel = false;
         let mut workers = None;
         let mut positional_only = false;
@@ -255,6 +259,13 @@ impl Command {
                     cli_argument_error("--task-workers requires a worker count in 1..=256")
                 })?;
                 workers = Some(workers::parse(&value, "--task-workers")?);
+            } else if !positional_only && arg == "--strict-native-stack" {
+                if strict_native_stack {
+                    return Err(cli_argument_error(
+                        "--strict-native-stack was specified more than once",
+                    ));
+                }
+                strict_native_stack = true;
             } else if !positional_only && arg == "--no-prelude" {
                 if !prelude {
                     return Err(cli_argument_error(
@@ -296,6 +307,11 @@ impl Command {
             workers,
             environment.as_deref(),
         )?;
+        if strict_native_stack && (interpreter || !matches!(mode, ExecutionMode::Local)) {
+            return Err(cli_argument_error(
+                "--strict-native-stack requires local native execution",
+            ));
+        }
         if build {
             if output.as_ref().is_some_and(|p| p.as_os_str().is_empty()) {
                 return Err(cli_argument_error("Output path must not be empty"));
@@ -305,6 +321,7 @@ impl Command {
                 output,
                 prelude,
                 mode,
+                strict_native_stack,
             })
         } else {
             Ok(Self::Run {
@@ -314,6 +331,7 @@ impl Command {
                 arguments,
                 prelude,
                 mode,
+                strict_native_stack,
             })
         }
     }
@@ -394,6 +412,20 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
                 .with_process_context(context),
             )?;
         }
+        let strict_native_stack = match command {
+            Command::Run {
+                strict_native_stack,
+                ..
+            }
+            | Command::Build {
+                strict_native_stack,
+                ..
+            } => strict_native_stack,
+            _ => unreachable!(),
+        };
+        if matches!(command, Command::Run { .. }) {
+            vm.set_strict_native_stack(strict_native_stack)?;
+        }
         vm.set_prelude_enabled(prelude);
         let ast = match &project {
             Some(project) => project.resolve(vm.type_registry())?,
@@ -415,12 +447,20 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
                     ..
                 } => {
                     let output = if let Some(project) = &project {
-                        project.build(&ast, entry, output.as_deref(), mode)?
+                        project.build(&ast, entry, output.as_deref(), mode, strict_native_stack)?
                     } else {
                         let output = output.clone().unwrap_or_else(|| {
                             source_path.with_extension(std::env::consts::EXE_EXTENSION)
                         });
-                        build::build(&ast, entry, source_path, &output, mode, false)?;
+                        build::build(
+                            &ast,
+                            entry,
+                            source_path,
+                            &output,
+                            mode,
+                            false,
+                            strict_native_stack,
+                        )?;
                         output
                     };
                     progress::status(

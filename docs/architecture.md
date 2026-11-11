@@ -2750,8 +2750,9 @@ Cranelift 0.137.1 的内置 stack-limit 检查产生机器陷阱；本提案要�
 原生宿主调用仍须提供能执行小型入口和运行时的 C 栈空间；不能把入口检查解释为从已经耗尽的宿主栈中恢复。
 外部函数、宿主重入、资源 stop/release 的任意宿主代码，以及 CPS 执行／排空不在这个空间证明内；
 它们保持各自显式的宿主 ABI／任务契约，尚不能作为“整个调用链受保护”的入口使用。
-当前没有对任意宿主调用实施栈预算验证或自动拒绝；因此阶段 1 中“受保护执行不得静默进入未覆盖路径”的
-严格准入要求尚未完成，不能仅凭下面的同步回归勾选整个阶段。阶段 2 再扩展这些路径的执行与清理保护。
+默认模式保留上述边界；显式开启[严格同步准入](#严格同步准入的首批范围)后，未覆盖的调用及拥有值依赖在编译／加载时拒绝，
+间接目标在交接拥有参数前校验。首批范围刻意收窄；阶段 1 的组合边界验收仍待完成，不能仅凭同步回归勾选整个阶段。
+阶段 2 再扩展挂起、宿主重入等路径的执行与清理保护。
 运行时与 std 的具体依赖见[阶段 1 栈预算审查](#阶段-1-栈预算审查)。
 
 | 路径 | 普通 JIT | 独立 AOT | 阶段 1 验收责任 |
@@ -2855,7 +2856,7 @@ process、shutdown、task、tcp、testing、tls、vm，均按挂起声明归入�
 - 宿主注册的 Scalar／TextView／TextFfi／Borrowing／C／ResourceFactory 等同步 ABI 都需纳入入口分类；
   [BindingSpec](../src/core/resolver.rs) 目前只有名称、签名、符号和挂起标记，不能提供栈需求证明。
 
-**收口顺序。** 先取得最小可核算路径，再扩展 std；本次没有新增语言语法、公开宿主 ABI 或保护模式。
+**审查时确定的收口顺序。** 先取得最小可核算路径，再扩展 std；当时仅做审查，没有新增语言语法、公开宿主 ABI 或保护模式。
 
 1. 将 `place::owners` 与相关 copy 遍历改成有界、可核算的迭代状态（实现进展见下节）；所需工作区在准入前准备或使用明确的固定额度，
    不能在栈失败后临时分配无界工作队列。覆盖嵌套数组／记录／枚举、空数组、未初始化和已移动 lanes，
@@ -2868,8 +2869,8 @@ process、shutdown、task、tcp、testing、tls、vm，均按挂起声明归入�
 4. 在剩余栈接近阈值时分别触发普通返回、调用前拒绝、拥有入口拒绝与构造失败；核对最大描述符深度、
    首错／位置、FP 恢复、资源释放和线程复用。继续用普通 JIT 与真实独立 AOT，按修改范围验证，不提前扩大到阶段 2。
 
-本次仅做源码审查、声明盘点和现有产物反汇编；检查文档链接与 `git diff --check`，没有运行 Cargo、重建 runtime 或新增行为验证。
-阶段 1 仍未验收，上述建议不能视作已实现的严格准入规则。
+这轮初始审查仅包含源码、声明盘点和现有产物反汇编；当时检查文档链接与 `git diff --check`，没有运行 Cargo、重建 runtime 或新增行为验证。
+后续实现见下文的 place 迭代化、最小报错路径和[首批严格准入](#严格同步准入的首批范围)；阶段 1 仍待组合验收。
 
 #### place 遍历迭代化进展
 
@@ -2911,7 +2912,7 @@ copy 与 dispose 的 `walk` 实例直接帧分别为 6,256 和 6,448 字节，�
 
 #### 最小报错路径与退出预算
 
-栈不足现在经 [runtime/error.rs](../src/runtime/error.rs) 的内联 `StackLimit` 状态传播：
+栈不足现在经 [runtime/error.rs](../src/runtime/error.rs) 的内联 `DeferredNative` 状态传播：
 固定 `ResourceLimit` 类别、主 Span、最近一个调用 Span 和饱和递增的省略计数。
 `room` 不再构造消息，`call_failed` 不再为该错误增长 Vec；C 的 code/start/end/clear 只操作状态。
 首错、Cancelled 替换及 isolate 的致命错误优先级保持不变，嵌套受检调用与 panic 退出仍恢复外层错误状态。
@@ -2963,9 +2964,62 @@ CPS 排空中的诊断读取可能仍分配，属于阶段 2，不包含在本�
 （核心 1901 项、CLI 366 项及其余二进制／集成／文档测试）、while／Map 三后端短输入正确性。
 文档文件链接、本文新增锚点和 `git diff --check` 通过。未运行 Release、全量 stress、其他平台或性能测量。
 
+#### 严格同步准入的首批范围
+
+macOS arm64 可显式选择 `run` / `build --strict-native-stack`；Rust 嵌入对应
+`VmEngine::set_strict_native_stack(true)` 和 `AotCompiler::set_strict_native_stack(true)`。
+VM 必须在首次成功加载前设置，AOT 必须在编译开始前设置；策略随 staging／重载保留。
+默认关闭，既有程序继续采用原来的生成帧检查。解释器、其他平台及 CLI Parallel 组合明确拒绝该选项。
+
+[native/admission.rs](../src/backends/native/admission.rs) 检查所有将被生成的同步入口及其可达正文，
+按实际 IR 操作、调用依赖和存储类型闭合准入，新增操作默认拒绝。首批支持标量计算、同步直调／递归、
+模块内函数值、借用 dyn、String 字面量／克隆及其清理，以及受限的内联记录、元组和固定数组操作。
+允许类型不等于允许该类型的全部 API：例如固定数组的动态索引和视图操作尚未纳入。
+普通方法仍能由直调或借用 dyn 使用，但严格产物不生成持久实例 ABI 包装。
+
+以下路径在编译／加载时返回带位置的 `InvalidCall`：外部宿主或已编译导入入口、Clock、嵌套 VM、
+资源工厂及资源参数／返回值／字段、动态容器、闭包、间接存储、CPS、持久 Script 和 worker 入口，
+以及尚无预算证据的格式化、I/O、随机和加密等 runtime 操作。
+资源在接收或创建之前拒绝，不能等到退出时拒绝 release；既有固定 release 的小栈测试也不代表相应资源的完整创建／执行链已获准。
+未被生成或引用的私有函数不属于该产物的执行依赖。拒绝新模块不会破坏旧模块或已发布的 CLI 可执行文件。
+
+同步间接调用同时检查实际目标地址：只允许当前不可变模块中、签名匹配且正文通过准入的语言入口，
+比较完成后才交接拥有实参。相同名称、相同签名、旧版本入口或宿主提供的地址均不能替代资格检查；
+公开 C 适配入口与语言函数值入口可能具有不同 ABI，也不能互换。
+未知地址不会被调用，返回 `InvalidCall`，并沿固定大小的 `DeferredNative` 状态传播；
+与栈超限一样，主位置、最近调用位置和省略计数不在传播中分配，离开生成代码后才物化诊断。
+这没有新增将 Joky 函数值传给 C 的公开 ABI，也没有引入用户自报可信栈预算的注解。
+
+首批预算证据在既有真实 64 KiB 栈测试上增加 String 构造／克隆、分配失败、普通算术错误、
+间接目标拒绝，以及实际 Local call-region 包装和退出链；未优化 Debug 同样通过。
+普通错误仍使用原有可分配诊断，零分配承诺只覆盖栈超限和未知目标拒绝的延迟通道。
+256 KiB 预留、系统分配器及宿主入口条件仍遵循上文限制；准入检查不是任意 allocator 状态或工具链的形式空间证明。
+宿主仍须提供正常线程入口所需空间，且遵守公开 ABI；严格模式不承诺恢复错误 C 指针或任意 unsafe 内部 ABI 调用。
+
+[stack_admission.rs](../src/backends/aot/tests/stack_admission.rs) 覆盖普通 VM 成功行为、静态拒绝和失败后旧模块可用性。
+由于语言函数值没有公开宿主 ABI，非法地址回归在已检查 IR 中替换函数值槽，再执行同一生产 lowering 和普通 runtime；
+普通 JIT 与独立链接 AOT 均验证函数／dyn 的非法目标不执行和后续浅调用可用；
+JIT 另外核对拥有参数零存活分配，独立 AOT 在目标拒绝后逐寄存器核对 FP 状态。
+CLI 回归覆盖单文件／项目的严格 run 和 build、选项冲突及构建失败保留旧产物。
+
+本轮定向验证为 macOS arm64、Debug：
+
+- `cargo test --lib -- strict_native_stack native_stack_ stack_limit_`：8 项通过。
+- `cargo test --test cli strict_native_stack`：1 项通过，含普通 CLI 单文件／项目 JIT 与独立 AOT。
+- `cargo test --test native_stack_error`：普通 runtime 的栈超限和未知目标拒绝传播零 Rust 分配。
+- `CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test --lib native_stack_emergency_budget`：扩展后的真实 64 KiB 栈探针通过。
+- `cargo test --lib -- --ignored exhaustive_task_fixed_array_local_budget_failures exhaustive_task_fixed_array_owned_budgets exhaustive_isolate_cancellation`：3 项通过。
+
+`./scripts/check.sh` 完整通过：fmt、Clippy、默认 Debug 测试（核心 1903 项、CLI 367 项及其余二进制／集成／文档测试），
+以及 while／Map 三后端短输入正确性。最后将 place 准入改为显式允许列表后，重新通过上述 8 项定向回归、fmt 和所有 target 的 Clippy。
+文档文件链接、相关锚点及 `git diff --check` 通过；未运行 Release、全量 stress、其他平台执行或性能测量。
+
+阶段 1 还需将接近栈阈值、最大描述符深度、构造失败和两种拥有拒绝出口组合到普通 JIT／独立 AOT 验收中，
+核对首批允许集合的完整预算证据后才能勾选阶段完成。扩展 std 准入范围时，必须同步补执行与退出两条路径的预算证据。
+
 #### 原生栈保护的三个生产验收阶段
 
-状态：2026-11-11，阶段 1 的同步生产机制与对应回归已完成；严格准入和运行时／清理空间上界仍待收口，
+状态：2026-11-11，阶段 1 的同步生产机制、最小报错路径及首批严格准入已完成；组合边界验收与预算证据仍待收口，
 整个阶段尚未验收。实际覆盖、验证结果与缺口见上文；阶段 2、3 待实施。
 只有覆盖矩阵中有实际证据的路径计入交付，不能把宿主 ABI 契约当成运行时已经证明的栈上界。
 每阶段交付必须写明平台、后端、调用路径和清理路径的覆盖矩阵；阶段 1 完成也不表示整个 K1-3 已修复。

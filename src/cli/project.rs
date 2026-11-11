@@ -292,6 +292,7 @@ impl Project {
         entry: EntryPoint,
         output: Option<&Path>,
         mode: ExecutionMode,
+        strict_native_stack: bool,
     ) -> Result<PathBuf, Error> {
         let output = output.map_or_else(|| self.root.join("dist"), PathBuf::from);
         let name = output
@@ -379,6 +380,7 @@ impl Project {
             &bundle.join(&self.name),
             mode,
             true,
+            strict_native_stack,
         )?;
         fs::write(bundle.join(MARKER), &marker).map_err(|e| io(&bundle, e))?;
         check_output(&output, &marker)?;

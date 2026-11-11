@@ -39,6 +39,7 @@ unsafe impl GlobalAlloc for Tracked {
 static ALLOCATOR: Tracked = Tracked;
 
 unsafe extern "C" {
+    fn __joky_native_stack_target_v1(accepted: i32, source: u64, start: usize, end: usize) -> i32;
     fn __joky_native_stack_room_v1(
         sp: usize,
         bytes: usize,
@@ -51,13 +52,17 @@ unsafe extern "C" {
 #[test]
 fn native_stack_failure_propagation_does_not_allocate() {
     std::thread::spawn(|| {
-        for _ in 0..2 {
+        for iteration in 0..4 {
             // The first iteration covers cold stack/error TLS in this thread.
             ALLOCATIONS.set(0);
             TRACK.set(true);
             let sp: usize;
             unsafe { std::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack)) };
-            let room = unsafe { __joky_native_stack_room_v1(sp, usize::MAX, 7, 11, 19) };
+            let room = if iteration < 2 {
+                unsafe { __joky_native_stack_room_v1(sp, usize::MAX, 7, 11, 19) }
+            } else {
+                unsafe { __joky_native_stack_target_v1(0, 7, 11, 19) }
+            };
             for n in 0..10_000 {
                 call_failed(7, n, n + 1);
             }

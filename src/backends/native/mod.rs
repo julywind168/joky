@@ -1,4 +1,5 @@
 //! Shared Cranelift code generation for the JIT and AOT backends.
+mod admission;
 mod domain;
 mod float_env;
 mod lower;
@@ -51,6 +52,7 @@ pub(crate) fn compile<M: Module>(
     plan: &ModulePlan,
     symbol_prefix: &str,
     bindings: &BindingRegistry,
+    strict_native_stack: bool,
 ) -> Result<CompiledDefinitions, Error> {
     let _float_env = crate::runtime::float_env::Guard::enter();
     // Imported text methods are available through the prelude, but unused
@@ -59,7 +61,10 @@ pub(crate) fn compile<M: Module>(
         .functions
         .iter()
         .filter(|(_, info)| {
-            !info.internal || info.instance_entry || info.script_entry || info.parallel_entry
+            !info.internal
+                || (!strict_native_stack && info.instance_entry)
+                || info.script_entry
+                || info.parallel_entry
         })
         .map(|(name, _)| name.clone())
         .collect();
@@ -88,6 +93,16 @@ pub(crate) fn compile<M: Module>(
             }
         }
     }
+    let admission = if strict_native_stack {
+        if !stack::enabled(module) {
+            return Err(compile_error(
+                "Strict native stack admission requires macOS AArch64",
+            ));
+        }
+        Some(admission::check(plan, &reachable)?)
+    } else {
+        None
+    };
     // Checkpoints are needed on CPS roots and their entire synchronous call
     // graph. Native stack admission separately makes synchronous calls fallible.
     let mut cancellable: HashSet<String> = plan
@@ -309,7 +324,7 @@ pub(crate) fn compile<M: Module>(
     }
     let mut instance_ids = HashMap::new();
     for name in &names {
-        if plan.functions[*name].instance_entry {
+        if plan.functions[*name].instance_entry && !strict_native_stack {
             let id = module
                 .declare_function(
                     &crate::core::instance::symbol(symbol_prefix, name),
@@ -593,6 +608,7 @@ pub(crate) fn compile<M: Module>(
                 );
             }
             let data = lower::DataRefs {
+                admitted_targets: admission.as_ref(),
                 stack_frames: stack_frames
                     .iter()
                     .map(|(name, &id)| {
@@ -727,7 +743,7 @@ pub(crate) fn compile<M: Module>(
     for name in &names {
         let name = *name;
         let info = &functions[name];
-        if !info.instance_entry {
+        if !info.instance_entry || strict_native_stack {
             continue;
         }
         let entry = ids[name];

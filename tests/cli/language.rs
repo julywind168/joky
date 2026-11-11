@@ -2727,3 +2727,46 @@ fn native_stack_cli_reports_limit_in_ordinary_builds() {
         }
     }
 }
+
+#[test]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn strict_native_stack_cli_routes_policy_and_preserves_failed_output() {
+    let work = Workspace::new();
+    work.write("strict.jk", "fn main() -> Int32 { 40 + 2 }");
+    work.assert_native("strict.jk", &["--strict-native-stack"], b"", 42);
+    for options in [
+        vec!["run", "--strict-native-stack", "--interpreter", "strict.jk"],
+        vec!["build", "--strict-native-stack", "--parallel", "strict.jk"],
+        vec![
+            "run",
+            "--strict-native-stack",
+            "--strict-native-stack",
+            "strict.jk",
+        ],
+    ] {
+        failure(&work.cli(&options), "--strict-native-stack");
+    }
+    work.write(
+        "strict.jk",
+        "import joky/io fn main() { io.println(\"must not run\") }",
+    );
+    for command in ["run", "build"] {
+        let output = work.cli(&[command, "--strict-native-stack", "strict.jk"]);
+        failure(&output, "Strict native stack admission");
+        assert!(output.stdout.is_empty());
+    }
+    // Failed strict compilation must leave the previous native executable usable.
+    assert_eq!(
+        Command::new(work.path().join("strict"))
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(42)
+    );
+    success(&work.cli(&["init", "strict-project"]));
+    work.write("strict-project/src/main.jk", "fn main() -> Int32 { 42 }");
+    let run = work.cli(&["run", "--strict-native-stack", "strict-project"]);
+    assert_eq!(run.status.code(), Some(42), "{run:?}");
+    success(&work.cli(&["build", "--strict-native-stack", "strict-project"]));
+}

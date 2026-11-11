@@ -48,6 +48,15 @@ printf 'one\ntwo' | JOKY_LINE_PREFIX='item: ' cargo run -- run examples/stdin_li
 开始编译时显示输入路径，启动系统链接器前显示产物名，成功发布后显示产物路径与总构建耗时。
 失败时停止在对应阶段，不输出 `Finished`。状态词在支持颜色的终端中加粗显示为绿色，支持 `NO_COLOR`。
 
+## 严格同步栈准入
+
+macOS arm64 可在 `joky run` 或 `joky build` 中添加 `--strict-native-stack`，单文件和项目均支持。
+它在加载／编译时拒绝预算尚未覆盖的调用及清理依赖，执行时在拥有参数交接前检查间接目标地址。
+默认关闭；当前只支持有限的同步计算和 String 等路径，I/O、宿主资源、任务及许多 std 操作会明确报错。
+不能与 `--interpreter`、`--parallel` 或 `--task-workers` 组合；其他平台拒绝开启。
+`check` 不接受此选项，静态语义检查通过不代表严格原生准入通过。
+范围、嵌入 API 与验收边界见[严格同步准入](architecture.md#严格同步准入的首批范围)。
+
 ## 源码静态检查
 
 ```sh

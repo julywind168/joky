@@ -1,6 +1,8 @@
 use super::*;
 use crate::core::types::{memory_layout::MAX_DEPTH, ConstArgument, FixedArrayType};
-use crate::runtime::{arena, buffer::Buffer, cleanup, error, explicit_arena, float_env};
+use crate::runtime::{
+    arena, buffer::Buffer, cleanup, error, explicit_arena, float_env, owned_text,
+};
 use crate::{ErrorCode, Type};
 use std::sync::Arc;
 
@@ -50,6 +52,24 @@ unsafe fn exercise(nodes: &[crate::runtime::place::CopyNode]) {
     error::joky_runtime_error_clear();
 
     let mut arena = arena::Arena::default();
+    // Include the native call-region wrappers used by admitted direct calls.
+    let symbols = arena::symbols();
+    let address = |name| {
+        symbols
+            .iter()
+            .find(|(symbol, _)| *symbol == name)
+            .unwrap()
+            .1
+    };
+    let region: unsafe extern "C" fn(*const arena::Arena) -> *mut arena::Arena =
+        std::mem::transmute(address("__joky_arena_call_region"));
+    let release: unsafe extern "C" fn(*mut arena::Arena) =
+        std::mem::transmute(address("__joky_arena_drop"));
+    let region = region(&arena);
+    assert!(!region.is_null());
+    let temporary = Buffer::copy_bytes(&mut *region, b"region").unwrap();
+    Buffer::release(&mut *region, temporary.as_ptr()).unwrap();
+    release(region);
     let frame = cleanup::new(&mut arena);
     let register = |slot, owner| {
         (*frame).entries.insert(
@@ -66,7 +86,15 @@ unsafe fn exercise(nodes: &[crate::runtime::place::CopyNode]) {
     for slot in 0..64 {
         register(
             slot,
-            Buffer::copy_bytes(&mut arena, b"text").unwrap().as_ptr(),
+            owned_text::from_view(
+                &mut arena,
+                (&crate::runtime::string::JokyText::new("text")
+                    as *const crate::runtime::string::JokyText)
+                    .cast(),
+                7,
+                1,
+                2,
+            ),
         );
     }
     register(64, nested_buffers(&mut arena));
@@ -88,6 +116,7 @@ unsafe fn exercise(nodes: &[crate::runtime::place::CopyNode]) {
             .as_ptr(),
     );
     register(68, key.as_ptr());
+    register(70, owned_text::clone(&mut arena, key.as_ptr(), 7, 1, 2));
 
     // A maximum-depth partially initialized place: one live and one zero lane.
     let pointer = (*frame)
@@ -111,6 +140,21 @@ unsafe fn exercise(nodes: &[crate::runtime::place::CopyNode]) {
     let state = float_env::testing::state();
     let saved = float_env::enter();
     let limit = arena::LIMIT.with(|limit| limit.replace(0));
+    // The admitted String helper's allocation failure and ordinary propagation
+    // also execute on this exact stack, before the deferred emergency failure.
+    assert!(owned_text::clone(&mut arena, key.as_ptr(), 7, 2, 3).is_null());
+    for site in 0..10_000 {
+        error::call_failed(7, site, site + 1);
+    }
+    assert_eq!(error::joky_runtime_error_code(), 1);
+    error::joky_runtime_error_clear();
+    error::division_by_zero_in(7, 4, 5);
+    error::invalid_shift_in(7, 6, 7);
+    assert_eq!(error::joky_runtime_error_start(), 4);
+    error::joky_runtime_error_clear();
+    assert_eq!(target(0, 7, 4, 5), 0);
+    assert_eq!(error::joky_runtime_error_start(), 4);
+    error::joky_runtime_error_clear();
     assert_eq!(room(sp, 0, 7, 21, 29), 0);
     for site in 0..10_000 {
         error::call_failed(7, site, site + 1);

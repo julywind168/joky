@@ -228,7 +228,8 @@ impl foo.Foreign { fn v(self)->Int32 { self.n } } fn main(){}", TypeMismatch, "C
             interp::call_sync(&interpreted, "value", &[], Default::default()).unwrap(),
             interp::Value::Int32(42)
         ));
-        let native = jit::compile(&prepared, &[], &HashMap::new(), vec![], ModuleId(2)).unwrap();
+        let native =
+            jit::compile(&prepared, &[], &HashMap::new(), vec![], ModuleId(2), false).unwrap();
         let value: unsafe extern "C" fn() -> i32 =
             unsafe { std::mem::transmute(native.exports["value"].entry) };
         assert_eq!(unsafe { value() }, 42);

@@ -15,6 +15,7 @@ pub(super) fn build(
     output: &Path,
     mode: joky::runtime::parallel::ExecutionMode,
     project: bool,
+    strict_native_stack: bool,
 ) -> Result<(), Error> {
     let source = source
         .canonicalize()
@@ -65,6 +66,7 @@ pub(super) fn build(
     let executable = work.0.join("program");
     // Keep source symbols separate from the C entry point and library functions.
     let mut compiler = AotCompiler::with_symbol_prefix("joky_program", "__joky_user_")?;
+    compiler.set_strict_native_stack(strict_native_stack)?;
     compiler.compile_module(ast)?;
     let parallel_main = match mode {
         joky::runtime::parallel::ExecutionMode::Local => None,

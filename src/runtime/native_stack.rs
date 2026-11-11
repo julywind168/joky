@@ -56,6 +56,18 @@ pub extern "C" fn room(sp: usize, bytes: usize, source: u64, start: usize, end: 
     i32::from(fits)
 }
 
+/// The generated caller compares against immutable, qualified entry addresses.
+/// This check precedes ownership transfer and never calls the unknown address.
+#[export_name = "__joky_native_stack_target_v1"]
+pub extern "C" fn target(accepted: i32, source: u64, start: usize, end: usize) -> i32 {
+    if accepted == 0 {
+        super::error::record_unadmitted_target(
+            Span::new(start, end.max(start)).with_source(SourceId::from_raw(source)),
+        );
+    }
+    i32::from(accepted != 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

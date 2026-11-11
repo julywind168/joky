@@ -5,6 +5,11 @@
 
 ## Unreleased
 
+- macOS arm64 新增可选的严格同步原生栈准入：`run` / `build --strict-native-stack`，
+  Rust 嵌入使用 `VmEngine` / `AotCompiler` 的 `set_strict_native_stack(true)`。默认关闭。
+  未覆盖的调用和拥有值依赖在加载／编译时拒绝，间接目标在交接参数前校验；
+  首批不接收宿主资源、I/O、任务等路径，详见[范围与限制](docs/architecture.md#严格同步准入的首批范围)。
+
 - macOS arm64 同步原生栈超限改为延迟生成诊断，检查与失败传播不再为该错误分配消息或扩展调用链。
   保留错误位置和最近一个调用位置，其余调用位置显示省略数量；公开错误查询 ABI 不变。
 - 移除内置 `joky/drop.Drop` 及自动调用用户析构方法的能力；旧导入会明确报迁移错误。
