@@ -44,7 +44,7 @@ pub fn secure_bytes(length: UInt64) -> Result<Array<UInt8>, RandomError> {
         bytes.push(0)
         i += 1
     }
-    if buffer.random_fill(bytes.slice_mut(0, length)) {
+    if buffer.random_fill(&mut bytes[..length]) {
         Ok(bytes)
     } else {
         Err(RandomError.Unavailable)

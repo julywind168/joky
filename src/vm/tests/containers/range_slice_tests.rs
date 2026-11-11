@@ -8,36 +8,46 @@ const SOURCE: &str = include_str!("../../../../tests/fixtures/range_slices.jk");
 fn range_slices_resume_once_and_release_borrows_on_cancel() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm_with_prelude(SOURCE, mode, false);
-        for cancel in [false, true] {
-            EVENTS.with(|events| events.borrow_mut().clear());
-            READY.with(|ready| ready.set(false));
-            let mut task = vm.call_async("pending", &[]).unwrap();
-            for _ in 0..3 {
-                task.resume().unwrap();
-            }
-            EVENTS.with(|events| assert_eq!(*events.borrow(), [-99, -1, -1]));
-            if !cancel {
-                READY.with(|ready| ready.set(true));
-                for _ in 0..30 {
-                    if task.is_finished() {
-                        break;
-                    }
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
+        let error = vm.call_int32_0("bad_open_end").unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("FixedArray index or slice is out of bounds"),
+            "{error}"
+        );
+        for (entry, pending, completed) in [
+            (
+                "pending",
+                &[-99, -1, -1][..],
+                &[-99, -1, -1, 0, 0, 4, 4][..],
+            ),
+            ("pending_open", &[0, 1, 1][..], &[0, 1, 1][..]),
+        ] {
+            for cancel in [false, true] {
+                EVENTS.with(|events| events.borrow_mut().clear());
+                READY.with(|ready| ready.set(false));
+                let mut task = vm.call_async(entry, &[]).unwrap();
+                for _ in 0..3 {
                     task.resume().unwrap();
                 }
-                assert_eq!(task.cps_result(), Some(42));
-            }
-            drop(task);
-            EVENTS.with(|events| {
-                assert_eq!(
-                    *events.borrow(),
-                    if cancel {
-                        vec![-99, -1, -1]
-                    } else {
-                        vec![-99, -1, -1, 0, 0, 4, 4]
+                EVENTS.with(|events| assert_eq!(*events.borrow(), pending));
+                if !cancel {
+                    READY.with(|ready| ready.set(true));
+                    for _ in 0..30 {
+                        if task.is_finished() {
+                            break;
+                        }
+                        task.resume().unwrap();
                     }
-                )
-            });
-            LIVE.with(|live| assert_eq!(live.get(), 0));
+                    assert_eq!(task.cps_result(), Some(42));
+                }
+                drop(task);
+                EVENTS.with(|events| {
+                    assert_eq!(*events.borrow(), if cancel { pending } else { completed })
+                });
+                LIVE.with(|live| assert_eq!(live.get(), 0));
+            }
         }
     }
 }
@@ -50,6 +60,12 @@ fn range_slices_reject_invalid_types_conflicting_loans_and_escapes() {
         "fn bad() { let a = [1, 2]; let s = &a[0.0..1.0]; }",
         "fn bad() { let a = [1, 2]; let r = 0..2; let s = &a[r]; }",
         "fn bad() { let a = [1, 2]; let s = a[0..2]; }",
+        "fn bad() { let a = [1, 2]; let s = a[..]; }",
+        "fn bad() { let a = [1, 2]; let s = &a[..=]; }",
+        "fn bad() { let a = [1, 2]; let s = &a[1..=]; }",
+        "fn bad() { let a = [1, 2]; let s = &a[..1; 0]; }",
+        "fn bad() { let a = [1, 2]; let n: Int32 = 1; let s = &a[n..]; }",
+        "fn bad() { let r = 1.. }",
         "fn bad() { let a = [1, 2]; let s = &mut a[0..2]; }",
         "fn bad() { var a = [1, 2]; let r = &a; let s = &mut r[0..2]; }",
         "fn bad() { var a = [1, 2]; let s = &a[0..2]; a.push(3); s[0]; }",
@@ -67,23 +83,22 @@ fn range_slices_reject_invalid_types_conflicting_loans_and_escapes() {
 #[ignore = "exhaustive: cancel range slicing at every instruction"]
 fn exhaustive_range_slices_instruction_cancellation() {
     let mut vm = parity_vm_with_prelude(SOURCE, VmMode::Interpreter, false);
-    assert_cancellation(
-        &mut vm,
-        "pending",
-        20_000,
-        CancellationSweep::EveryInstruction,
-        || {
-            READY.with(|ready| ready.set(true));
-            EVENTS.with(|events| events.borrow_mut().clear());
-        },
-        || EVENTS.with(|events| events.borrow().clone()),
-        || {
-            LIVE.with(|live| assert_eq!(live.get(), 0));
-            crate::runtime::arena::LIVE.with(|live| {
-                assert_eq!(live.get(), 0);
-            });
-        },
-    );
+    for entry in ["pending", "pending_open"] {
+        assert_cancellation(
+            &mut vm,
+            entry,
+            20_000,
+            CancellationSweep::EveryInstruction,
+            || {
+                READY.with(|ready| ready.set(true));
+                EVENTS.with(|events| events.borrow_mut().clear());
+            },
+            || EVENTS.with(|events| events.borrow().clone()),
+            || {
+                LIVE.with(|live| assert_eq!(live.get(), 0));
+            },
+        );
+    }
 }
 
 #[test]

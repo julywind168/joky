@@ -126,7 +126,7 @@ impl Stdin {
         limit: UInt64
     ) -> Result<Bool, ReadError> {
         let end = self.buffer.len()
-        let source = self.buffer.slice(0, end)
+        let source = &self.buffer[..end]
         let at = if line {
             buffer.find_byte(source, 10, self.offset, end)
         } else {

@@ -208,6 +208,14 @@ fn format_keeps_negative_patterns_and_attribute_literals_together() {
 }
 
 #[test]
+fn format_open_slice_bounds() {
+    assert_format(
+        "fn f() { let a = [1, 2, 3]; let full = &a[ .. ]; let prefix = &a[ .. 1 ]; let tail = &a[ 1 .. ] }",
+        "fn f() {\n    let a = [1, 2, 3]\n    let full = &a[..]\n    let prefix = &a[..1]\n    let tail = &a[1..]\n}\n",
+    );
+}
+
+#[test]
 fn format_match_alternatives_and_bitwise_or() {
     assert_format(
         "fn f(n:Int32)->Int32{match n{-1|2=>16|32,_=>0}}",

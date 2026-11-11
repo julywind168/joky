@@ -1568,7 +1568,7 @@ fn chunked_body(io: &mut Wire, limit: UInt64) @suspends -> Result<Array<UInt8>, 
             return result.Ok(body)
         }
         let chunk = exact_body(io, n)?
-        array.extend_bytes(&mut body, chunk.slice(0, n), 0, n)
+        array.extend_bytes(&mut body, &chunk[..n], 0, n)
         if !response_line(io, &mut metadata)?.is_empty() {
             return Err(InvalidResponse)
         }
@@ -1600,7 +1600,7 @@ fn eof_body(io: &mut Wire, limit: UInt64) @suspends -> Result<Array<UInt8>, Clie
         if part.len() > left {
             return Err(SizeLimit)
         }
-        array.extend_bytes(&mut body, part.slice(0, part.len()), 0, part.len())
+        array.extend_bytes(&mut body, &part[..], 0, part.len())
     }
 }
 

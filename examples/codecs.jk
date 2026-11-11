@@ -7,10 +7,10 @@ fn main() {
     println(hex.encode(text.bytes()))
     println(base64.encode(text.bytes()))
     let decoded = base64.decode("aGVsbG8=").unwrap()
-    println(hex.encode(&decoded[0 .. decoded.len()]))
+    println(hex.encode(&decoded[..]))
 
     match random.secure_bytes(32) {
-        Ok(bytes) => println(base64.url_safe_no_pad().encode(&bytes[0 .. bytes.len()]))
+        Ok(bytes) => println(base64.url_safe_no_pad().encode(&bytes[..]))
         Err(_) => println("Secure randomness unavailable")
     }
 }

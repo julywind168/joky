@@ -273,7 +273,7 @@ impl File {
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, WriteError> {
         let length = bytes.len()
         if length == 0 {
-            return match self.write(bytes.slice(0, 0)) {
+            return match self.write(&bytes[..0]) {
                 Ok(_) => Ok({})
                 Err(error) => Err(WriteError { written: 0, error: error })
             }
@@ -386,7 +386,7 @@ fn read_remaining(
             )
         }
         let size = chunk.len()
-        array.extend_bytes(&mut output, chunk.slice(0, size), 0, size)
+        array.extend_bytes(&mut output, &chunk[..size], 0, size)
     }
 }
 

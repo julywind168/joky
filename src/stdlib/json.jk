@@ -858,7 +858,7 @@ pub fn decode_bytes_with_limits(
     if input.len() > limits.max_input_bytes {
         return Err(decode_error(DecodeErrorKind.InputLimit, limits.max_input_bytes))
     }
-    let bytes = input.slice(0, input.len())
+    let bytes = &input[..]
     let valid = buffer.utf8_prefix(bytes)
     if valid != input.len() {
         return Err(decode_error(DecodeErrorKind.InvalidUtf8, valid))

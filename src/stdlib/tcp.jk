@@ -397,11 +397,11 @@ impl ReceiveBuffer {
         Ok({})
     }
     fn find(&self, delimiter: UInt8, length: UInt64) -> UInt64 {
-        let source = self.bytes.slice(0, self.bytes.len())
+        let source = &self.bytes[..]
         buffer.find_byte(source, delimiter, self.offset, self.offset + length) - self.offset
     }
     fn take_into(&mut self, result: &mut Array<UInt8>, length: UInt64) {
-        let source = self.bytes.slice(0, self.bytes.len())
+        let source = &self.bytes[..]
         array.extend_bytes(result, source, self.offset, self.offset + length)
         self.offset = self.offset + length
     }

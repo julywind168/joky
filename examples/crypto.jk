@@ -1,4 +1,4 @@
-import joky/crypto.{ type Sha256, type HmacSha256 }
+import joky/crypto.{type Sha256, type HmacSha256}
 import joky/hex
 import joky/random
 import joky/task
@@ -12,21 +12,21 @@ fn main() @suspends {
     task.yield_now()
     hash.update(tail.bytes())
     let digest = hash.finish()
-    println(hex.encode(&digest[0 .. digest.len()]))
+    println(hex.encode(&digest[..]))
 
     match random.secure_bytes(32) {
         Ok(key) => {
-            var mac = HmacSha256.new(&key[0 .. key.len()])
+            var mac = HmacSha256.new(&key[..])
             mac.update(head.bytes())
             task.yield_now()
             mac.update(tail.bytes())
             let tag = mac.finish()
-            println(hex.encode(&tag[0 .. tag.len()]))
-            var verifier = HmacSha256.new(&key[0 .. key.len()])
+            println(hex.encode(&tag[..]))
+            var verifier = HmacSha256.new(&key[..])
             verifier.update(message.bytes())
-            println(verifier.verify(&tag[0 .. tag.len()]))
+            println(verifier.verify(&tag[..]))
             let changed = "hello!"
-            println(crypto.verify_hmac_sha256(&key[0 .. key.len()], changed.bytes(), &tag[0 .. tag.len()]))
+            println(crypto.verify_hmac_sha256(&key[..], changed.bytes(), &tag[..]))
         }
         Err(_) => println("Secure randomness unavailable")
     }

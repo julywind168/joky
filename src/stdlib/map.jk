@@ -145,16 +145,15 @@ pub fn is_empty<K, V>(table: &Map<K, V>) -> Bool {
 pub fn release<K, V>(table: Map<K, V>) {}
 
 pub fn keys<K, V>(table: &Map<K, V>) -> &Slice<K> {
-    table.keys.slice(0, len(table))
+    &table.keys[..len(table)]
 }
 
 pub fn values<K, V>(table: &Map<K, V>) -> &Slice<V> {
-    table.values.slice(0, len(table))
+    &table.values[..]
 }
 
 pub fn values_mut<K, V>(table: &mut Map<K, V>) -> &mut Slice<V> {
-    let length = len(table)
-    table.values.slice_mut(0, length)
+    &mut table.values[..]
 }
 
 // Taking the dense tail needs neither key protocols nor a moved-entry repair.

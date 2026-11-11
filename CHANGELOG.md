@@ -5,6 +5,7 @@
 
 ## Unreleased
 
+- Array、FixedArray 和 Slice 的半开切片支持省略端点，如 `&values[..]`、`&values[..end]` 和 `&mut values[start..]`。
 - `match` 分支支持用 `|` 合并多个不引入绑定的备选模式，例如 `1 | 2 => value`。备选模式共用守卫和分支体。
 
 - 完成 macOS arm64 首批严格同步原生栈保护的阶段 1 验收，补齐真实栈阈值下的深层拥有值、部分构造失败及两种拒绝出口。

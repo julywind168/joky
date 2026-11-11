@@ -177,7 +177,7 @@ pub fn v4() -> Result<Uuid, RandomError> {
     match random.secure_bytes(16) {
         Err(error) => Err(error)
         Ok(bytes) => {
-            let value = Uuid.from_slice(bytes.slice(0, 16)).unwrap()
+            let value = Uuid.from_slice(&bytes[..16]).unwrap()
             Ok(Uuid {
                     high: (value.high & 0xffffffffffff0fff) | 0x4000,
                     low: (value.low & 0x3fffffffffffffff) | 0x8000000000000000

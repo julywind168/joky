@@ -12,7 +12,7 @@
 //!     let input = "abc"
 //!     let digest = crypto.sha256((&input).bytes())
 //!     assert_eq(
-//!         hex.encode(digest.slice(0, digest.len())),
+//!         hex.encode(&digest[..]),
 //!         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 //!     )
 //! }
@@ -32,13 +32,13 @@ fn output() -> Array<UInt8> {
 
 pub fn sha256(input: &Slice<UInt8>) -> Array<UInt8> {
     var bytes = output()
-    buffer.sha256(bytes.slice_mut(0, 32), input)
+    buffer.sha256(&mut bytes[..], input)
     bytes
 }
 
 pub fn hmac_sha256(key: &Slice<UInt8>, input: &Slice<UInt8>) -> Array<UInt8> {
     var bytes = output()
-    buffer.hmac_sha256(bytes.slice_mut(0, 32), key, input)
+    buffer.hmac_sha256(&mut bytes[..], key, input)
     bytes
 }
 
@@ -58,7 +58,7 @@ impl Sha256 {
     }
     pub fn finish(var self) -> Array<UInt8> {
         var bytes = output()
-        buffer.sha256_finish(&mut self.owner, bytes.slice_mut(0, 32))
+        buffer.sha256_finish(&mut self.owner, &mut bytes[..])
         bytes
     }
 }
@@ -72,7 +72,7 @@ impl HmacSha256 {
     }
     pub fn finish(var self) -> Array<UInt8> {
         var bytes = output()
-        buffer.hmac_sha256_finish(&mut self.owner, bytes.slice_mut(0, 32))
+        buffer.hmac_sha256_finish(&mut self.owner, &mut bytes[..])
         bytes
     }
     pub fn verify(var self, tag: &Slice<UInt8>) -> Bool {

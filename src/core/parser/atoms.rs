@@ -534,7 +534,7 @@ impl Parser<'_> {
                 let record = std::mem::replace(&mut self.allow_record, true);
                 let newlines =
                     std::mem::replace(&mut self.newlines, Newlines::Joined { minus: None });
-                let index = self.parse_expr()?;
+                let index = self.parse_subscript()?;
                 self.expect(&TokenKind::RBracket)?;
                 self.allow_record = record;
                 self.newlines = newlines;

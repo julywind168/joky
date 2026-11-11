@@ -14,6 +14,19 @@ impl Parser<'_> {
         newline_ends_sequence: bool,
     ) -> Result<Expr, Diagnostic> {
         let first = self.parse_assignment()?;
+        self.parse_sequence_tail(first, newline_ends_sequence)
+    }
+
+    pub(super) fn parse_subscript(&mut self) -> Result<Expr, Diagnostic> {
+        let first = self.nested_expression(|parser| parser.parse_assignment_inner(true))?;
+        self.parse_sequence_tail(first, false)
+    }
+
+    fn parse_sequence_tail(
+        &mut self,
+        first: Expr,
+        newline_ends_sequence: bool,
+    ) -> Result<Expr, Diagnostic> {
         if self.peek() != &TokenKind::Semi {
             return Ok(first);
         }
@@ -53,10 +66,10 @@ impl Parser<'_> {
 
     /// Assignment is right-associative, binds above sequencing, and returns Unit.
     pub(super) fn parse_assignment(&mut self) -> Result<Expr, Diagnostic> {
-        self.nested_expression(Self::parse_assignment_inner)
+        self.nested_expression(|parser| parser.parse_assignment_inner(false))
     }
 
-    fn parse_assignment_inner(&mut self) -> Result<Expr, Diagnostic> {
+    fn parse_assignment_inner(&mut self, subscript: bool) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
         match self.peek() {
             TokenKind::Return => {
@@ -94,7 +107,7 @@ impl Parser<'_> {
             }
             _ => {}
         }
-        let lhs = self.parse_range()?;
+        let lhs = self.parse_range(subscript)?;
         if self.at_expression_break()
             || !matches!(self.peek(), TokenKind::Eq | TokenKind::CompoundAssign(_))
         {
@@ -142,33 +155,64 @@ impl Parser<'_> {
         })
     }
 
-    /// Bounded ranges bind below logical operators and above assignment.
-    fn parse_range(&mut self) -> Result<Expr, Diagnostic> {
-        let start = self.parse_logical_or()?;
-        if self.at_expression_break()
-            || !matches!(self.peek(), TokenKind::DotDot | TokenKind::DotDotEq)
-        {
-            return Ok(start);
-        }
+    /// Ranges bind below logical operators and above assignment.
+    fn parse_range(&mut self, subscript: bool) -> Result<Expr, Diagnostic> {
+        let offset = self.peek_span().start();
+        let start = if subscript && self.peek() == &TokenKind::DotDot {
+            None
+        } else {
+            let start = self.parse_logical_or()?;
+            if self.at_expression_break()
+                || !matches!(self.peek(), TokenKind::DotDot | TokenKind::DotDotEq)
+            {
+                return Ok(start);
+            }
+            Some(start)
+        };
         let inclusive = self.peek() == &TokenKind::DotDotEq;
+        let open_end = subscript
+            && !inclusive
+            && self
+                .tokens
+                .get(self.pos + 1)
+                .is_some_and(|t| t.kind == TokenKind::RBracket);
+        let open = start.is_none() || open_end;
+        if open {
+            self.format_role(format::Role::OpenSlice);
+        }
         self.advance();
-        let end = self.parse_logical_or()?;
+        let end = if open_end {
+            None
+        } else {
+            Some(self.parse_logical_or()?)
+        };
         if !self.at_expression_break()
             && matches!(self.peek(), TokenKind::DotDot | TokenKind::DotDotEq)
         {
             return Err(self.error("Range chains require parentheses".into()));
         }
-        self.iterators = true;
-        let span = self.span(start.span().start(), end.span().end());
+        if open && self.peek() != &TokenKind::RBracket {
+            return Err(
+                self.error("A slice with an omitted bound must be the entire subscript".into())
+            );
+        }
+        self.iterators |= !open;
+        let span = self.span(
+            start.as_ref().map_or(offset, |e| e.span().start()),
+            end.as_ref()
+                .map_or(self.last_span.end(), |e| e.span().end()),
+        );
         Ok(Expr::Call {
-            callee: if inclusive {
-                "$joky_iter.range_inclusive"
-            } else {
-                "$joky_iter.range"
+            callee: match (&start, &end) {
+                (None, None) => "$joky_slice.full",
+                (None, Some(_)) => "$joky_slice.to",
+                (Some(_), None) => "$joky_slice.from",
+                (Some(_), Some(_)) if inclusive => "$joky_iter.range_inclusive",
+                (Some(_), Some(_)) => "$joky_iter.range",
             }
             .into(),
             type_args: vec![],
-            args: vec![start, end],
+            args: start.into_iter().chain(end).collect(),
             span,
         })
     }

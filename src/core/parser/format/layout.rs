@@ -304,6 +304,8 @@ pub(super) fn space_between(syntax: &Syntax, left: &Piece<'_>, right: &Piece<'_>
         || br == Role::TypeClose
         || ar == Role::ClosureOpen
         || br == Role::ClosureClose
+        || ar == Role::OpenSlice
+        || br == Role::OpenSlice
     {
         return false;
     }

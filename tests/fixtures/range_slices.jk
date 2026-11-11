@@ -11,13 +11,18 @@ fn sum(values: &Slice<Int32>) -> Int32 {
     for value in values { total += *value }
     total
 }
-fn first<T>(values: &Array<T>) -> &Slice<T> { &values[0..1] }
+fn first<T>(values: &Array<T>) -> &Slice<T> { &values[..1] }
+fn fixed_tail<const N: UInt64>(values: &FixedArray<Int32, N>) -> &Slice<Int32> { &values[1..] }
 fn selected(values: &Array<Int32>) -> &Slice<Int32> { &values[1..=2] }
 fn base(values: &Array<Int32>) -> &Array<Int32> { record(0); values }
 struct Item { id: Int32, text: String }
 fn arrays() {
     var values = [10, 20, 30, 40]
     expect(sum(&values[1..3]) == 50)
+    expect(sum(&values[..]) == 100 && sum(&values[..2]) == 30)
+    expect(sum(&values[2..]) == 70 && sum(&values[4..]) == 0 && sum(&values[..0]) == 0)
+    let empty: Array<Int32> = []
+    expect(sum(&empty[..]) == 0)
     expect(sum(selected(&values)) == 50)
     expect(sum(&values[0..0]) == 0 && sum(&values[4..4]) == 0)
     expect(sum(&values[0..=0]) == 10)
@@ -26,6 +31,9 @@ fn arrays() {
     var source = &values
     let captured = &source[0..{ source = &other; 1 }]
     expect(captured[0] == 10)
+    source = &values
+    let captured_tail = &source[{ source = &other; 2 }..]
+    expect(sum(captured_tail) == 70)
     var start: UInt64 = 1
     let frozen = &values[start..{ start = 3; start }]
     expect(sum(frozen) == 50)
@@ -40,6 +48,7 @@ fn arrays() {
     for value in &mut *region { *value += 1 }
     expect(region.slice(2, 2).is_empty())
     expect(sum(&region[2..2]) == 0)
+    expect(sum(&region[1..]) == 31 && sum(&region[..]) == 54)
     expect(values[1] == 23 && values[2] == 31)
 }
 fn fixed_and_owned() {
@@ -47,10 +56,11 @@ fn fixed_and_owned() {
     let part = &mut fixed[1..=2]
     part[0] += 10
     expect(sum(&part[0..2]) == 15)
+    expect(sum(fixed_tail(&fixed)) == 19 && sum(&fixed[..]) == 20)
     expect(fixed[1] == 12 && sum(&fixed[4..4]) == 0)
     var items = [Item { id: 20, text: "a" }, Item { id: 22, text: "b" }]
     expect(first(&items)[0].id == 20)
-    let owned = &mut items[0..2]
+    let owned = &mut items[..]
     owned[1].id += 1
     expect(items[1].id == 23)
 }
@@ -90,6 +100,15 @@ fn pending() @suspends -> Int32 {
     expect(sum(region) == 43 && n == 5 && guard.id == 99)
     values[2] += 1
     42
+}
+fn pending_open() @suspends -> Int32 {
+    let values = [10, 20, 42]
+    let tail = &base(&values)[uint64(delayed_value(record(1)))..]
+    sum(tail)
+}
+fn bad_open_end() -> Int32 {
+    let values: FixedArray<Int32, 2> = [1, 2]
+    sum(&values[3..])
 }
 fn bad_half() { let a = [1, 2]; let s = &a[0..3]; sum(s); }
 fn bad_reverse() { let a = [1, 2]; let s = &a[1..=0]; sum(s); }

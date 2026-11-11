@@ -1,13 +1,15 @@
 import joky/mem
 
 struct Resource { id: Int32, values: Array<Int32> }
+
 fn resource(id: Int32) -> Resource {
     Resource { id, values: [] }
 }
+
 fn main() {
     var values = [resource(20), resource(21)]
-    let region = &mut values[0 .. 2]
-    let child = &mut region[1 .. 2]
+    let region = &mut values[..]
+    let child = &mut region[1..]
     let old = mem.replace(&mut child[0], resource(22))
     println(old.id)
     println(region[0].id + region[1].id)

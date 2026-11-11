@@ -248,7 +248,7 @@ impl TlsStream {
                 return Ok(None)
             }
             let found = uint64(part[n - 1]) == delimiter
-            array.extend_bytes(&mut result, part.slice(0, n), 0, n)
+            array.extend_bytes(&mut result, &part[..n], 0, n)
             if found {
                 break
             }
@@ -290,7 +290,7 @@ impl TlsStream {
                 length
             }
             var chunk: Array<UInt8> = []
-            array.extend_bytes(&mut chunk, bytes.slice(0, length), offset, end)
+            array.extend_bytes(&mut chunk, &bytes[..length], offset, end)
             let code = __tls_write(&mut self.session, chunk)
             if code != 0 {
                 return Err(failure(code))

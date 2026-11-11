@@ -8,9 +8,9 @@ pub(super) fn is_index_place(mut expr: &Expr) -> bool {
     matches!(expr, Expr::Index { .. })
 }
 
-/// Only parser-authored bounded range expressions select slicing. Iterator
+/// Only parser-authored range syntax selects slicing. Iterator
 /// values and ordinary function calls remain ordinary index operands.
-pub(super) fn slice_bounds(expr: &Expr) -> Option<(&Expr, &Expr, bool)> {
+pub(super) fn slice_bounds(expr: &Expr) -> Option<(Option<&Expr>, Option<&Expr>, bool)> {
     let Expr::Call {
         callee,
         args,
@@ -20,12 +20,15 @@ pub(super) fn slice_bounds(expr: &Expr) -> Option<(&Expr, &Expr, bool)> {
     else {
         return None;
     };
-    if !type_args.is_empty() || args.len() != 2 {
+    if !type_args.is_empty() {
         return None;
     }
-    match callee.as_str() {
-        "$joky_iter.range" => Some((&args[0], &args[1], false)),
-        "$joky_iter.range_inclusive" => Some((&args[0], &args[1], true)),
+    match (callee.as_str(), args.as_slice()) {
+        ("$joky_iter.range", [start, end]) => Some((Some(start), Some(end), false)),
+        ("$joky_iter.range_inclusive", [start, end]) => Some((Some(start), Some(end), true)),
+        ("$joky_slice.full", []) => Some((None, None, false)),
+        ("$joky_slice.to", [end]) => Some((None, Some(end), false)),
+        ("$joky_slice.from", [start]) => Some((Some(start), None, false)),
         _ => None,
     }
 }
@@ -154,7 +157,17 @@ impl FunctionPlan {
             // A later bound may rebind the source reference variable.
             root = self.reference_value(Some(root), false)?.unwrap();
             let mut bounds = Vec::with_capacity(2);
-            for bound in [start, end] {
+            for (index, bound) in [start, end].into_iter().enumerate() {
+                let Some(bound) = bound else {
+                    self.current_span = *span;
+                    let bound = if index == 0 {
+                        self.pattern_u64(0)?
+                    } else {
+                        self.sequence_len(&root, &element)?
+                    };
+                    bounds.push(bound);
+                    continue;
+                };
                 let Flow::Value(value) = self.expr_expected(
                     bound,
                     vars,

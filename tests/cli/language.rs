@@ -1803,21 +1803,29 @@ fn range_slices_execute_views_suspension_and_checked_closed_bounds_in_aot() {
     let source = format!("import joky/io.{{println}}\nimport joky/task\n{source}");
     work.write(
         "slices.jk",
-        &format!("{source}\nfn main() @suspends {{ println(compute()); println(pending()); }}"),
+        &format!("{source}\nfn main() @suspends {{ println(compute()); println(pending()); println(pending_open()); }}"),
     );
     success(&work.cli(&["build", "--no-prelude", "slices.jk"]));
     let output = Command::new(work.path().join("slices")).output().unwrap();
     success(&output);
-    assert_eq!(output.stdout, b"0\n1\n2\n42\n-99\n-1\n-1\n0\n0\n4\n4\n42\n");
-    work.write(
-        "failure.jk",
-        &format!("{source}\nfn main() {{ bad_max() }}"),
+    assert_eq!(
+        output.stdout,
+        b"0\n1\n2\n42\n-99\n-1\n-1\n0\n0\n4\n4\n42\n0\n1\n1\n42\n"
     );
-    success(&work.cli(&["build", "--no-prelude", "failure.jk"]));
-    let output = Command::new(work.path().join("failure")).output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(output.stdout, b"");
-    assert!(String::from_utf8_lossy(&output.stderr).contains("Invalid inclusive slice bounds"));
+    for (function, message) in [
+        ("bad_max", "Invalid inclusive slice bounds"),
+        ("bad_open_end", "FixedArray index or slice is out of bounds"),
+    ] {
+        work.write(
+            "failure.jk",
+            &format!("{source}\nfn main() {{ {function}(); }}"),
+        );
+        success(&work.cli(&["build", "--no-prelude", "failure.jk"]));
+        let output = Command::new(work.path().join("failure")).output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(output.stdout, b"");
+        assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+    }
 }
 
 #[test]
