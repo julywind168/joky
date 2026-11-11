@@ -5,6 +5,9 @@
 
 ## Unreleased
 
+- 完成 macOS arm64 首批严格同步原生栈保护的阶段 1 验收，补齐真实栈阈值下的深层拥有值、部分构造失败及两种拒绝出口。
+  严格准入现在明确拒绝拥有型 dyn 及函数签名中的拥有 dyn；借用 dyn 保持支持。范围见[验收记录](docs/architecture.md#阶段-1-最终验收)。
+
 - macOS arm64 新增可选的严格同步原生栈准入：`run` / `build --strict-native-stack`，
   Rust 嵌入使用 `VmEngine` / `AotCompiler` 的 `set_strict_native_stack(true)`。默认关闭。
   未覆盖的调用和拥有值依赖在加载／编译时拒绝，间接目标在交接参数前校验；

@@ -239,6 +239,7 @@ fn strict_native_stack_rejects_unbudgeted_dependencies_before_publication() {
         "extern fn factory(tag:UInt64) -> Owner fn consume(owner:Owner) {} fn run() { consume(factory(7)) }",
         "extern fn factory(tag:UInt64) -> Owner struct Wrapper { owner:Owner } fn consume(owner:Wrapper) {} fn run() { consume(Wrapper { owner:factory(7) }) }",
         "fn consume(owner:Owner) {} fn nested(callback:fn(Owner) -> Unit) {} fn run() { nested(consume) }",
+        "trait View { fn value(&self) @noescape -> Int32 } fn consume(value:dyn View) {} fn take(callback:fn(dyn View) -> Unit) {} fn run() { take(consume) }",
         "fn pending() @suspends {}",
         "import joky/time fn clock() { let now = time.Instant.now() }",
         "import joky/vm fn nested() { let engine = vm.Vm.new() }",

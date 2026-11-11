@@ -42,6 +42,8 @@ mod ownership;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod stack_admission;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod stack_boundary;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod stack_probe;
 mod string_collections;
 mod strings;

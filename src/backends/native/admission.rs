@@ -15,45 +15,77 @@ fn reject(name: &str, span: Span, reason: impl std::fmt::Display) -> Error {
     .with_span(span)
 }
 
-fn storage(ty: &Type) -> bool {
-    TypeWalk::new(ty, TypeEdges::Fields).all(|ty| match ty {
-        Type::Resource(_)
-        | Type::Named(_)
-        | Type::Applied(_)
-        | Type::Parameter(_)
-        | Type::Projection(_)
-        | Type::Buffer(_)
-        | Type::BufferElement(_)
-        | Type::BufferSlice(_)
-        | Type::BufferIterator(_)
-        | Type::BufferPairIterator(_)
-        | Type::BufferEntry(_) => false,
-        Type::Record(r) => !r.indirect && r.closure.is_none(),
-        Type::Enum(e) => !e.indirect && !e.compact,
-        Type::Function(f) => !f.suspends,
-        // Dyn values are borrowed. Concrete entries and their signatures are
-        // qualified below and their actual addresses checked before every call.
-        Type::FixedArray(_)
-        | Type::FixedArrayInit(_)
-        | Type::Reference(_)
-        | Type::DynTrait(_)
-        | Type::Tuple(_)
-        | Type::String
-        | Type::Ptr
-        | Type::Bool
-        | Type::Unit
-        | Type::Int8
-        | Type::Int16
-        | Type::Int32
-        | Type::Int64
-        | Type::UInt8
-        | Type::UInt16
-        | Type::UInt32
-        | Type::UInt64
-        | Type::Rune
-        | Type::Float32
-        | Type::Float64 => true,
-    })
+fn storage(root: &Type) -> bool {
+    let mut pending = vec![root];
+    let mut seen = HashSet::new();
+    while let Some(root) = pending.pop() {
+        if !seen.insert(root as *const Type) {
+            continue;
+        }
+        // Keep the reference edge visible: a borrowed dyn view has no cleanup
+        // obligation, whereas an owning erased value has unknown release code.
+        for ty in TypeWalk::new(root, TypeEdges::Inline) {
+            match ty {
+                Type::Resource(_)
+                | Type::Named(_)
+                | Type::Applied(_)
+                | Type::Parameter(_)
+                | Type::Projection(_)
+                | Type::Buffer(_)
+                | Type::BufferElement(_)
+                | Type::BufferSlice(_)
+                | Type::BufferIterator(_)
+                | Type::BufferPairIterator(_)
+                | Type::BufferEntry(_)
+                | Type::DynTrait(_) => return false,
+                Type::Record(r) => {
+                    if r.indirect || r.closure.is_some() {
+                        return false;
+                    }
+                    pending.extend(r.arguments.iter().filter_map(|arg| arg.as_type()));
+                }
+                Type::Enum(e) => {
+                    if e.indirect || e.compact {
+                        return false;
+                    }
+                    pending.extend(e.arguments.iter().filter_map(|arg| arg.as_type()));
+                }
+                Type::Function(f) => {
+                    if f.suspends {
+                        return false;
+                    }
+                    pending.extend(&f.signature.params);
+                    pending.push(&f.signature.ret);
+                }
+                Type::Reference(r) => {
+                    if let Type::DynTrait(d) = &r.target {
+                        pending.extend(d.equalities.iter().map(|e| &e.ty));
+                    } else {
+                        pending.push(&r.target);
+                    }
+                }
+                Type::FixedArray(_)
+                | Type::FixedArrayInit(_)
+                | Type::Tuple(_)
+                | Type::String
+                | Type::Ptr
+                | Type::Bool
+                | Type::Unit
+                | Type::Int8
+                | Type::Int16
+                | Type::Int32
+                | Type::Int64
+                | Type::UInt8
+                | Type::UInt16
+                | Type::UInt32
+                | Type::UInt64
+                | Type::Rune
+                | Type::Float32
+                | Type::Float64 => {}
+            }
+        }
+    }
+    true
 }
 
 pub(super) fn check(

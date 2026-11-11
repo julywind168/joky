@@ -6,6 +6,9 @@ use crate::runtime::{
 use crate::{ErrorCode, Type};
 use std::sync::Arc;
 
+#[path = "admitted_budget_tests.rs"]
+mod admitted;
+
 // Available in the macOS pthread ABI, but not exposed by our libc version.
 unsafe extern "C" {
     fn pthread_attr_setstack(
@@ -51,6 +54,7 @@ unsafe fn exercise(nodes: &[crate::runtime::place::CopyNode]) {
     assert_eq!(error::joky_runtime_error_start(), 11);
     error::joky_runtime_error_clear();
 
+    admitted::exercise(nodes);
     let mut arena = arena::Arena::default();
     // Include the native call-region wrappers used by admitted direct calls.
     let symbols = arena::symbols();
