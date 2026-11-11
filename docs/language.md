@@ -3679,7 +3679,7 @@ else 可以换行，但不能用分号与 then 块分开。`||` 按最长匹配�
 
 ## 整数范围模式
 
-`match`、`if let` 和 `while let` 支持八种整数的范围模式：`a..b` 不包含 b，`a..=b` 包含 b。
+`match`、`if let`、`while let` 和 `let ... else` 支持八种整数的范围模式：`a..b` 不包含 b，`a..=b` 包含 b。
 整数字面量端点按被匹配的整数类型定型，可带直接负号。`UInt8` 范围也可使用字节字面量端点。
 不允许隐式跨整数类型转换。
 
@@ -3708,12 +3708,12 @@ fn band(value: UInt8) -> Int32 {
 
 端点暂不支持变量、命名常量（包括 `UInt8.MAX`）、函数调用、算术表达式或省略端点。
 Rune、Bool、浮点与字符串不支持范围模式；Rune/Bool 的普通字面量模式仍可用。
-match 范围分支可带守卫；`let` / `for` 中的可失败模式仍未提供。
+match 范围分支可带守卫。可失败的 `let` 绑定需要 `else`，`for` 仍使用不可失败的模式。
 可运行示例见 [range_patterns.jk](../examples/range_patterns.jk)。
 
 ## 序列与字面量模式
 
-`match`、`if let` 和 `while let` 接受数组/切片的序列模式，并复用枚举的求值一次、
+`match`、`if let`、`while let` 和 `let ... else` 接受数组/切片的序列模式，并复用枚举的求值一次、
 分支作用域、分支结果同型及穷尽检查。元素模式可嵌套枚举、元组、记录、序列和标量字面量。
 整数按被匹配的整数类型检查范围；Bool 和 Rune 按各自类型匹配，String 按 UTF-8 内容匹配，均不调用用户相等协议。
 
@@ -3762,7 +3762,7 @@ fn inspect(values: &Array<Int32>) -> Int32 {
 
 `let` / `var` 还支持具体 FixedArray 的不可失败解构及共享解构，例如
 `let [a, b]: FixedArray<Int32, 2> = [20, 22]`。按值余段是独立固长数组，共享余段是切片。
-动态数组的 let/var 序列解构不开放，使用 `match` 或 `if let`。
+动态数组的序列解构使用 `match`、`if let` 或 `let ... else`。
 行为覆盖见 [array_patterns.jk](../tests/fixtures/array_patterns.jk)，失败清理见
 [array_patterns_cleanup.jk](../tests/fixtures/array_patterns_cleanup.jk)。
 
@@ -3803,6 +3803,25 @@ fn drain(values: &mut Array<Int32>) {
 所有权与借用规则沿用 `match`：按值匹配移动拥有者，失败的模式及未使用载荷仍会清理；
 匹配 `&value` / `&mut value` 保留原拥有者，Copy 载荷按值读取，非 Copy 载荷绑定为对应引用。
 `if let` / `while let` 暂不支持 `&&` 模式链；需要附加条件时可使用 match 守卫。
+
+### 失败即退出的绑定
+
+`let Pattern = value else { ... }` 只求值一次，使用与 `match` 相同的匹配和借用规则。
+成功后，不可变绑定在当前作用域的后续代码中有效。`else` 块使用声明之前的作用域，
+必须通过 `return`、循环中的 `break` 或 `continue`、`panic` 等方式退出，编译器会拒绝可能正常结束的失败块。
+可以用 `let Pattern: Type = value else { ... }` 为初始化器提供类型。
+
+```joky
+fn value_or_zero(input: Option<Int32>) -> Int32 {
+    let Some(value) = input else {
+        return 0
+    }
+    value
+}
+```
+
+按值匹配时，成功分支取得绑定的拥有载荷，其余载荷在执行后续代码前清理。失败时，
+按值传入的匹配对象在进入 `else` 块前清理。初始化器和失败块都可按所在函数的规则挂起。
 
 ## for 循环与迭代器
 

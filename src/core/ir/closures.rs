@@ -99,6 +99,11 @@ fn walk_free(
                 binding_names(pattern, &mut names);
                 bound.extend(names);
             }
+            Expr::LetElse(binding) => {
+                descend(&binding.value, &mut bound.clone())?;
+                descend(&binding.fallback, &mut bound.clone())?;
+                bound.extend(binding.pattern.binding_names());
+            }
             Expr::Match { value, arms, .. } => {
                 descend(value, bound)?;
                 for arm in arms {

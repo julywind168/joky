@@ -58,9 +58,9 @@ fn serve(script: &Script, host: Host, var listener: TcpListener, stop: &shutdown
     var next_id: UInt64 = 1
     scope {
         while !stop.requested() {
-            let stream = match listener.accept_until(stop) { Ok(Some(stream)) => stream, _ => break }
+            let Ok(Some(stream)) = listener.accept_until(stop) else { break }
             if stop.requested() { break }
-            let permit = match entrants.try_acquire() { Ok(permit) => permit, Err(_) => continue }
+            let Ok(permit) = entrants.try_acquire() else { continue }
             let id = next_id
             next_id += 1
             let copy = Script { vm: script.vm.share(), entries: script.entries.clone() }

@@ -3,6 +3,149 @@ use super::*;
 use crate::parser::ast::RecordFieldPattern;
 
 impl Parser<'_> {
+    pub(super) fn parse_local_binding(&mut self) -> Result<Expr, Diagnostic> {
+        enum LocalPattern {
+            Let(PayloadPattern),
+            Var(BindingPattern),
+        }
+        let start = self.peek_span().start();
+        let mutable = self.peek() == &TokenKind::Var;
+        self.advance();
+        let pattern = if mutable {
+            LocalPattern::Var(self.parse_binding_pattern()?)
+        } else {
+            LocalPattern::Let(self.parse_match_payload_pattern()?)
+        };
+        let annotation = if self.peek() == &TokenKind::Colon {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.expect(&TokenKind::Eq)?;
+        let value = self.parse_assignment()?;
+        let pattern = match pattern {
+            LocalPattern::Let(pattern) if self.peek() == &TokenKind::Else => {
+                let pattern = match pattern {
+                    PayloadPattern::Name { name, span } => Pattern::Variant {
+                        name,
+                        binding: None,
+                        span,
+                    },
+                    pattern => Pattern::Value(Box::new(pattern)),
+                };
+                for name in pattern.binding_names() {
+                    self.check_binding_name(&name)?;
+                }
+                self.advance();
+                let fallback = self.parse_block()?;
+                return Ok(Expr::LetElse(Box::new(LetElse {
+                    pattern,
+                    annotation,
+                    value,
+                    fallback,
+                    span: self.span(start, self.last_span.end()),
+                })));
+            }
+            LocalPattern::Let(pattern) => self.irrefutable_let_pattern(pattern)?,
+            LocalPattern::Var(pattern) => pattern,
+        };
+        let span = self.span(start, self.last_span.end());
+        let value = Box::new(value);
+        let BindingPattern::Name { name, .. } = pattern else {
+            return Ok(Expr::Destructure {
+                pattern,
+                mutable,
+                annotation,
+                value,
+                span,
+            });
+        };
+        Ok(if mutable {
+            Expr::Var {
+                name,
+                annotation,
+                value,
+                span,
+            }
+        } else {
+            Expr::Let {
+                name,
+                annotation,
+                value,
+                span,
+            }
+        })
+    }
+
+    fn irrefutable_let_pattern(
+        &self,
+        pattern: PayloadPattern,
+    ) -> Result<BindingPattern, Diagnostic> {
+        let span = pattern.span();
+        Ok(match pattern {
+            PayloadPattern::Name { name, .. }
+            | PayloadPattern::Variant {
+                name,
+                payload: None,
+                ..
+            } if !name.contains('.') => {
+                self.check_binding_name(&name)?;
+                BindingPattern::Name { name, span }
+            }
+            PayloadPattern::Discard { .. } => BindingPattern::Discard { span },
+            PayloadPattern::Tuple { elements, .. } => BindingPattern::Tuple {
+                elements: elements
+                    .into_iter()
+                    .map(|p| self.irrefutable_let_pattern(p))
+                    .collect::<Result<_, _>>()?,
+                span,
+            },
+            PayloadPattern::Sequence(p) => BindingPattern::Sequence(Box::new(SequencePattern {
+                prefix: p
+                    .prefix
+                    .into_iter()
+                    .map(|p| self.irrefutable_let_pattern(p))
+                    .collect::<Result<_, _>>()?,
+                suffix: p
+                    .suffix
+                    .into_iter()
+                    .map(|p| self.irrefutable_let_pattern(p))
+                    .collect::<Result<_, _>>()?,
+                rest: p.rest,
+                span,
+            })),
+            PayloadPattern::Record {
+                name,
+                resolved,
+                type_args,
+                fields,
+                rest,
+                ..
+            } => BindingPattern::Record {
+                inner: Box::new(RecordPattern {
+                    resolved,
+                    name,
+                    type_args,
+                    fields,
+                    rest,
+                }),
+                span,
+            },
+            _ => {
+                let line = self.tokens[self
+                    .tokens
+                    .partition_point(|token| token.span.start() < span.start())]
+                .line;
+                return Err(Diagnostic::at(
+                    line,
+                    span,
+                    "A refutable let pattern requires an else block",
+                ));
+            }
+        })
+    }
+
     pub(super) fn parse_binding_pattern(&mut self) -> Result<BindingPattern, Diagnostic> {
         if self.pattern_depth >= 256 {
             return Err(self.error("Binding pattern nesting exceeds 256 levels".into()));
@@ -138,7 +281,12 @@ impl Parser<'_> {
         }
         self.pattern_depth += 1;
         let start = self.peek_span().start();
-        let result = if self.peek() == &TokenKind::LBracket {
+        let result = if self.peek() == &TokenKind::Amp {
+            return Err(self.error(
+                "Reference patterns are not supported; destructure a value or a shared reference"
+                    .into(),
+            ));
+        } else if self.peek() == &TokenKind::LBracket {
             PayloadPattern::Sequence(Box::new(
                 self.parse_sequence_pattern(Self::parse_match_payload_pattern)?,
             ))

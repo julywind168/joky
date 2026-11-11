@@ -2,8 +2,102 @@
 use super::support::*;
 use super::VmMode;
 use crate::runtime::arena::LIVE;
+use crate::ErrorCode;
 
 const SOURCE: &str = include_str!("../../../../tests/fixtures/conditional_patterns.jk");
+
+#[test]
+fn let_else_rejects_fallthrough_and_hides_bindings_from_failure() {
+    for (source, code, message) in [
+        (
+            "fn f() { let Some(n) = Some(42) else {} }",
+            ErrorCode::InvalidControlFlow,
+            "must exit control flow",
+        ),
+        (
+            "fn f() -> Int32 { let Some(n) = Some(42) else { return n }; n }",
+            ErrorCode::UnknownName,
+            "n",
+        ),
+        (
+            "fn f() { let Some(n) = Some(42) else { break } }",
+            ErrorCode::InvalidControlFlow,
+            "must be inside a while loop",
+        ),
+        (
+            "fn f() { let Some(n) = Some(42) else { return }; n = 1 }",
+            ErrorCode::InvalidAssignment,
+            "n",
+        ),
+    ] {
+        let error = frontend_error(source, &crate::ModuleSources::new());
+        assert_eq!(error.code(), code, "{source}: {error}");
+        assert!(error.message().contains(message), "{source}: {error}");
+    }
+    let error = crate::parser::parse("fn f() { let Some(n) = Some(42) }").unwrap_err();
+    assert!(error.message.contains("requires an else block"), "{error}");
+}
+
+#[test]
+fn let_else_suspends_once_and_drops_discarded_owners_on_both_paths() {
+    let source = r#"
+        import joky/array.{type Array}
+        extern fn record(value: Int32) -> Int32
+        extern fn delayed_value(value: Int32) @suspends -> Int32
+        enum Packet { Keep((Int32, Array<Int32>, Array<Int32>)), Skip(Array<Int32>) }
+
+        fn packet(select: Int32) @suspends -> Packet {
+            let id = delayed_value(record(select))
+            if id == 1 { Packet.Skip([10]) } else { Packet.Keep((id, [40], [7])) }
+        }
+
+        fn run(select: Int32) @suspends -> Int32 {
+            let Packet.Keep((id, kept, _)) = packet(select) else {
+                delayed_value(record(-1))
+                return 42
+            }
+            delayed_value(record(id))
+            kept[0] + id
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        for (select, branch, live_owners) in [(0, -1, 0), (1, 2, 2)] {
+            for cancel in [false, true] {
+                READY.with(|ready| ready.set(false));
+                EVENTS.with(|events| events.borrow_mut().clear());
+                let mut task = vm.call_async("run", &[select]).unwrap();
+                for _ in 0..3 {
+                    task.resume().unwrap();
+                }
+                EVENTS.with(|events| assert_eq!(*events.borrow(), [select, select]));
+                READY.with(|ready| ready.set(true));
+                for _ in 0..20 {
+                    if EVENTS.with(|events| events.borrow().len()) == 4 {
+                        break;
+                    }
+                    task.resume().unwrap();
+                }
+                let expected = [select, select, branch, branch];
+                EVENTS.with(|events| assert_eq!(*events.borrow(), expected));
+                assert!(!task.is_finished());
+                LIVE.with(|live| assert_eq!(live.get(), live_owners));
+                if !cancel {
+                    for _ in 0..20 {
+                        if task.is_finished() {
+                            break;
+                        }
+                        task.resume().unwrap();
+                    }
+                    assert_eq!(task.cps_result(), Some(42));
+                }
+                drop(task);
+                EVENTS.with(|events| assert_eq!(*events.borrow(), expected));
+                LIVE.with(|live| assert_eq!(live.get(), 0));
+            }
+        }
+    }
+}
 
 #[test]
 fn conditional_patterns_resume_without_replaying_condition_or_body() {

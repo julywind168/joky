@@ -231,6 +231,7 @@ impl Syntax {
                             );
                         }
                     }
+                    Expr::LetElse(binding) => syntax.anchor(&binding.fallback, binding.span),
                     Expr::When(w) => {
                         syntax.anchor(&w.body, w.span);
                         for body in w.missing.iter().chain(w.alias.iter()) {
@@ -242,6 +243,7 @@ impl Syntax {
                 if matches!(
                     expr,
                     Expr::Let { .. }
+                        | Expr::LetElse(_)
                         | Expr::Var { .. }
                         | Expr::Assign { .. }
                         | Expr::Destructure { .. }
@@ -327,6 +329,7 @@ impl Syntax {
                 if !matches!(
                     pair[0],
                     Expr::Let { .. }
+                        | Expr::LetElse(_)
                         | Expr::Var { .. }
                         | Expr::Destructure { .. }
                         | Expr::Assign { .. }

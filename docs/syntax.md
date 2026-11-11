@@ -285,6 +285,7 @@ while / if 条件中的序列使用括号，例如 `while (advance(); ready()) {
 赋值返回 Unit，因此 `a = b = 1` 对两个 Int32 变量是类型错误。
 
 `if let Pattern = value` 与 `while let Pattern = value` 复用枚举 `match` 模式与移动/借用规则。
+`let Pattern = value else { ... }` 在成功后引入当前作用域的绑定，失败块必须退出控制流。
 `if let` 只匹配一次，成功绑定只在 then 块有效；支持 else 与 else if let，分支结果规则与 if 一致。
 `while let` 每轮重新求值，失败退出；绑定限本轮，循环返回 Unit，支持 break / continue / return。
 右侧和成功块可挂起，恢复时不重放副作用；尚无 `&&` 模式链或顶层非枚举解构；附加条件可用 match 守卫。

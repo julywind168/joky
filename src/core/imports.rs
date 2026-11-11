@@ -222,6 +222,11 @@ fn uses_equality(module: &Module) -> bool {
                 return true;
             }
         }
+        if let Expr::LetElse(binding) = expression {
+            if binding.pattern.payload().is_some_and(string_pattern) {
+                return true;
+            }
+        }
         pending.extend(expression.children());
     }
     false

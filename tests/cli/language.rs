@@ -1519,6 +1519,91 @@ fn conditional_patterns_run_on_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn let_else_bindings_and_exits_execute_on_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "let_else.jk",
+        r#"
+        import joky/task
+        struct Point { x: Int32, y: Int32 }
+        enum Packet { Data(Point), Empty }
+
+        fn shadow(value: Option<Int32>) -> Int32 {
+            let n = 40
+            let Some(n) = value else { return n }
+            let read = || { n + 1 }
+            read()
+        }
+
+        fn shapes() -> Int32 {
+            let Packet.Data(Point { x, y }) = Packet.Data(Point { x: 20, y: 22 }) else {
+                panic("Expected a point")
+            }
+            let [head, ..tail] = [x, y] else { return 0 }
+            head + tail[0]
+        }
+
+        fn borrowed() -> Int32 {
+            var value = Some([20])
+            let Some(items) = &mut value else { return 0 }
+            items.push(22)
+            let Some(items) = &value else { return 0 }
+            items[0] + items[1]
+        }
+
+        fn loop_exits() -> Int32 {
+            var i = 0
+            var total = 0
+            while true {
+                i += 1
+                let Some(n) = if i < 5 && i != 2 { Some(i) } else { None } else {
+                    if i >= 5 { break }
+                    continue
+                }
+                total += n
+            }
+            total
+        }
+
+        fn typed() -> Int64 {
+            let Some(n): Option<Int64> = Some(42) else { return 0 }
+            n
+        }
+
+        fn read(value: Option<Int32>) @suspends -> Int32 {
+            let Some(n) = value else { task.yield_now(); return 42 }
+            task.yield_now()
+            n
+        }
+
+        fn generic<T>(input: Option<T>) -> Option<T> {
+            let Some(value) = input else { return None }
+            Some(value)
+        }
+
+        fn main() @suspends {
+            println(shadow(Some(41)))
+            println(shadow(None))
+            println(shapes())
+            println(borrowed())
+            println(loop_exits())
+            println(typed())
+            println(read(Some(42)))
+            println(read(None))
+            println(generic(Some("owned"))!)
+        }
+        "#,
+    );
+    work.assert_all_backends(
+        "let_else.jk",
+        &[],
+        b"42\n40\n42\n42\n8\n42\n42\n42\nowned\n",
+        0,
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn tuple_members_run_on_all_backends() {
     let work = Workspace::new();
     let fixture = include_str!("../fixtures/tuple_members.jk");

@@ -5,6 +5,7 @@
 
 ## Unreleased
 
+- `let Pattern = value else { ... }` 支持可失败的绑定。成功后绑定进入当前作用域，失败块必须退出控制流。
 - 新增固定为 `UInt8` 的字节字面量，如 `b'0'`、`b'\t'` 和 `b'\xff'`，支持表达式、字面量模式和范围模式。
 - Array、FixedArray 和 Slice 的半开切片支持省略端点，如 `&values[..]`、`&values[..end]` 和 `&mut values[start..]`。
 - `match` 分支支持用 `|` 合并多个不引入绑定的备选模式，例如 `1 | 2 => value`。备选模式共用守卫和分支体。

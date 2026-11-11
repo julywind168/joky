@@ -1,6 +1,7 @@
 //! Enum construction and exhaustive matching, lowered to typed scalar storage.
 use super::*;
 use crate::core::types::EnumType;
+use std::collections::HashSet;
 
 use super::generics::ConstructorContext;
 
@@ -419,6 +420,149 @@ impl FunctionPlan {
         }
     }
 
+    fn match_input(
+        &mut self,
+        input: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Result<Flow, Error> {
+        self.local_scopes.push(Vec::new());
+        let mut value = self.expr_expected(
+            input,
+            &mut vars.clone(),
+            functions,
+            suspends,
+            types,
+            expected,
+        )?;
+        if let Flow::Value(Some(slot)) = &value {
+            if slot.ty.is_owner() || slot.ty.is_place() {
+                value = Flow::Value(self.snapshot(&Some(slot.clone()))?);
+                self.escape_owner(&value);
+            }
+        }
+        self.end_local_scope();
+        Ok(value)
+    }
+
+    pub(super) fn let_else_expr(
+        &mut self,
+        binding: &crate::parser::ast::LetElse,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Flow, Error> {
+        let span = binding.span;
+        let annotation = binding.annotation.as_ref();
+        if let Some(annotation) = annotation {
+            validate_nominal_type(annotation, &self.nominals, &span)?;
+            types
+                .validate(annotation)
+                .map_err(|error| error.with_span(span))?;
+        }
+        let Flow::Value(value) =
+            self.match_input(&binding.value, vars, functions, suspends, types, annotation)?
+        else {
+            return Err(unreachable_error(&binding.fallback));
+        };
+        if let Some(annotation) = annotation.filter(|ty| **ty != slot_type(&value)) {
+            return Err(type_error(
+                &span,
+                ErrorCode::TypeMismatch,
+                format!(
+                    "Type annotation mismatch: expected {annotation}, got {}",
+                    slot_type(&value)
+                ),
+            ));
+        }
+        let mut value = value.ok_or_else(|| {
+            type_error(
+                &span,
+                ErrorCode::TypeMismatch,
+                "let ... else requires a matchable value",
+            )
+        })?;
+        let (matched_type, borrowed) = self.match_type(&value.ty, types, span)?;
+        let pattern = self.check_match_pattern(&binding.pattern, &matched_type, types)?;
+        if let Some(mutable) = borrowed {
+            value.ty = Type::reference(matched_type, mutable);
+            value = self.reference_value(Some(value), false)?.unwrap();
+        }
+
+        let temporary = value.ty.is_owner() || value.ty.is_place();
+        if temporary {
+            // Both paths end the scrutinee explicitly unless the success
+            // pattern transfers the entire value into a binding.
+            self.local_scopes
+                .last_mut()
+                .unwrap()
+                .retain(|local| local.index != value.index);
+        }
+        let failure = self.label_count;
+        let success = failure + 1;
+        self.label_count += 2;
+        self.test_match_arm(&pattern, &value, borrowed.is_some(), failure)?;
+        self.emit(Op::Jump(success));
+        self.emit(Op::Label(failure));
+        if temporary {
+            self.emit(Op::EndLocal(value.clone()));
+        }
+        if !matches!(
+            self.expr(
+                &binding.fallback,
+                &mut vars.clone(),
+                functions,
+                suspends,
+                types
+            )?,
+            Flow::Diverged
+        ) {
+            return Err(type_error(
+                &binding.fallback.span(),
+                ErrorCode::InvalidControlFlow,
+                "The else block of a let binding must exit control flow",
+            ));
+        }
+
+        self.current_span = span;
+        self.emit(Op::Label(success));
+        if borrowed.is_some() {
+            self.bind_borrowed_pattern(&pattern, &value, 0, &mut Vec::new(), false, vars)?;
+        } else {
+            // Keep only the storage retained by the new bindings. Decomposition
+            // can detach intermediate owner groups that also need to end here.
+            self.local_scopes.push(if temporary {
+                vec![value.clone()]
+            } else {
+                Vec::new()
+            });
+            let mut bindings = HashMap::new();
+            self.bind_value_pattern(&pattern, Some(value), None, &mut bindings, true)?;
+            let retained: HashSet<_> = bindings
+                .values()
+                .flat_map(|binding| binding.slot.iter().chain(&binding.place))
+                .map(|slot| slot.index)
+                .collect();
+            let mut locals = Vec::new();
+            self.local_scopes.last_mut().unwrap().retain(|slot| {
+                if retained.contains(&slot.index) {
+                    locals.push(slot.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            self.end_local_scope();
+            self.local_scopes.last_mut().unwrap().extend(locals);
+            vars.extend(bindings);
+        }
+        Ok(Flow::Value(None))
+    }
+
     pub(super) fn match_expr(
         &mut self,
         expr: &Expr,
@@ -445,15 +589,7 @@ impl FunctionPlan {
                 return self.expr(&lowered, vars, functions, suspends, types);
             }
         }
-        self.local_scopes.push(Vec::new());
-        let mut value = self.expr(value, &mut vars.clone(), functions, suspends, types)?;
-        if let Flow::Value(Some(slot)) = &value {
-            if slot.ty.is_owner() || slot.ty.is_place() {
-                value = Flow::Value(self.snapshot(&Some(slot.clone()))?);
-                self.escape_owner(&value);
-            }
-        }
-        self.end_local_scope();
+        let value = self.match_input(value, vars, functions, suspends, types, None)?;
         let Flow::Value(value) = value else {
             return match arms.first() {
                 Some(arm) => Err(unreachable_error(&arm.body)),

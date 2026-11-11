@@ -287,6 +287,16 @@ pub enum Expr {
         body: Box<Expr>,
         span: Span,
     },
+    LetElse(Box<LetElse>),
+}
+
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
+pub struct LetElse {
+    pub pattern: Pattern,
+    pub annotation: Option<Type>,
+    pub value: Expr,
+    pub fallback: Expr,
+    pub span: Span,
 }
 
 #[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
@@ -342,6 +352,7 @@ impl Expr {
     pub const fn span(&self) -> Span {
         match self {
             Self::IndexedLoop(loop_) => loop_.span,
+            Self::LetElse(binding) => binding.span,
             Self::When(block) => block.span,
             Self::AnonymousFunction(function) => function.span,
             Self::GenericName(name) => name.span,
@@ -386,6 +397,10 @@ impl Expr {
 
     pub(crate) fn with_span(self, span: Span) -> Self {
         match self {
+            Self::LetElse(mut binding) => {
+                binding.span = span;
+                Self::LetElse(binding)
+            }
             Self::IndexedLoop(mut loop_) => {
                 loop_.span = span;
                 Self::IndexedLoop(loop_)
@@ -1446,6 +1461,14 @@ pub struct SequencePattern<P> {
     pub span: Span,
 }
 impl Pattern {
+    pub(crate) fn binding_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        if let Some(payload) = self.payload() {
+            payload.names(&mut names);
+        }
+        names
+    }
+
     pub(crate) fn payload(&self) -> Option<&PayloadPattern> {
         match self {
             Self::Value(p) => Some(p),
@@ -1483,6 +1506,7 @@ impl Expr {
     /// Visit expression children in source order. Declaration scopes are handled by callers.
     pub(crate) fn children(&self) -> Vec<&Expr> {
         match self {
+            Expr::LetElse(binding) => vec![&binding.value, &binding.fallback],
             Expr::IndexedLoop(loop_) => vec![&loop_.body],
             Expr::When(w) => w
                 .paths

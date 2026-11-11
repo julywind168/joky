@@ -440,6 +440,7 @@ impl FunctionPlan {
         p: &CheckedSequence,
         value: &Slot,
         vars: &mut HashMap<String, Binding>,
+        snapshot_copies: bool,
     ) -> Result<(), Error> {
         if let Type::FixedArray(a) = &value.ty {
             let ConstArgument::Value(length) = a.length else {
@@ -460,13 +461,13 @@ impl FunctionPlan {
                     length as usize - p.suffix.len() + i - p.prefix.len()
                 };
                 let child_value = self.place_read(value, index * stride, p.element.clone())?;
-                self.bind_match_pattern(child, child_value, None, vars)?;
+                self.bind_value_pattern(child, child_value, None, vars, snapshot_copies)?;
             }
             if let Some(Some(name)) = &p.rest {
                 let ty = p.rest_type(&value.ty, None).unwrap();
                 let rest = self.place_read(value, p.prefix.len() * stride, ty.clone())?;
                 let pattern = CheckedPattern::nested(ty, Kind::Any(Some(name.clone())), p.span);
-                self.bind_match_pattern(&pattern, rest, None, vars)?;
+                self.bind_value_pattern(&pattern, rest, None, vars, snapshot_copies)?;
             }
             return Ok(());
         }
@@ -511,15 +512,15 @@ impl FunctionPlan {
                 vec![root.clone()],
                 p.element.clone(),
             )?;
-            self.bind_match_pattern(child, child_value, None, vars)?;
+            self.bind_value_pattern(child, child_value, None, vars, snapshot_copies)?;
         }
         for (child, value) in p.suffix.iter().zip(suffix_values.into_iter().rev()) {
-            self.bind_match_pattern(child, value, None, vars)?;
+            self.bind_value_pattern(child, value, None, vars, snapshot_copies)?;
         }
         if let Some(Some(name)) = &p.rest {
             let pattern =
                 CheckedPattern::nested(value.ty.clone(), Kind::Any(Some(name.clone())), p.span);
-            self.bind_match_pattern(&pattern, Some(value.clone()), None, vars)?;
+            self.bind_value_pattern(&pattern, Some(value.clone()), None, vars, snapshot_copies)?;
         }
         Ok(())
     }

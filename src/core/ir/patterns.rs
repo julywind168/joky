@@ -816,6 +816,17 @@ impl FunctionPlan {
         parent: Option<&Slot>,
         vars: &mut HashMap<String, Binding>,
     ) -> Result<(), Error> {
+        self.bind_value_pattern(pattern, value, parent, vars, false)
+    }
+
+    pub(super) fn bind_value_pattern(
+        &mut self,
+        pattern: &CheckedPattern,
+        value: Option<Slot>,
+        parent: Option<&Slot>,
+        vars: &mut HashMap<String, Binding>,
+        snapshot_copies: bool,
+    ) -> Result<(), Error> {
         if !pattern.binds() {
             return Ok(());
         }
@@ -831,14 +842,14 @@ impl FunctionPlan {
                 }));
                 value = dst;
             }
-            return self.bind_sequence_value(p, &value, vars);
+            return self.bind_sequence_value(p, &value, vars, snapshot_copies);
         }
         if pattern.ty.is_place() && !matches!(pattern.kind, Kind::Any(_)) {
             let base = value.as_ref().unwrap();
             for (child, offset) in pattern.storage_children()? {
                 if child.binds() {
                     let value = self.place_read(base, offset, child.ty.clone())?;
-                    self.bind_match_pattern(child, value, None, vars)?;
+                    self.bind_value_pattern(child, value, None, vars, snapshot_copies)?;
                 }
             }
             return Ok(());
@@ -866,6 +877,13 @@ impl FunctionPlan {
             | Kind::Sequence(_)
             | Kind::Or(_) => {}
             Kind::Any(Some(name)) => {
+                let value = if snapshot_copies && !pattern.ty.is_owner() {
+                    // A declaration outlives the tested scrutinee. A Copy
+                    // binding must have its own storage before that value ends.
+                    self.snapshot(&value)?
+                } else {
+                    value
+                };
                 let binding = self.local_binding(
                     name,
                     Binding {
@@ -885,7 +903,7 @@ impl FunctionPlan {
                         index: offset,
                         ty: element.ty.clone(),
                     });
-                    self.bind_match_pattern(element, child, parent, vars)?;
+                    self.bind_value_pattern(element, child, parent, vars, snapshot_copies)?;
                     offset += element.ty.scalar_types().len();
                 }
             }
@@ -899,11 +917,12 @@ impl FunctionPlan {
                         index: slot.index + enumeration.variants[*tag].offset,
                         ty: payload.ty.clone(),
                     });
-                    self.bind_match_pattern(
+                    self.bind_value_pattern(
                         payload,
                         child,
                         slot.ty.is_owner().then_some(slot),
                         vars,
+                        snapshot_copies,
                     )?;
                 }
             }
@@ -919,7 +938,7 @@ impl FunctionPlan {
                         index: slot.index + field.offset,
                         ty: field.ty.clone(),
                     });
-                    self.bind_match_pattern(child, child_slot, parent, vars)?;
+                    self.bind_value_pattern(child, child_slot, parent, vars, snapshot_copies)?;
                 }
             }
         }

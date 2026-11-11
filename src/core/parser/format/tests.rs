@@ -208,6 +208,14 @@ fn format_keeps_negative_patterns_and_attribute_literals_together() {
 }
 
 #[test]
+fn format_let_else_and_following_binding_use() {
+    assert_format(
+        "fn f(value: Option<Int32>) -> Int32 {let Some(n)=value else {return 0};n}",
+        "fn f(value: Option<Int32>) -> Int32 {\n    let Some(n) = value else {\n        return 0\n    }\n    n\n}\n",
+    );
+}
+
+#[test]
 fn format_preserves_byte_literals_and_range_patterns() {
     assert_format(
         r"fn f(n:UInt8)->UInt8{match n{b'a'..=b'z'=>b'\xAf',_=>b'\0'}}",

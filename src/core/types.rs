@@ -1377,6 +1377,12 @@ pub(crate) fn resolve_pattern_heads(
                     walk_binding(pattern, aliases, registry)?;
                     pending.push(value.as_mut());
                 }
+                Expr::LetElse(binding) => {
+                    for payload in binding.pattern.payloads_mut() {
+                        walk_payload(payload, aliases, registry)?;
+                    }
+                    pending.extend([&mut binding.value, &mut binding.fallback]);
+                }
                 Expr::Match { value, arms, .. } => {
                     pending.push(value.as_mut());
                     for arm in arms.iter_mut() {
@@ -1553,6 +1559,16 @@ pub(crate) fn map_syntax(
             for arg in &mut call.args {
                 map_syntax(arg, map, substitutions)?;
             }
+        }
+        Expr::LetElse(binding) => {
+            if let Some(annotation) = &mut binding.annotation {
+                map(annotation, binding.value.span())?;
+            }
+            for payload in binding.pattern.payloads_mut() {
+                map_payload_types(payload, map, substitutions)?;
+            }
+            map_syntax(&mut binding.value, map, substitutions)?;
+            map_syntax(&mut binding.fallback, map, substitutions)?;
         }
         Expr::Match { value, arms, .. } => {
             map_syntax(value, map, substitutions)?;

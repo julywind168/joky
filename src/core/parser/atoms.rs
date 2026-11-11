@@ -107,46 +107,7 @@ impl Parser<'_> {
                     span: self.last_span,
                 })
             }
-            // Both binding kinds require an initializer and allow an annotation.
-            TokenKind::Let | TokenKind::Var => {
-                let mutable = self.peek() == &TokenKind::Var;
-                self.advance();
-                let pattern = self.parse_binding_pattern()?;
-                let annotation = if self.peek() == &TokenKind::Colon {
-                    self.advance();
-                    Some(self.parse_type()?)
-                } else {
-                    None
-                };
-                self.expect(&TokenKind::Eq)?;
-                let value = self.parse_assignment()?;
-                let value = Box::new(value);
-                let span = self.span(start, self.last_span.end());
-                let BindingPattern::Name { name, .. } = pattern else {
-                    return Ok(Expr::Destructure {
-                        pattern,
-                        mutable,
-                        annotation,
-                        value,
-                        span,
-                    });
-                };
-                Ok(if mutable {
-                    Expr::Var {
-                        name,
-                        annotation,
-                        value,
-                        span,
-                    }
-                } else {
-                    Expr::Let {
-                        name,
-                        annotation,
-                        value,
-                        span,
-                    }
-                })
-            }
+            TokenKind::Let | TokenKind::Var => self.parse_local_binding(),
             TokenKind::Unsafe => {
                 self.advance();
                 let Expr::Block { exprs, .. } = self.parse_block()? else {

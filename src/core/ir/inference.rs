@@ -658,6 +658,7 @@ impl FunctionPlan {
             }
             Expr::Branch { .. }
             | Expr::Let { .. }
+            | Expr::LetElse(_)
             | Expr::Var { .. }
             | Expr::Destructure { .. }
             | Expr::Assign { .. }
@@ -843,6 +844,21 @@ impl FunctionPlan {
                     .or_else(|| self.bound_hint(value, vars, functions, types));
                 self.hint_bindings(value, vars, functions, types);
                 bind_pattern(pattern, ty.as_ref(), vars);
+            }
+            Expr::LetElse(binding) => {
+                let matched = binding
+                    .annotation
+                    .clone()
+                    .or_else(|| self.bound_hint(&binding.value, vars, functions, types))
+                    .and_then(|ty| self.match_type(&ty, types, binding.span).ok());
+                for name in binding.pattern.binding_names() {
+                    vars.remove(&name);
+                }
+                if let Some((ty, borrowed)) = matched {
+                    if let Ok(pattern) = self.check_match_pattern(&binding.pattern, &ty, types) {
+                        pattern.hints(vars, borrowed);
+                    }
+                }
             }
             Expr::Sequence { exprs, .. }
             | Expr::Array {

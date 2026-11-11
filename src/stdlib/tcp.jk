@@ -477,11 +477,8 @@ impl BufferedTcp {
         self.read_frame(progress)
     }
     pub fn read_line(&mut self, limit: UInt64) @suspends -> Result<Option<String>, ReadError> {
-        let bytes = match self.read_until(10, limit)? {
-            Some(bytes) => bytes,
-            None => {
-                return Ok(None)
-            }
+        let Some(bytes) = self.read_until(10, limit)? else {
+            return Ok(None)
         }
         Ok(Some(decode_line(bytes)?))
     }
@@ -493,11 +490,8 @@ impl BufferedTcp {
         if limit > 1048576 {
             return Err(ReadError.InvalidLimit)
         }
-        let header = match self.read_exact(4)? {
-            Some(header) => header,
-            None => {
-                return Ok(None)
-            }
+        let Some(header) = self.read_exact(4)? else {
+            return Ok(None)
         }
         let length = message_length(header)
         if length > limit {
@@ -610,11 +604,8 @@ impl BufferedTcpReader {
         self.read_frame(progress)
     }
     pub fn read_line(&mut self, limit: UInt64) @suspends -> Result<Option<String>, ReadError> {
-        let bytes = match self.read_until(10, limit)? {
-            Some(bytes) => bytes,
-            None => {
-                return Ok(None)
-            }
+        let Some(bytes) = self.read_until(10, limit)? else {
+            return Ok(None)
         }
         Ok(Some(decode_line(bytes)?))
     }
@@ -626,11 +617,8 @@ impl BufferedTcpReader {
         if limit > 1048576 {
             return Err(ReadError.InvalidLimit)
         }
-        let header = match self.read_exact(4)? {
-            Some(header) => header,
-            None => {
-                return Ok(None)
-            }
+        let Some(header) = self.read_exact(4)? else {
+            return Ok(None)
         }
         let length = message_length(header)
         if length > limit {

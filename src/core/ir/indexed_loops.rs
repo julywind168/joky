@@ -261,6 +261,28 @@ impl Inference<'_> {
                     }
                 });
             }
+            Expr::LetElse(binding) => {
+                let dependent = descend(
+                    &binding.value,
+                    &mut vars.clone(),
+                    &mut tracked.clone(),
+                    binding.annotation.as_ref(),
+                )?;
+                descend(
+                    &binding.fallback,
+                    &mut vars.clone(),
+                    &mut tracked.clone(),
+                    None,
+                )?;
+                self.plan
+                    .hint_bindings(expr, vars, self.functions, self.types);
+                for name in binding.pattern.binding_names() {
+                    tracked.remove(&name);
+                    if dependent {
+                        tracked.insert(name);
+                    }
+                }
+            }
             Expr::Assign { name, value, .. } => {
                 let ty = vars.get(name).map(|b| slot_type(&b.slot));
                 descend(value, vars, tracked, ty.as_ref())?;
