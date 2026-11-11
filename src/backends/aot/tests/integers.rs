@@ -526,13 +526,16 @@ fn bitwise_native_objects_check_shifts_and_preserve_pending_operands() {
 }
 
 #[test]
-fn integer_conversion_only_objects_need_no_runtime() {
+fn integer_conversion_objects_report_target_runtime_requirement() {
     let source = include_str!("../../../../tests/fixtures/conversions.jk");
     let mut compiler = AotCompiler::new("pure_conversions").unwrap();
     compiler
         .compile_module(&crate::parser::parse(source).unwrap())
         .unwrap();
-    assert!(!compiler.requires_runtime());
+    assert_eq!(
+        compiler.requires_runtime(),
+        cfg!(all(target_os = "macos", target_arch = "aarch64"))
+    );
 }
 
 #[test]

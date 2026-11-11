@@ -50,6 +50,7 @@ impl Effects {
             "__joky_cps_slots",
             "joky_runtime_error_code",
             "__joky_task_checkpoint_v1",
+            "__joky_native_stack_room_v1",
         ];
         Self {
             preserving: names.iter().map(|name| helpers[*name].as_u32()).collect(),
@@ -98,6 +99,7 @@ pub(super) fn define<M: Module>(
     helpers: &HashMap<String, FuncId>,
     effects: &Effects,
     bodies: &HashMap<FuncId, FuncId>,
+    stack: Option<&super::stack::Entry<'_>>,
 ) -> Result<bool, Box<ModuleError>> {
     let Some(&body) = bodies.get(&id) else {
         let required = instrument(module, &mut ctx.func, helpers, effects)?;
@@ -141,14 +143,19 @@ pub(super) fn define<M: Module>(
     }
     let signature = ctx.func.signature.clone();
     module.define_function(body, ctx)?;
-    #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
-    if helpers.get(super::stack_probe::TARGET) == Some(&id) {
-        super::stack_probe::record_body(module, ctx)?;
+    if let Some(stack) = stack {
+        let bytes = super::stack::frame(ctx)? + super::stack::ENVELOPE;
+        super::stack::define_descriptor(module, stack.descriptor, bytes)?;
     }
     ctx.clear();
     ctx.func.signature = signature;
-    wrap_body(module, &mut ctx.func, body, helpers);
+    if let Some(stack) = stack {
+        super::stack::wrap(module, ctx, body, helpers, stack);
+    } else {
+        wrap_body(module, &mut ctx.func, body, helpers);
+    }
     module.define_function(id, ctx)?;
+    super::stack::audit(module, ctx)?;
     Ok(true)
 }
 
@@ -260,6 +267,7 @@ fn reset_bridge<M: Module>(
     b.seal_all_blocks();
     b.finalize(module.target_config());
     module.define_function(id, &mut ctx)?;
+    super::stack::audit(module, &ctx)?;
     Ok(id)
 }
 
@@ -315,6 +323,7 @@ fn isolate_body<M: Module>(
     let mut ctx = Context::new();
     std::mem::swap(&mut ctx.func, function);
     module.define_function(body, &mut ctx)?;
+    super::stack::audit(module, &ctx)?;
     function.signature = signature;
     wrap_body(module, function, body, helpers);
     Ok(())
@@ -483,9 +492,16 @@ mod tests {
                         b.ins().return_(&[result]);
                         b.seal_all_blocks();
                         b.finalize(module.target_config());
-                        assert!(
-                            define(&mut module, &mut ctx, id, &helpers, &effects, &bodies).unwrap()
-                        );
+                        assert!(define(
+                            &mut module,
+                            &mut ctx,
+                            id,
+                            &helpers,
+                            &effects,
+                            &bodies,
+                            None
+                        )
+                        .unwrap());
                     }
                     module.finalize_definitions().unwrap();
                     let call: unsafe extern "C" fn(u64) -> u64 =

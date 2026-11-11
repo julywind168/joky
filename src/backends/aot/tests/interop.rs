@@ -227,6 +227,14 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         r#"
         #include "joky_cps.h"
         #include "joky_runtime.h"
+        #if defined(__APPLE__) && defined(__aarch64__)
+        typedef int32_t (*StackRoom)(size_t, size_t, uint64_t, size_t, size_t);
+        static StackRoom stack_room_fn;
+        void bind_stack_runtime(StackRoom f) { stack_room_fn = f; }
+        int32_t __joky_native_stack_room_v1(size_t sp, size_t bytes, uint64_t source, size_t start, size_t end) {
+            return stack_room_fn(sp, bytes, source, start, end);
+        }
+        #endif
         static void (*checkpoint_fn)(void);
         void bind_checkpoint(void (*f)(void)) { checkpoint_fn = f; }
         void __joky_task_checkpoint_v1(void) { checkpoint_fn(); }
@@ -393,6 +401,14 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         unsafe extern "C" fn(*mut cps::CpsFrame),
     );
     unsafe {
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            type BindStack =
+                unsafe extern "C" fn(extern "C" fn(usize, usize, u64, usize, usize) -> i32);
+            library.get::<BindStack>(b"bind_stack_runtime").unwrap()(
+                crate::runtime::native_stack::room,
+            );
+        }
         type BindCheckpoint = unsafe extern "C" fn(extern "C" fn());
         library.get::<BindCheckpoint>(b"bind_checkpoint").unwrap()(
             crate::runtime::error::checkpoint,

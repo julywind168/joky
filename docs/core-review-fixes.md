@@ -136,7 +136,7 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 
 ### K1-3 原生后端深递归栈溢出崩溃
 
-- 现状：`rec(10_000_000)`（同步或 `@suspends` 递归）在 JIT abort（rc=134）、AOT SIGSEGV；
+- 原始复现：`rec(10_000_000)`（同步或 `@suspends` 递归）在 JIT abort（rc=134）、AOT SIGSEGV；
   解释器在 `max_call_depth = 1024`（`src/vm/limits.rs`）给出受控错误，CLI 已折叠连续重复的回溯帧。
 - 修复方向：
   1. 解释器回溯折叠重复帧（如 `at rec (repeated 1021 times)`），立即可做。
@@ -290,7 +290,7 @@ fn main() { let y = id(id(id(id(id(id(id(id(id(id(id(1))))))))))) }
 | K0-3 | 已修复 | `fix: clean up cancelled interpreter siblings in registration order` | Debug 定向测试 8 项通过。race、join 失败、scope 主体失败及 isolate 内失败四种场景均核对 JIT、解释器、独立 AOT 的完整析构序列。另跑结构化结果、并发块、race、scope 和 isolate 五项取消穷举，全部通过。fmt、Clippy、diff 检查通过，未跑全量。 |
 | K1-1 | 已修复 | `bda88494`、`fix: plan flat operator and conditional chains iteratively` | Debug 定向库测试 135 项、CLI 回归 2 项、加法逐指令取消穷举 1 项通过。Dev CLI 对 2000 层括号在 check 和 fmt 均返回带位置的 resource_limit；1000 项加法和 300 分支条件链在 JIT、解释器、独立 AOT 输出一致。fmt、Clippy、diff 检查通过，未跑全量。 |
 | K1-2、K2-2 | 已修复 | `fix: bound nested generic inference and preserve literal context` | Debug 定向库测试 79 项、CLI 回归 2 项通过。30 层 id、or、and、unwrap 链通过 JIT、解释器及独立 AOT；比较 10 与 30 层的推导步数，另验证上下文定型、变量遮蔽、同位置 AST 和预算诊断。fmt、Clippy、diff 检查通过，未跑全量。 |
-| K1-3 | 解释器回溯已修复，原生同步直调已验证测试原型 | `fix: fold adjacent identical interpreter trace frames in CLI diagnostics`、`test: prototype native stack preflight for direct owning calls` | macOS arm64 的 JIT 和 AOT 小栈回归验证了拒绝位置、拥有实参析构一次及失败后线程可复用。常规构建的原生栈保护仍待实施。见[原生栈保护提案](architecture.md#k1-3-原生栈保护提案)。 |
+| K1-3 | 解释器回溯已修复，macOS arm64 同步生产保护已接入 | `fix: fold adjacent identical interpreter trace frames in CLI diagnostics`、`feat: guard synchronous native stacks on macOS arm64` | 普通 JIT 与真实独立 AOT 覆盖直调、互递归、函数指针及 dyn，小栈超限后校验拥有参数清理、FP 恢复和线程复用。CPS、任意宿主回调与其他平台仍有边界，见[覆盖矩阵](architecture.md#k1-3-原生栈保护提案)。 |
 | K2-1 | 已修复 | `fix: infer generic argument types from module constants` | 模块常量及同名局部参数在 JIT、解释器和 AOT 的定向回归通过。 |
 | K2-3 | 已修复 | `fix: reject mixed numeric literal defaults consistently` | 算术、数组、同型泛型调用和条件分支的双向拒绝用例及显式浮点上下文的三后端运行通过。补充提交 `fix: preserve numeric literal defaults in nested expressions` 覆盖泛型实参中的表达式和连续运算。 |
 | K2-4 | 已修复 | `fix: dereference captured references for field access` | 三后端验证借用捕获、move 捕获及独占引用写入。 |

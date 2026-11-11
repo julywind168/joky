@@ -62,7 +62,7 @@ Joky 面向游戏后端、引擎及 host + script 场景。仓库内 std 的实�
 - 普通容器、借用、挂起与实例测试保留结果、显式求值顺序、存活分配、调用/持久预算、失败及取消检查。
 - [宿主资源用例](../tests/fixtures/resource_owners.jk) 验证字段移出、替换、嵌套容器、闭包捕获、部分构造、取消与实例关闭的真实 release。
 - [Map 独立模型](../tests/fixtures/map_stress.jk) 和 [FixedArray 模型](../tests/fixtures/fixed_array_f5.jk) 使用宿主资源释放计数，保留重复释放和缺失释放检查。
-- [栈保护原型](../src/backends/aot/tests/stack_probe.rs) 改用宿主资源 release 验证拒绝深递归后的释放与线程复用；仍是测试原型，不表示 P0 已生产化。
+- [栈保护用例](../src/backends/aot/tests/stack_probe.rs) 改用宿主资源 release 验证拒绝深递归后的释放与线程复用。Drop 撤回验收时它仍是测试原型；后续同步生产接入和覆盖边界见[当前架构说明](architecture.md#k1-3-原生栈保护提案)。
 - 旧导入拒绝、失败后已加载模块仍可用，以及同名普通 trait 独立验证。
 - 删除只验证用户析构执行顺序、析构失败、独立指令预算或析构重入的用例；不再宣称这些行为受支持。
 

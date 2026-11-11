@@ -13,6 +13,11 @@ extern "C" {
  * Before each top-level direct call or CPS poll, clear; afterwards check code.
  * A failed direct result is unspecified: never use it, especially String views.
  * A failing CPS poll returns JOKY_CPS_RUNTIME_ERROR and must not be polled again.
+ * macOS AArch64 synchronous code also requires this runtime for native stack
+ * admission, including pure scalar functions. Admission protects generated
+ * bodies; hosts must supply stack space for the ABI entry and bounded runtime
+ * callbacks. It cannot recover a host stack overflow or protect arbitrary host
+ * recursion. CPS/worker cleanup coverage is a separate contract.
  * Error offsets refer to the failing module's source, including after reload.
  * Queries do not clear the error. Host callbacks must return promptly after a
  * generated callback fails; do not clear an unhandled failure or unwind.

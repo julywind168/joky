@@ -203,8 +203,13 @@ pub extern "C" fn joky_runtime_print_error() {
     });
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 8] {
+pub(crate) fn symbols() -> impl IntoIterator<Item = (&'static str, *const u8)> {
     [
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        (
+            "__joky_native_stack_room_v1",
+            super::native_stack::room as *const u8,
+        ),
         ("__joky_runtime_call_failed", call_failed as *const u8),
         (
             "__joky_runtime_assert_failed_v2",

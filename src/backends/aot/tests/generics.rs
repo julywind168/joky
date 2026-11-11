@@ -140,7 +140,7 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
 }
 
 #[test]
-fn unused_generic_templates_have_no_exports_or_runtime_dependencies() {
+fn unused_generic_templates_have_no_exports_or_extra_runtime_dependencies() {
     let source = "struct Marker<T> {} impl<T> Marker<T> { fn unused<U>(self, value: U) @suspends -> Self { 1 / 0; self } } fn unused<T>(x: T) @suspends -> T { 1 / 0; x } fn id<T>(x: T) -> T { x } fn answer() -> Int32 { id(42) }";
     let mut compiler = AotCompiler::new("unused_generics").unwrap();
     assert_eq!(
@@ -149,7 +149,10 @@ fn unused_generic_templates_have_no_exports_or_runtime_dependencies() {
             .unwrap(),
         ["answer"]
     );
-    assert!(!compiler.requires_runtime());
+    assert_eq!(
+        compiler.requires_runtime(),
+        cfg!(all(target_os = "macos", target_arch = "aarch64"))
+    );
 }
 
 #[test]

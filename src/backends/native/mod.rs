@@ -2,8 +2,7 @@
 mod domain;
 mod float_env;
 mod lower;
-#[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
-pub(crate) mod stack_probe;
+mod stack;
 mod task;
 
 use crate::core::builtins::{Builtin, ExternAbi};
@@ -90,7 +89,7 @@ pub(crate) fn compile<M: Module>(
         }
     }
     // Checkpoints are needed on CPS roots and their entire synchronous call
-    // graph. Standalone synchronous scalar objects keep their runtime-free ABI.
+    // graph. Native stack admission separately makes synchronous calls fallible.
     let mut cancellable: HashSet<String> = plan
         .functions
         .iter()
@@ -113,9 +112,12 @@ pub(crate) fn compile<M: Module>(
             info.may_fail = true;
         }
     }
-    #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
-    let stack_probe_frame =
-        stack_probe::descriptor(module).map_err(|e| compile_error(e.to_string()))?;
+    let protected = stack::enabled(module);
+    if protected {
+        for info in functions.values_mut() {
+            info.may_fail = true;
+        }
+    }
     let mut ids = lower::declare_helpers(module)?;
     let float_effects = float_env::Effects::runtime_helpers(&ids);
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
@@ -280,18 +282,29 @@ pub(crate) fn compile<M: Module>(
         ids.insert(name.clone(), id);
     }
     // Runtime-backed definitions have private direct-call bodies. All published
-    // IDs and function addresses retain the protected entry, including CPS
-    // descriptors. Scalar-only objects keep their runtime-free ABI.
+    // IDs and function addresses retain the FP entry, including CPS descriptors.
+    // Stack-protected targets also split otherwise runtime-free scalar bodies.
     let mut float_bodies = HashMap::new();
     for name in &names {
         let info = &functions[*name];
         if (plan.bodies.contains_key(*name) || adapters.contains_key(*name))
-            && (info.needs_arena || info.suspends)
+            && (info.needs_arena || info.suspends || protected)
         {
             let body = module
                 .declare_anonymous_function(&lower::signature(module, info))
                 .map_err(|e| compile_error(e.to_string()))?;
             float_bodies.insert(ids[*name], body);
+        }
+    }
+    let mut stack_frames = HashMap::new();
+    if protected {
+        for name in &names {
+            if !functions[*name].suspends && float_bodies.contains_key(&ids[*name]) {
+                let id = module
+                    .declare_anonymous_data(false, false)
+                    .map_err(|e| compile_error(e.to_string()))?;
+                stack_frames.insert((*name).clone(), id);
+            }
         }
     }
     let mut instance_ids = HashMap::new();
@@ -547,6 +560,14 @@ pub(crate) fn compile<M: Module>(
                 &ids,
                 &float_effects,
                 &float_bodies,
+                stack_frames
+                    .get(name)
+                    .map(|&descriptor| stack::Entry {
+                        descriptor,
+                        info,
+                        places: &place_ids,
+                    })
+                    .as_ref(),
             )
             .map_err(|e| compile_error(e.to_string()))?;
             requires_runtime = true;
@@ -572,9 +593,13 @@ pub(crate) fn compile<M: Module>(
                 );
             }
             let data = lower::DataRefs {
-                #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
-                stack_probe_frame: stack_probe_frame
-                    .map(|id| module.declare_data_in_func(id, builder.func)),
+                stack_frames: stack_frames
+                    .iter()
+                    .map(|(name, &id)| {
+                        (name.clone(), module.declare_data_in_func(id, builder.func))
+                    })
+                    .collect(),
+                stack_protected: protected,
                 checkpoints: cancellable.contains(name),
                 tasks: task_ids
                     .get(name)
@@ -636,6 +661,14 @@ pub(crate) fn compile<M: Module>(
             &ids,
             &float_effects,
             &float_bodies,
+            stack_frames
+                .get(name)
+                .map(|&descriptor| stack::Entry {
+                    descriptor,
+                    info,
+                    places: &place_ids,
+                })
+                .as_ref(),
         )
         .map_err(|e| compile_error(format!("Failed to define {name}: {e:?}")))?;
         requires_runtime |= info.suspends
@@ -687,6 +720,7 @@ pub(crate) fn compile<M: Module>(
         module
             .define_function(id, &mut ctx)
             .map_err(|e| compile_error(format!("{e:?}")))?;
+        stack::audit(module, &ctx).map_err(|e| compile_error(e.to_string()))?;
         requires_runtime = true;
     }
     let mut instance_entries = HashMap::new();
@@ -709,6 +743,7 @@ pub(crate) fn compile<M: Module>(
         module
             .define_function(id, &mut ctx)
             .map_err(|e| compile_error(e.to_string()))?;
+        stack::audit(module, &ctx).map_err(|e| compile_error(e.to_string()))?;
 
         instance_entries.insert(name.clone(), (id, info.clone()));
     }

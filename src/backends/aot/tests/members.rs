@@ -164,7 +164,10 @@ fn checked_integer_method_matrix_matches_native_direct_and_cps() {
         compiler
             .compile_module(&crate::parser::parse(&source).unwrap())
             .unwrap();
-        assert_eq!(compiler.requires_runtime(), suspends);
+        assert_eq!(
+            compiler.requires_runtime(),
+            suspends || cfg!(all(target_os = "macos", target_arch = "aarch64"))
+        );
         let fixture = ScratchDir::new("checked_conversions");
         let dir = fixture.path();
         let object = dir.join("checked.o");
@@ -185,7 +188,7 @@ fn checked_integer_method_matrix_matches_native_direct_and_cps() {
             .arg(object)
             .args(["-Wall", "-Wextra", "-Werror", "-I"])
             .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"));
-        if suspends {
+        if suspends || cfg!(all(target_os = "macos", target_arch = "aarch64")) {
             link_runtime(&mut command);
         }
         let output = command.arg("-o").arg(&program).output().unwrap();

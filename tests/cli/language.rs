@@ -2693,3 +2693,37 @@ fn borrowed_owner_enums_run_in_standalone_aot() {
     work.write("mixed.jk", &source);
     work.assert_native("mixed.jk", &[], b"", 0);
 }
+
+#[test]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn native_stack_cli_reports_limit_in_ordinary_builds() {
+    let work = Workspace::new();
+    for (file, depth) in [("shallow.jk", 3), ("deep.jk", 10_000_000)] {
+        work.write(file, &format!(
+            "fn descend(n:Int32) -> Int32 {{ if n == 0 {{ 42 }} else {{ descend(n - 1) }} }} fn main() -> Int32 {{ descend({depth}) - 42 }}"
+        ));
+        for interpreted in [false, true] {
+            let output = if interpreted {
+                work.cli(&["run", "--interpreter", file])
+            } else {
+                work.cli(&["run", file])
+            };
+            if depth == 3 {
+                success(&output);
+            } else {
+                assert_eq!(output.status.code(), Some(1), "{output:?}");
+                let message = String::from_utf8_lossy(&output.stderr);
+                assert!(message.contains("[resource_limit]"), "{message}");
+            }
+        }
+        success(&work.cli(&["build", file]));
+        let executable = work.path().join(file.trim_end_matches(".jk"));
+        let output = Command::new(executable).output().unwrap();
+        if depth == 3 {
+            success(&output);
+        } else {
+            assert_eq!(output.status.code(), Some(1), "{output:?}");
+            assert!(String::from_utf8_lossy(&output.stderr).contains("Native stack limit exceeded"));
+        }
+    }
+}

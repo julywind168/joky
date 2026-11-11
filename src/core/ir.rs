@@ -782,6 +782,8 @@ impl ModulePlan {
                 || source_name.starts_with("__joky_closure_")
                 || source_name.starts_with("__joky_callable_")
                 || source_name.starts_with("__joky_indirect_")
+                || source_name.starts_with("__joky_native_stack_")
+                || source_name.starts_with("__joky_float_env_")
                 || source_name.starts_with("__joky_runtime_")
                 || source_name.starts_with("joky_runtime_")
                 || source_name.starts_with("joky_cps_")

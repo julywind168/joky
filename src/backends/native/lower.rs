@@ -19,8 +19,8 @@ use cranelift_module::{FuncId, Linkage, Module};
 use std::collections::HashMap;
 
 pub(super) struct DataRefs {
-    #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
-    pub stack_probe_frame: Option<GlobalValue>,
+    pub stack_frames: HashMap<String, GlobalValue>,
+    pub stack_protected: bool,
     pub checkpoints: bool,
     pub tasks: HashMap<String, GlobalValue>,
     pub places: Vec<(Type, GlobalValue, usize)>,
@@ -438,6 +438,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
     let ptr = module.target_config().pointer_type();
     let mut ids = HashMap::new();
     for (name, params, returns) in [
+        (
+            "__joky_native_stack_room_v1",
+            vec![ptr, ptr, types::I64, ptr, ptr],
+            vec![types::I32],
+        ),
         (
             "__joky_place_begin",
             vec![ptr, ptr, ptr, ptr, types::I64],
@@ -979,7 +984,7 @@ fn helper(
 
 /// Emit a cold failure return without changing the public direct function ABI.
 /// Callers must check the error channel before using the unspecified result.
-fn failure_return(
+pub(super) fn failure_return(
     builder: &mut FunctionBuilder,
     refs: &HashMap<String, FuncRef>,
     frame: Option<Value>,
@@ -3004,15 +3009,17 @@ fn lower_ops(
                 state: None,
                 indirect,
             } => {
-                #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
-                if let Some(frame_size) = data
-                    .stack_probe_frame
-                    .filter(|_| indirect.is_none() && name == super::stack_probe::TARGET)
-                {
-                    let address = builder.ins().symbol_value(ptr_ty, frame_size);
-                    let bytes = builder
-                        .ins()
-                        .load(ptr_ty, MemFlagsData::trusted(), address, 0);
+                if data.stack_protected {
+                    let bytes = if let Some(&frame_size) =
+                        data.stack_frames.get(name).filter(|_| indirect.is_none())
+                    {
+                        let address = builder.ins().symbol_value(ptr_ty, frame_size);
+                        builder
+                            .ins()
+                            .load(ptr_ty, MemFlagsData::trusted(), address, 0)
+                    } else {
+                        builder.ins().iconst(ptr_ty, super::stack::ENVELOPE as i64)
+                    };
                     let sp = builder.ins().get_stack_pointer(ptr_ty);
                     let source = builder
                         .ins()
@@ -3022,7 +3029,7 @@ fn lower_ops(
                     let room = helper(
                         builder,
                         refs,
-                        "probe_stack_room",
+                        "__joky_native_stack_room_v1",
                         &[sp, bytes, source, start, end],
                     );
                     let ready = builder.create_block();
@@ -3462,6 +3469,84 @@ pub(super) fn lower(
     } else {
         lower_direct(builder, info, plan, functions, refs, ptr_ty, data);
     }
+}
+
+/// A guarded ABI entry owns its by-value arguments even when its body cannot
+/// be entered. Release handles directly, without allocating a cleanup context.
+/// Buffer metadata was established by the producer; release walks it iteratively.
+pub(super) fn reject_arguments(
+    builder: &mut FunctionBuilder,
+    info: &FunctionInfo,
+    args: &[Value],
+    refs: &HashMap<String, FuncRef>,
+    places: &[(Type, GlobalValue, usize)],
+    ptr: types::Type,
+) {
+    if !info.needs_arena {
+        return;
+    }
+    let arena = *args.last().unwrap();
+    let mut parameters = args.iter().copied();
+    let source = builder
+        .ins()
+        .iconst(types::I64, info.span.source_id().raw() as i64);
+    let first = builder.ins().iconst(ptr, info.span.start() as i64);
+    let last = builder.ins().iconst(ptr, info.span.end() as i64);
+    for (index, ty) in info.signature.params.iter().enumerate() {
+        if index == 0 && info.closure_entry && ty.closure_info().is_some() {
+            let pointer = parameters.next().unwrap();
+            for (offset, lane) in ty.storage_scalars().unwrap() {
+                if lane.is_owner_lane() {
+                    let handle =
+                        builder
+                            .ins()
+                            .load(ptr, MemFlagsData::new(), pointer, offset as i32);
+                    release_rejected_owner(
+                        builder,
+                        refs["__joky_buffer_release"],
+                        &[arena, handle, source, first, last],
+                    );
+                }
+            }
+        } else if ty.is_place() {
+            let pointer = parameters.next().unwrap();
+            if ty.is_owner() {
+                let (_, descriptor, count) = places
+                    .iter()
+                    .find(|(known, _, _)| known == ty)
+                    .expect("owned parameter descriptor");
+                let descriptor = builder.ins().symbol_value(ptr, *descriptor);
+                let count = builder.ins().iconst(ptr, *count as i64);
+                builder.ins().call(
+                    refs["__joky_place_dispose"],
+                    &[arena, pointer, descriptor, count],
+                );
+            }
+        } else {
+            for lane in ty.value_lanes() {
+                let value = parameters.next().unwrap();
+                if lane.is_owner_lane() {
+                    release_rejected_owner(
+                        builder,
+                        refs["__joky_buffer_release"],
+                        &[arena, value, source, first, last],
+                    );
+                }
+            }
+        }
+    }
+}
+
+// Inactive enum lanes and partially moved captures contain null owners, just
+// as in ordinary cleanup registrations. Never report a spurious cleanup error.
+fn release_rejected_owner(builder: &mut FunctionBuilder, release: FuncRef, args: &[Value; 5]) {
+    let live = builder.create_block();
+    let next = builder.create_block();
+    builder.ins().brif(args[1], live, &[], next, &[]);
+    builder.switch_to_block(live);
+    builder.ins().call(release, args);
+    builder.ins().jump(next, &[]);
+    builder.switch_to_block(next);
 }
 
 /// Keep the existing host signature while passing one arena through internal calls.

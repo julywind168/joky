@@ -2,6 +2,8 @@
 //! Compilation, linking, loading, and correctness checks are outside timing.
 #[path = "support/lua.rs"]
 mod lua;
+#[path = "../tests/support/runtime.rs"]
+mod runtime;
 
 use joky::{aot::AotCompiler, parser, vm::VmEngine};
 use libloading::Library;
@@ -132,9 +134,15 @@ impl Drop for Scratch {
     }
 }
 
+struct NativeErrors {
+    clear: unsafe extern "C" fn(),
+    code: unsafe extern "C" fn() -> i32,
+}
+
 enum Backend {
     Aot {
         entries: [Entry; 3],
+        errors: Option<NativeErrors>,
         // Keep code loaded until every function pointer is no longer used.
         _library: Library,
     },
@@ -159,10 +167,21 @@ impl Backend {
 
     fn call(&self, kernel: usize, n: i32, seed: i32) -> BenchResult<i32> {
         match self {
-            Self::Aot { entries, .. } => {
+            Self::Aot {
+                entries, errors, ..
+            } => {
                 // SAFETY: All exports come from the source above, have the exact
                 // two-Int32 ABI, and are kept alive by this backend's library.
-                Ok(unsafe { entries[kernel](n, seed) })
+                unsafe {
+                    if let Some(errors) = errors {
+                        (errors.clear)();
+                    }
+                    let value = entries[kernel](n, seed);
+                    if errors.as_ref().is_some_and(|errors| (errors.code)() != 0) {
+                        return Err(invalid("AOT while workload failed"));
+                    }
+                    Ok(value)
+                }
             }
             Self::Jit(vm) | Self::Interpreter(vm) => {
                 Ok(vm.call_int32_2(FUNCTIONS[kernel], n, seed)?)
@@ -187,17 +206,33 @@ fn load_backends(directory: &Path, cc: &std::ffi::OsStr) -> BenchResult<Vec<Back
     let ast = parser::parse(SOURCE)?;
     let mut compiler = AotCompiler::new("while_benchmark")?;
     compiler.compile_module(&ast)?;
+    let requires_runtime = compiler.requires_runtime();
     compiler.write_object(&object)?;
-    let linked = Command::new(cc)
+    let mut linker = Command::new(cc);
+    linker
         .arg(if cfg!(target_os = "macos") {
             "-dynamiclib"
         } else {
             "-shared"
         })
-        .arg(&object)
-        .arg("-o")
-        .arg(&library_path)
-        .output()?;
+        .arg(&object);
+    if requires_runtime {
+        linker.arg(runtime::runtime_archive());
+        if cfg!(target_os = "macos") {
+            linker.args(["-liconv", "-lSystem"]);
+        } else {
+            linker.args([
+                "-lgcc_s",
+                "-lutil",
+                "-lrt",
+                "-lpthread",
+                "-lm",
+                "-ldl",
+                "-lc",
+            ]);
+        }
+    }
+    let linked = linker.arg("-o").arg(&library_path).output()?;
     if !linked.status.success() {
         return Err(invalid(format!(
             "AOT linking failed: {}",
@@ -205,13 +240,25 @@ fn load_backends(directory: &Path, cc: &std::ffi::OsStr) -> BenchResult<Vec<Back
         )));
     }
     // SAFETY: This is our freshly generated, trusted native object, with no
-    // constructors or imported host functions. Its owner stays in Backend.
+    // user constructors or host functions. Any required runtime is linked above;
+    // the library owner stays in Backend.
     let library = unsafe { Library::new(&library_path)? };
     let mut entries = Vec::new();
     for name in FUNCTIONS {
         // SAFETY: The source fixes every export's ABI to (i32, i32) -> i32.
         entries.push(unsafe { *library.get::<Entry>(name.as_bytes())? });
     }
+    let errors = if requires_runtime {
+        // SAFETY: Query the same library runtime that the generated code uses.
+        Some(unsafe {
+            NativeErrors {
+                clear: *library.get(b"joky_runtime_error_clear")?,
+                code: *library.get(b"joky_runtime_error_code")?,
+            }
+        })
+    } else {
+        None
+    };
     let mut jit = VmEngine::new();
     jit.load_source(SOURCE)?;
     let mut interpreter = VmEngine::new_interpreter();
@@ -219,6 +266,7 @@ fn load_backends(directory: &Path, cc: &std::ffi::OsStr) -> BenchResult<Vec<Back
     Ok(vec![
         Backend::Aot {
             entries: entries.try_into().unwrap(),
+            errors,
             _library: library,
         },
         Backend::Jit(jit),
@@ -341,7 +389,7 @@ fn metadata(config: &Config, cc: &std::ffi::OsStr) -> String {
         .unwrap_or("unavailable")
         .to_owned();
     let default_opt_level = joky::DEFAULT_CODEGEN_OPT_LEVEL;
-    format!("timestamp_utc={}\nrevision={}\nworking_tree_dirty={}\nos={}\narch={}\ncpu={}\nrust={}\ncc={}\ndebug_assertions={}\niterations={:?}\nsamples={}\nsample_target_ms={}\nseed={}\ncodegen=current backend defaults, no benchmark-specific overrides\ncranelift_default_opt_level={}\ncall_boundary=AOT native symbol; JIT and Interpreter checked VmEngine API\n",
+    format!("timestamp_utc={}\nrevision={}\nworking_tree_dirty={}\nos={}\narch={}\ncpu={}\nrust={}\ncc={}\ndebug_assertions={}\niterations={:?}\nsamples={}\nsample_target_ms={}\nseed={}\ncodegen=current backend defaults, no benchmark-specific overrides\ncranelift_default_opt_level={}\ncall_boundary=AOT native symbol plus required runtime error channel; JIT and Interpreter checked VmEngine API\n",
         command("date".as_ref(), &["-u", "+%Y-%m-%dT%H:%M:%SZ"]),
         command("git".as_ref(), &["rev-parse", "HEAD"]),
         !command("git".as_ref(), &["status", "--porcelain"]).is_empty(),
@@ -402,7 +450,7 @@ fn run() -> BenchResult<()> {
     let mut report = format!(
         "# While benchmark\n\n```text\n{metadata}```\n\n\
         Steady-state execution; excludes compilation/linking/loading. Includes the call boundary.\n\
-        AOT uses resolved native symbols; JIT/Interpreter use checked VmEngine calls.\n\
+        AOT uses resolved native symbols and checks its error channel when a runtime is required; JIT/Interpreter use checked VmEngine calls.\n\
         N=0 measures call/dispatch overhead; ns/iteration is median/N without subtraction.\n\
         Batches adapt per backend, after calibration and one untimed warm-up batch.\n\
         Backend order rotates each sample. P95 is nearest-rank over batch means, not individual-call tail latency.\n\

@@ -42,3 +42,6 @@ pub mod fs;
 pub(crate) mod value_storage;
 
 pub mod process;
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub(crate) mod native_stack;

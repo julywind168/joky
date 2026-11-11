@@ -581,7 +581,8 @@ impl AotCompiler {
             .map(|f| f.frame_slots)
     }
 
-    /// Whether this module uses CPS or native error helpers from libjoky.
+    /// Whether this module uses native runtime helpers (including stack admission
+    /// for synchronous macOS AArch64 code, even for pure scalar functions).
     /// Query after compilation and link the same runtime used by the caller.
     /// Covers private definitions too, because their machine code is emitted
     /// even when no export reaches them.

@@ -5885,6 +5885,11 @@ step 中的单次回调、图扫描及回收也同步执行；不保证硬时间
 
 ## 任务执行模式
 
+macOS arm64 的 JIT／独立 AOT 在同步调用进入正文前检查原生栈空间，深递归超限通过
+`ResourceLimit` 返回，失败后仍执行已覆盖的拥有值清理。纯标量函数也可能触发这个错误；
+C 宿主须在读取结果前查询错误，并链接配套 runtime。这个保护不等于任意宿主回调、CPS 递归
+或其他平台已有相同保证，具体覆盖与限制见[原生栈保护](architecture.md#k1-3-原生栈保护提案)。
+
 默认 `ExecutionMode::Local` 在宿主线程顺序推进任务；Godot 继续主线程驱动。
 显式 `Parallel { workers }` 使用 1–256 个固定 worker，把同一根任务的 join/race/branch
 及后代独立调度。受检的只读借用静态 join/race 可以跨 worker，具体边界见下文；

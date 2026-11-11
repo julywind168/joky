@@ -115,6 +115,8 @@ fn failure_effects_propagate_through_recursion_without_marking_pure_loops() {
         "joky_runtime_error_code",
         "__joky_runtime_division_by_zero",
         "__joky_runtime_invalid_shift",
+        "__joky_native_stack_room_v1",
+        "__joky_float_env_enter",
     ] {
         let ast = crate::parser::parse(&format!("fn {name}() {{}}")).unwrap();
         let error = ModulePlan::with_import_layouts_and_types(

@@ -54,6 +54,8 @@ cargo bench --bench while -- --check
 
 - **只测预热后的执行**。解析、编译、对象输出、链接、动态库加载及正确性检查均不计时。
 - AOT 生成对象文件，通过系统 `cc` 链接成动态库，在同一进程内调用真实 AOT 导出。
+  按 `requires_runtime()` 链接同 profile 的 runtime，并在需要 runtime 时逐次清除／检查该动态库的错误通道；
+  macOS arm64 的同步栈保护会使纯整数 while 对象也需要 runtime，这些调用开销包含在测量边界内。
   动态库所有者在整个测量期间保活，避免把进程启动成本计入循环。
 - JIT 与解释器使用已有的 `VmEngine::call_int32_2`。AOT 使用已解析的原生函数指针，
   因此调用入口不同：JIT/Interpreter 包含名称查询和签名校验，AOT 没有。
