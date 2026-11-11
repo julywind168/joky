@@ -1079,6 +1079,8 @@ Array 元素的拥有偏移由同一描述生成；写入先清零完整目标�
 对象字节数以受检宽整数计算，并受 64 MiB、目标 max_size 和目标有符号地址空间上限共同限制。
 数组形状每个规范化/规划阶段最多 256 个，沿用深度 256 和既有普通字段/槽、函数实例预算。
 布局模型覆盖 32/64 位目标；执行验收使用当前宿主目标，不代表两种架构都已执行。
+运行时的 place 拷贝与 owner 扫描共用有界迭代遍历，不再按类型深度递归调用；工作区与验证范围见
+[place 遍历迭代化进展](#place-遍历迭代化进展)。编译期描述符生成与其他任务生命周期路径另有边界。
 
 F4 在 C 字段和同步引用中递归接受非空、非零大小兼容数组，复用同一紧凑字节布局。
 数组引用在原生 ABI 和解释器适配器中都沿既有单指针引用通道传递原地址；不物化副本或 Buffer，
@@ -2785,7 +2787,8 @@ CLI 回归 `native_stack_cli_reports_limit_in_ordinary_builds` 覆盖普通 JIT�
 
 #### 阶段 1 栈预算审查
 
-2026-11-11，基于 `427d526a` 审查。结论：**256 KiB 是当前保留额度，尚不是完整运行时调用链的已证明上界**。
+2026-11-11，基于 `427d526a` 审查。下表和反汇编数据保留该提交的状态；后续修复见
+[place 遍历迭代化进展](#place-遍历迭代化进展)。结论：**256 KiB 是当前保留额度，尚不是完整运行时调用链的已证明上界**。
 生成代码的最终帧描述与三个 4 KiB 辅助帧额度已有编译检查，但该检查不覆盖 Rust 编译的 runtime、
 系统库或宿主函数。不能用生成包装帧的限制推导这些被调用函数的大小，也不能靠增加一个固定常量完成验收。
 
@@ -2852,7 +2855,7 @@ process、shutdown、task、tcp、testing、tls、vm，均按挂起声明归入�
 
 **收口顺序。** 先取得最小可核算路径，再扩展 std；本次没有新增语言语法、公开宿主 ABI 或保护模式。
 
-1. 优先将 `place::owners` 与相关 copy 遍历改成有界、可核算的迭代状态；所需工作区在准入前准备或使用明确的固定额度，
+1. 将 `place::owners` 与相关 copy 遍历改成有界、可核算的迭代状态（实现进展见下节）；所需工作区在准入前准备或使用明确的固定额度，
    不能在栈失败后临时分配无界工作队列。覆盖嵌套数组／记录／枚举、空数组、未初始化和已移动 lanes，
    并保留两种拒绝出口的恰好一次清理责任。
 2. 给栈不足的首错建立最小报错路径：审查能否先保存错误码与 Span，退出危险深度后再物化消息／调用位置；
@@ -2865,6 +2868,43 @@ process、shutdown、task、tcp、testing、tls、vm，均按挂起声明归入�
 
 本次仅做源码审查、声明盘点和现有产物反汇编；检查文档链接与 `git diff --check`，没有运行 Cargo、重建 runtime 或新增行为验证。
 阶段 1 仍未验收，上述建议不能视作已实现的严格准入规则。
+
+#### place 遍历迭代化进展
+
+`runtime::place::copy_fields` 与 `owners` 现在共用 `walk`，覆盖正常拷贝、拥有移动、借用快照、
+`dispose` 以及 worker packet 的同一遍历入口。描述符格式和公开 ABI 不变；编译期类型／描述符构建未改写。
+
+遍历器以显式游标记录字段列表的下一个子节点、数组的下一个元素和父级偏移。枚举只进入活动分支，
+其跳转和标量叶节点不占续行条目。工作区直接复用布局验证器的 `MAX_DEPTH = 256`，最多 256 个
+三 `usize` 条目；64 位目标为 6,144 字节、32 位目标为 3,072 字节，不随运行时数组长度分配。
+叶节点允许位于最后一层聚合之下，不需要额外条目。活跃条目写入后才能读取；空数组不会进入元素描述符。
+遍历器禁止内联，避免连续的 dispose／copy 把多份工作区合并进调用方；**上述数字是工作区大小，
+不是包含保存寄存器、调用方及叶端回调的总机器帧证明**。
+本次 macOS arm64 Test profile 静态 runtime（SHA-256
+`faac729d55b5936bcf657aac6b20a825a35f91e38b31842abfeaa8e95b5f28fd`）反汇编显示，
+copy 与 dispose 的 `walk` 实例直接帧分别为 6,256 和 6,448 字节，均已包含工作区与保存寄存器；
+这是该产物的固定帧观测，不包含它们调用的其他函数，也不外推到其他构建模式。
+
+遍历本身不申请堆内存，也不进行递归调用。移动仍清零源 owner lane，快照保留源 owner，自移动不改变值；
+字段／数组遍历次序保持原实现，枚举 tag 会复制，padding 和非活动载荷不会复制。
+清理继续在 release 前清空 owner lane，保留首错并处理剩余 owner；部分初始化的零 lane 和空数组可安全排空。
+这些约束不限制资源 release 回调自身的栈或重入；阶段 1 的报错预算和严格宿主准入仍未完成。
+
+回归位于 [place/traversal_tests.rs](../src/runtime/place/traversal_tests.rs)：最大聚合深度的实际编译器描述符
+在隔离子进程的 64 KiB 线程栈中执行快照、移动、自移动、owner 扫描和重复清理，并在清理前把任务分配预算设为零。
+另用 16 层记录／数组与枚举、空数组组合验证移动、替换、字段构造失败及失败后复用，执行 JIT、解释器和真实独立 AOT。
+已执行的定向检查：
+
+- `cargo test --lib -- place_traversal_ native_stack_sync_production fixed_array_f2a_copy_skips_padding_and_inactive_variants`：
+  4 项通过，包含三后端组合行为、最大深度小栈、padding／非活动分支及原有栈超限拒绝清理。
+- `CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test --lib place_traversal_maximum_depth_on_small_stack`：
+  未优化 Debug 的 64 KiB 小栈回归通过，不依赖 Test profile 的优化消除递归。
+- `cargo test --lib -- --ignored exhaustive_fixed_array_owned_elements_cancellation exhaustive_task_fixed_array_local_budget_failures exhaustive_task_fixed_array_owned_budgets`：
+  3 项通过，覆盖拥有数组取消、Local 预算失败和跨 worker 的拥有值构造／捕获／安装／结果预算失败。
+
+`./scripts/check.sh` 完整通过：fmt、Clippy（所有 target，warnings 作为错误）、默认 Debug 测试
+（核心 1898 项、CLI 366 项及其余二进制／集成／文档测试），以及 while／Map 的三后端短输入正确性检查。
+文档链接与 `git diff --check` 通过；未运行 Release、全量 stress、其他平台执行或性能测量。
 
 #### 原生栈保护的三个生产验收阶段
 

@@ -18,10 +18,14 @@ pub(crate) struct CopyNode {
     pub end: u64,
 }
 
+#[cfg(test)]
+mod traversal_tests;
+
 /// Copy value fields and move owning pointers, skipping padding and inactive variants.
 ///
 /// # Safety
-/// `nodes` must be a compiler-validated, bounded, finite copy program. Source
+/// `nodes` must be a compiler-validated, bounded, finite copy program whose
+/// aggregate depth satisfies `memory_layout::MAX_DEPTH`. Source
 /// and destination must have its complete layout and valid alignment. Source
 /// is fully initialized and its ownership lanes are exclusively writable. The
 /// destination has no live owners; regions are disjoint or exactly identical.
@@ -36,49 +40,25 @@ pub(crate) unsafe fn copy(dst: *mut u8, src: *const u8, nodes: &[CopyNode]) {
 /// borrows its pointers until its caller explicitly adopts each owner; it must
 /// never independently release a pointer still owned by the source.
 pub(crate) unsafe fn copy_fields(dst: *mut u8, src: *const u8, nodes: &[CopyNode], moving: bool) {
-    unsafe fn visit(dst: *mut u8, src: *const u8, nodes: &[CopyNode], index: usize, moving: bool) {
-        let node = nodes[index];
-        let dst = dst.add(node.offset as usize);
-        let src = src.add(node.offset as usize);
-        match node.kind {
-            0 => std::ptr::copy_nonoverlapping(src, dst, node.count as usize),
-            4 => {
-                dst.cast::<usize>()
-                    .write_unaligned(src.cast::<usize>().read_unaligned());
-                if moving {
-                    src.cast_mut().cast::<usize>().write_unaligned(0);
-                }
-            }
-            1 => {
-                let mut child = index + 1;
-                while child < node.end as usize {
-                    visit(dst, src, nodes, child, moving);
-                    child = nodes[child].end as usize;
-                }
-            }
-            2 => {
-                for item in 0..node.count as usize {
-                    let offset = item * node.stride as usize;
-                    visit(dst.add(offset), src.add(offset), nodes, index + 1, moving);
-                }
-            }
-            3 => {
-                let tag = src.cast::<i32>().read_unaligned();
-                dst.cast::<i32>().write_unaligned(tag);
-                let mut child = index + 1;
-                for variant in 0..node.count {
-                    if variant == tag as u64 {
-                        visit(dst, src, nodes, child, moving);
-                        break;
-                    }
-                    child = nodes[child].end as usize;
-                }
-            }
-            _ => unreachable!("validated copy program"),
-        }
-    }
     if !std::ptr::eq(dst, src) {
-        visit(dst, src, nodes, 0, moving);
+        walk(src, nodes, &mut |node, offset| {
+            let dst = dst.add(offset);
+            let src = src.add(offset);
+            match node.kind {
+                0 => std::ptr::copy_nonoverlapping(src, dst, node.count as usize),
+                3 => dst
+                    .cast::<i32>()
+                    .write_unaligned(src.cast::<i32>().read_unaligned()),
+                4 => {
+                    dst.cast::<usize>()
+                        .write_unaligned(src.cast::<usize>().read_unaligned());
+                    if moving {
+                        src.cast_mut().cast::<usize>().write_unaligned(0);
+                    }
+                }
+                _ => unreachable!("only leaves and tags are visited"),
+            }
+        });
     }
 }
 
@@ -88,42 +68,93 @@ pub(crate) unsafe fn copy_fields(dst: *mut u8, src: *const u8, nodes: &[CopyNode
 /// The bounded compiler descriptor matches the live, writable allocation. Tags
 /// are initialized; every active ownership lane is initialized or zeroed.
 pub(crate) unsafe fn owners(data: *mut u8, nodes: &[CopyNode], visit: &mut impl FnMut(*mut usize)) {
-    unsafe fn walk(
-        data: *mut u8,
-        nodes: &[CopyNode],
-        index: usize,
-        visit: &mut impl FnMut(*mut usize),
-    ) {
-        let node = nodes[index];
-        let data = data.add(node.offset as usize);
+    walk(data, nodes, &mut |node, offset| {
+        if node.kind == 4 {
+            visit(data.add(offset).cast());
+        }
+    });
+}
+
+/// A suspended field list or array loop. No state is needed for scalar leaves
+/// or enums: only one variant can be active, so its descent is a tail step.
+struct Resume {
+    node: usize,
+    offset: usize,
+    next: usize,
+}
+
+// Keep the fixed workspace out of callers, including consecutive copy/dispose
+// operations. Its capacity is the same aggregate depth the compiler admits;
+// a final scalar/owner leaf does not occupy a workspace entry.
+#[inline(never)]
+unsafe fn walk(data: *const u8, nodes: &[CopyNode], visit: &mut impl FnMut(&CopyNode, usize)) {
+    use crate::core::types::memory_layout::MAX_DEPTH;
+    use std::mem::MaybeUninit;
+    let mut pending = [const { MaybeUninit::<Resume>::uninit() }; MAX_DEPTH];
+    let mut depth = 0;
+    let mut index = 0;
+    let mut offset = 0;
+    'descend: loop {
+        let node = &nodes[index];
+        offset += node.offset as usize;
         match node.kind {
-            4 => visit(data.cast()),
-            1 | 3 => {
-                let tag = (node.kind == 3).then(|| data.cast::<i32>().read_unaligned());
+            0 | 4 => visit(node, offset),
+            1 if index + 1 < node.end as usize => {
+                pending[depth].write(Resume {
+                    node: index,
+                    offset,
+                    next: nodes[index + 1].end as usize,
+                });
+                depth += 1;
+                index += 1;
+                continue;
+            }
+            2 if node.count != 0 => {
+                pending[depth].write(Resume {
+                    node: index,
+                    offset,
+                    next: 1,
+                });
+                depth += 1;
+                index += 1;
+                continue;
+            }
+            3 => {
+                let tag = data.add(offset).cast::<i32>().read_unaligned();
+                visit(node, offset);
                 let mut child = index + 1;
-                let mut variant = 0;
-                while child < node.end as usize {
-                    if tag.is_none_or(|tag| tag == variant) {
-                        walk(data, nodes, child, visit);
+                for variant in 0..node.count {
+                    if variant == tag as u64 {
+                        index = child;
+                        continue 'descend;
                     }
                     child = nodes[child].end as usize;
-                    variant += 1;
                 }
             }
-            2 => {
-                for item in 0..node.count as usize {
-                    walk(
-                        data.add(item * node.stride as usize),
-                        nodes,
-                        index + 1,
-                        visit,
-                    );
-                }
-            }
-            _ => {}
+            1 | 2 => {}
+            _ => unreachable!("validated copy program"),
         }
+        while depth != 0 {
+            // Every live entry was written before incrementing depth; popping
+            // leaves it inaccessible until the next descent overwrites it.
+            let resume = pending[depth - 1].assume_init_mut();
+            let parent = &nodes[resume.node];
+            if parent.kind == 1 && resume.next < parent.end as usize {
+                index = resume.next;
+                offset = resume.offset;
+                resume.next = nodes[index].end as usize;
+                continue 'descend;
+            }
+            if parent.kind == 2 && resume.next < parent.count as usize {
+                index = resume.node + 1;
+                offset = resume.offset + resume.next * parent.stride as usize;
+                resume.next += 1;
+                continue 'descend;
+            }
+            depth -= 1;
+        }
+        break;
     }
-    walk(data, nodes, 0, visit);
 }
 
 /// Clear each lane before releasing it, including on an interrupted construction.

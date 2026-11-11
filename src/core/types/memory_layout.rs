@@ -7,7 +7,8 @@ use super::{ConstArgument, EnumType, FixedArrayType, RecordType, TupleType, Type
 use std::{collections::HashMap, sync::Arc};
 
 const MAX_MEMBERS: usize = 65_536;
-const MAX_DEPTH: usize = 256;
+// Runtime place traversal uses this same bound for its fixed workspace.
+pub(crate) const MAX_DEPTH: usize = 256;
 
 /// Target input. Default uses the native integer/pointer alignments and size
 /// limit. Explicit cross-target inputs do not establish a foreign call ABI.
