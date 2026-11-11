@@ -498,71 +498,48 @@ fn read_string(
         if byte < 32 {
             return Err(decode_error(DecodeErrorKind.UnexpectedToken, offset))
         }
-        var scalar: UInt32 = 0
-        if byte == 92 {
+        let scalar = if byte == 92 {
             offset = offset + 1
             if offset == length {
                 return Err(decode_error(DecodeErrorKind.UnexpectedEof, offset))
             }
             let escaped = byte_at(bytes, offset)
             offset = offset + 1
-            if escaped == 117 {
-                scalar = hex_quad(input, offset, source_offset)?
-                offset = offset + 4
-                if scalar >= 0xd800 && scalar <= 0xdbff {
-                    if length - offset < 2 || byte_at(bytes, offset) != 92 || byte_at(
-                        bytes,
-                        offset + 1
-                    ) != 117 {
-                        return Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
-                    }
-                    let second = hex_quad(input, offset + 2, offset)?
-                    if second < 0xdc00 || second > 0xdfff {
-                        return Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
-                    }
-                    scalar = 0x10000 + (scalar - 0xd800) * 1024 + second - 0xdc00
-                    offset = offset + 6
-                } else {
-                    if scalar >= 0xdc00 && scalar <= 0xdfff {
-                        return Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
-                    }
-                }
-            } else {
-                if escaped == 34 || escaped == 92 || escaped == 47 {
-                    scalar = uint32(escaped)
-                } else {
-                    if escaped == 98 {
-                        scalar = 8
-                    } else {
-                        if escaped == 102 {
-                            scalar = 12
-                        } else {
-                            if escaped == 110 {
-                                scalar = 10
-                            } else {
-                                if escaped == 114 {
-                                    scalar = 13
-                                } else {
-                                    if escaped == 116 {
-                                        scalar = 9
-                                    } else {
-                                        return Err(
-                                            decode_error(
-                                                DecodeErrorKind.InvalidEscape,
-                                                source_offset
-                                            )
-                                        )
-                                    }
-                                }
-                            }
+            match escaped {
+                117 => {
+                    let scalar = hex_quad(input, offset, source_offset)?
+                    offset += 4
+                    if scalar >= 0xd800 && scalar <= 0xdbff {
+                        if length - offset < 2 || byte_at(bytes, offset) != 92 || byte_at(
+                            bytes,
+                            offset + 1
+                        ) != 117 {
+                            return Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
                         }
+                        let second = hex_quad(input, offset + 2, offset)?
+                        if second < 0xdc00 || second > 0xdfff {
+                            return Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
+                        }
+                        offset += 6
+                        0x10000 + (scalar - 0xd800) * 1024 + second - 0xdc00
+                    } else if scalar >= 0xdc00 && scalar <= 0xdfff {
+                        return Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
+                    } else {
+                        scalar
                     }
-                }
+                },
+                34 | 92 | 47 => uint32(escaped),
+                98 => 8,
+                102 => 12,
+                110 => 10,
+                114 => 13,
+                116 => 9,
+                _ => return Err(decode_error(DecodeErrorKind.InvalidEscape, source_offset))
             }
         } else {
             let (value, next) = read_utf8_scalar(input, offset)
-            scalar = value
             offset = next
+            value
         }
         if rune_width(scalar) > limit - builder.byte_length() {
             return Err(decode_error(DecodeErrorKind.StringLimit, source_offset))
@@ -927,42 +904,21 @@ fn hex_rune(digit: UInt32) -> Rune {
 
 fn write_escaped(encoder: &mut Encoder, rune: Rune) -> Result<Unit, EncodeError> {
     let scalar = rune.to_u32()
-    var suffix = '\0'
-    if scalar == 34 {
-        suffix = '"'
-    } else {
-        if scalar == 92 {
-            suffix = '\\'
-        } else {
-            if scalar == 8 {
-                suffix = 'b'
-            } else {
-                if scalar == 12 {
-                    suffix = 'f'
-                } else {
-                    if scalar == 10 {
-                        suffix = 'n'
-                    } else {
-                        if scalar == 13 {
-                            suffix = 'r'
-                        } else {
-                            if scalar == 9 {
-                                suffix = 't'
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    let suffix = match rune {
+        '"' | '\\' => rune,
+        '\u{8}' => 'b',
+        '\u{c}' => 'f',
+        '\n' => 'n',
+        '\r' => 'r',
+        '\t' => 't',
+        _ => '\0'
     }
     let width: UInt64 = if suffix != '\0' {
         2
+    } else if scalar < 32 {
+        6
     } else {
-        if scalar < 32 {
-            6
-        } else {
-            rune_width(scalar)
-        }
+        rune_width(scalar)
     }
     if !output_room(encoder, width) {
         return Err(EncodeError.OutputLimit)
@@ -970,17 +926,15 @@ fn write_escaped(encoder: &mut Encoder, rune: Rune) -> Result<Unit, EncodeError>
     if suffix != '\0' {
         encoder.output.push('\\')
         encoder.output.push(suffix)
+    } else if scalar < 32 {
+        encoder.output.push('\\')
+        encoder.output.push('u')
+        encoder.output.push('0')
+        encoder.output.push('0')
+        encoder.output.push(hex_rune(scalar / 16))
+        encoder.output.push(hex_rune(scalar - (scalar / 16) * 16))
     } else {
-        if scalar < 32 {
-            encoder.output.push('\\')
-            encoder.output.push('u')
-            encoder.output.push('0')
-            encoder.output.push('0')
-            encoder.output.push(hex_rune(scalar / 16))
-            encoder.output.push(hex_rune(scalar - (scalar / 16) * 16))
-        } else {
-            encoder.output.push(rune)
-        }
+        encoder.output.push(rune)
     }
     Ok({})
 }

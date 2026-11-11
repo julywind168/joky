@@ -29,22 +29,12 @@ extern fn __fs_message(result: &mut fs.OutcomeOwner) @suspends -> String
 extern fn __fs_bytes(result: &mut fs.OutcomeOwner) @suspends -> Array<UInt8>
 
 fn error(result: &mut fs.OutcomeOwner, code: UInt64) @suspends -> IoError {
-    let kind = if code == 1 {
-        ErrorKind.Unsupported
-    } else {
-        if code == 5 {
-            ErrorKind.InvalidInput
-        } else {
-            if code == 6 {
-                ErrorKind.Busy
-            } else {
-                if code == 8 {
-                    ErrorKind.LimitExceeded
-                } else {
-                    ErrorKind.SystemFailure
-                }
-            }
-        }
+    let kind = match code {
+        1 => ErrorKind.Unsupported,
+        5 => ErrorKind.InvalidInput,
+        6 => ErrorKind.Busy,
+        8 => ErrorKind.LimitExceeded,
+        _ => ErrorKind.SystemFailure
     }
     IoError { kind, message: __fs_message(result) }
 }

@@ -63,7 +63,7 @@ pub fn lookup<T>(
             Ok(text) => text,
             Err(_) => "Name resolution failed"
         }
-        return Err(ResolveError { kind: kind, message: message })
+        return Err(ResolveError { kind, message })
     }
     var addresses = Array.with_capacity::<T>(bytes.len() / 24)
     var offset: UInt64 = 0
