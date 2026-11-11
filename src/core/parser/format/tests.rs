@@ -208,6 +208,14 @@ fn format_keeps_negative_patterns_and_attribute_literals_together() {
 }
 
 #[test]
+fn format_match_alternatives_and_bitwise_or() {
+    assert_format(
+        "fn f(n:Int32)->Int32{match n{-1|2=>16|32,_=>0}}",
+        "fn f(n: Int32) -> Int32 {\n    match n {\n        -1 | 2 => 16 | 32,\n        _ => 0\n    }\n}\n",
+    );
+}
+
+#[test]
 fn format_wraps_long_lists_records_and_signatures() {
     let source = concat!(
         "struct Record{first_field_name:Int32,second_field_name:Int32,third_field_name:Int32,fourth_field_name:Int32,fifth_field_name:Int32}\n",

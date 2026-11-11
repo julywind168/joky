@@ -1821,6 +1821,82 @@ fn range_slices_execute_views_suspension_and_checked_closed_bounds_in_aot() {
 }
 
 #[test]
+#[cfg(unix)]
+fn match_alternatives_share_guards_and_bodies_on_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "alternatives.jk",
+        r#"
+        import joky/io.{println}
+        import joky/task
+
+        enum Token { Word(String), Number(Int32), End }
+
+        fn kind(token: Token) -> Int32 {
+            match token {
+                Word(_) | Number(_) => 7,
+                End => 0
+            }
+        }
+
+        fn command(text: &String) -> Int32 {
+            match text {
+                "quit" | "exit" => 9,
+                _ => 0
+            }
+        }
+
+        fn literals(n: Int32) -> Int32 {
+            match n {
+                -1 | 2 if false => 99,
+                -1 | 2 => 16 | 32,
+                _ => 0
+            }
+        }
+
+        fn halves(n: UInt8) -> Int32 {
+            match n {
+                0 .. 128 | 128 ..= 254 => 1,
+                255 => 2
+            }
+        }
+
+        fn overlap(n: UInt8) @suspends -> Int32 {
+            var calls = 0
+            let result = match { calls += 1; n } {
+                0 ..= 4 | 3 ..= 6 if { calls += 10; task.yield_now(); false } => 999,
+                0 ..= 6 | 9 => 20,
+                _ => 30
+            }
+            calls + result
+        }
+
+        fn main() @suspends {
+            println(kind(Token.Word("owned")))
+            println(kind(Token.Number(0)))
+            println(kind(Token.End))
+            println(command("exit"))
+            println(command("extra"))
+            println(literals(-1))
+            println(literals(2))
+            println(literals(3))
+            println(halves(128))
+            println(halves(255))
+            println(overlap(3))
+            println(overlap(6))
+            println(overlap(9))
+        }
+        "#,
+    );
+    work.assert_all_backends(
+        "alternatives.jk",
+        &["--no-prelude"],
+        b"7\n7\n0\n9\n0\n48\n48\n0\n1\n2\n31\n31\n21\n",
+        0,
+    );
+}
+
+#[test]
 fn range_patterns_execute_integer_domains_owned_matches_and_suspension_in_aot() {
     let work = Workspace::new();
     let source = include_str!("../fixtures/range_patterns.jk")

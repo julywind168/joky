@@ -1380,7 +1380,7 @@ pub(crate) fn resolve_pattern_heads(
                 Expr::Match { value, arms, .. } => {
                     pending.push(value.as_mut());
                     for arm in arms.iter_mut() {
-                        if let Some(binding) = arm.pattern.payload_mut() {
+                        for binding in arm.pattern.payloads_mut() {
                             walk_payload(binding, aliases, registry)?;
                         }
                     }
@@ -1557,7 +1557,7 @@ pub(crate) fn map_syntax(
         Expr::Match { value, arms, .. } => {
             map_syntax(value, map, substitutions)?;
             for arm in arms.iter_mut() {
-                if let Some(binding) = arm.pattern.payload_mut() {
+                for binding in arm.pattern.payloads_mut() {
                     map_payload_types(binding, map, substitutions)?;
                 }
             }

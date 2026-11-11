@@ -50,14 +50,11 @@ fn digit(value: UInt8, upper: Bool) -> UInt8 {
 }
 
 fn nibble(byte: UInt8) -> UInt8 {
-    if byte >= 48 && byte <= 57 {
-        byte - 48
-    } else if byte >= 65 && byte <= 70 {
-        byte - 65 + 10
-    } else if byte >= 97 && byte <= 102 {
-        byte - 97 + 10
-    } else {
-        16
+    match byte {
+        48 ..= 57 => byte - 48,
+        65 ..= 70 => byte - 65 + 10,
+        97 ..= 102 => byte - 97 + 10,
+        _ => 16
     }
 }
 

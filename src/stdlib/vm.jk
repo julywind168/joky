@@ -264,14 +264,11 @@ impl Vm {
             &mut packet.storage,
             true
         )
-        if status == 0 {
-            Ok(unpack::<R>(&packet))
-        } else if status == 1 {
-            Err(CallError.Unavailable)
-        } else if status == 2 {
-            Err(CallError.Incompatible)
-        } else {
-            Err(CallError.Failed)
+        match status {
+            0 => Ok(unpack::<R>(&packet)),
+            1 => Err(CallError.Unavailable),
+            2 => Err(CallError.Incompatible),
+            _ => Err(CallError.Failed)
         }
     }
 }

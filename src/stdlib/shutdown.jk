@@ -84,12 +84,10 @@ pub fn create() @suspends -> Controller {
 }
 
 fn reason(code: UInt64) -> Reason {
-    if code == 2 {
-        Reason.Interrupt
-    } else if code == 3 {
-        Reason.Terminate
-    } else {
-        Reason.Requested
+    match code {
+        2 => Reason.Interrupt,
+        3 => Reason.Terminate,
+        _ => Reason.Requested
     }
 }
 
@@ -121,17 +119,11 @@ impl Controller {
     pub fn subscribe_unix(&self) @suspends -> Result<Signals, SignalError> {
         var error: UInt64 = 0
         let signals = Signals { storage: __shutdown_subscribe(&self.storage, &mut error) }
-        if error == 0 {
-            return Ok(signals)
+        match error {
+            0 => Ok(signals),
+            1 => Err(SignalError.Unsupported),
+            2 => Err(SignalError.Busy),
+            _ => Err(SignalError.Unavailable)
         }
-        Err(
-            if error == 1 {
-                SignalError.Unsupported
-            } else if error == 2 {
-                SignalError.Busy
-            } else {
-                SignalError.Unavailable
-            }
-        )
     }
 }

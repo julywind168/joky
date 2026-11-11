@@ -122,7 +122,7 @@ fn comparisons_require_explicit_grouping_and_unary_operators_require_operands() 
 }
 
 #[test]
-fn negated_index_and_or_pattern_diagnostics_keep_source_positions() {
+fn negated_index_and_syntax_diagnostics_keep_source_positions() {
     let ast = parse("fn f() { -1[0] }").unwrap();
     let Item::FnDef(f) = &ast.items[0] else {
         panic!()
@@ -134,7 +134,11 @@ fn negated_index_and_or_pattern_diagnostics_keep_source_positions() {
         matches!(&exprs[0],Expr::Unary {op: UnaryOp::Neg,operand,..} if matches!(operand.as_ref(), Expr::Index {..}))
     );
     for (source, message, token) in [
-        ("fn f() { match 1 { 1 | 2 => 0 } }", "Or-patterns", "|"),
+        (
+            "fn f() { match 1 { 1 | => 0 } }",
+            "Expected an identifier",
+            "=>",
+        ),
         ("fn f() { if true b }", "Expected `{`, got `b`", "b"),
         (
             "fn f() { let x = fn }",

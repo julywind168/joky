@@ -3236,7 +3236,7 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
   或源码在两项之间存在真实换行；载荷类型和单个模式绑定允许尾随逗号。类型声明支持前向引用及透明别名。
   不同用户声明或不同次解析产生不同类型身份，即使名字、变体及布局相同；标准库身份按编译环境共享。
 - 分支以 `pattern => expression` 或 `pattern if condition => expression` 书写，不带前导 `|`。相邻分支用逗号或真实换行分隔，
-  块分支也需要分隔；允许尾逗号，不允许空分支。
+  块分支也需要分隔；允许尾逗号，不允许空分支。同一分支可使用[备选模式](#备选模式)。
 - `match value { pattern => expression ... }` 是表达式，被匹配值只求值一次，本节描述枚举值或枚举引用 `&Enum` / `&mut Enum`；
   数组、切片及标量字面量匹配见[序列与字面量模式](#序列与字面量模式)。
   模式支持 `Variant`、`Enum.Variant`、`Variant(binding)`、`Variant(_)` 和整个分支的 `_`。
@@ -3757,6 +3757,14 @@ fn inspect(values: &Array<Int32>) -> Int32 {
 动态数组的 let/var 序列解构不开放，使用 `match` 或 `if let`。
 行为覆盖见 [array_patterns.jk](../tests/fixtures/array_patterns.jk)，失败清理见
 [array_patterns_cleanup.jk](../tests/fixtures/array_patterns_cleanup.jk)。
+
+## 备选模式
+
+`match` 分支可在顶层用 `|` 连接多个不引入绑定的模式。比如 `4 | 6 | 9 | 11 => 30`、
+`"quit" | "exit" => Stop` 或 `Ready | Done(_) => true`。整数范围也可以与字面量混用。
+备选模式共用一个分支体和可选守卫。任一模式匹配后，守卫最多执行一次，返回 false 时继续下一分支。
+无守卫分支的备选模式共同计入穷尽检查。被前面的无守卫分支或同一分支内的更早模式完整覆盖的备选会报不可达。
+`=>` 后的 `|` 仍按表达式语法解析，例如 `1 | 2 => a | b`。
 
 ## 条件模式与模式循环
 

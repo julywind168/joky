@@ -515,11 +515,7 @@ impl FunctionPlan {
             let next = if arm_index + 1 < arms.len() {
                 let next = self.label_count;
                 self.label_count += 1;
-                if borrowed.is_some() {
-                    self.borrowed_pattern_tests(&pattern, &value, 0, next)?;
-                } else {
-                    self.match_pattern_tests(&pattern, value.index, next)?;
-                }
+                self.test_match_arm(&pattern, &value, borrowed.is_some(), next)?;
                 Some(next)
             } else {
                 None

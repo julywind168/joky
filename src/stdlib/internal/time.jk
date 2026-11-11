@@ -349,16 +349,11 @@ fn leap(year: Int64) -> Bool {
 }
 
 fn month_days(year: Int64, month: Int64) -> Int64 {
-    if month == 2 {
-        if leap(year) {
-            29
-        } else {
-            28
-        }
-    } else if month == 4 || month == 6 || month == 9 || month == 11 {
-        30
-    } else {
-        31
+    match month {
+        2 if leap(year) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31
     }
 }
 

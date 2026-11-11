@@ -604,20 +604,22 @@ fn read_request(
             return Err(ReadFailure.HeadLimit)
         }
         let field = header(bytes)?
-        if field.name == "host" {
-            if host || !valid_host(&field.value) {
-                return Err(ReadFailure.Bad)
-            }
-            host = true
-        } else if field.name == "content-length" {
-            if length.is_some() {
-                return Err(ReadFailure.Bad)
-            }
-            length = Some(content_length(&field.value)?)
-        } else if field.name == "transfer-encoding" {
-            return Err(ReadFailure.Bad)
-        } else if field.name == "expect" {
-            return Err(ReadFailure.Expectation)
+        match &field.name {
+            "host" => {
+                if host || !valid_host(&field.value) {
+                    return Err(ReadFailure.Bad)
+                }
+                host = true
+            },
+            "content-length" => {
+                if length.is_some() {
+                    return Err(ReadFailure.Bad)
+                }
+                length = Some(content_length(&field.value)?)
+            },
+            "transfer-encoding" => return Err(ReadFailure.Bad),
+            "expect" => return Err(ReadFailure.Expectation),
+            _ => {}
         }
         headers.push(field)
     }
@@ -1547,16 +1549,12 @@ fn chunked_body(io: &mut Wire, limit: UInt64) @suspends -> Result<Array<UInt8>, 
         }
         var n: UInt64 = 0
         for b in &digits {
-            let digit = if *b >= 48 && *b <= 57 {
-                *b - 48
-            } else if *b >= 65 && *b <= 70 {
-                *b - 55
-            } else if *b >= 97 && *b <= 102 {
-                *b - 87
-            } else if *b == 59 {
-                return Err(UnsupportedFraming)
-            } else {
-                return Err(InvalidResponse)
+            let digit = match *b {
+                48 ..= 57 => *b - 48,
+                65 ..= 70 => *b - 55,
+                97 ..= 102 => *b - 87,
+                59 => return Err(UnsupportedFraming),
+                _ => return Err(InvalidResponse)
             }
             n = n * 16 + uint64(digit)
             if n > limit - body.len() {

@@ -77,52 +77,25 @@ pub fn decode(text: &String) -> Result<Array<UInt8>, DecodeError> {
 }
 
 fn symbol(value: UInt8, url: Bool) -> UInt8 {
-    if value < 26 {
-        65 + value
-    } else if value < 52 {
-        97 + value - 26
-    } else if value < 62 {
-        48 + value - 52
-    } else if value == 62 {
-        if url {
-            45
-        } else {
-            43
-        }
-    } else {
-        if url {
-            95
-        } else {
-            47
-        }
+    match (value, url) {
+        (0 .. 26, _) => 65 + value,
+        (26 .. 52, _) => 97 + value - 26,
+        (52 .. 62, _) => 48 + value - 52,
+        (62, true) => 45,
+        (62, false) => 43,
+        (_, true) => 95,
+        _ => 47
     }
 }
 
 fn sextet(byte: UInt8, url: Bool) -> UInt32 {
-    if byte >= 65 && byte <= 90 {
-        uint32(byte - 65)
-    } else if byte >= 97 && byte <= 122 {
-        uint32(byte - 97) + 26
-    } else if byte >= 48 && byte <= 57 {
-        uint32(byte - 48) + 52
-    } else if byte == (
-        if url {
-        uint8(45)
-    } else {
-        uint8(43)
-    }
-    ) {
-        62
-    } else if byte == (
-        if url {
-        uint8(95)
-    } else {
-        uint8(47)
-    }
-    ) {
-        63
-    } else {
-        64
+    match (byte, url) {
+        (65 ..= 90, _) => uint32(byte - 65),
+        (97 ..= 122, _) => uint32(byte - 97) + 26,
+        (48 ..= 57, _) => uint32(byte - 48) + 52,
+        (43, false) | (45, true) => 62,
+        (47, false) | (95, true) => 63,
+        _ => 64
     }
 }
 

@@ -19,11 +19,17 @@ impl Parser<'_> {
         let mut arms = Vec::new();
         while self.peek() != &TokenKind::RBrace {
             let arm_start = self.peek_span().start();
-            let pattern = self.parse_match_pattern()?;
+            let mut pattern = self.parse_match_pattern()?;
             if self.peek() == &TokenKind::Pipe {
-                return Err(self.error(
-                    "Or-patterns (`a | b`) are not supported; use separate match arms".into(),
-                ));
+                let mut alternatives = vec![pattern];
+                while self.peek() == &TokenKind::Pipe {
+                    self.advance();
+                    alternatives.push(self.parse_match_pattern()?);
+                }
+                pattern = Pattern::Or {
+                    alternatives,
+                    span: self.span(arm_start, self.last_span.end()),
+                };
             }
             let guard = if self.peek() == &TokenKind::If {
                 self.advance();

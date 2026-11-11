@@ -21,6 +21,7 @@ pub(super) enum Kind {
     },
     /// Declared field indices in pattern order; the type carries the record.
     Record(Vec<(usize, CheckedPattern)>),
+    Or(Vec<CheckedPattern>),
 }
 
 pub(super) struct IntegerRange {
@@ -61,6 +62,13 @@ impl CheckedPattern {
         Self { ty, kind, span }
     }
 
+    fn alternatives(&self) -> &[Self] {
+        match &self.kind {
+            Kind::Or(alternatives) => alternatives,
+            _ => std::slice::from_ref(self),
+        }
+    }
+
     pub(super) fn hints(&self, vars: &mut HashMap<String, Binding>, borrowed: Option<bool>) {
         match &self.kind {
             Kind::Any(Some(name)) => {
@@ -71,7 +79,7 @@ impl CheckedPattern {
                 };
                 vars.insert(name.clone(), payload_binding(&ty, 0));
             }
-            Kind::Literal(..) | Kind::String(_) | Kind::Range(_) => {}
+            Kind::Literal(..) | Kind::String(_) | Kind::Range(_) | Kind::Or(_) => {}
             Kind::Sequence(p) => {
                 for child in p.prefix.iter().chain(&p.suffix) {
                     child.hints(vars, borrowed);
@@ -96,7 +104,12 @@ impl CheckedPattern {
         use crate::memory_layout::MemoryLayoutShape;
         if matches!(
             self.kind,
-            Kind::Any(_) | Kind::Literal(..) | Kind::String(_) | Kind::Range(_) | Kind::Sequence(_)
+            Kind::Any(_)
+                | Kind::Literal(..)
+                | Kind::String(_)
+                | Kind::Range(_)
+                | Kind::Sequence(_)
+                | Kind::Or(_)
         ) {
             return Ok(Vec::new());
         }
@@ -116,6 +129,7 @@ impl CheckedPattern {
                 | Kind::Literal(..)
                 | Kind::String(_)
                 | Kind::Range(_)
+                | Kind::Or(_)
                 | Kind::Sequence(_) => {
                     unreachable!()
                 }
@@ -145,7 +159,7 @@ impl CheckedPattern {
 
     pub(super) fn binds(&self) -> bool {
         match &self.kind {
-            Kind::Literal(..) | Kind::String(_) | Kind::Range(_) => false,
+            Kind::Literal(..) | Kind::String(_) | Kind::Range(_) | Kind::Or(_) => false,
             Kind::Sequence(p) => {
                 p.rest.as_ref().is_some_and(Option::is_some)
                     || p.prefix.iter().chain(&p.suffix).any(Self::binds)
@@ -175,12 +189,50 @@ impl CheckedPattern {
             Kind::Variant { tag, payload } => {
                 Coverage::Ctor(*tag, payload.iter().map(|p| p.coverage()).collect())
             }
+            Kind::Or(_) => unreachable!("alternatives are separate coverage rows"),
         })
     }
 }
 
 impl FunctionPlan {
     pub(super) fn check_match_pattern(
+        &self,
+        pattern: &Pattern,
+        ty: &Type,
+        types: &TypeRegistry,
+    ) -> Result<CheckedPattern, Error> {
+        let Pattern::Or { alternatives, span } = pattern else {
+            return self.check_match_alternative(pattern, ty, types);
+        };
+        if alternatives.len() < 2 {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidPattern,
+                "Expected at least two alternatives",
+            ));
+        }
+        let alternatives = alternatives
+            .iter()
+            .map(|alternative| {
+                let checked = self.check_match_alternative(alternative, ty, types)?;
+                if checked.binds() {
+                    return Err(type_error(
+                        &checked.span,
+                        ErrorCode::InvalidPattern,
+                        "Match alternatives cannot introduce bindings",
+                    ));
+                }
+                Ok(checked)
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(CheckedPattern::nested(
+            ty.clone(),
+            Kind::Or(alternatives),
+            *span,
+        ))
+    }
+
+    fn check_match_alternative(
         &self,
         pattern: &Pattern,
         ty: &Type,
@@ -199,6 +251,11 @@ impl FunctionPlan {
                 binding,
                 span,
             } => self.check_variant_pattern(name, binding.as_deref(), ty, *span, &mut names, types),
+            Pattern::Or { span, .. } => Err(type_error(
+                span,
+                ErrorCode::InvalidPattern,
+                "Nested match alternatives are not supported",
+            )),
         }
     }
     fn check_variant_pattern(
@@ -432,6 +489,39 @@ impl FunctionPlan {
         })
     }
 
+    pub(super) fn test_match_arm(
+        &mut self,
+        pattern: &CheckedPattern,
+        value: &Slot,
+        borrowed: bool,
+        failure: usize,
+    ) -> Result<(), Error> {
+        let test = |plan: &mut Self, alternative, failure| {
+            if borrowed {
+                plan.borrowed_pattern_tests(alternative, value, 0, failure)
+            } else {
+                plan.match_pattern_tests(alternative, value.index, failure)
+            }
+        };
+        let (last, preceding) = pattern.alternatives().split_last().unwrap();
+        if preceding.is_empty() {
+            return test(self, last, failure);
+        }
+        let matched = self.label_count;
+        self.label_count += 1;
+        for alternative in preceding {
+            let next = self.label_count;
+            self.label_count += 1;
+            test(self, alternative, next)?;
+            self.emit(Op::Jump(matched));
+            self.emit(Op::Label(next));
+        }
+        test(self, last, failure)?;
+        self.current_span = pattern.span;
+        self.emit(Op::Label(matched));
+        Ok(())
+    }
+
     pub(super) fn match_pattern_tests(
         &mut self,
         pattern: &CheckedPattern,
@@ -477,7 +567,7 @@ impl FunctionPlan {
             return Ok(());
         }
         match &pattern.kind {
-            Kind::Sequence(_) => unreachable!(),
+            Kind::Sequence(_) | Kind::Or(_) => unreachable!(),
             Kind::String(text) => {
                 let actual = Slot {
                     index,
@@ -756,7 +846,11 @@ impl FunctionPlan {
             value
         };
         match &pattern.kind {
-            Kind::Literal(..) | Kind::String(_) | Kind::Range(_) | Kind::Sequence(_) => {}
+            Kind::Literal(..)
+            | Kind::String(_)
+            | Kind::Range(_)
+            | Kind::Sequence(_)
+            | Kind::Or(_) => {}
             Kind::Any(Some(name)) => {
                 let binding = self.local_binding(
                     name,
@@ -1209,7 +1303,8 @@ fn validate_integer_literals(
     let mut covered = HashSet::new();
     let mut complete = false;
     let mut checked = Vec::new();
-    for (index, arm) in arms.iter().enumerate() {
+    let mut remaining = 65_536usize;
+    for arm in arms {
         let location = arm.pattern.span();
         if complete {
             return Err(type_error(
@@ -1218,31 +1313,40 @@ fn validate_integer_literals(
                 "Unreachable match arm after complete coverage",
             ));
         }
-        if index >= 65_536 {
-            return Err(type_error(
-                &location,
-                ErrorCode::ResourceLimit,
-                "Match coverage analysis exceeds 65536 steps",
-            ));
-        }
+        remaining = remaining
+            .checked_sub(arm.pattern.alternatives().len())
+            .ok_or_else(|| {
+                type_error(
+                    &location,
+                    ErrorCode::ResourceLimit,
+                    "Match coverage analysis exceeds 65536 steps",
+                )
+            })?;
         let pattern = plan.check_match_pattern(&arm.pattern, ty, types)?;
-        complete = match &pattern.kind {
-            Kind::Literal(_, bits) => {
-                if covered.contains(bits) {
-                    return Err(type_error(
-                        &location,
-                        ErrorCode::UnreachableCode,
-                        "Duplicate match arm or unreachable pattern",
-                    ));
-                }
-                if arm.guard.is_none() {
-                    covered.insert(*bits);
-                }
-                covered.len() as u128 == domain
+        for alternative in pattern.alternatives() {
+            let useful = !complete
+                && match &alternative.kind {
+                    Kind::Literal(_, bits) => covered.insert(*bits),
+                    Kind::Any(_) => true,
+                    _ => unreachable!("scalar literal or binding"),
+                };
+            if !useful {
+                return Err(type_error(
+                    &alternative.span,
+                    ErrorCode::UnreachableCode,
+                    "Duplicate match arm or unreachable pattern",
+                ));
             }
-            Kind::Any(_) => arm.guard.is_none(),
-            _ => unreachable!("scalar literal or binding"),
-        };
+            complete = matches!(alternative.kind, Kind::Any(_)) || covered.len() as u128 == domain;
+        }
+        if arm.guard.is_some() {
+            for alternative in pattern.alternatives() {
+                if let Kind::Literal(_, bits) = &alternative.kind {
+                    covered.remove(bits);
+                }
+            }
+            complete = false;
+        }
         checked.push(pattern);
     }
     if !complete {
@@ -1265,16 +1369,20 @@ pub(super) fn validate(
     // One integer column has no correlations with other columns. For literal
     // arms, its covered constructors are precisely the distinct checked bits.
     if let Some(integer) = ty.integer().filter(|_| *ty != Type::Rune) {
-        if arms.iter().all(|arm| match &arm.pattern {
-            Pattern::Wildcard { .. } => true,
-            Pattern::Value(p) => matches!(
-                p.as_ref(),
-                PayloadPattern::Literal { .. }
-                    | PayloadPattern::Discard { .. }
-                    | PayloadPattern::Name { .. }
-            ),
-            Pattern::Variant { .. } => false,
-        }) {
+        if arms
+            .iter()
+            .flat_map(|arm| arm.pattern.alternatives())
+            .all(|pattern| match pattern {
+                Pattern::Wildcard { .. } => true,
+                Pattern::Value(p) => matches!(
+                    p.as_ref(),
+                    PayloadPattern::Literal { .. }
+                        | PayloadPattern::Discard { .. }
+                        | PayloadPattern::Name { .. }
+                ),
+                Pattern::Variant { .. } | Pattern::Or { .. } => false,
+            })
+        {
             return validate_integer_literals(plan, ty, 1u128 << integer.bits(), arms, span, types);
         }
     }
@@ -1298,23 +1406,27 @@ pub(super) fn validate(
             ));
         }
         let pattern = plan.check_match_pattern(&arm.pattern, ty, types)?;
-        let coverage = pattern.coverage();
-        if !useful(
-            &matrix,
-            std::slice::from_ref(&coverage),
-            std::slice::from_ref(ty),
-            &mut budget,
-            location,
-            0,
-        )? {
-            return Err(type_error(
-                &location,
-                ErrorCode::UnreachableCode,
-                "Duplicate match arm or unreachable pattern",
-            ));
-        }
-        if arm.guard.is_none() {
+        let covered = matrix.len();
+        for alternative in pattern.alternatives() {
+            let coverage = alternative.coverage();
+            if !useful(
+                &matrix,
+                std::slice::from_ref(&coverage),
+                std::slice::from_ref(ty),
+                &mut budget,
+                alternative.span,
+                0,
+            )? {
+                return Err(type_error(
+                    &alternative.span,
+                    ErrorCode::UnreachableCode,
+                    "Duplicate match arm or unreachable pattern",
+                ));
+            }
             matrix.push(vec![coverage]);
+        }
+        if arm.guard.is_some() {
+            matrix.truncate(covered);
         }
         checked.push(pattern);
     }

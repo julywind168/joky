@@ -83,16 +83,12 @@ const RECORD: UInt64 = 16384
 const MAX_IO: UInt64 = 1048576
 
 fn failure(code: UInt64) -> TlsError {
-    if code == 1 {
-        InvalidConfig
-    } else if code == 2 {
-        InvalidName
-    } else if code == 3 {
-        Certificate
-    } else if code == 5 {
-        Limit
-    } else {
-        Protocol
+    match code {
+        1 => InvalidConfig,
+        2 => InvalidName,
+        3 => Certificate,
+        5 => Limit,
+        _ => Protocol
     }
 }
 

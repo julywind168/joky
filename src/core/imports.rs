@@ -215,7 +215,9 @@ fn uses_equality(module: &Module) -> bool {
         if let Expr::Match { arms, .. } = expression {
             if arms
                 .iter()
-                .any(|arm| arm.pattern.payload().is_some_and(string_pattern))
+                .flat_map(|arm| arm.pattern.alternatives())
+                .filter_map(|pattern| pattern.payload())
+                .any(string_pattern)
             {
                 return true;
             }

@@ -1246,13 +1246,32 @@ pub enum Pattern {
         binding: Option<Box<PayloadPattern>>,
         span: Span,
     },
+    Or {
+        alternatives: Vec<Pattern>,
+        span: Span,
+    },
 }
 impl Pattern {
     pub fn span(&self) -> Span {
         match self {
             Self::Value(p) => p.span(),
-            Self::Wildcard { span } | Self::Variant { span, .. } => *span,
+            Self::Wildcard { span } | Self::Variant { span, .. } | Self::Or { span, .. } => *span,
         }
+    }
+
+    pub(crate) fn alternatives(&self) -> &[Self] {
+        match self {
+            Self::Or { alternatives, .. } => alternatives,
+            pattern => std::slice::from_ref(pattern),
+        }
+    }
+
+    pub(crate) fn payloads_mut(&mut self) -> impl Iterator<Item = &mut PayloadPattern> {
+        let alternatives = match self {
+            Self::Or { alternatives, .. } => alternatives,
+            pattern => std::slice::from_mut(pattern),
+        };
+        alternatives.iter_mut().filter_map(Self::payload_mut)
     }
 }
 
@@ -1434,7 +1453,7 @@ impl Pattern {
             _ => None,
         }
     }
-    pub(crate) fn payload_mut(&mut self) -> Option<&mut PayloadPattern> {
+    fn payload_mut(&mut self) -> Option<&mut PayloadPattern> {
         match self {
             Self::Value(p) => Some(p),
             Self::Variant { binding, .. } => binding.as_deref_mut(),

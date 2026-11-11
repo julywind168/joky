@@ -3,7 +3,7 @@
 //! branch block is lowered into a private entry function whose parameters are
 //! the captured free variables, in first-use order.
 use super::*;
-use crate::parser::ast::{BindingPattern, Param, Pattern};
+use crate::parser::ast::{BindingPattern, Param};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static TASK_ENTRY_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -474,14 +474,8 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                 for arm in arms {
                     scopes.push(std::collections::HashSet::new());
                     let mut names = Vec::new();
-                    match &arm.pattern {
-                        Pattern::Value(p) => p.names(&mut names),
-                        Pattern::Wildcard { .. } => {}
-                        Pattern::Variant { binding, .. } => {
-                            if let Some(binding) = binding {
-                                binding.names(&mut names);
-                            }
-                        }
+                    if let Some(pattern) = arm.pattern.payload() {
+                        pattern.names(&mut names);
                     }
                     scopes.last_mut().expect("outermost layer").extend(names);
                     if let Some(guard) = &arm.guard {
