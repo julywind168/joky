@@ -140,10 +140,7 @@ impl Show for DomainAccessError {
 pub enum Outcome<T, E> { Committed(T), Rejected(E), Failed(DomainAccessError) }
 impl<T, E> Outcome<T, E> {
     pub fn is_committed(&self) -> Bool {
-        match self {
-            Committed(_) => true,
-            _ => false
-        }
+        self is Committed(_)
     }
     // Explicitly discard either failure and consume the successful payload.
     pub fn committed(self) -> Option<T> {

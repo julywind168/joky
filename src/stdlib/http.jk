@@ -305,12 +305,9 @@ enum ReadFailure { Bad, Network, HeadLimit, BodyLimit, Timeout, Stopped, Unsuppo
 
 // HTTP token characters: ASCII letters, digits and the permitted punctuation.
 fn token(b: UInt8) -> Bool {
-    match b {
-        b'A' ..= b'Z' | b'a' ..= b'z' | b'0' ..= b'9' => true,
-        b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' => true,
-        b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~' => true,
-        _ => false
-    }
+    b is b'A' ..= b'Z' | b'a' ..= b'z' | b'0' ..= b'9' |
+        b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' |
+        b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
 }
 
 // ASCII type/subtype followed by optional token or quoted-string parameters.
@@ -1395,10 +1392,7 @@ impl Client {
             result.Ok(io) => io,
             Err(e) => return Err(e)
         }
-        let head_only = match method {
-            Head => true,
-            _ => false
-        }
+        let head_only = method is Head
         race {
             exchange(wire, head, body, self.max_body, head_only),
             exchange_deadline(self.exchange_timeout)

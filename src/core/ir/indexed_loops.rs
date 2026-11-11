@@ -504,6 +504,9 @@ impl Inference<'_> {
                     }
                 }
             }
+            Expr::Is { value, .. } => {
+                depends = descend(value, &mut vars.clone(), &mut tracked.clone(), None)?;
+            }
             Expr::Match {
                 value,
                 arms,

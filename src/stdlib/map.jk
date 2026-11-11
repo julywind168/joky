@@ -403,11 +403,7 @@ pub fn insert<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K, value: V) -> Optio
     }
     reserve(table, 1)
     let position = index_position(&table.buckets, cached_hash)
-    let reused = match table.buckets[position] {
-        Bucket.Deleted => true,
-        Bucket.Empty => false,
-        Bucket.Full(_) => false
-    }
+    let reused = table.buckets[position] is Bucket.Deleted
     let i = len(table)
     table.keys.push(key)
     table.values.push(value)

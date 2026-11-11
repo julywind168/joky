@@ -365,10 +365,7 @@ impl ReceiveBuffer {
         self.bytes.len() - self.offset
     }
     fn is_eof(&self) -> Bool {
-        match self.state {
-            Eof => true,
-            _ => false
-        }
+        self.state is Eof
     }
     fn needs_fill(&self) -> Result<Bool, ReadError> {
         if self.buffered_len() > 0 {

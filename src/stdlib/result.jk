@@ -97,18 +97,12 @@ impl<T, E> Result<T, E> {
 
     /// Tests for success without consuming either payload.
     pub fn is_ok(&self) -> Bool {
-        match self {
-            Ok(_) => true,
-            Err(_) => false
-        }
+        self is Ok(_)
     }
 
     /// Tests for failure without consuming either payload.
     pub fn is_err(&self) -> Bool {
-        match self {
-            Ok(_) => false,
-            Err(_) => true
-        }
+        self is Err(_)
     }
 
     /// Only the error branch invokes the consuming callback.

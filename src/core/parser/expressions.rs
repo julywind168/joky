@@ -264,24 +264,40 @@ impl Parser<'_> {
         }
     }
 
-    /// Comparisons bind below bitwise operators and arithmetic and cannot chain without parentheses.
+    fn at_pattern_test(&self) -> bool {
+        !self.at_expression_break() && matches!(self.peek(), TokenKind::Ident(name) if name == "is")
+    }
+
+    /// Comparisons and pattern tests bind below bitwise operators and cannot chain.
     fn parse_comparison(&mut self) -> Result<Expr, Diagnostic> {
         let lhs = self.parse_bit_or()?;
-        if let Some(op) = self.comparison_op() {
+        let expr = if self.at_pattern_test() {
+            self.format_role(format::Role::PatternTest);
+            self.advance();
+            let pattern = self.parse_pattern_alternatives()?;
+            let span = self.span(lhs.span().start(), self.last_span.end());
+            Expr::Is {
+                value: Box::new(lhs),
+                pattern: Box::new(pattern),
+                span,
+            }
+        } else if let Some(op) = self.comparison_op() {
             self.advance();
             let rhs = self.parse_bit_or()?;
-            if self.comparison_op().is_some() {
-                return Err(self.error("Comparison chains require parentheses".into()));
-            }
             let span = self.span(lhs.span().start(), rhs.span().end());
-            return Ok(Expr::BinOp {
+            Expr::BinOp {
                 op,
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
                 span,
-            });
+            }
+        } else {
+            return Ok(lhs);
+        };
+        if self.comparison_op().is_some() || self.at_pattern_test() {
+            return Err(self.error("Comparison chains require parentheses".into()));
         }
-        Ok(lhs)
+        Ok(expr)
     }
 
     fn parse_bit_or(&mut self) -> Result<Expr, Diagnostic> {

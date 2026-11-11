@@ -41,11 +41,7 @@ impl Show for DecodeError {
 }
 
 fn unreserved(byte: UInt8) -> Bool {
-    match byte {
-        b'A' ..= b'Z' | b'a' ..= b'z' | b'0' ..= b'9' => true,
-        b'-' | b'.' | b'_' | b'~' => true,
-        _ => false
-    }
+    byte is b'A' ..= b'Z' | b'a' ..= b'z' | b'0' ..= b'9' | b'-' | b'.' | b'_' | b'~'
 }
 
 fn digit(value: UInt8) -> UInt8 {

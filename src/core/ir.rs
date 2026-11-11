@@ -2245,6 +2245,9 @@ impl FunctionPlan {
                 self.tuple_expr(expr, vars, functions, suspends, types, expected)
             }
             Expr::Match { .. } => self.match_expr(expr, vars, functions, suspends, types, expected),
+            Expr::Is { value, pattern, .. } => {
+                self.pattern_test_expr(value, pattern, vars, functions, suspends, types)
+            }
             Expr::LetElse(binding) => self.let_else_expr(binding, vars, functions, suspends, types),
             Expr::Record { .. } | Expr::Field { .. } | Expr::FieldAssign { .. } => {
                 self.record_expr(expr, vars, functions, suspends, types, expected)

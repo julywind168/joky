@@ -7,6 +7,99 @@ use crate::ErrorCode;
 const SOURCE: &str = include_str!("../../../../tests/fixtures/conditional_patterns.jk");
 
 #[test]
+fn is_pattern_rejects_bindings_and_invalid_patterns() {
+    for (source, code, message) in [
+        (
+            "fn f() -> Bool { Some(42) is Some(n) }",
+            ErrorCode::InvalidPattern,
+            "cannot introduce bindings",
+        ),
+        (
+            "fn f() -> Bool { [42] is [..rest] }",
+            ErrorCode::InvalidPattern,
+            "cannot introduce bindings",
+        ),
+        (
+            "fn f() -> Bool { Some(42) is None | Some(n) }",
+            ErrorCode::InvalidPattern,
+            "cannot introduce bindings",
+        ),
+        (
+            "fn f() -> Bool { true is Some(_) }",
+            ErrorCode::InvalidPattern,
+            "requires an enum",
+        ),
+        (
+            "fn f() -> Bool { {} is _ }",
+            ErrorCode::TypeMismatch,
+            "requires a matchable value",
+        ),
+    ] {
+        let error = frontend_error(source, &crate::ModuleSources::new());
+        assert_eq!(error.code(), code, "{source}: {error}");
+        assert!(error.message().contains(message), "{source}: {error}");
+    }
+}
+
+#[test]
+fn is_pattern_releases_owned_inputs_before_the_next_suspension() {
+    let source = r#"
+        import joky/array.{type Array}
+        extern fn record(value: Int32) -> Int32
+        extern fn delayed_value(value: Int32) @suspends -> Int32
+        enum Packet { Data(Array<Int32>), Other(Array<Int32>) }
+
+        fn packet(select: Int32) @suspends -> Packet {
+            let id = delayed_value(record(select))
+            if id == 1 { Packet.Other([42]) } else { Packet.Data([42]) }
+        }
+
+        fn run(select: Int32) @suspends -> Int32 {
+            let result = packet(select) is Packet.Data([42])
+            delayed_value(record(if result { 2 } else { 3 }))
+            if result { 42 } else { 0 }
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        for (select, branch, result) in [(0, 3, 0), (1, 2, 42)] {
+            for cancel in [false, true] {
+                READY.with(|ready| ready.set(false));
+                EVENTS.with(|events| events.borrow_mut().clear());
+                let mut task = vm.call_async("run", &[select]).unwrap();
+                for _ in 0..3 {
+                    task.resume().unwrap();
+                }
+                EVENTS.with(|events| assert_eq!(*events.borrow(), [select, select]));
+                READY.with(|ready| ready.set(true));
+                for _ in 0..20 {
+                    if EVENTS.with(|events| events.borrow().len()) == 4 {
+                        break;
+                    }
+                    task.resume().unwrap();
+                }
+                let expected = [select, select, branch, branch];
+                EVENTS.with(|events| assert_eq!(*events.borrow(), expected));
+                assert!(!task.is_finished());
+                LIVE.with(|live| assert_eq!(live.get(), 0));
+                if !cancel {
+                    for _ in 0..20 {
+                        if task.is_finished() {
+                            break;
+                        }
+                        task.resume().unwrap();
+                    }
+                    assert_eq!(task.cps_result(), Some(result));
+                }
+                drop(task);
+                EVENTS.with(|events| assert_eq!(*events.borrow(), expected));
+                LIVE.with(|live| assert_eq!(live.get(), 0));
+            }
+        }
+    }
+}
+
+#[test]
 fn let_else_rejects_fallthrough_and_hides_bindings_from_failure() {
     for (source, code, message) in [
         (

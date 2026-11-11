@@ -19,18 +19,7 @@ impl Parser<'_> {
         let mut arms = Vec::new();
         while self.peek() != &TokenKind::RBrace {
             let arm_start = self.peek_span().start();
-            let mut pattern = self.parse_match_pattern()?;
-            if self.peek() == &TokenKind::Pipe {
-                let mut alternatives = vec![pattern];
-                while self.peek() == &TokenKind::Pipe {
-                    self.advance();
-                    alternatives.push(self.parse_match_pattern()?);
-                }
-                pattern = Pattern::Or {
-                    alternatives,
-                    span: self.span(arm_start, self.last_span.end()),
-                };
-            }
+            let pattern = self.parse_pattern_alternatives()?;
             let guard = if self.peek() == &TokenKind::If {
                 self.advance();
                 Some(self.parse_assignment()?)
@@ -55,6 +44,23 @@ impl Parser<'_> {
             iteration: false,
             value,
             arms,
+            span: self.span(start, self.last_span.end()),
+        })
+    }
+
+    pub(super) fn parse_pattern_alternatives(&mut self) -> Result<Pattern, Diagnostic> {
+        let start = self.peek_span().start();
+        let first = self.parse_match_pattern()?;
+        if self.peek() != &TokenKind::Pipe {
+            return Ok(first);
+        }
+        let mut alternatives = vec![first];
+        while self.peek() == &TokenKind::Pipe {
+            self.advance();
+            alternatives.push(self.parse_match_pattern()?);
+        }
+        Ok(Pattern::Or {
+            alternatives,
             span: self.span(start, self.last_span.end()),
         })
     }

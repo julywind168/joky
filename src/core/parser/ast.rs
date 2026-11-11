@@ -288,6 +288,11 @@ pub enum Expr {
         span: Span,
     },
     LetElse(Box<LetElse>),
+    Is {
+        value: Box<Expr>,
+        pattern: Box<Pattern>,
+        span: Span,
+    },
 }
 
 #[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
@@ -363,6 +368,7 @@ impl Expr {
             | Self::Tuple { span, .. }
             | Self::Destructure { span, .. }
             | Self::Match { span, .. }
+            | Self::Is { span, .. }
             | Self::Record { span, .. }
             | Self::Field { span, .. }
             | Self::FieldAssign { span, .. }
@@ -397,6 +403,11 @@ impl Expr {
 
     pub(crate) fn with_span(self, span: Span) -> Self {
         match self {
+            Self::Is { value, pattern, .. } => Self::Is {
+                value,
+                pattern,
+                span,
+            },
             Self::LetElse(mut binding) => {
                 binding.span = span;
                 Self::LetElse(binding)
@@ -1533,6 +1544,7 @@ impl Expr {
             Expr::Call { args, .. } => args.iter().collect(),
             Expr::Let { value, .. }
             | Expr::Var { value, .. }
+            | Expr::Is { value, .. }
             | Expr::Assign { value, .. }
             | Expr::Destructure { value, .. }
             | Expr::Spread { value, .. }

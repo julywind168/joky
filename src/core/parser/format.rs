@@ -54,6 +54,7 @@ pub(super) enum Role {
     TypeOpen,
     TypeClose,
     Prefix,
+    PatternTest,
     OpenSlice,
     ClosureOpen,
     ClosureClose,

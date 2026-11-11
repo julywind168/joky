@@ -586,6 +586,7 @@ impl FunctionPlan {
             Expr::Unary {
                 op: UnaryOp::Not, ..
             }
+            | Expr::Is { .. }
             | Expr::Logical { .. } => Some(Type::Bool),
             Expr::BinaryChain { .. } => {
                 let mut local = vars.clone();

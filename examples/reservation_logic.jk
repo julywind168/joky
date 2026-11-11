@@ -124,7 +124,7 @@ fn demo(_: Unit) @suspends {
     }
     assert_stock(read, 90, 0, 10)
     let changed = Request { user: 1, id: key, amount: 9 }
-    assert(match begin(stock, changed, 0) { Return(Conflict) => true, _ => false }, "key reused with different amount")
+    assert(begin(stock, changed, 0) is Return(Conflict), "key reused with different amount")
     // Commit, then lose the reply. A retry must return the original order ID.
     finish(stock, ticket, Decision.Accept, 1);
     assert(match purchase(stock, order, Decision.Fail, 2) { Confirmed(id) => id == ticket, _ => false }, "replay committed order")
@@ -132,23 +132,26 @@ fn demo(_: Unit) @suspends {
     assert_stock(read, 90, 10, 0)
 
     let other = Request { user: 2, id: key, amount: 10 }
-    assert(match purchase(stock, other, Decision.Reject, 3) { Declined => true, _ => false }, "keys are per user")
+    assert(purchase(stock, other, Decision.Reject, 3) is Declined, "keys are per user")
     let failed = Request { user: 3, id: key, amount: 10 }
-    assert(match purchase(stock, failed, Decision.Fail, 4) { Failed => true, _ => false }, "release on failed check")
+    assert(purchase(stock, failed, Decision.Fail, 4) is Failed, "release on failed check")
     let fourth = Request { user: 4, id: key, amount: 10 }
     purchase(stock, fourth, Decision.Reject, 5);
     let fresh = Request { user: 5, id: key, amount: 5 }
-    assert(match begin(stock, fresh, 60) { Return(Busy) => true, _ => false }, "full replay table")
+    assert(begin(stock, fresh, 60) is Return(Busy), "full replay table")
     assert(match begin(stock, order, 60) { Return(Confirmed(id)) => id == ticket, _ => false }, "retain until deadline")
-    assert(match purchase(stock, order, Decision.Reject, 61) { Declined => true, _ => false }, "new admission after replay window")
+    assert(
+        purchase(stock, order, Decision.Reject, 61) is Declined,
+        "new admission after replay window"
+    )
 
     race { abandoned(stock, fresh), stop_after_reservation(read) }
     assert_stock(read, 85, 10, 5)
     let old = when (stock) { stock.next_id - 1 }!
     when (mut stock) { stock.expire(110) }!
-    assert(match begin(stock, fresh, 110) { Return(Expired) => true, _ => false }, "retry after hold expiry")
+    assert(begin(stock, fresh, 110) is Return(Expired), "retry after hold expiry")
     let next = match begin(stock, other, 111) { Start(id) => id, _ => panic("fresh hold") }
-    assert(match finish(stock, old, Decision.Accept, 112) { Expired => true, _ => false }, "ignore late reply")
+    assert(finish(stock, old, Decision.Accept, 112) is Expired, "ignore late reply")
     assert_stock(read, 80, 10, 10)
     finish(stock, next, Decision.Accept, 112);
     assert_stock(read, 80, 20, 0)

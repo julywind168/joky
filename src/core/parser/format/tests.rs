@@ -216,6 +216,14 @@ fn format_let_else_and_following_binding_use() {
 }
 
 #[test]
+fn format_pattern_tests_and_contextual_identifier() {
+    assert_format(
+        "fn is(a: Int32) -> Bool { (a,a)is(1,_) && [a]is[0]|[1] }",
+        "fn is(a: Int32) -> Bool {\n    (a, a) is (1, _) && [a] is [0] | [1]\n}\n",
+    );
+}
+
+#[test]
 fn format_preserves_byte_literals_and_range_patterns() {
     assert_format(
         r"fn f(n:UInt8)->UInt8{match n{b'a'..=b'z'=>b'\xAf',_=>b'\0'}}",

@@ -186,7 +186,7 @@ fn finish(
 // Type checking selects equality later; equality expressions and string patterns
 // need the standard implementation. Embedded libraries declare their own dependencies.
 fn uses_equality(module: &Module) -> bool {
-    use crate::parser::ast::{BinOp, Expr, Literal, PayloadPattern};
+    use crate::parser::ast::{BinOp, Expr, Literal, Pattern, PayloadPattern};
     fn string_pattern(pattern: &PayloadPattern) -> bool {
         match pattern {
             PayloadPattern::Literal {
@@ -201,31 +201,27 @@ fn uses_equality(module: &Module) -> bool {
             _ => false,
         }
     }
+    fn has_string_pattern(pattern: &Pattern) -> bool {
+        pattern
+            .alternatives()
+            .iter()
+            .filter_map(Pattern::payload)
+            .any(string_pattern)
+    }
     let mut pending: Vec<_> = module.expression_roots().collect();
     while let Some(expression) = pending.pop() {
-        if matches!(
-            expression,
+        let uses_equality = match expression {
             Expr::BinOp {
                 op: BinOp::Eq | BinOp::Ne,
                 ..
-            }
-        ) {
+            } => true,
+            Expr::Match { arms, .. } => arms.iter().any(|arm| has_string_pattern(&arm.pattern)),
+            Expr::LetElse(binding) => has_string_pattern(&binding.pattern),
+            Expr::Is { pattern, .. } => has_string_pattern(pattern),
+            _ => false,
+        };
+        if uses_equality {
             return true;
-        }
-        if let Expr::Match { arms, .. } = expression {
-            if arms
-                .iter()
-                .flat_map(|arm| arm.pattern.alternatives())
-                .filter_map(|pattern| pattern.payload())
-                .any(string_pattern)
-            {
-                return true;
-            }
-        }
-        if let Expr::LetElse(binding) = expression {
-            if binding.pattern.payload().is_some_and(string_pattern) {
-                return true;
-            }
         }
         pending.extend(expression.children());
     }

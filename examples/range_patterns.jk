@@ -17,7 +17,7 @@ fn overlap(value: Int32) -> Int32 {
 }
 
 fn accepted(score: Option<Int32>) -> Bool {
-    match score { Some(60..=100) => true, Some(_) => false, None => false }
+    score is Some(60 ..= 100)
 }
 
 fn main() {

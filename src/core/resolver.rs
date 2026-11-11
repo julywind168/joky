@@ -473,6 +473,13 @@ fn resolve_calls(
                 resolve_calls(arg, functions, member_roots, call_forms, locals)?;
             }
         }
+        Expr::Is { value, .. } => resolve_calls(
+            value,
+            functions,
+            member_roots,
+            call_forms,
+            &mut locals.clone(),
+        )?,
         Expr::LetElse(binding) => {
             for child in [&mut binding.value, &mut binding.fallback] {
                 resolve_calls(

@@ -3679,7 +3679,7 @@ else 可以换行，但不能用分号与 then 块分开。`||` 按最长匹配�
 
 ## 整数范围模式
 
-`match`、`if let`、`while let` 和 `let ... else` 支持八种整数的范围模式：`a..b` 不包含 b，`a..=b` 包含 b。
+`match`、`if let`、`while let`、`let ... else` 和 `is` 支持八种整数的范围模式：`a..b` 不包含 b，`a..=b` 包含 b。
 整数字面量端点按被匹配的整数类型定型，可带直接负号。`UInt8` 范围也可使用字节字面量端点。
 不允许隐式跨整数类型转换。
 
@@ -3803,6 +3803,26 @@ fn drain(values: &mut Array<Int32>) {
 所有权与借用规则沿用 `match`：按值匹配移动拥有者，失败的模式及未使用载荷仍会清理；
 匹配 `&value` / `&mut value` 保留原拥有者，Copy 载荷按值读取，非 Copy 载荷绑定为对应引用。
 `if let` / `while let` 暂不支持 `&&` 模式链；需要附加条件时可使用 match 守卫。
+
+### 布尔模式测试
+
+`value is Pattern` 求值左侧一次，匹配成功时返回 `true`，否则返回 `false`。
+模式沿用 `match`，支持字面量、范围、枚举载荷、元组、序列和 `|` 备选模式。
+`is` 不引入绑定，可用 `_` 忽略载荷，例如 `value is Some(_)`。
+
+```joky
+fn accepted(score: Option<Int32>) -> Bool {
+    score is Some(60 ..= 100)
+}
+
+fn separator(byte: UInt8) -> Bool {
+    byte is b',' | b';'
+}
+```
+
+`is` 与比较运算同级，高于 `&&` 和 `||`。`x is 1 | 2 && ready` 先测试两个备选模式，再按短路规则求值 `ready`。
+与其他比较组合时需要括号，例如 `(x is 1) == ready`。`is` 在这个位置是运算符，仍可用作标识符。
+按值测试会消费拥有值，并在返回布尔结果前清理。用 `&value is Pattern` 可以在测试后继续使用原值。
 
 ### 失败即退出的绑定
 

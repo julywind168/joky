@@ -154,6 +154,7 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
             | Expr::Var { value, .. }
             | Expr::Assign { value, .. }
             | Expr::Destructure { value, .. }
+            | Expr::Is { value, .. }
             | Expr::Spread { value, .. } => pending.push(value),
             Expr::Return { value, .. } => pending.extend(value.iter().map(Box::as_ref)),
             Expr::BinaryChain { .. } | Expr::IfChain { .. } | Expr::LetElse(_) => {

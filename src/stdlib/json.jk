@@ -338,10 +338,7 @@ fn decode_error(kind: DecodeErrorKind, offset: UInt64) -> DecodeError {
 }
 
 fn whitespace(byte: UInt8) -> Bool {
-    match byte {
-        b' ' | b'\t' | b'\n' | b'\r' => true,
-        _ => false
-    }
+    byte is b' ' | b'\t' | b'\n' | b'\r'
 }
 
 fn skip_space(input: &slice.Slice<UInt8>, start: UInt64) -> UInt64 {

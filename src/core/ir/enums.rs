@@ -4,6 +4,7 @@ use crate::core::types::EnumType;
 use std::collections::HashSet;
 
 use super::generics::ConstructorContext;
+use crate::parser::ast::Pattern;
 
 pub(super) struct Constructor<'a> {
     pub enumeration: Arc<EnumType>,
@@ -446,6 +447,58 @@ impl FunctionPlan {
         }
         self.end_local_scope();
         Ok(value)
+    }
+
+    pub(super) fn pattern_test_expr(
+        &mut self,
+        input: &Expr,
+        pattern: &Pattern,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Flow, Error> {
+        self.local_scopes.push(Vec::new());
+        let mut value = match self.match_input(input, vars, functions, suspends, types, None)? {
+            Flow::Value(Some(value)) => value,
+            Flow::Value(None) => {
+                return Err(type_error(
+                    &input.span(),
+                    ErrorCode::TypeMismatch,
+                    "`is` requires a matchable value",
+                ));
+            }
+            Flow::Diverged => {
+                self.end_local_scope();
+                return Ok(Flow::Diverged);
+            }
+        };
+        let (matched_type, borrowed) = self.match_type(&value.ty, types, input.span())?;
+        let pattern = self.check_match_pattern(pattern, &matched_type, types)?;
+        if pattern.binds() {
+            return Err(type_error(
+                &pattern.span,
+                ErrorCode::InvalidPattern,
+                "An `is` pattern cannot introduce bindings; use `_` to ignore a payload",
+            ));
+        }
+        if let Some(mutable) = borrowed {
+            value.ty = Type::reference(matched_type, mutable);
+            value = self.reference_value(Some(value), false)?.unwrap();
+        }
+
+        let result = self.slot(Type::Bool)?;
+        let failure = self.label_count;
+        let exit = failure + 1;
+        self.label_count += 2;
+        self.test_match_arm(&pattern, &value, borrowed.is_some(), failure)?;
+        self.emit(Op::Literal(result.clone(), Constant::Bool(true)));
+        self.emit(Op::Jump(exit));
+        self.emit(Op::Label(failure));
+        self.emit(Op::Literal(result.clone(), Constant::Bool(false)));
+        self.emit(Op::Label(exit));
+        self.end_local_scope();
+        Ok(Flow::Value(Some(result)))
     }
 
     pub(super) fn let_else_expr(

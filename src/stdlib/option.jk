@@ -101,18 +101,12 @@ impl<T> Option<T> {
 
     /// Returns true when a value is present.
     pub fn is_some(&self) -> Bool {
-        match self {
-            None => false,
-            Some(_) => true
-        }
+        self is Some(_)
     }
 
     /// Returns true when no value is present.
     pub fn is_none(&self) -> Bool {
-        match self {
-            None => true,
-            Some(_) => false
-        }
+        self is None
     }
 
     /// Only the missing branch invokes the consuming callback.

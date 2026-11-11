@@ -1519,6 +1519,49 @@ fn conditional_patterns_run_on_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn is_pattern_tests_execute_on_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "is_pattern.jk",
+        r#"
+        import joky/array.{type Array}
+        import joky/task
+        enum Packet { Data((String, Array<UInt8>)), Empty }
+
+        fn is(n: Int32) -> Int32 { n + 1 }
+
+        fn accepted(score: Option<Int32>) -> Bool {
+            let check = || { score is Some(60..=100) }
+            check()
+        }
+
+        fn packet() @suspends -> Packet {
+            println("once")
+            task.yield_now()
+            Packet.Data(("ready", [b'0', b'9']))
+        }
+
+        fn main() @suspends {
+            assert(is(1) + 2 is 0..2 | 4 && accepted(Some(90)), "precedence and capture")
+            assert(!(is(0) is 2 | 3) && (2 is 2) is true, "grouping")
+            assert(true || packet() is Packet.Empty, "short circuit")
+            assert(packet() is Packet.Data(("ready", [b'0'..=b'9', ..])), "owning match")
+            var owner = Packet.Data(("ready", [b'0', b'9']))
+            if &mut owner is Packet.Data(("ready", [b'0', b'9'])) {
+                assert(&owner is Packet.Data((_, [b'0', ..])), "borrow retained the owner")
+            } else {
+                panic("expected a borrowed match")
+            }
+            assert(!(&owner is Packet.Empty) && owner is _, "false and wildcard")
+            println("ok")
+        }
+        "#,
+    );
+    work.assert_all_backends("is_pattern.jk", &[], b"once\nok\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
 fn let_else_bindings_and_exits_execute_on_all_backends() {
     let work = Workspace::new();
     work.write(

@@ -105,11 +105,17 @@ fn comparisons_require_explicit_grouping_and_unary_operators_require_operands() 
         "1 < 2 == true",
         "true == false != true",
         "true != 1 < 2",
+        "1 is 2 is false",
+        "1 is 2 == false",
+        "1 == 2 is false",
     ] {
         let source = format!("fn f() {{ {expression} }}");
         let error = parse(&source).unwrap_err();
         assert_eq!(error.message, "Comparison chains require parentheses");
-        assert!(matches!(error.span.slice(&source), Some("<" | "==" | "!=")));
+        assert!(matches!(
+            error.span.slice(&source),
+            Some("<" | "==" | "!=" | "is")
+        ));
     }
     for expression in ["(1 < 2) == true", "true == (1 < 2)", "!(true != false)"] {
         parse(&format!("fn f() -> Bool {{ {expression} }}")).unwrap();
@@ -139,6 +145,7 @@ fn negated_index_and_syntax_diagnostics_keep_source_positions() {
             "Expected an identifier",
             "=>",
         ),
+        ("fn f() { 1 is 2 | }", "Expected an identifier", "}"),
         ("fn f() { if true b }", "Expected `{`, got `b`", "b"),
         (
             "fn f() { let x = fn }",

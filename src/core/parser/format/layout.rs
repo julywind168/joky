@@ -249,32 +249,33 @@ fn copy_line_breaks(mut gap: &str, output: &mut String, limit: usize) {
 }
 
 pub(super) fn binary(kind: &TokenKind, role: Role) -> bool {
-    role == Role::Normal
-        && matches!(
-            kind,
-            TokenKind::Eq
-                | TokenKind::EqEq
-                | TokenKind::Ne
-                | TokenKind::Lt
-                | TokenKind::Le
-                | TokenKind::Gt
-                | TokenKind::Ge
-                | TokenKind::Shl
-                | TokenKind::Shr
-                | TokenKind::Plus
-                | TokenKind::Minus
-                | TokenKind::Star
-                | TokenKind::Slash
-                | TokenKind::Percent
-                | TokenKind::Amp
-                | TokenKind::Pipe
-                | TokenKind::Caret
-                | TokenKind::AndAnd
-                | TokenKind::OrOr
-                | TokenKind::Arrow
-                | TokenKind::FatArrow
-                | TokenKind::CompoundAssign(_)
-        )
+    role == Role::PatternTest
+        || role == Role::Normal
+            && matches!(
+                kind,
+                TokenKind::Eq
+                    | TokenKind::EqEq
+                    | TokenKind::Ne
+                    | TokenKind::Lt
+                    | TokenKind::Le
+                    | TokenKind::Gt
+                    | TokenKind::Ge
+                    | TokenKind::Shl
+                    | TokenKind::Shr
+                    | TokenKind::Plus
+                    | TokenKind::Minus
+                    | TokenKind::Star
+                    | TokenKind::Slash
+                    | TokenKind::Percent
+                    | TokenKind::Amp
+                    | TokenKind::Pipe
+                    | TokenKind::Caret
+                    | TokenKind::AndAnd
+                    | TokenKind::OrOr
+                    | TokenKind::Arrow
+                    | TokenKind::FatArrow
+                    | TokenKind::CompoundAssign(_)
+            )
 }
 
 pub(super) fn space_between(syntax: &Syntax, left: &Piece<'_>, right: &Piece<'_>) -> bool {
