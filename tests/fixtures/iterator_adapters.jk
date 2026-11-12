@@ -33,6 +33,9 @@ fn sum<I: IntoIterator>(input: I) -> Int32 {
     n
 }
 fn compute() -> Int32 {
+    expect(iter.collect(0..0).is_empty())
+    let collected = iter.collect(iter.chain(1..3, [3, 4]))
+    expect(collected.len() == 4 && collected[0] == 1 && collected[3] == 4)
     expect(iter.count(0..0) == 0)
     expect(iter.count(iter.filter(0..5, even)) == 3)
     expect(iter.fold(1..4, 0, |acc, value| { acc * 10 + value }) == 123)
@@ -121,6 +124,8 @@ fn lazy() {
     expect(iter.next(&mut chained)! == 4)
     expect(iter.next(&mut chained).is_none())
     expect(iter.next(&mut chained).is_none())
+    let collected = iter.collect(Input { tag: 40 })
+    expect(collected.len() == 2 && collected[0] == 1 && collected[1] == 2)
 }
 struct Owned { id: Int32, values: Array<Int32> }
 
@@ -138,6 +143,22 @@ fn terminal_cleanup() {
     expect(iter.count([owned(1), owned(2)]) == 2)
     let result = iter.fold([owned(3), owned(4)], owned(9), |acc, value| { value })
     expect(result.id == 4)
+    collect_owned()
+}
+fn collect_owned() {
+    let items = [owned(1), owned(2), owned(3), owned(4), owned(5), owned(6)]
+    let collected = iter.collect(iter.take(items, 5))
+    expect(collected.len() == 5 && collected.borrow_ref(0).id == 1)
+    let last = collected.borrow_ref(4)
+    let values = &last.values
+    expect(last.id == 5 && values[0] == 5)
+}
+fn fail_collect() {
+    let mapped = iter.map([owned(1), owned(2), owned(3)], move |value| {
+        assert(value.id != 2, "Collect callback failure")
+        value
+    })
+    iter.collect(mapped);
 }
 fn fail_fold() {
     let capture = owned(9)

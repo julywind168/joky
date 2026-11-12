@@ -198,6 +198,13 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         kind: SourceKind::BufferLibrary,
         path: "joky/iter",
         source: include_str!("../../stdlib/iter.jk"),
+        reexport_imports: true,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::InternalLibrary,
+        path: "joky/internal/iteration",
+        source: include_str!("../../stdlib/internal/iteration.jk"),
         reexport_imports: false,
         implicit: ImplicitImports::None,
     },
@@ -1145,10 +1152,10 @@ pub(crate) fn iter_test_library() -> StandardLibrary {
         include_str!("../../stdlib/iter.jk"),
         r#"
 pub fn test_enumerate_max<I: IntoIterator>(input: I) -> Enumerate<I.IntoIter> {
-    Enumerate { source: IntoIterator.into_iter(input), next_index: Some(18446744073709551615), done: false }
+    Enumerate { source: IntoIterator.into_iter(input), next_index: option.Some(18446744073709551615), done: false }
 }
 pub fn test_enumerate_shared_max<I: Copy + SharedIterator>(input: I) -> SharedEnumerate<I> {
-    SharedEnumerate { source: input, next_index: Some(18446744073709551615), done: false }
+    SharedEnumerate { source: input, next_index: option.Some(18446744073709551615), done: false }
 }
 "#
     );

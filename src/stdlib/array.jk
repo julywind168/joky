@@ -25,7 +25,7 @@ import joky/mem
 import joky/element.{type Element}
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
-import joky/iter as iteration.{type Iterator, type IntoIterator, type Iter}
+import joky/internal/iteration.{type Iterator, type IntoIterator, type Iter}
 import joky/check
 
 /// A growable, single-owner sequence. Dropping it drops its remaining elements.

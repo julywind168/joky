@@ -28,7 +28,7 @@ impl FunctionPlan {
         traits
             .definitions
             .iter()
-            .find(|definition| definition.name == "joky/iter.SharedIterator")
+            .find(|definition| definition.name == "joky/internal/iteration.SharedIterator")
             .is_some_and(|definition| {
                 traits
                     .satisfies(ty, definition.self_parameter.id)

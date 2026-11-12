@@ -162,8 +162,19 @@ impl Parser<'_> {
             });
         }
         if self.iterators {
+            // Lower-level standard modules can use the iteration protocols
+            // without depending on the public collection operations.
+            let iteration = if module
+                .imports
+                .iter()
+                .any(|i| i.path == "joky/internal/iteration")
+            {
+                "joky/internal/iteration"
+            } else {
+                "joky/iter"
+            };
             for (path, alias) in [
-                ("joky/iter", "$joky_iter"),
+                (iteration, "$joky_iter"),
                 ("joky/option", "$joky_option"),
                 ("joky/check", "$joky_check"),
             ] {

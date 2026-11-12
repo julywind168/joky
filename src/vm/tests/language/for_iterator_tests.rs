@@ -298,7 +298,7 @@ fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
                 "lazy",
                 vec![
                     1, 2, 3, 4, 13, 14, 13, 14, 13, 20, 21, 30, 31, 32, 5, 33, 33, 33, 34, 6, 35,
-                    35, 7, 8, 36, 36, 37, 37,
+                    35, 7, 8, 36, 36, 37, 37, 40, 50, 50, 50,
                 ],
             ),
             ("cleanup", vec![]),
@@ -314,13 +314,32 @@ fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
         assert_eq!(vm.call_int32_0("early").unwrap(), 1);
         EVENTS.with(|events| assert!((*events.borrow()).is_empty()));
         LIVE.with(|live| assert_eq!(live.get(), 0));
-        for name in ["fail_map", "fail_filter", "fail_fold"] {
+        for name in ["fail_map", "fail_filter", "fail_fold", "fail_collect"] {
             EVENTS.with(|events| events.borrow_mut().clear());
             let error = vm.call_unit_0(name).unwrap_err();
             assert!(error.to_string().contains("callback failure"), "{error}");
             EVENTS.with(|events| assert!((*events.borrow()).is_empty(), "{mode:?} {name}"));
             LIVE.with(|live| assert_eq!(live.get(), 0));
         }
+        let mut failures = 0;
+        let mut complete = false;
+        for budget in (0..8192).step_by(64) {
+            let previous = crate::runtime::arena::LIMIT.with(|limit| limit.replace(budget));
+            let result = vm.call_unit_0("collect_owned");
+            crate::runtime::arena::LIMIT.with(|limit| limit.set(previous));
+            LIVE.with(|live| assert_eq!(live.get(), 0));
+            match result {
+                Ok(()) => {
+                    complete = true;
+                    break;
+                }
+                Err(error) => {
+                    assert_eq!(error.code(), crate::ErrorCode::ResourceLimit, "{error}");
+                    failures += 1;
+                }
+            }
+        }
+        assert!(failures > 0 && complete, "{mode:?} collect");
         EVENTS.with(|events| events.borrow_mut().clear());
         let mut task = vm.call_async("pending", &[]).unwrap();
         while !task.is_finished() {

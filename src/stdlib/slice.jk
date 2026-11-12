@@ -18,7 +18,7 @@
 
 // Half-open borrowed ranges. Views cannot resize or own their storage.
 import joky/internal/buffer
-import joky/iter as iteration.{type Iter}
+import joky/internal/iteration.{type Iter}
 import joky/element.{type Element}
 import joky/option.{type Option, Some, None}
 

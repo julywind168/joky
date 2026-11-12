@@ -111,6 +111,7 @@ fn standard_library_private_entries_reject_user_access() {
         "import joky/arena fn f() { arena.new(); }",
         "import joky/internal/text fn f() {}",
         "import joky/internal/resolve fn f() {}",
+        "import joky/internal/iteration fn f() { for _ in 0..1 {} }",
     ] {
         let error = checker
             .check_module(&crate::parser::parse(source).unwrap())

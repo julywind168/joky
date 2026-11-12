@@ -3962,6 +3962,10 @@ count 消费并清理每项；fold 接受 `FnMut(A, Item) -> A`，逐次移动�
 支持拥有型元素、拥有型累积值与可变捕获。空输入分别返回 0 和原 initial，不调用 fold 回调。
 两者不创建中间数组；count 超出 UInt64 范围按普通整数溢出报错，不回绕。
 
+`iter.collect(input) -> Array<Item>` 按顺序把剩余元素移入数组，空输入返回空数组。
+它支持拥有元素，按值转换一次 IntoIterator，到第一个 None 停止。失败或取消时自动清理
+已经收集的元素、当前元素和剩余迭代状态。
+
 ```joky
 import joky/iter
 import joky/io.{println}

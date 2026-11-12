@@ -137,7 +137,7 @@ mod tests {
             .insert("foo", "pub struct Foreign { pub n:Int32 }")
             .unwrap();
         for (source, code, message, location) in [
-            ("fn main(){let x:Int32=0..3}", TypeMismatch, "Result type mismatch: expected Int32, got joky/iter.Range<Int32>", "0..3"),
+            ("fn main(){let x:Int32=0..3}", TypeMismatch, "Result type mismatch: expected Int32, got joky/internal/iteration.Range<Int32>", "0..3"),
             ("fn main(){let a:Int64=0; let b:Int32=2; let x=a..b}", TypeMismatch, "Range endpoints must have the same type: start is Int64, end is Int32", "b"),
             ("fn main(){for x in 5 { println(x) }}", TypeMismatch, "Cannot iterate over Int32: for requires an IntoIterator implementation", "5"),
             ("const A:Bool=1 fn main(){}", TypeMismatch, "Type mismatch for constant `A`: expected Bool, got Int32", ""),

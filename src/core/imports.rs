@@ -448,7 +448,7 @@ fn bind(
         let compiler_alias = match import.path.as_str() {
             "joky/time" => Some("$joky_time"),
             "joky/array" => Some("$joky_array"),
-            "joky/iter" => Some("$joky_iter"),
+            "joky/iter" | "joky/internal/iteration" => Some("$joky_iter"),
             "joky/check" => Some("$joky_check"),
             "joky/option" => Some("$joky_option"),
             "joky/show" => Some("$joky_show"),
