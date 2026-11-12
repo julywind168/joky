@@ -1020,6 +1020,7 @@ fn answer() -> Int32 {
 | `set(&mut Array<T>, UInt64, T) -> Bool` | 替换已有元素，越界返回 false 且不修改数组 |
 | `push(&mut Array<T>, T)` | 必要时扩容，追加元素 |
 | `append(&mut Array<T>, &mut Array<T>)` | 按原顺序将源元素移入目标尾部，源数组清空并保留容量 |
+| `extend<T: Copy>(&mut Array<T>, &Slice<T>)` | 按原顺序复制切片元素到数组尾部，源切片仍可读取 |
 | `array.extend_bytes(&mut Array<UInt8>, &Slice<UInt8>, start: UInt64, end: UInt64)` | 批量追加半开区间 [start, end) 的字节，必要时扩容；只提供模块函数 |
 | `pop(&mut Array<T>) -> Option<T>` | 移出末元素；空数组返回 None，不缩小容量 |
 | `into_iter(Array<T>) -> IntoIter<T>` / `values.into_iter()` | 消费数组，按原下标正序逐项移出 T；无需 Copy |
@@ -1041,6 +1042,8 @@ fn answer() -> Int32 {
 
 `dst.append(&mut src)` 支持 String 等拥有元素。两个参数都要求独占借用。目标先按需扩容，
 然后一次转移源数组的已初始化元素。源数组为空时两边的长度和容量保持原值。
+`dst.extend(&src[start..end])` 按需扩容后批量复制，空切片保留目标的长度和容量。
+目标不能与源切片冲突借用，Copy 元素携带的共享引用保留其原始来源。
 
 `any`、`all`、`find`、`position` 接受 `Fn(&T) @noescape -> Bool`，支持函数和只读捕获闭包，
 同步借用元素，不消费或复制元素，不要求 T: Copy。四者按原顺序短路，不再调用后续元素的谓词。

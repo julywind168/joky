@@ -85,10 +85,11 @@ impl BufferIntrinsic {
             _ => None,
         }
     }
-    pub(crate) const ALL: [Self; 62] = [
+    pub(crate) const ALL: [Self; 63] = [
         Self::Allocate,
         Self::Transfer,
         Self::AppendBytes,
+        Self::AppendCopy,
         Self::FindByte,
         Self::Utf8Prefix,
         Self::PathJoin,
@@ -365,6 +366,7 @@ impl BufferIntrinsic {
             ),
             Self::Allocate => (vec![Type::UInt64], owner),
             Self::Transfer => (vec![exclusive.clone(), exclusive], Type::Unit),
+            Self::AppendCopy => (vec![exclusive, Type::reference(slice, false)], Type::Unit),
             Self::AppendBytes => (
                 vec![
                     exclusive,
@@ -608,6 +610,7 @@ impl BufferIntrinsic {
             Self::Allocate => "__joky_buffer_allocate",
             Self::Transfer => "__joky_buffer_transfer",
             Self::AppendBytes => "__joky_buffer_append_bytes",
+            Self::AppendCopy => "__joky_buffer_append_copy",
             Self::FindByte => "__joky_buffer_find_byte",
             Self::Utf8Prefix => "__joky_buffer_utf8_prefix",
             Self::PathJoin => "__joky_buffer_path_join",
@@ -680,6 +683,13 @@ impl FunctionPlan {
         self.type_registry
             .validate(&Type::Buffer(Arc::new(element.clone())))
             .map_err(|e| e.with_span(f.span))?;
+        if intrinsic == BufferIntrinsic::AppendCopy && !element.is_copy_storage_value() {
+            return Err(type_error(
+                &f.span,
+                ErrorCode::TypeMismatch,
+                "Buffer copy append requires Copy storage elements",
+            ));
+        }
         if element.is_owner()
             && !matches!(
                 intrinsic,

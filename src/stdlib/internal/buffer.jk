@@ -7,6 +7,9 @@ pub type Slice<T> = T
 #intrinsic("buffer.transfer")
 pub fn transfer<T>(source: &mut Buffer<T>, destination: &mut Buffer<T>)
 
+#intrinsic("buffer.append_copy")
+pub fn append_copy<T: Copy>(destination: &mut Buffer<T>, source: &Slice<T>)
+
 #intrinsic("buffer.append_bytes")
 pub fn append_bytes(
     destination: &mut Buffer<UInt8>,

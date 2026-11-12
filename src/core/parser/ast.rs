@@ -1066,6 +1066,7 @@ pub(crate) enum BufferIntrinsic {
     EntryKey,
     EntryValue,
     EntryValueMut,
+    AppendCopy,
 }
 
 #[derive(joky_image_derive::Image, Debug, Clone)]

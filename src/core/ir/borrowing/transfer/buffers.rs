@@ -61,7 +61,7 @@ impl Instruction<'_> {
                         let identity = state[&args[0].index].clone();
                         add_contents(state, &identity, &contents);
                     }
-                    BufferIntrinsic::Replace => {
+                    BufferIntrinsic::Replace | BufferIntrinsic::AppendCopy => {
                         let contents = buffer_contents(state, &args[1]);
                         let identity = state[&args[0].index].clone();
                         add_contents(state, &identity, &contents);

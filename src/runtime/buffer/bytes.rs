@@ -1,4 +1,4 @@
-//! Bounded byte operations over compiler-checked owners and borrowed slices.
+//! Bounded byte and element copies over compiler-checked owners and slices.
 use super::{bounds_error, located, Buffer, Error, BYTE_CHUNK};
 use crate::runtime::parallel::pool::check_cancelled;
 
@@ -27,24 +27,67 @@ impl Buffer {
         }
         let source = &*source;
         let selected = range(source, start, end)?;
-        let input = &source.bytes()?[selected];
+        source.bytes()?;
         let destination = &mut *destination;
         destination.bytes()?;
-        if input.len() > destination.capacity - destination.len {
-            return Err(bounds_error("Byte append exceeds reserved capacity"));
+        destination.append_range(source, selected)
+    }
+
+    /// Copy a slice's initialized elements to pre-reserved capacity.
+    ///
+    /// # Safety
+    /// Both headers and their payloads remain live on this task. The element
+    /// type is identical and Copy. The destination owns its exclusively borrowed
+    /// storage and its payload does not overlap the source.
+    pub(crate) unsafe fn append_copy(
+        destination: *mut Self,
+        source: *const Self,
+    ) -> Result<(), Error> {
+        if std::ptr::eq(destination, source) {
+            return Err(bounds_error("Buffer copy append requires distinct storage"));
         }
+        let source = &*source;
+        let destination = &mut *destination;
+        if source.element != destination.element
+            || destination.failed_store.is_some()
+            || destination
+                .cleanup
+                .as_ref()
+                .is_some_and(|c| !c.owners.is_empty())
+        {
+            return Err(bounds_error(
+                "Buffer copy append requires matching Copy element layouts",
+            ));
+        }
+        destination.append_range(source, 0..source.len)
+    }
+
+    /// The checked source range is initialized and disjoint from the destination.
+    /// Both layouts match and neither contains owning element lanes.
+    unsafe fn append_range(
+        &mut self,
+        source: &Self,
+        selected: std::ops::Range<usize>,
+    ) -> Result<(), Error> {
+        let count = selected.len();
+        if count > self.capacity - self.len {
+            return Err(bounds_error("Buffer copy append exceeds reserved capacity"));
+        }
+        let bytes = count * self.element.size();
+        let input = source.address(selected.start);
+        let output = self.address(self.len);
         // Publish the new prefix only after all bounded copies succeed. A cancelled
         // copy leaves bytes outside the old initialized prefix, with no new owners.
-        let output = destination.data.as_ptr().add(destination.len);
-        for (index, chunk) in input.chunks(BYTE_CHUNK).enumerate() {
+        // Raw copies preserve the possibly uninitialized padding of Copy elements.
+        for offset in (0..bytes).step_by(BYTE_CHUNK) {
             check_cancelled()?;
             std::ptr::copy_nonoverlapping(
-                chunk.as_ptr(),
-                output.add(index * BYTE_CHUNK),
-                chunk.len(),
+                input.add(offset),
+                output.add(offset),
+                (bytes - offset).min(BYTE_CHUNK),
             );
         }
-        destination.len += input.len();
+        self.len += count;
         Ok(())
     }
 
@@ -101,6 +144,16 @@ pub(super) unsafe extern "C" fn append(
         start,
         end,
     );
+}
+#[export_name = "__joky_buffer_append_copy"]
+pub(super) unsafe extern "C" fn append_copy(
+    destination: *mut Buffer,
+    input: *const Buffer,
+    source: u64,
+    start: usize,
+    end: usize,
+) {
+    located(Buffer::append_copy(destination, input), source, start, end);
 }
 #[export_name = "__joky_buffer_find_byte"]
 pub(super) unsafe extern "C" fn find(

@@ -290,6 +290,10 @@ pub(super) fn execute(
                         )?;
                         Value::Unit
                     }
+                    BufferIntrinsic::AppendCopy => {
+                        Buffer::append_copy(pointer(arg(0))?, pointer(arg(1))?)?;
+                        Value::Unit
+                    }
                     BufferIntrinsic::FindByte => {
                         let Value::UInt8(byte) = arg(1) else {
                             return Err(abi_error("Invalid byte search argument"));

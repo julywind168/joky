@@ -835,7 +835,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             BufferIntrinsic::Store => (vec![ptr, ptr, types::I64], vec![ptr]),
             BufferIntrinsic::TakeLast => (vec![ptr], vec![ptr]),
             BufferIntrinsic::SwapElements => (vec![ptr, types::I64, types::I64], vec![]),
-            BufferIntrinsic::Transfer => (vec![ptr, ptr], vec![]),
+            BufferIntrinsic::Transfer | BufferIntrinsic::AppendCopy => (vec![ptr, ptr], vec![]),
             BufferIntrinsic::AppendBytes => (vec![ptr, ptr, types::I64, types::I64], vec![]),
             BufferIntrinsic::FindByte => (
                 vec![ptr, types::I8, types::I64, types::I64],

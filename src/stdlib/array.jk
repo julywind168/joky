@@ -299,6 +299,16 @@ pub fn append<T>(values: &mut Array<T>, other: &mut Array<T>) {
     buffer.transfer(&mut other.storage, &mut values.storage)
 }
 
+/// Copies the slice's elements to the end of the array in order.
+pub fn extend<T: Copy>(values: &mut Array<T>, from: &Slice<T>) {
+    let count = slices.len(from)
+    if count == 0 {
+        return
+    }
+    reserve(values, count)
+    buffer.append_copy(&mut values.storage, from)
+}
+
 // Copy a borrowed byte range without creating a retained subslice header.
 // Validate before growing, then publish the appended prefix in one checked operation.
 pub fn extend_bytes(values: &mut Array<UInt8>, source: &Slice<UInt8>, start: UInt64, end: UInt64) {
@@ -455,6 +465,10 @@ pub fn swap<T>(values: &mut Array<T>, first: UInt64, second: UInt64) -> Bool {
 }
 
 impl<T: Copy> Array<T> {
+    /// Copies the slice's elements to the end of this array in order.
+    pub fn extend(&mut self, from: &Slice<T>) {
+        extend(self, from)
+    }
     /// Copies the element at `index`, or returns `None` when out of bounds.
     pub fn get(&self, index: UInt64) -> Option<T> {
         get(self, index)

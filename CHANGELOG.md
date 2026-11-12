@@ -5,6 +5,7 @@
 
 ## Unreleased
 
+- `Array<T: Copy>.extend(&Slice<T>)` 按原顺序批量复制切片元素到数组尾部。
 - `Array.append(&mut other)` 批量移动源数组的元素到目标尾部，保持顺序并保留清空后的源容量。
 - enum 支持派生 `ToJson` 和 `FromJson`，使用 `type` 标签，有载荷的变体使用 `value` 键。
 - struct 的 JSON 派生支持 `#json(skip)`，解码时可用 `default` 构造跳过的字段。

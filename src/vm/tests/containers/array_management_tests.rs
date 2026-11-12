@@ -32,6 +32,7 @@ fn array_management_transfers_ownership_in_both_execution_modes() {
         for (name, events) in [
             ("manage_copy", vec![]),
             ("manage_append", vec![]),
+            ("manage_extend", vec![]),
             ("manage_owned", vec![-1, -2, -3, -4]),
             ("manage_enum_tuple", vec![-1, -2]),
             ("manage_wrapper", vec![]),
@@ -114,24 +115,26 @@ fn array_management_preserves_cleanup_under_allocation_failure_and_reload() {
     let _restore = RestoreLimit;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = configured(mode);
-        let mut complete = false;
-        for budget in (0..4096).step_by(8) {
-            EVENTS.with(|e| e.borrow_mut().clear());
-            crate::runtime::arena::LIMIT.with(|l| l.set(budget));
-            match vm.call_int32_0("manage_transitions") {
-                Ok(n) => {
-                    assert_eq!(n, 42);
-                    complete = true;
+        for entry in ["manage_transitions", "manage_extend"] {
+            let mut complete = false;
+            for budget in (0..4096).step_by(8) {
+                EVENTS.with(|e| e.borrow_mut().clear());
+                crate::runtime::arena::LIMIT.with(|l| l.set(budget));
+                match vm.call_int32_0(entry) {
+                    Ok(n) => {
+                        assert_eq!(n, 42, "{mode:?} {entry}");
+                        complete = true;
+                    }
+                    Err(e) => assert_eq!(e.code(), crate::ErrorCode::ResourceLimit),
                 }
-                Err(e) => assert_eq!(e.code(), crate::ErrorCode::ResourceLimit),
+                tracked();
+                if complete {
+                    break;
+                }
             }
-            tracked();
-            if complete {
-                break;
-            }
+            assert!(complete, "{mode:?} {entry}");
+            crate::runtime::arena::LIMIT.with(|l| l.set(crate::runtime::arena::MAX_BYTES));
         }
-        assert!(complete);
-        crate::runtime::arena::LIMIT.with(|l| l.set(crate::runtime::arena::MAX_BYTES));
     }
     for finish in [false, true] {
         let mut vm = configured(VmMode::Interpreter);
@@ -176,6 +179,9 @@ fn array_management_rejects_conflicting_loans_and_invalid_capabilities() {
     }
     for body in [
         "fn bad(var values: Array<Int32>) { values.append(&mut values); }",
+        "fn bad(var values: Array<Int32>) { values.extend(&values[..]); }",
+        "fn bad(values: &mut Array<String>, other: &Array<String>) { values.extend(&other[..]); }",
+        "fn bad(values: &mut Array<Int32>, other: &Array<UInt32>) { values.extend(&other[..]); }",
         "fn bad(values: &mut Array<Resource>, other: &mut Array<Resource>) { let item = other.borrow_ref(0); values.append(other); item.id; }",
         "fn bad(values: &mut Array<Resource>, other: &mut Array<Resource>) { let item = values.borrow_ref(0); values.append(other); item.id; }",
         "fn bad(values: &mut Array<Resource>) { values.swap(-1, 0); }",

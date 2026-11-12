@@ -1782,13 +1782,14 @@ unsafe extern "C" fn cleanup_owner(buffer: *mut Buffer, offset: usize) {
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 52] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 53] {
     [
         (
             "__joky_buffer_password_needs_rehash",
             super::password::needs_rehash_native as *const u8,
         ),
         ("__joky_buffer_append_bytes", bytes::append as *const u8),
+        ("__joky_buffer_append_copy", bytes::append_copy as *const u8),
         ("__joky_buffer_find_byte", bytes::find as *const u8),
         ("__joky_buffer_utf8_prefix", bytes::utf8_prefix as *const u8),
         ("__joky_buffer_path_join", path::join_native as *const u8),
