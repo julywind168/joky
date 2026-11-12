@@ -47,6 +47,11 @@ fn compute() -> Int32 {
     let (cursor, a) = iter.step_shared(iter.skip_shared(Flicker { position: 0 }, 18446744073709551615))
     let (_, b) = iter.step_shared(cursor)
     assert(a.is_none() && b.is_none(), "fused while skipping")
+    let (cursor, a) = iter.step_shared(iter.enumerate_shared(Flicker { position: 0 }))
+    let (cursor, b) = iter.step_shared(cursor)
+    let (_, c) = iter.step_shared(cursor)
+    let (index, value) = a!
+    assert(index == 0 && value == 0 && b.is_none() && c.is_none(), "fused enumerate")
     let (zipped, a) = iter.step_shared(iter.zip_shared(Flicker { position: 0 }, Flicker { position: 0 }))
     let (zipped, b) = iter.step_shared(zipped)
     let (_, c) = iter.step_shared(zipped)
@@ -66,6 +71,16 @@ fn compute() -> Int32 {
     assert(total_count(tail) == 2, "skip shared state")
     let (_, item) = iter.step_shared(tail)
     assert(item! == "skip", "copy advances independently")
+    let numbered = iter.enumerate_shared(values.iter_shared())
+    let (next, first) = iter.step_shared(numbered)
+    let (_, second) = iter.step_shared(next)
+    let (a, first) = first!
+    let (b, second) = second!
+    assert(a == 0 && first == "first" && b == 1 && second == "skip", "numbered references stay live")
+    for (index, value) in iter.skip_shared(numbered, 1) {
+        assert(index == 1 && value == "skip", "copied numbering and skip")
+        break
+    }
     for value in values.iter_shared() { assert(value == "first", "early exit"); break }
     values.push("after")
     assert(values.len() == 4, "borrow ends after traversal")

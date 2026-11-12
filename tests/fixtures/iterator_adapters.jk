@@ -1,5 +1,5 @@
 import joky/task
-import joky/iter.{type Iterator, type IntoIterator}
+import joky/iter.{type Iterator, type IntoIterator, enumerate}
 import joky/option.{type Option, Some, None}
 import joky/array.{type Array}
 import joky/check.{assert}
@@ -49,6 +49,13 @@ fn compute() -> Int32 {
     expect(sum(iter.skip(0..2, 0)) == 2)
     expect(sum(iter.skip(0..0, 1)) == 0)
     expect(iter.fold(iter.skip([1, 2, 3, 4], 2), 0, |acc, value| { acc * 10 + value }) == 34)
+    expect(iter.count(enumerate(0..0)) == 0)
+    let numbered = enumerate([owned(20), owned(21)])
+    let total = iter.fold(numbered, 0, |acc, entry| {
+        let (index, value) = entry
+        acc + int32(index) + value.id
+    })
+    expect(total == 42)
     expect(sum(iter.zip(0..0, 0..3)) == 0)
     expect(sum(iter.zip(0..3, 0..0)) == 0)
     expect(sum(iter.filter(0..3, move |x| { *x > 10 })) == 0)
@@ -99,6 +106,12 @@ fn lazy() {
     var overskipped = iter.skip(Source { position: 0, end: 1, tag: 34 }, 18446744073709551615)
     expect(iter.next(&mut overskipped).is_none())
     expect(iter.next(&mut overskipped).is_none())
+    let unused_enumerate = enumerate(Input { tag: 6 })
+    var numbered = enumerate(Source { position: 0, end: 2, tag: 35 })
+    let (index, value) = iter.next(&mut numbered)!
+    expect(index == 0 && value == 1)
+    expect(iter.next(&mut numbered).is_none())
+    expect(iter.next(&mut numbered).is_none())
 }
 struct Owned { id: Int32, values: Array<Int32> }
 
@@ -148,14 +161,16 @@ fn fail_filter() {
 fn early() -> Int32 {
     let capture = owned(9)
     let mapped = iter.map([owned(0), owned(1), owned(2)], move |value| { expect(capture.id == 9); value })
-    for value in iter.skip(mapped, 1) {
+    for (index, value) in enumerate(iter.skip(mapped, 1)) {
+        expect(index == 0)
         return value.id
     }
     0
 }
 fn pending() @suspends -> Int32 {
-    let left = iter.skip([owned(0), owned(1), owned(2)], 1)
-    for (left, right) in iter.zip(iter.take(left, 2), [owned(3), owned(4)]) {
+    let left = enumerate(iter.skip([owned(0), owned(1), owned(2)], 1))
+    for ((index, left), right) in iter.zip(iter.take(left, 2), [owned(3), owned(4)]) {
+        expect(int32(index) + 1 == left.id)
         record(left.id + right.id + 10)
         task.yield_now()
     }

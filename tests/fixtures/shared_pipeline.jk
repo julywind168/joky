@@ -25,8 +25,11 @@ fn count<I: Copy + iter.SharedIterator>(values: I) -> UInt64 {
 fn compute() -> Int32 {
     var names = ["Alice", "", "Bob", "Carol"]
     assert(iter.shared(&names).filter(|name| { name != "" }).count() == 3, "filtered count")
-    let tail = iter.shared(&names).filter(|name| { name != "" }).skip(1).take(1)
-    assert(tail.fold(false, |found, name| { found || name == "Bob" }), "skip counts filtered items")
+    let tail = iter.shared(&names).filter(|name| { name != "" }).enumerate().skip(1).take(1)
+    assert(tail.fold(false, |found, entry| {
+        let (index, name) = entry
+        found || (index == 1 && name == "Bob")
+    }), "enumerate counts filtered items")
     assert(iter.shared(&names).take(0).fold(42, |acc, name| { assert(false, "empty fold"); acc }) == 42, "empty fold")
     let built = iter.shared(&names).take(1).fold(StringBuilder.new(), |var acc, name| {
         acc.push_str(name)
@@ -46,6 +49,11 @@ fn compute() -> Int32 {
     assert(iter.fold_shared(names.iter_shared(), 0, |acc, name| { acc + int32(name.byte_length()) }) == 13, "shared fold")
     let digits = [1, 2, 3]
     assert(iter.shared(&digits).map(|n| { *n }).fold(0, |acc, n| { acc * 10 + n }) == 123, "ordered mapped fold")
+    let mapped = iter.shared(&digits).skip(1).enumerate().map(|entry| {
+        let (index, value) = entry
+        int32(index) + *value
+    })
+    assert(mapped.fold(0, |sum, n| { sum + n }) == 6, "numbering starts after skip")
     var calls = 0
     assert(iter.shared(&digits).fold(0, |acc, n| { calls += 1; acc + *n }) == 6, "mutable fold capture")
     assert(calls == 3, "fold callback count")

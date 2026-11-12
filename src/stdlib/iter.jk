@@ -26,6 +26,7 @@
 //! }
 //! ```
 
+import joky/check
 import joky/internal/buffer
 import joky/internal/types
 import joky/option.{type Option, Some, None}
@@ -135,6 +136,37 @@ impl<I: Iterator> Iterator for Skip<I> {
         let value = Iterator.next(&mut self.source)
         self.done = value.is_none()
         value
+    }
+}
+
+pub struct Enumerate<I> { source: I, next_index: Option<UInt64>, done: Bool }
+
+/// Lazily pairs each item with its zero-based UInt64 index.
+pub fn enumerate<I: IntoIterator>(input: I) -> Enumerate<I.IntoIter> {
+    Enumerate { source: IntoIterator.into_iter(input), next_index: Some(0), done: false }
+}
+
+fn enumerate_index(next_index: Option<UInt64>) -> UInt64 {
+    let Some(index) = next_index else {
+        check.panic("Iterator index overflow")
+    }
+    index
+}
+
+impl<I: Iterator> Iterator for Enumerate<I> {
+    type Item
+    = (UInt64, I.Item)
+    fn next(&mut self) -> Option<Self.Item> {
+        if self.done {
+            return None
+        }
+        let Some(item) = Iterator.next(&mut self.source) else {
+            self.done = true
+            return None
+        }
+        let index = enumerate_index(self.next_index)
+        self.next_index = Step.successor(index)
+        Some((index, item))
     }
 }
 
@@ -506,6 +538,33 @@ impl<I: Copy + SharedIterator> SharedIterator for SharedSkip<I> {
     }
 }
 
+pub struct SharedEnumerate<I: Copy> { source: I, next_index: Option<UInt64>, done: Bool }
+
+/// Lazily pairs each shared item with its zero-based UInt64 index.
+pub fn enumerate_shared<I: Copy + SharedIterator>(input: I) -> SharedEnumerate<I> {
+    SharedEnumerate { source: input, next_index: Some(0), done: false }
+}
+
+impl<I: Copy + SharedIterator> SharedIterator for SharedEnumerate<I> {
+    type Item
+    = (UInt64, I.Item)
+    fn step(self) -> (Self, Option<Self.Item>) {
+        let SharedEnumerate { source, next_index, done } = self
+        if done {
+            return (self, None)
+        }
+        let (source, value) = SharedIterator.step(source)
+        let Some(item) = value else {
+            return (SharedEnumerate { source, next_index, done: true }, None)
+        }
+        let index = enumerate_index(next_index)
+        (
+            SharedEnumerate { source, next_index: Step.successor(index), done: false },
+            Some((index, item))
+        )
+    }
+}
+
 pub struct SharedZip<I: Copy, J: Copy> { left: I, right: J, done: Bool }
 
 pub fn zip_shared<I: Copy + SharedIterator, J: Copy + SharedIterator>(
@@ -647,6 +706,10 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
     /// Skips the first `count` items in this pipeline's output order.
     pub fn skip(self, count: UInt64) -> SharedPipeline<SharedSkip<I>, T> {
         SharedPipeline { source: skip_shared(self.source, count) }
+    }
+    /// Pairs each pipeline item with its zero-based UInt64 index.
+    pub fn enumerate(self) -> SharedPipeline<SharedEnumerate<I>, (UInt64, T)> {
+        SharedPipeline { source: enumerate_shared(self.source) }
     }
     pub fn filter<F: Copy + Fn(T) @noescape -> Bool>(
         self,

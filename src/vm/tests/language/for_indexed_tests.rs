@@ -44,8 +44,6 @@ fn for_indexed_rejects_conflicting_types_and_invalid_patterns() {
         assert!(error.span().is_some(), "{source}: {error}");
     }
     for source in [
-        "import joky/iter.{enumerate} fn bad() {}",
-        "import joky/iter.{type Enumerate} fn bad() {}",
         "fn bad() { let a = [1]; for _ in a.into_iter().enumerate() {} }",
         "fn bad() { let a = [1]; for _ in a.iter().enumerate() {} }",
     ] {

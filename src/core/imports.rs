@@ -19,7 +19,7 @@ pub(crate) use files::{
 };
 #[cfg(test)]
 pub(crate) use sources::{
-    list_test_library, map_test_library, string_test_library, tcp_test_library,
+    iter_test_library, list_test_library, map_test_library, string_test_library, tcp_test_library,
 };
 pub(crate) use sources::{DefinitionScope, StandardCache, StandardLibrary};
 

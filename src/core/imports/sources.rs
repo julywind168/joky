@@ -1131,6 +1131,32 @@ pub(crate) fn list_test_library() -> StandardLibrary {
     LIBRARY.with(Clone::clone)
 }
 
+// Seed production iterator state at the boundary without iterating 2^64 items.
+#[cfg(test)]
+pub(crate) fn iter_test_library() -> StandardLibrary {
+    const SOURCE: &str = concat!(
+        include_str!("../../stdlib/iter.jk"),
+        r#"
+pub fn test_enumerate_max<I: IntoIterator>(input: I) -> Enumerate<I.IntoIter> {
+    Enumerate { source: IntoIterator.into_iter(input), next_index: Some(18446744073709551615), done: false }
+}
+pub fn test_enumerate_shared_max<I: Copy + SharedIterator>(input: I) -> SharedEnumerate<I> {
+    SharedEnumerate { source: input, next_index: Some(18446744073709551615), done: false }
+}
+"#
+    );
+    thread_local! {
+        static LIBRARY: StandardLibrary = {
+            let definitions: Vec<_> = SOURCES.iter().map(|s| SourceDefinition {
+                kind: s.kind, path: s.path, source: if s.path == "joky/iter" { SOURCE } else { s.source },
+                reexport_imports: s.reexport_imports, implicit: s.implicit,
+            }).collect();
+            StandardLibrary::from_sources(&definitions).unwrap()
+        };
+    }
+    LIBRARY.with(Clone::clone)
+}
+
 // TCP probes exercise buffered terminal states with the production methods.
 #[cfg(test)]
 pub(crate) fn tcp_test_library() -> StandardLibrary {

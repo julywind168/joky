@@ -297,7 +297,8 @@ fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
             (
                 "lazy",
                 vec![
-                    1, 2, 3, 4, 13, 14, 13, 14, 13, 20, 21, 30, 31, 32, 5, 33, 33, 33, 34,
+                    1, 2, 3, 4, 13, 14, 13, 14, 13, 20, 21, 30, 31, 32, 5, 33, 33, 33, 34, 6, 35,
+                    35,
                 ],
             ),
             ("cleanup", vec![]),
@@ -345,6 +346,81 @@ fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
             with_prefix, without_prefix,
             "{mode:?}: skipped owner still live"
         );
+    }
+}
+
+#[test]
+fn iterator_adapters_enumerate_yields_maximum_then_checks_for_another_item() {
+    let source = r#"
+        import joky/array.{type Array}
+        import joky/check.{assert}
+        import joky/iter
+
+        fn owned(more: Bool) -> Int32 {
+            let values = if more { ["last", "overflow"] } else { ["last"] }
+            var numbered = iter.test_enumerate_max(values)
+            let (index, value) = iter.next(&mut numbered)!
+            assert(index == 18446744073709551615 && value == "last", "maximum owned index")
+            assert(iter.next(&mut numbered).is_none(), "exhaustion at maximum")
+            assert(iter.next(&mut numbered).is_none(), "fused after maximum")
+            42
+        }
+
+        fn shared(more: Bool) -> Int32 {
+            let values = if more { ["last", "overflow"] } else { ["last"] }
+            let (numbered, first) = iter.step_shared(iter.test_enumerate_shared_max(values.iter_shared()))
+            let (index, value) = first!
+            assert(index == 18446744073709551615 && value == "last", "maximum shared index")
+            let (numbered, second) = iter.step_shared(numbered)
+            let (_, third) = iter.step_shared(numbered)
+            assert(second.is_none() && third.is_none(), "fused after shared maximum")
+            42
+        }
+
+        fn owned_end() -> Int32 { owned(false) }
+        fn owned_overflow() -> Int32 { owned(true) }
+        fn shared_end() -> Int32 { shared(false) }
+        fn shared_overflow() -> Int32 { shared(true) }
+    "#;
+    let cases = [
+        ("owned_end", Some(42)),
+        ("owned_overflow", None),
+        ("shared_end", Some(42)),
+        ("shared_overflow", None),
+    ];
+    let library = crate::core::imports::iter_test_library();
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let registry = std::rc::Rc::new(crate::modules::ModuleRegistry::default());
+        registry.types().standard.set(library.clone()).unwrap();
+        let mut vm = VmEngine::with_mode_and_registry(mode, registry);
+        vm.set_prelude_enabled(false);
+        vm.load_source(source)
+            .unwrap_or_else(|error| panic!("{error}"));
+        for (name, expected) in cases {
+            let result = vm.call_int32_0(name);
+            if let Some(expected) = expected {
+                assert_eq!(result.unwrap(), expected, "{mode:?} {name}");
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error.message().contains("Iterator index overflow"),
+                    "{error}"
+                );
+            }
+            LIVE.with(|live| assert_eq!(live.get(), 0));
+        }
+    }
+    #[cfg(unix)]
+    {
+        let types = crate::TypeRegistry::new().with_prelude(false);
+        types.standard.set(library).unwrap();
+        let ast = types
+            .resolve_with_modules(
+                &crate::parser::parse(source).unwrap(),
+                &crate::ModuleSources::new(),
+            )
+            .unwrap();
+        crate::backends::aot::tests::assert_sync_results(&ast, &cases);
     }
 }
 

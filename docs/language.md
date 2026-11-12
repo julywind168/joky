@@ -3928,14 +3928,19 @@ Item 可以是受支持的普通值或拥有值；每项的移动、忽略、失
 | --- | --- |
 | `take(input, count)` | count 为 UInt64，最多交付 count 项；零次不调用源 next |
 | `skip(input, count)` | count 为 UInt64，首次推进时跳过前 count 项，随即清理被跳过的拥有值 |
+| `enumerate(input)` | 交付 `(UInt64, Item)`，从 0 开始编号 |
 | `zip(left, right)` | 每轮先取左项再取右项，返回二元组；任一源结束即结束 |
 | `map(input, transform)` | `FnMut(Item) -> T`，每取一项才调用转换；支持拥有型输入与输出 |
 | `filter(input, predicate)` | `FnMut(&Item) -> Bool`，短暂借用当前项判断，接受时移动原项，拒绝时清理该项 |
 
-返回的 Take、Skip、Zip、Map、Filter 都实现 Iterator，字段私有。组合器首次收到 None 后保持耗尽，
+返回的 Take、Skip、Enumerate、Zip、Map、Filter 都实现 Iterator，字段私有。组合器首次收到 None 后保持耗尽，
 不再调用源或回调。zip 右源先结束时，本轮已经取得的左项会被清理；不保证左源零额外消费。
 skip(0) 直接交付来源的首项，跳过数量达到或超过输入长度时返回空迭代。
 提前 break、return、失败或丢弃组合器会清理剩余输入和回调环境。
+
+enumerate 把编号作为元素的一部分交给后续组合器。`iter.enumerate(iter.skip(input, 1))` 从 0 开始编号，
+`iter.skip(iter.enumerate(input), 1)` 则保留原有编号，首项编号为 1。最大编号 `UInt64.MAX` 可以正常交付。
+此后若来源还有元素，报 `Iterator index overflow`。正常耗尽直接结束。
 
 `iter.count(input) -> UInt64` 与 `iter.fold(input, initial, combine) -> A` 是立即执行的终结操作：
 输入按值转换一次 IntoIterator，按顺序读取剩余元素，到第一个 None 停止并清理迭代状态。
@@ -3963,7 +3968,7 @@ filter 的函数指针谓词须具有 `@noescape` 契约，例如 `fn even(x: &I
 filter 的 Item 需可直接借用（无引用 Copy 数据或拥有值）；引用元素再取 `&&T` 尚不支持。
 无引用 move 闭包组合器可在挂起函数中使用，循环体可挂起；组合器的完整存储仍须满足挂起资格。
 闭包回调本身保持同步，借用捕获或挂起回调不能借组合器绕过限制。
-take/zip 沿用输入的跨挂起资格。`&xs`、`&mut xs` 和 Map 的借用游标尚不接入这些组合器。
+take/skip/enumerate/zip 沿用输入的跨挂起资格。`&xs`、`&mut xs` 和 Map 的借用游标尚不接入这些组合器。
 完整示例见 [iterator_adapters.jk](../examples/iterator_adapters.jk)。
 
 ### 范围表达式
@@ -4069,6 +4074,7 @@ Array 的 `values.iter_shared()` / `array.iter_shared(&values)` 返回
 | --- | --- |
 | `iter.take_shared(input, count)` | 最多取 count 项，零项不推进输入 |
 | `iter.skip_shared(input, count)` | 首次推进时跳过前 count 项，保留共享借用和原元素 |
+| `iter.enumerate_shared(input)` | 交付 `(UInt64, Item)`，按普通 enumerate 的编号规则推进 |
 | `iter.filter_shared(input, predicate)` | 按原顺序保留满足条件的共享元素；输入元素须为 `&T` |
 | `iter.zip_shared(left, right)` | 返回两侧元素的元组，任一侧结束即永久耗尽；先推进左侧 |
 | `iter.step_shared(input)` | 返回 `(后继状态, Option<元素>)`，用于显式推进和泛型 helper |
@@ -4107,7 +4113,7 @@ filter_shared 接收 `fn(&T) @noescape -> Bool`，仅允许同步、不保存参
 ### 共享流水线方法
 
 `iter.shared(&values)` 借用 Array，返回 SharedPipeline；支持跨行
-`.filter(predicate).map(transform).skip(count).take(count).zip(other)` 方法链。它实现 SharedIterator，
+`.filter(predicate).skip(count).enumerate().map(transform).take(count).zip(other)` 方法链。它实现 SharedIterator，
 可用于普通 for、编号循环和 `I: Copy + SharedIterator` 泛型入口。
 包装类型使用现有泛型固有方法，没有新增关键字或通用扩展方法。
 
@@ -4117,8 +4123,9 @@ filter_shared 接收 `fn(&T) @noescape -> Bool`，仅允许同步、不保存参
 - 回调可以是同步 noescape 函数指针，或只读 Copy 借用闭包；闭包可直接捕获局部阈值、
   偏移量、字符串等，不需要手写参数类型或 noescape 注解。编译器检查回调不保留元素引用。
   修改捕获变量的 FnMut 闭包和拥有型 move 环境不满足此接口的 Copy + Fn 要求。
-- map 后可继续 filter、skip、take 或 zip；此时回调接收转换后的值。
+- map 后可继续 filter、skip、enumerate、take 或 zip；此时回调接收转换后的值。
 - skip 跳过的是前一个组合器的输出项；zip 接收另一个 SharedPipeline。
+- enumerate 将后续操作的 Item 变为 `(UInt64, Item)`。直接对共享数组编号时得到 `(UInt64, &T)`，引用沿用原元素的借用范围。
 - `.count() -> UInt64` / `.fold(initial, combine) -> A` 立即遍历当前管线副本，到第一个 None 停止。
   fold 接受 `FnMut(A, Item) @noescape -> A`，A 必须不含引用，支持拥有型累积值与可变捕获；回调不能保存或返回参数中的借用。
   例如可复制文本内容至 StringBuilder，但不能把借用元素收集进结果。count 和 fold 都不消费原容器；
@@ -4149,6 +4156,7 @@ filter 后 skip 跳过命中项，skip 后 filter 从未跳过的首项开始检
 流水线按值进入 for 后不能再次使用或复制，也不满足 Copy。支持编号、continue、break、
 嵌套遍历不同数组及提前返回；当前元素最后使用前不能推进冲突游标，原数组也不能修改、
 移动或释放。循环最后使用结束后可再次访问数组。拥有型元素可通过当前 &mut T 原地替换。
+独占遍历可用 `for index, value in iter.exclusive(&mut values)` 为循环体提供编号。
 
 for 与显式接口使用相同规则：`pipeline.into_parts()` 消费流水线，返回
 `(&mut iter.Iter<T>, P)`；局部可用 `var (cursor, plan) = ...` 解构，

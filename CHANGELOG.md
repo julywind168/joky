@@ -5,6 +5,7 @@
 
 ## Unreleased
 
+- `joky/iter` 为拥有迭代器和共享流水线提供 `enumerate`，惰性产出带 `UInt64` 编号的元素。
 - `joky/iter` 为拥有迭代器、共享迭代器和独占流水线提供惰性 `skip`，跳过前若干项后交付其余元素。
 - `if`、`else if` 和 `while` 条件可用 `&&` 串联模式绑定和布尔测试，成功绑定对后续条件可见。
 - `value is Pattern` 返回模式匹配的 `Bool` 结果，支持 `|` 备选模式。
