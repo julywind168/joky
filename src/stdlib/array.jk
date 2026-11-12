@@ -132,6 +132,11 @@ impl<T> Array<T> {
     pub fn push(&mut self, value: T) {
         push(self, value)
     }
+    /// Moves all elements from `other` to the end of this array in order.
+    /// `other` is left empty with its original capacity.
+    pub fn append(&mut self, other: &mut Self) {
+        append(self, other)
+    }
     /// Removes and returns the last element, or `None` when empty.
     pub fn pop(&mut self) -> Option<T> {
         pop(self)
@@ -282,6 +287,16 @@ fn grow<T>(values: &mut Buffer<T>, required: UInt64, capacity: UInt64, limit: UI
 pub fn push<T>(values: &mut Array<T>, value: T) {
     reserve(values, 1)
     buffer.initialize_next(&mut values.storage, value)
+}
+
+/// Moves the initialized elements of `other` into the tail of `values`.
+pub fn append<T>(values: &mut Array<T>, other: &mut Array<T>) {
+    let count = len(other)
+    if count == 0 {
+        return
+    }
+    reserve(values, count)
+    buffer.transfer(&mut other.storage, &mut values.storage)
 }
 
 // Copy a borrowed byte range without creating a retained subslice header.

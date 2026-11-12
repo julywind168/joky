@@ -757,30 +757,33 @@ impl Buffer {
         self.metadata_charge = 0;
     }
 
-    /// Move the initialized prefix into empty, preallocated storage. All checks
-    /// precede mutation; no allocation or suspension occurs here.
+    /// Move the initialized prefix to the tail of preallocated storage.
+    /// Check both layouts and spare capacity before transferring cleanup responsibility.
     ///
     /// # Safety
     /// Both pointers must identify live, exclusively borrowed buffers in the
     /// same task arena, with compatible compiler-installed element descriptors.
     /// No element view may remain live; execution stays on the task thread.
     pub(crate) unsafe fn transfer(source: *mut Self, destination: *mut Self) -> Result<(), Error> {
-        if source == destination
-            || (*source).element != (*destination).element
-            || (*destination).len != 0
-            || (*source).len > (*destination).capacity
+        if source == destination {
+            return Err(bounds_error("Buffer transfer requires distinct storage"));
+        }
+        let source = &mut *source;
+        let destination = &mut *destination;
+        if source.element != destination.element
+            || source.len > destination.capacity - destination.len
         {
             return Err(bounds_error(
-                "Buffer transfer requires distinct matching storage with enough empty capacity",
+                "Buffer transfer requires matching storage with enough spare capacity",
             ));
         }
         std::ptr::copy_nonoverlapping(
-            (*source).data.as_ptr(),
-            (*destination).data.as_ptr(),
-            (*source).len * (*source).element.size(),
+            source.data.as_ptr(),
+            destination.address(destination.len),
+            source.len * source.element.size(),
         );
-        (*destination).len = (*source).len;
-        (*source).len = 0;
+        destination.len += source.len;
+        source.len = 0;
         Ok(())
     }
 

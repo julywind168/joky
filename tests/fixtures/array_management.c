@@ -5,12 +5,15 @@ static int32_t events[32];
 static int count;
 void record_drop(int32_t value) { if (count < 32) events[count++] = value; }
 extern int32_t manage_copy(void), manage_owned(void), manage_enum_tuple(void);
+extern int32_t manage_append(void), manage_transitions(void);
 extern int32_t manage_wrapper(void), manage_zero_and_aggregate(void), manage_references(void);
 extern int32_t manage_clear_failure(void), manage_truncate_failure(void), manage_budget(void);
 extern int32_t manage_evaluation(void);
 int main(void) {
     struct Case { int32_t (*call)(void); int failure, count; int32_t events[12]; } cases[] = {
         {manage_copy, 0, 0, {0}},
+        {manage_append, 0, 0, {0}},
+        {manage_transitions, 0, 5, {-1, -2, -3, -4, -90}},
         {manage_owned, 0, 4, {-1, -2, -3, -4}},
         {manage_enum_tuple, 0, 2, {-1, -2}},
         {manage_wrapper, 0, 0, {0}},

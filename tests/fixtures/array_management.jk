@@ -25,6 +25,25 @@ fn manage_copy() -> Int32 {
     values.clear(); values.push(20); values.push(22)
     if values.len() == 2 && values.capacity() == 8 { result } else { 0 }
 }
+fn manage_append() -> Int32 {
+    var values = Array.with_capacity::<String>(4)
+    var other = Array.with_capacity::<String>(3)
+    values.append(&mut other)
+    if !values.is_empty() || values.capacity() != 4 || other.capacity() != 3 { return 0 }
+
+    other.push("first")
+    array.append(&mut values, &mut other)
+    if !other.is_empty() || other.capacity() != 3 { return 0 }
+    other.push("second")
+    other.push("third")
+    values.append(&mut other)
+    if !other.is_empty() || other.capacity() != 3 { return 0 }
+    other.release()
+
+    if values.len() != 3 || values.capacity() != 4 { return 0 }
+    if values.borrow_ref(0) != "first" || values.borrow_ref(1) != "second" || values.borrow_ref(2) != "third" { return 0 }
+    42
+}
 fn manage_owned() -> Int32 {
     var values = Array.with_capacity::<Resource>(4)
     values.push(resource(1)); values.push(resource(2)); values.push(resource(3))
@@ -62,7 +81,10 @@ fn manage_wrapper() -> Int32 {
 struct Pair { a: UInt64, b: Bool, c: Unit }
 fn manage_zero_and_aggregate() -> Int32 {
     var zero = Array.new::<Unit>()
-    zero.push({}); zero.push({})
+    var other = Array.with_capacity::<Unit>(2)
+    zero.push({}); other.push({})
+    zero.append(&mut other)
+    if zero.len() != 2 || !other.is_empty() || other.capacity() != 2 { return 0 }
     if !zero.swap(0, 1) || !zero.swap(1, 1) || zero.swap(0, 2) { return 0 }
     zero.truncate(1); zero.clear()
     if zero.swap(0, 0) { return 0 }
@@ -78,7 +100,10 @@ fn manage_zero_and_aggregate() -> Int32 {
 }
 fn manage_references() -> Int32 {
     var values = Array.new::<&Int32>()
-    values.push((&*(alloc(20)))); values.push((&*(alloc(22))))
+    var other = Array.new::<&Int32>()
+    values.push((&*(alloc(20)))); other.push((&*(alloc(22))))
+    values.append(&mut other)
+    other.release()
     values.swap(0, 1)
     let a = values.get(0)
     let b = values.get(1)
@@ -124,8 +149,11 @@ fn manage_evaluation() -> Int32 {
     result
 }
 fn manage_transitions() -> Int32 {
-    var values = Array.new::<Resource>()
-    values.push(resource(1)); values.push(resource(2)); values.push(resource(3))
+    var values = Array.with_capacity::<Resource>(1)
+    var other = Array.with_capacity::<Resource>(2)
+    values.push(resource(1)); other.push(resource(2)); other.push(resource(3))
+    values.append(&mut other)
+    if values.len() != 3 || !other.is_empty() || other.capacity() != 2 { return 0 }
     values.swap(0, 2)
     values.truncate(1)
     values.push(resource(4))

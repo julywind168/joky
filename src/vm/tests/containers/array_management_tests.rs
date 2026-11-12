@@ -31,6 +31,7 @@ fn array_management_transfers_ownership_in_both_execution_modes() {
             .unwrap_or_else(|e| panic!("{mode:?}: {e} {:?}", e.span()));
         for (name, events) in [
             ("manage_copy", vec![]),
+            ("manage_append", vec![]),
             ("manage_owned", vec![-1, -2, -3, -4]),
             ("manage_enum_tuple", vec![-1, -2]),
             ("manage_wrapper", vec![]),
@@ -174,6 +175,9 @@ fn array_management_rejects_conflicting_loans_and_invalid_capabilities() {
         }
     }
     for body in [
+        "fn bad(var values: Array<Int32>) { values.append(&mut values); }",
+        "fn bad(values: &mut Array<Resource>, other: &mut Array<Resource>) { let item = other.borrow_ref(0); values.append(other); item.id; }",
+        "fn bad(values: &mut Array<Resource>, other: &mut Array<Resource>) { let item = values.borrow_ref(0); values.append(other); item.id; }",
         "fn bad(values: &mut Array<Resource>) { values.swap(-1, 0); }",
         "fn bad(values: &mut Array<Resource>) { values.truncate(-1); }",
         "fn bad(values: &mut Array<Int32>) { values.swap(0, { values.clear(); 0 }); }",
