@@ -407,7 +407,23 @@ pub(crate) fn substitute(
             | Type::BufferIterator(element)
             | Type::BufferPairIterator(element)
             | Type::BufferEntry(element) => {
-                let result = ty.with_buffer_element(visit(element, substitutions, types, cache)?);
+                let element = visit(element, substitutions, types, cache)?;
+                // A recursive argument can be shallow inside an otherwise
+                // specialized element. Keep its identity until the complete
+                // declaration graph can supply the inline element layout.
+                let element = if matches!(ty, Type::Buffer(_))
+                    && element.nominal().is_some()
+                    && TypeWalk::new(&element, TypeEdges::Inline)
+                        .skip(1)
+                        .any(|ty| {
+                            matches!(ty, Type::Record(r) if r.indirect)
+                                || matches!(ty, Type::Enum(e) if e.indirect)
+                        }) {
+                    indirect::resolve_element(&element, &HashMap::new(), types, 0)?
+                } else {
+                    element
+                };
+                let result = ty.with_buffer_element(element);
                 types.validate(&result)?;
                 result
             }

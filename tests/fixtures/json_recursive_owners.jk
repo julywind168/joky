@@ -49,7 +49,10 @@ fn exercise() {
     var optional = Array.new::<Option<MaybeTree>>()
     optional.push(Some(MaybeTree.EndTree))
     let nested = MaybeTree.NextTree(optional)
-    match &nested { NextTree(optional) => ensure(optional.len() == 1), _ => ensure(false) }
+    match &nested {
+        NextTree(optional) => ensure(optional.borrow_ref(0) is Some(EndTree))
+        _ => ensure(false)
+    }
     var children = Array.new::<Tracked>()
     children.push(Tracked { id: 2, children: Array.new::<Tracked>() })
     let tracked = Tracked { id: 1, children: children }
