@@ -475,20 +475,27 @@ impl Type {
     pub(crate) fn is_scoped_shared_value(&self) -> bool {
         self.is_copy_value()
             && (self.contains_buffers() || self.contains_unstorable_closures())
-            && self.scalar_types().iter().all(|ty| {
-                if let Some(reference) = ty.reference_type() {
-                    !reference.mutable
-                        && (!ty.is_buffer_view() || reference.target.is_owner())
-                        && !reference.target.contains_dyn()
-                        && !reference.target.contains_explicit_arena()
-                } else {
-                    !ty.is_buffer_target() && !ty.is_callable_parameter()
-                }
-            })
+            && self.scalar_types().iter().all(Self::is_scoped_shared_lane)
     }
-    /// Local cursor packets transfer exclusive cursor loans alongside plain metadata.
+    fn is_scoped_shared_lane(&self) -> bool {
+        if let Some(reference) = self.reference_type() {
+            !reference.mutable
+                && (!self.is_buffer_view() || reference.target.is_owner())
+                && !reference.target.contains_dyn()
+                && !reference.target.contains_explicit_arena()
+        } else {
+            !self.is_buffer_target() && !self.is_callable_parameter()
+        }
+    }
+    pub(super) fn is_cursor_packet_metadata(&self) -> bool {
+        self.is_copy_storage_value() && !self.contains_references()
+            || self.contains_unstorable_closures() && self.is_scoped_shared_value()
+    }
+    /// Local cursor packets transfer exclusive cursor loans alongside Copy state,
+    /// including shared loans carried by read-only callbacks.
     /// They cannot be copied, stored, borrowed as a whole, or used as enum payloads.
     pub(crate) fn is_scoped_cursor_value(&self) -> bool {
+        let mut borrowed_callbacks = None;
         !self.is_owner()
             && !matches!(self, Self::Enum(_))
             && self.scalar_types().iter().any(|ty| {
@@ -497,9 +504,16 @@ impl Type {
             })
             && self.scalar_types().iter().all(|ty| {
                 if let Some(r) = ty.reference_type() {
-                    r.mutable && matches!(r.target, Self::BufferIterator(_))
+                    if r.mutable {
+                        matches!(r.target, Self::BufferIterator(_))
+                    } else {
+                        ty.is_scoped_shared_lane()
+                            && *borrowed_callbacks.get_or_insert_with(|| self.contains_unstorable_closures())
+                    }
                 } else {
                     ty.is_copy_storage_value() && !ty.contains_references()
+                        // Rigid callbacks are checked again with their actual capture lanes.
+                        || matches!(ty, Self::Parameter(p) if p.copy && p.callable.as_ref().is_some_and(|f| f.mode == CallableKind::Fn && !f.suspends))
                 }
             })
     }

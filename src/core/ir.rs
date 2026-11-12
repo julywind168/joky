@@ -100,6 +100,8 @@ pub(crate) struct FunctionInfo {
     pub inferred_arena_retained: Vec<(usize, usize)>,
     /// A returned reference may point into scoped or relocatable aggregate storage.
     pub returns_interior: bool,
+    /// Shared lanes of a returned cursor packet do not derive from exclusive inputs.
+    pub cursor_return_independent: bool,
     pub compiler_intrinsic: Option<CompilerIntrinsic>,
     pub builtin: Option<Builtin>,
     pub extern_abi: ExternAbi,
@@ -148,6 +150,7 @@ impl FunctionInfo {
             inferred_arena_retained: Vec::new(),
             call_region: false,
             returns_interior: true,
+            cursor_return_independent: false,
             compiler_intrinsic: None,
             signature,
             builtin: None,
@@ -843,6 +846,7 @@ impl ModulePlan {
                 inferred_noescape: Vec::new(),
                 inferred_retained: None,
                 inferred_arena_retained: Vec::new(),
+                cursor_return_independent: false,
                 call_region: false,
                 returns_interior: true,
                 compiler_intrinsic: match item {
@@ -2111,9 +2115,6 @@ impl FunctionPlan {
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         if let Some(input) = self.iteration_input(expr, vars, functions, types) {
-            if let Some(plan) = iterators::exclusive_plan_input(&input) {
-                self.borrowed_names.require_place(plan.to_owned());
-            }
             return self.expr_expected(&input, vars, functions, suspends, types, expected);
         }
         if let Expr::Call {

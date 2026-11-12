@@ -15,24 +15,6 @@ pub(super) fn paired_binding(value: &Expr) -> Option<&Expr> {
     })
 }
 
-pub(super) fn exclusive_plan_input(input: &Expr) -> Option<&str> {
-    let Expr::Sequence { exprs, .. } = input else {
-        return None;
-    };
-    let Expr::Destructure {
-        pattern: BindingPattern::Tuple { elements, .. },
-        ..
-    } = exprs.first()?
-    else {
-        return None;
-    };
-    let BindingPattern::Name { name, .. } = elements.get(1)? else {
-        return None;
-    };
-    name.starts_with("$exclusive_plan_")
-        .then_some(name.as_str())
-}
-
 impl FunctionPlan {
     fn is_exclusive_pipeline(&self, ty: &Type) -> bool {
         self.generics.borrow().members.methods.iter().any(|method| {
@@ -265,16 +247,42 @@ impl FunctionPlan {
                     if let Some(suffix) = name.strip_prefix("$for_iterator_") {
                         let plan = format!("$exclusive_plan_{suffix}");
                         if vars.contains_key(&plan) {
-                            return Expr::Call {
-                                callee: "$joky_iter.advance_exclusive".into(),
-                                type_args: vec![],
-                                args: vec![
-                                    Expr::Unary {
-                                        op: UnaryOp::BorrowMut,
-                                        operand: Box::new(Expr::Ident { name: plan, span }),
+                            let next = format!("$exclusive_successor_{suffix}");
+                            let advanced = format!("$exclusive_advanced_{suffix}");
+                            let ident = |name: &str| Expr::Ident {
+                                name: name.into(),
+                                span,
+                            };
+                            return Expr::Block {
+                                exprs: vec![
+                                    Expr::Destructure {
+                                        pattern: BindingPattern::Tuple {
+                                            elements: [&next, &advanced]
+                                                .into_iter()
+                                                .map(|name| BindingPattern::Name {
+                                                    name: name.clone(),
+                                                    span,
+                                                })
+                                                .collect(),
+                                            span,
+                                        },
+                                        mutable: false,
+                                        annotation: None,
+                                        value: Box::new(Expr::Call {
+                                            callee: "$joky_iter.step_exclusive".into(),
+                                            type_args: vec![],
+                                            args: vec![ident(&plan), *operand.clone()],
+                                            span,
+                                        }),
                                         span,
                                     },
-                                    *operand.clone(),
+                                    Expr::Assign {
+                                        name: plan,
+                                        op: None,
+                                        value: Box::new(ident(&next)),
+                                        span,
+                                    },
+                                    ident(&advanced),
                                 ],
                                 span,
                             };

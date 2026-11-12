@@ -794,19 +794,16 @@ pub(super) fn member_type(
 }
 
 fn validate_cursor_packet<'a>(
-    types: impl Iterator<Item = &'a Type> + Clone,
+    mut types: impl Iterator<Item = &'a Type> + Clone,
     span: Span,
 ) -> Result<(), Error> {
     if types.clone().any(Type::is_scoped_cursor_value)
-        && types.clone().any(|ty| {
-            !ty.is_scoped_cursor_value()
-                && (!ty.is_copy_storage_value() || ty.contains_references())
-        })
+        && types.any(|ty| !ty.is_scoped_cursor_value() && !ty.is_cursor_packet_metadata())
     {
         return Err(error(
             ErrorCode::TypeMismatch,
             span,
-            "Exclusive cursor packets require cursor loans and reference-free Copy metadata",
+            "Exclusive cursor packets require cursor loans, reference-free Copy data or read-only callback state",
         ));
     }
     Ok(())

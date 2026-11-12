@@ -866,7 +866,7 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy, U: Copy, F: Copy + Fn(T) @noes
     }
 }
 
-// Cursor loans move separately from plain adapter state. Explicit parts and for
+// Cursor loans move separately from Copy adapter state. Explicit parts and for
 // use the same checked advance/current protocol; no optional exclusive item exists.
 pub trait ExclusiveSource {
     type Item
@@ -874,14 +874,14 @@ pub trait ExclusiveSource {
 }
 pub trait ExclusivePlan {
     type Item
-    fn advance(&mut self, cursor: &Iter<Self.Item>) @noescape -> Bool
+    fn step(self, cursor: &Iter<Self.Item>) @noescape(cursor) -> (Self, Bool)
 }
 pub struct ExclusiveAll<T> {}
 impl<T> ExclusivePlan for ExclusiveAll<T> {
     type Item
     = T
-    fn advance(&mut self, cursor: &Iter<T>) @noescape -> Bool {
-        advance(cursor)
+    fn step(self, cursor: &Iter<T>) @noescape(cursor) -> (Self, Bool) {
+        (self, advance(cursor))
     }
 }
 pub struct ExclusivePipeline<P: Copy, T> { cursor: &mut Iter<T>, plan: P }
@@ -905,15 +905,15 @@ impl<P: Copy + ExclusivePlan<Item = T>, T> ExclusivePipeline<P, T> {
             plan: ExclusiveSkip { source: plan, remaining: count, done: false }
         }
     }
-    pub fn filter(
+    /// Borrows each candidate briefly and yields mutable access to matching items.
+    pub fn filter<F: Copy + Fn(&T) @noescape -> Bool>(
         self,
-        predicate: fn(&T) @noescape -> Bool
-    ) -> ExclusivePipeline<ExclusiveFilter<P, T>, T> {
+        predicate: F
+    ) -> ExclusivePipeline<ExclusiveFilter<P, T, F>, T> {
         let ExclusivePipeline { cursor, plan } = self
         ExclusivePipeline { cursor, plan: ExclusiveFilter { source: plan, predicate, done: false } }
     }
     pub fn into_parts(self) -> (&mut Iter<T>, P) {
-        types.require_plain_copy::<P>()
         let ExclusivePipeline { cursor, plan } = self
         (cursor, plan)
     }
@@ -930,64 +930,86 @@ pub fn advance_exclusive<P: Copy + ExclusivePlan>(
     cursor: &Iter<P.Item>
 ) @noescape -> Bool {
     types.require_plain_copy::<P>()
-    ExclusivePlan.advance(plan, cursor)
+    let (next, advanced) = ExclusivePlan.step(*plan, cursor)
+    *plan = next
+    advanced
+}
+
+/// Returns the successor plan and whether the cursor reached an item.
+pub fn step_exclusive<P: Copy + ExclusivePlan>(
+    plan: P,
+    cursor: &Iter<P.Item>
+) @noescape(cursor) -> (P, Bool) {
+    ExclusivePlan.step(plan, cursor)
 }
 
 pub struct ExclusiveTake<P: Copy> { source: P, remaining: UInt64 }
 impl<P: Copy + ExclusivePlan> ExclusivePlan for ExclusiveTake<P> {
     type Item
     = P.Item
-    fn advance(&mut self, cursor: &Iter<P.Item>) @noescape -> Bool {
+    fn step(var self, cursor: &Iter<P.Item>) @noescape(cursor) -> (Self, Bool) {
         if self.remaining == 0 {
-            return false
+            return (self, false)
         }
-        self.remaining -= 1
-        if ExclusivePlan.advance(&mut self.source, cursor) {
-            true
+        let (source, advanced) = ExclusivePlan.step(self.source, cursor)
+        self.source = source
+        self.remaining = if advanced {
+            self.remaining - 1
         } else {
-            self.remaining = 0
-            false
+            0
         }
+        (self, advanced)
     }
 }
 pub struct ExclusiveSkip<P: Copy> { source: P, remaining: UInt64, done: Bool }
 impl<P: Copy + ExclusivePlan> ExclusivePlan for ExclusiveSkip<P> {
     type Item
     = P.Item
-    fn advance(&mut self, cursor: &Iter<P.Item>) @noescape -> Bool {
+    fn step(var self, cursor: &Iter<P.Item>) @noescape(cursor) -> (Self, Bool) {
         if self.done {
-            return false
+            return (self, false)
         }
         while self.remaining != 0 {
-            if !ExclusivePlan.advance(&mut self.source, cursor) {
+            let (source, advanced) = ExclusivePlan.step(self.source, cursor)
+            self.source = source
+            if !advanced {
                 self.done = true
-                return false
+                return (self, false)
             }
             self.remaining -= 1
         }
-        let advanced = ExclusivePlan.advance(&mut self.source, cursor)
+        let (source, advanced) = ExclusivePlan.step(self.source, cursor)
+        self.source = source
         self.done = !advanced
-        advanced
+        (self, advanced)
     }
 }
-pub struct ExclusiveFilter<P: Copy, T> {
+pub struct ExclusiveFilter<P: Copy, T, F: Copy> {
     source: P,
-    predicate: fn(&T) @noescape -> Bool,
+    predicate: F,
     done: Bool
 }
-impl<P: Copy + ExclusivePlan<Item = T>, T> ExclusivePlan for ExclusiveFilter<P, T> {
+impl<P: Copy + ExclusivePlan<Item = T>, T, F: Copy + Fn(&T) @noescape -> Bool> ExclusivePlan for ExclusiveFilter<
+    P,
+    T,
+    F
+> {
     type Item
     = T
-    fn advance(&mut self, cursor: &Iter<T>) @noescape -> Bool {
+    fn step(var self, cursor: &Iter<T>) @noescape(cursor) -> (Self, Bool) {
         if self.done {
-            return false
+            return (self, false)
         }
-        while ExclusivePlan.advance(&mut self.source, cursor) {
+        while true {
+            let (source, advanced) = ExclusivePlan.step(self.source, cursor)
+            self.source = source
+            if !advanced {
+                self.done = true
+                return (self, false)
+            }
             if (self.predicate)(current(cursor)) {
-                return true
+                return (self, true)
             }
         }
-        self.done = true
-        false
     }
 }

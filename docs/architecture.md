@@ -549,10 +549,10 @@ SharedIterator.step 以值传递后继状态，for 降低为普通解构、赋�
 不借此开放可变借用含引用的局部聚合。String 相等运算绑定可信文本函数，三后端共用
 普通共享调用期借用和临时存储清理，不新增比较 ABI 或用户运算符派发。
 
-独占流水线的 for 入口识别标准 ExclusivePipeline 的声明身份，一次性拆出独占游标与普通状态，
-状态在本地稳定位置上供 advance_exclusive 更新，元素仍通过原 current_mut 取得。
+独占流水线的 for 入口识别标准 ExclusivePipeline 的声明身份，一次性拆出独占游标与 Copy 计划。
+`step_exclusive` 按值返回后继计划，保留其中只读闭包的借用来源。推进成功后通过 current_mut 取得元素。
 没有新增运行时游标、比较或回调 ABI，也不在循环体后补隐藏状态写回；continue/break/return
-沿原控制流工作。显式 into_parts/advance_exclusive 与循环使用同一原语和借用检查。
+沿原控制流工作。显式 into_parts/step_exclusive 与循环使用同一原语和借用检查。
 不可变绑定读取独占游标包也必须产生逐引用转移，不能像共享 Copy 聚合那样只别名同一槽。
 
 ## 局部值借用

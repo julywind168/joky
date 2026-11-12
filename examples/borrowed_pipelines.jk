@@ -2,7 +2,6 @@ import joky/iter
 
 fn nonempty(value: &String) @noescape -> Bool { value != "" }
 fn byte_length(value: &String) @noescape -> UInt64 { value.byte_length() }
-fn positive(value: &Int32) @noescape -> Bool { *value > 0 }
 
 fn shared_demo() {
     let names = ["Alice", "", "Bob", "Carol"]
@@ -17,8 +16,9 @@ fn shared_demo() {
 
 fn exclusive_demo() {
     var scores = [1, 0, 2, 3]
+    let threshold = 1
     for score in iter.exclusive(&mut scores)
-        .filter(positive)
+        .filter(|score| { *score >= threshold })
         .take(2)
     {
         *score += 10

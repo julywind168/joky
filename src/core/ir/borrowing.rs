@@ -11,6 +11,7 @@ type Set = BTreeSet<usize>;
 #[derive(Default)]
 struct Escapes {
     returned: Set,
+    shared_returned: Set,
     retained: Set,
     arena_retained: BTreeMap<usize, Set>,
     returns_interior: bool,
@@ -146,6 +147,8 @@ fn refs(slot: &Slot) -> Vec<Slot> {
 }
 
 pub(super) fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
+    let borrowed_closure =
+        |ty: &Type| ty.closure_info().is_some_and(|c| !c.storable) && !ty.is_owner();
     match op {
         Op::Place(op) => match op {
             PlaceOp::View {
@@ -190,9 +193,9 @@ pub(super) fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
         Op::OutboxEmit { bytes, .. } => (refs(bytes), vec![]),
         Op::Assert { message, .. } | Op::Panic { message } => (refs(message), vec![]),
         Op::Closure(op) => match op.as_ref() {
-            closures::ClosureOp::End(slot) if slot.ty.is_scoped_suspending_closure() => {
-                // This environment owns no captures and has no destructor. Its
-                // lexical end must not prolong loans after a consuming call.
+            closures::ClosureOp::End(slot) if borrowed_closure(&slot.ty) => {
+                // An environment with no owned captures has no destructor.
+                // Its lexical end does not use the captured references.
                 (vec![], refs(slot))
             }
             closures::ClosureOp::BorrowCapture { dst, reference } => (refs(reference), refs(dst)),
@@ -292,6 +295,17 @@ pub(super) fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             std::iter::once(arena).chain(value).flat_map(refs).collect(),
             refs(dst),
         ),
+        // Ending a materialized reference binding or borrowed closure does not
+        // read the stored references.
+        Op::EndLocal(local)
+            if borrowed_closure(&local.ty)
+                || local
+                    .ty
+                    .reference_type()
+                    .is_some_and(|r| r.target.reference_type().is_some()) =>
+        {
+            (vec![], refs(local))
+        }
         Op::EndLocal(local) => (refs(local), vec![]),
         Op::ReadMemory { dst, reference, .. } => {
             (refs(reference), dst.iter().flat_map(refs).collect())
@@ -650,6 +664,7 @@ pub(super) fn infer_module(
         info.inferred_retained = Some(Vec::new());
         info.inferred_arena_retained.clear();
         info.returns_interior = false;
+        info.cursor_return_independent = info.signature.ret.is_scoped_cursor_value();
         info.inferred_noescape = info
             .signature
             .params
@@ -710,6 +725,7 @@ pub(super) fn infer_module(
         let mut rejected = Set::new();
         let mut retained = Set::new();
         let mut parameter_roots = Vec::new();
+        let mut shared_depends_on_exclusive = false;
         for (index, ty) in info.signature.params.iter().enumerate() {
             let resolved = if let Some(reference) = ty.reference_type() {
                 Type::reference(
@@ -728,6 +744,11 @@ pub(super) fn infer_module(
                 let mut roots = vec![s.index];
                 if reference_buffer(&s.ty) {
                     roots.push(body.slot_count + body.ops.len() + s.index);
+                }
+                if s.ty.reference_type().is_some_and(|r| r.mutable) {
+                    shared_depends_on_exclusive |= roots
+                        .iter()
+                        .any(|root| escaped.shared_returned.contains(root));
                 }
                 roots
             })
@@ -766,6 +787,7 @@ pub(super) fn infer_module(
             info.inferred_retained.as_ref().unwrap().len(),
             info.returns_interior,
             info.inferred_arena_retained.len(),
+            info.cursor_return_independent,
         );
         info.inferred_noescape
             .retain(|index| !rejected.contains(index));
@@ -776,6 +798,7 @@ pub(super) fn infer_module(
             }
         }
         info.returns_interior |= result.is_err() || escaped.returns_interior;
+        info.cursor_return_independent &= result.is_ok() && !shared_depends_on_exclusive;
         for effect in arena_effects {
             if !info.inferred_arena_retained.contains(&effect) {
                 info.inferred_arena_retained.push(effect);
@@ -787,6 +810,7 @@ pub(super) fn infer_module(
                 stored.len(),
                 info.returns_interior,
                 info.inferred_arena_retained.len(),
+                info.cursor_return_independent,
             )
         {
             pending.extend(callers.get(&name).into_iter().flatten().cloned());
@@ -906,6 +930,17 @@ fn analyze(
         .iter()
         .filter_map(|op| match op {
             Op::Local { dst, .. } => Some(dst.index),
+            _ => None,
+        })
+        .collect();
+    let reference_places: BTreeMap<_, _> = plan
+        .ops
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, op)| match op {
+            Op::Local { target, .. } => target
+                .reference_type()
+                .map(|r| (plan.slot_count + pc, r.mutable)),
             _ => None,
         })
         .collect();
@@ -1056,6 +1091,7 @@ fn analyze(
         local_roots: &local_roots,
         owner_roots: &owner_roots,
         local_places: &local_places,
+        reference_places: &reference_places,
         argument_roots: &argument_roots,
         arena_parameter_roots: &arena_parameter_roots,
         explicit_allocation_roots: &explicit_allocation_roots,

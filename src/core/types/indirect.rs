@@ -253,7 +253,7 @@ fn resolve(
     for argument in arguments.iter_mut().filter_map(|a| a.as_type_mut()) {
         *argument = resolve(argument, canonical, registry, depth + 1, budget)?;
         registry.validate(argument)?;
-        if argument.contains_unstorable_closures() && !argument.is_scoped_shared_value()
+        if argument.contains_unstorable_closures() && !argument.is_scoped_borrowed_value()
             || !argument.is_copy_storage_value()
                 && !argument.is_scoped_borrowed_value()
                 && !argument.is_owner()

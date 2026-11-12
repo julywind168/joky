@@ -6,13 +6,15 @@ extern fn record(value: Int32) -> Int32
 fn positive(value: &Int32) @noescape -> Bool { *value > 0 }
 fn observed(value: &Int32) @noescape -> Bool { record(*value) > 0 }
 fn fail(value: &String) @noescape -> Bool { panic("exclusive predicate failed") }
-fn nonempty(value: &String) @noescape -> Bool { value != "" }
 fn generic<P: Copy + iter.ExclusivePlan<Item = Int32>>(values: iter.ExclusivePipeline<P, Int32>) {
     for value in values { *value += 10 }
 }
+fn forward<T>(value: T) -> T { value }
 fn compute() -> Int32 {
     var values = [1, 0, 2, 3]
-    generic(iter.exclusive(&mut values).filter(positive).take(2))
+    let threshold = 1
+    let selected = iter.exclusive(&mut values).filter(|value| { *value >= threshold }).take(2)
+    generic(forward(selected))
     assert(values[0] == 11 && values[1] == 0 && values[2] == 12 && values[3] == 3, "filter then take")
     for value in iter.exclusive(&mut values).take(2).filter(positive) { *value += 100 }
     assert(values[0] == 111 && values[2] == 12, "take before filter")
@@ -20,7 +22,8 @@ fn compute() -> Int32 {
     for _ in iter.exclusive(&mut empty).filter(positive).take(2).skip(1) { panic("empty") }
     for _ in iter.exclusive(&mut values).filter(observed).take(0) { panic("take zero") }
     var names = ["a", "", "b"]
-    for name in iter.exclusive(&mut names).filter(nonempty).skip(1).take(1) { *name = "replaced" }
+    let excluded = ""
+    for name in iter.exclusive(&mut names).filter(|name| { name != &excluded }).skip(1).take(1) { *name = "replaced" }
     assert(names[0] == "a" && names[1] == "" && names[2] == "replaced", "skipped elements stay in source")
     values.push(7)
     assert(values.len() == 5, "source reusable after loop")
@@ -28,12 +31,15 @@ fn compute() -> Int32 {
 }
 fn lazy() -> Int32 {
     var values = [1, 0, 2, 3]
-    for index, value in iter.exclusive(&mut values).filter(observed).take(2) {
+    var threshold = 1
+    let selected = iter.exclusive(&mut values).filter(|value| { record(*value) >= threshold }).take(2)
+    for index, value in selected {
         if index == 0 { continue }
         *value += 20
     }
     assert(values[0] == 1 && values[2] == 22 && values[3] == 3, "index and continue")
-    for value in iter.exclusive(&mut values).filter(observed) { *value += 5; break }
+    threshold = 0
+    for value in iter.exclusive(&mut values).filter(|value| { record(*value) > threshold }) { *value += 5; break }
     assert(values[0] == 6, "break")
     for value in iter.exclusive(&mut values).filter(observed).skip(1).take(1) { *value += 1 }
     assert(values[0] == 6 && values[2] == 23 && values[3] == 3, "skip counts filtered items")
@@ -45,11 +51,16 @@ fn manual() -> Int32 {
     assert(iter.advance_exclusive(&mut plan, cursor), "manual advance")
     let value = iter.current_mut(cursor)
     *value = 42
+    let read = || { *value }
+    assert(read() == 42, "current element capture ends after its last use")
     assert(!iter.advance_exclusive(&mut plan, cursor), "take exhausted")
     assert(!iter.advance_exclusive(&mut plan, cursor), "fused take")
-    var (cursor, plan) = iter.exclusive(&mut values).skip(18446744073709551615).into_parts()
-    assert(!iter.advance_exclusive(&mut plan, cursor), "skip past end")
-    assert(!iter.advance_exclusive(&mut plan, cursor), "fused skip")
+    let threshold = 1
+    let (cursor, plan) = iter.exclusive(&mut values).filter(|value| { *value >= threshold }).skip(18446744073709551615).into_parts()
+    let (plan, advanced) = iter.step_exclusive(plan, cursor)
+    assert(!advanced, "skip past end")
+    let (_, advanced) = iter.step_exclusive(plan, cursor)
+    assert(!advanced, "fused skip")
     values[0]
 }
 fn nested() -> Int32 {
@@ -63,12 +74,14 @@ fn nested() -> Int32 {
 }
 fn early() -> Int32 {
     var values = ["owned", "later"]
-    for _ in iter.exclusive(&mut values).skip(1).filter(nonempty) { return 42 }
+    let selected = "later"
+    for _ in iter.exclusive(&mut values).skip(1).filter(|value| { value == &selected }) { return 42 }
     0
 }
 fn failed() {
     var values = ["owned"]
-    for _ in iter.exclusive(&mut values).filter(fail).skip(1) {}
+    let selected = "owned"
+    for _ in iter.exclusive(&mut values).filter(|value| { value == &selected && fail(value) }).skip(1) {}
 }
 fn main() {
     assert(compute() == 42 && lazy() == 42 && manual() == 42 && nested() == 42 && early() == 42, "exclusive pipeline")

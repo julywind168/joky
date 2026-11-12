@@ -4156,7 +4156,9 @@ Array 已实现该协议。返回引用须来自源对象，首个缺失项表�
 
 `iter.exclusive(&mut values)` 返回只可转移的 ExclusivePipeline，支持
 `.filter(predicate).skip(count).take(count)`，也允许重复组合及交换顺序。filter 回调为同步
-`fn(&T) @noescape -> Bool`，只临时读取元素，不支持捕获闭包；循环体获得 &mut T。
+`F: Copy + Fn(&T) @noescape -> Bool`，支持函数指针和只读借用捕获。回调临时读取元素，
+命中后循环体获得 `&mut T`，可就地修改。比如 `.filter(|score| { *score >= threshold })`
+可以读取外层的运行时阈值。捕获的借用持续到流水线最后一次使用，并须与来源的独占借用兼容。
 filter 后 take 计数命中项，take 后 filter 只检查前 count 个输入项。
 filter 后 skip 跳过命中项，skip 后 filter 从未跳过的首项开始检查。被跳过的元素留在原数组中。
 构造和组合不执行回调，take(0) 不推进来源，首次耗尽后保持结束。
@@ -4168,12 +4170,13 @@ filter 后 skip 跳过命中项，skip 后 filter 从未跳过的首项开始检
 
 for 与显式接口使用相同规则：`pipeline.into_parts()` 消费流水线，返回
 `(&mut iter.Iter<T>, P)`；局部可用 `var (cursor, plan) = ...` 解构，
-`iter.advance_exclusive(&mut plan, cursor)` 推进，`iter.current_mut(cursor)` 取得当前项。
-`P: Copy + ExclusivePlan<Item = T>` 描述普通适配器状态，advance 方法有 noescape 契约；
-实际 P 还须通过无引用 Copy 检查。Array 实现 ExclusiveSource，以 exclusive_cursor 提供底层游标。
+`iter.step_exclusive(plan, cursor)` 返回 `(后继计划, Bool)`，成功时可用 `iter.current_mut(cursor)` 取得当前项。
+无引用 Copy 计划也可用 `iter.advance_exclusive(&mut plan, cursor)` 更新原绑定。
+`P: Copy + ExclusivePlan<Item = T>` 描述适配器状态。`ExclusivePlan.step` 按值接收计划，
+对游标参数有 `@noescape(cursor)` 契约。Array 实现 ExclusiveSource，以 exclusive_cursor 提供底层游标。
 泛型 helper 可按值接收 `ExclusivePipeline<P, T>` 并直接 for，不依赖特殊名称。
 
-局部记录和元组现在可包含 &mut Iter 及无引用 Copy 元数据；读取或传递整个包会转移游标借用权限，
+局部记录和元组可包含 &mut Iter、无引用 Copy 元数据及含只读回调的 Copy 计划；读取或传递整个包会转移游标借用权限，
 不能复制、存入容器/arena、作为枚举载荷，或对整个包取引用。
 不开放其他可变引用聚合、共享游标聚合、混合拥有/借用聚合或 `Option<&mut T>`。
 流水线只用于同步语言函数；不能跨普通 @suspends 调用或进入并发分支，
@@ -4189,14 +4192,15 @@ for 与显式接口使用相同规则：`pipeline.into_parts()` 消费流水线�
 | map 返回 String、Array 等拥有值，提示不满足 Copy | 共享状态和拥有结果的混合返回尚未开放；在普通 for 内创建结果，或在允许消费输入时使用普通 iter.map |
 | map 返回引用或含引用记录，提示 reference-free Copy | Copy 不代表无引用；返回数值等无引用 Copy 结果，或在普通共享 for 内直接使用借用值 |
 | 共享 filter/map 回调不满足 Copy | 只读借用捕获可用；修改捕获变量的闭包与拥有型 move 环境不满足复制要求，需要这些能力时使用显式 for |
-| 独占 filter 或普通函数指针参数提示 capturing closure | 这些接口仍只保存函数指针；改用无捕获回调，或在显式 for 中读取阈值并筛选 |
+| 独占 filter 回调不满足 Copy 或 Fn | 使用只读捕获。需要修改捕获变量时，可在显式 for 中判断并更新状态 |
+| 独占 filter 的捕获与来源或后续修改冲突 | 筛选前把阈值计算到独立变量，或等流水线最后一次使用后再修改捕获变量 |
 | 回调缺少 @noescape | 借用回调必须明确承诺不保存或返回参数借用；满足该契约后声明 @noescape，不能仅加注解绕过检查 |
 | 回调带 @suspends | 流水线推进只调用同步回调；需要挂起时，在适用的普通 for 中组织工作，并遵守元素借用的挂起规则 |
 | 独占流水线进入 for 或赋给另一绑定后再次使用 | 整个值会转移独占游标权限；使用接收移动的绑定，或在上次遍历结束后从原数组创建新流水线 |
 | 在 @suspends 函数中构造借用流水线 | 当前借用流水线只支持同步语言函数；把遍历放入同步 helper，只向挂起调用者返回无引用 Copy 或拥有结果 |
 
 这些诊断不表示需要更多类型参数。标准库在实例化时发现的类型资格错误指向触发它的调用，
-而不是要求修改 joky/iter 内部实现。当前尚未开放独占捕获回调、共享 map 的拥有/借用结果、
+而不是要求修改 joky/iter 内部实现。当前尚未开放共享 map 的拥有/借用结果、
 独占 map/zip 或 Slice 流水线。
 
 ### IntoIterator 与自动转换
@@ -4283,7 +4287,7 @@ fn increment() -> Int32 {
 
 Iter 是编译器识别的借用目标，只能通过 `&Iter<T>` / `&mut Iter<T>` 使用。
 它不实现普通 Iterator，不能作为 `I: Iterator` 的参数；独占引用不进入 Option，
-共享游标仍不能进入聚合；独占游标可与无引用 Copy 状态组成局部、移动式游标包，
+共享游标仍不能进入聚合；独占游标可与无引用 Copy 状态及只读回调组成局部、移动式游标包，
 用于上文的 ExclusivePipeline。游标包不能进入枚举、堆存储或宿主 ABI。
 显式类型为 Iter 的借用参数可用于泛型转发。
 `for` 通过游标类型选择下面的两步操作，同名用户函数不能改变生成调用：

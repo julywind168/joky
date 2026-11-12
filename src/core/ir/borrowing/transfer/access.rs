@@ -69,20 +69,31 @@ impl Instruction<'_> {
             // Local storage and unique buffer owners are not competing loans.
             // Access through an owner still checks every live view; lifetime
             // markers keeping the owner live must not freeze its views.
-            if other == slot.index
-                || Some(other) == ignore
-                || self.facts.local_places.contains(&other)
-                || self.facts.types[&other].is_owner()
-            {
+            if other == slot.index || Some(other) == ignore || self.facts.types[&other].is_owner() {
                 continue;
             }
             if let Some(alias) = state.get(&other).filter(|v| !v.invalid) {
-                if conflict(
-                    alias,
-                    self.facts.types[&other]
-                        .reference_type()
-                        .is_some_and(|r| r.mutable),
-                ) {
+                let direct = !self.facts.local_places.contains(&other)
+                    && conflict(
+                        alias,
+                        self.facts.types[&other]
+                            .reference_type()
+                            .is_some_and(|r| r.mutable),
+                    );
+                // A reference materialized for capture can be live through its
+                // place after the original SSA value's last use.
+                let stored = alias.origins.iter().any(|origin| {
+                    self.facts
+                        .reference_places
+                        .get(&origin.root)
+                        .is_some_and(|&mutable| {
+                            state
+                                .contents
+                                .get(&origin.root)
+                                .is_some_and(|value| conflict(value, mutable))
+                        })
+                });
+                if direct || stored {
                     let ending = matches!(
                         self.facts.plan.ops.get(self.pc),
                         Some(Op::Buffer(BufferOp::End(_)) | Op::Place(PlaceOp::End(_)))
@@ -280,8 +291,23 @@ impl Instruction<'_> {
     }
     pub(in super::super) fn check_result(&self, state: &State) -> Result<(), Error> {
         if let Some(result) = &self.facts.plan.result {
+            let cursor_summary = self
+                .facts
+                .escaped
+                .filter(|_| result.ty.is_scoped_cursor_value());
             for slot in refs(result) {
-                self.record_escape(state.get(&slot.index), true);
+                let value = state.get(&slot.index);
+                self.record_escape(value, true);
+                if let (Some(escaped), Some(value)) = (
+                    cursor_summary,
+                    value.filter(|_| !exclusive_access(&slot.ty)),
+                ) {
+                    let mut escaped = escaped.borrow_mut();
+                    escaped
+                        .shared_returned
+                        .extend(value.origins.iter().map(|origin| origin.root));
+                    escaped.shared_returned.extend(&value.arenas);
+                }
                 if self.facts.escaped.is_none()
                     && state
                         .get(&slot.index)

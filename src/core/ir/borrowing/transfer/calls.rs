@@ -176,12 +176,17 @@ impl Instruction<'_> {
         for mut dst in result.iter().flat_map(refs) {
             dst.ty = self.facts.types[&dst.index].clone();
             let mutable = exclusive_access(&dst.ty);
+            // A proved independent callback lane and its exclusive cursor must
+            // retain distinct origins when returned in the same packet.
+            let independent_capture = !mutable && callee.cursor_return_independent;
             // A returned borrow does not point into an owning sibling lane.
             // Keep fresh view identities outside owner and stored-content roots.
             let origin = if dst.ty.is_owner() {
                 loan
             } else {
-                2 * self.facts.plan.slot_count + self.facts.plan.ops.len() + self.pc
+                2 * self.facts.plan.slot_count
+                    + self.facts.plan.ops.len() * (1 + usize::from(independent_capture))
+                    + self.pc
             };
             let mut value = Reference {
                 origins: BTreeSet::from([Origin::new(origin)]),
@@ -196,6 +201,9 @@ impl Instruction<'_> {
             };
             for arg in &inputs {
                 if noescape_inputs.contains(&arg.index) && !arg.ty.is_owner() {
+                    continue;
+                }
+                if independent_capture && arg.ty.reference_type().is_some_and(|r| r.mutable) {
                     continue;
                 }
                 let source = if dst.ty.is_owner() {

@@ -328,6 +328,7 @@ impl FunctionPlan {
         if target.is_place()
             || target.is_closure_value()
             || names_capture_place(&self.borrowed_names, name)
+                && !(target.is_aggregate() && target.is_scoped_cursor_value())
             || target.is_inline_owner()
             || needs_place
                 && !target.contains_references()

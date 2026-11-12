@@ -14,6 +14,7 @@ pub(super) struct Facts<'a> {
     pub local_roots: &'a Set,
     pub owner_roots: &'a Set,
     pub local_places: &'a Set,
+    pub reference_places: &'a BTreeMap<usize, bool>,
     pub argument_roots: &'a Set,
     pub arena_parameter_roots: &'a Set,
     pub explicit_allocation_roots: &'a Set,
