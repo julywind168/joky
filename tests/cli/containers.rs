@@ -889,7 +889,11 @@ fn json_derive_dependencies_keep_private_fields_and_generic_definition_scope() {
         "model.jk",
         r#"
         #derive(ToJson, FromJson)
-        pub struct Packet<T> { #json(rename: "payload") data: T, label: String }
+        pub struct Packet<T> {
+            #json(rename: "payload") data: T,
+            #json(default: label_default) label: String
+        }
+        fn label_default() -> String { "private" }
         pub fn make() -> Packet<String> { Packet { data: "payload", label: "private" } }
         pub fn valid(value: &Packet<String>) -> Bool {
             let expected = "payload"
@@ -909,6 +913,8 @@ fn json_derive_dependencies_keep_private_fields_and_generic_definition_scope() {
         fn main() {
             let value = model.make()
             let message = "derived dependency"
+            let omitted = codec.decode::<Wire<String>>("{{\"payload\":\"payload\"}}")!
+            assert(model.valid(&omitted), &message)
             match codec.encode(&value) {
                 Ok(text) => match codec.decode::<Wire<String>>(&text) {
                     Ok(result) => { assert(model.valid(&result), &message) }

@@ -1,7 +1,7 @@
 //! Expand JSON derives into ordinary, hygienic trait implementations before binding.
 use crate::core::types::{ParameterKind, Type, TypeApplication, TypeParameter};
 use crate::parser::ast::{
-    AttributeArgument, AttributeValue, Expr, FieldInit, FnDef, ImplDef, Import, Literal, MatchArm,
+    AnonymousFunction, AttributeValue, Expr, FieldInit, FnDef, ImplDef, Import, Literal, MatchArm,
     MethodCall, Module, NoEscape, Param, Pattern, PayloadPattern, RecordDef, UnaryOp,
 };
 use crate::{Error, ErrorCode, ErrorPhase, Span};
@@ -62,9 +62,12 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
                 seen.push((name.path.clone(), argument.span));
             }
         }
-        let names = field_names(record, !seen.is_empty())?;
+        if seen.is_empty() && record.field_attributes.is_empty() {
+            continue;
+        }
+        let fields = json_fields(record, &seen)?;
         if !seen.is_empty() {
-            requests.push((index, seen, names));
+            requests.push((index, seen, fields));
         }
     }
     if requests.is_empty() {
@@ -74,12 +77,12 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
     let typed = import(module, "joky/json/typed", "$json_derive_typed", span);
     let json = import(module, "joky/json", "$json_derive_value", span);
     let result = import(module, "joky/result", "$json_derive_result", span);
-    for (index, derives, names) in requests {
+    for (index, derives, fields) in requests {
         let record = &module.records[index];
         for (capability, span) in derives {
             module.implementations.push(implementation(
                 record,
-                &names,
+                &fields,
                 &capability,
                 span,
                 &typed,
@@ -95,18 +98,18 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
     Ok(())
 }
 
-fn field_names(record: &RecordDef, derived: bool) -> Result<Vec<String>, Error> {
-    if record.field_attributes.is_empty() {
-        return Ok(record
-            .fields
-            .iter()
-            .map(|field| field.name.clone())
-            .collect());
-    }
-    let mut names = Vec::with_capacity(record.fields.len());
+struct JsonField {
+    key: String,
+    default: Option<Expr>,
+}
+
+fn json_fields(record: &RecordDef, derives: &[(String, Span)]) -> Result<Vec<JsonField>, Error> {
+    let decoding = derives.iter().any(|(name, _)| name == "FromJson");
+    let mut fields = Vec::with_capacity(record.fields.len());
     let mut seen = HashMap::new();
     for (index, field) in record.fields.iter().enumerate() {
         let mut rename = None;
+        let mut default = None;
         for attribute in record.field_attributes.get(&index).into_iter().flatten() {
             if attribute.path != "json" {
                 return Err(error(
@@ -114,27 +117,56 @@ fn field_names(record: &RecordDef, derived: bool) -> Result<Vec<String>, Error> 
                     format!("Unknown field attribute #{}", attribute.path),
                 ));
             }
-            if !derived {
+            if derives.is_empty() {
                 return Err(error(
                     attribute.span,
                     "#json requires a ToJson or FromJson derive",
                 ));
             }
-            let Some(
-                [AttributeArgument {
-                    name: Some(name),
-                    value: AttributeValue::Literal(Literal::String(key)),
-                    span,
-                }],
-            ) = attribute.arguments.as_deref()
+            let Some(arguments) = attribute
+                .arguments
+                .as_deref()
+                .filter(|args| !args.is_empty())
             else {
-                return Err(error(attribute.span, "Expected #json(rename: \"key\")"));
+                return Err(error(attribute.span, "#json requires field options"));
             };
-            if name != "rename" {
-                return Err(error(*span, format!("Unknown #json option '{name}'")));
-            }
-            if rename.replace((key, *span)).is_some() {
-                return Err(error(*span, "Duplicate #json rename"));
+            for argument in arguments {
+                let span = argument.span;
+                match (argument.name.as_deref(), &argument.value) {
+                    (Some("rename"), AttributeValue::Literal(Literal::String(key))) => {
+                        if rename.replace((key, span)).is_some() {
+                            return Err(error(span, "Duplicate #json rename"));
+                        }
+                    }
+                    (Some("rename"), _) => {
+                        return Err(error(
+                            attribute.span,
+                            "Expected #json rename to be a string",
+                        ));
+                    }
+                    (Some("default"), value) => {
+                        if !decoding {
+                            return Err(error(span, "#json default requires a FromJson derive"));
+                        }
+                        let value = match value {
+                            AttributeValue::Literal(literal) => Expr::Literal {
+                                literal: literal.clone(),
+                                span,
+                            },
+                            AttributeValue::Name(name) if name.arguments.is_none() => {
+                                call(name.path.clone(), vec![], span)
+                            }
+                            _ => return Err(error(span, "Expected a literal or a zero-argument function name for #json default")),
+                        };
+                        if default.replace(value).is_some() {
+                            return Err(error(span, "Duplicate #json default"));
+                        }
+                    }
+                    (Some(name), _) => {
+                        return Err(error(span, format!("Unknown #json option '{name}'")))
+                    }
+                    (None, _) => return Err(error(span, "Expected a named #json option")),
+                }
             }
         }
         let (key, span) = rename.map_or((&field.name, None), |(key, span)| (key, Some(span)));
@@ -143,9 +175,12 @@ fn field_names(record: &RecordDef, derived: bool) -> Result<Vec<String>, Error> 
                 return Err(error(span, format!("Duplicate JSON field name {key:?}")));
             }
         }
-        names.push(key.clone());
+        fields.push(JsonField {
+            key: key.clone(),
+            default,
+        });
     }
-    Ok(names)
+    Ok(fields)
 }
 
 pub(super) fn import(module: &mut Module, path: &str, alias: &str, span: Span) -> String {
@@ -250,7 +285,7 @@ fn propagate(value: Expr, result: &str, span: Span) -> Expr {
 
 fn implementation(
     record: &RecordDef,
-    names: &[String],
+    json_fields: &[JsonField],
     capability: &str,
     span: Span,
     typed: &str,
@@ -308,12 +343,12 @@ fn implementation(
         value: Box::new(propagate(object, result, span)),
         span,
     }];
-    for (index, (field, key)) in fields.iter().zip(names).enumerate() {
+    for (index, (field, options)) in fields.iter().zip(json_fields).enumerate() {
         let span = field.span;
         let mut args = vec![
             borrow(ident("$fields", span), true, span),
             Expr::Literal {
-                literal: Literal::String(key.clone()),
+                literal: Literal::String(options.key.clone()),
                 span,
             },
         ];
@@ -334,11 +369,24 @@ fn implementation(
                 span,
             ));
         } else {
+            let method = if let Some(fallback) = &options.default {
+                args.push(Expr::AnonymousFunction(Box::new(AnonymousFunction {
+                    moving: false,
+                    suspends: false,
+                    params: vec![],
+                    ret: Some(field.ty.clone()),
+                    body: fallback.clone(),
+                    span: fallback.span(),
+                })));
+                "take_field_or"
+            } else {
+                "take_field"
+            };
             body.push(Expr::Let {
                 name: format!("$field_{index}"),
                 annotation: None,
                 value: Box::new(propagate(
-                    context_call("take_field", vec![field.ty.clone()], args, span),
+                    context_call(method, vec![field.ty.clone()], args, span),
                     result,
                     span,
                 )),

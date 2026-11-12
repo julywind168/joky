@@ -39,6 +39,9 @@ fn json_derive_rejections_point_to_attributes_and_fields() {
         (r#"#derive(FromJson) struct Bad { #json(other: "x") value: Int32 }"#, "Unknown #json option", Some(r#"other: "x""#)),
         (r#"#derive(ToJson) struct Bad { #json(rename: "x") #json(rename: "y") value: Int32 }"#, "Duplicate #json rename", Some(r#"rename: "y""#)),
         (r#"#derive(FromJson) struct Bad { #json(rename: "x") value: Int32, x: Int32 }"#, "Duplicate JSON field name", Some(r#"rename: "x""#)),
+        ("#derive(ToJson) struct Bad { #json(default: 0) value: Int32 }", "default requires a FromJson derive", Some("default: 0")),
+        ("#derive(FromJson) struct Bad { #json(default: make()) value: Int32 }", "Expected a literal or a zero-argument function name", Some("default: make()")),
+        ("#derive(FromJson) struct Bad { #json(default: 0) #json(default: 1) value: Int32 }", "Duplicate #json default", Some("default: 1")),
         (
             "#derive(ToJson) struct Bad { callback: fn() -> Int32 }",
             "Cannot derive",

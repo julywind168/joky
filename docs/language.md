@@ -8377,7 +8377,7 @@ struct Envelope<T> { value: T }
   同一方向同时派生和手写实现按重叠 trait impl 拒绝。可与有效的 `#repr(C)` 组合。
 - 每个派生实现的约束推导最多 256 次义务展开、32 层依赖；派生方法及其调用产生的泛型实例
   继续计入全局生成预算。
-  本版不提供 enum 派生、跳过或默认值注解，也不引入运行时反射。
+  本版不提供 enum 派生或跳过字段，也不引入运行时反射。
 
 | 接口 | 行为 |
 | --- | --- |
@@ -8402,7 +8402,10 @@ Float32 编码先精确拓宽到 Float64，输出可往返但不保证最短 Flo
 
 缺失字段通过 `FromJson.accepts_missing() -> Bool` 判断是否可用 null 补齐。
 默认 false 表示 MissingField；Option<T> 返回 true，因此缺失和显式 null 均解码为 None。
-补齐的 null 经过同一映射与限额检查；其他默认值由 struct 的 FromJson 实现自行处理。
+补齐的 null 经过同一映射与限额检查。
+派生 `FromJson` 的字段可用 `#json(default: 0)` 指定整数、布尔或字符串字面量，也可用
+`#json(default: make_value)` 指定一个同步无参函数。默认值按字段类型检查，可以与 `rename` 同用。
+只有键缺失时才求值，消耗一个映射节点。显式 null 仍通过字段自身的 `FromJson` 解码。
 编码 None 输出 null；Some 透明编码，
 故 Option<Unit>、嵌套 Option 等能产生 null 的类型不保证可区分所有原始状态。
 

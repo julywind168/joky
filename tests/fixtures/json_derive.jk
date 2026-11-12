@@ -113,7 +113,7 @@ fn json_derive_work() @suspends -> Int32 {
     ensure(recovered.age == 37)
     json_derive_failure()
 }
-fn main() { derived_names_and_associated_bounds(); derived_directions_and_keys(); derived_composition(); structs(); renamed_fields(); ensure(json_derive_probe() == 42); ensure(json_derive_failure() == 42) }
+fn main() { derived_names_and_associated_bounds(); derived_directions_and_keys(); derived_composition(); structs(); renamed_fields(); default_fields(); ensure(json_derive_probe() == 42); ensure(json_derive_failure() == 42) }
 
 #derive(ToJson, FromJson)
 struct Renamed {
@@ -133,6 +133,33 @@ fn renamed_fields() {
     var options = Options.default()
     options.reject_unknown_fields = true
     mapping(typed.decode_with_options::<Renamed>(&extra, options).err()!, 2, "/age")
+}
+
+fn default_nickname() -> Option<String> { Some("Ada") }
+fn unreachable_default() -> String { ensure(false); "" }
+
+#derive(FromJson)
+struct Defaults {
+    #json(rename: "years", default: 37)
+    age: UInt8,
+    #json(default: default_nickname)
+    nickname: Option<String>,
+    #json(default: unreachable_default)
+    name: String
+}
+
+fn default_fields() {
+    let value = decoded::<Defaults>(r#"{"name":"Ada"}"#)
+    ensure(value.age == 37)
+    ensure(value.nickname.unwrap() == "Ada")
+    let value = decoded::<Defaults>(r#"{"years":42,"nickname":null,"name":"Ada"}"#)
+    ensure(value.age == 42 && value.nickname.is_none() && value.name == "Ada")
+    bad::<Defaults>(r#"{"years":null,"name":"Ada"}"#, 3, "/years")
+    bad::<Defaults>(r#"{"name":null}"#, 13, "/name")
+    var options = Options.default()
+    options.limits.max_nodes = 1
+    let empty = "{{}}"
+    mapping(typed.decode_with_options::<Defaults>(&empty, options).err()!, 8, "/years")
 }
 
 

@@ -325,12 +325,7 @@ impl Context {
         fields: &mut Map<String, Value>,
         name: String
     ) @noescape -> Result<T, MappingError> {
-        array.push(&mut self.path, PathSegment.Field(name))
-        let value = match array.borrow_ref(&self.path, array.len(&self.path) - 1) {
-            Field(name) => map.remove(fields, name)
-            Index(_) => None
-        }
-        let result = match value {
+        let result = match self.enter_field(fields, name) {
             Some(value) => self.read::<T>(value)
             None => {
                 if FromJson.accepts_missing::<T>() {
@@ -342,6 +337,33 @@ impl Context {
         }
         array.take_last(&mut self.path)
         result
+    }
+    /// Reads a field or calls `fallback` once if the field is absent.
+    /// The fallback consumes one mapping node before it runs.
+    pub fn take_field_or<T: FromJson>(
+        &mut self,
+        fields: &mut Map<String, Value>,
+        name: String,
+        fallback: fn() -> T
+    ) @noescape -> Result<T, MappingError> {
+        let result = match self.enter_field(fields, name) {
+            Some(value) => self.read::<T>(value)
+            None => match self.scalar() {
+                Ok(_) => Ok(fallback())
+                Err(error) => Err(error)
+            }
+        }
+        array.take_last(&mut self.path)
+        result
+    }
+    fn enter_field(
+        &mut self,
+        fields: &mut Map<String, Value>,
+        name: String
+    ) @noescape -> Option<Value> {
+        let value = map.remove(fields, &name)
+        array.push(&mut self.path, PathSegment.Field(name))
+        value
     }
     pub fn finish_object(&mut self, var fields: Map<String, Value>) -> Result<Unit, MappingError> {
         if self.options.reject_unknown_fields {
