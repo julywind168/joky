@@ -152,7 +152,7 @@ impl Operation {
                 use crate::runtime::fs::Operation::*;
                 match op {
                     Open => (vec![Bytes(1, false), Word], Resource),
-                    Rename => (vec![Bytes(1, false), Bytes(1, false)], Resource),
+                    Rename | WriteAtomic => (vec![Bytes(1, false), Bytes(1, false)], Resource),
                     RemoveFile | ReadDir | CreateDir | CreateDirAll | RemoveDir | Metadata => {
                         (vec![Bytes(1, false)], Resource)
                     }

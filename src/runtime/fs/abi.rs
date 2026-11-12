@@ -184,6 +184,7 @@ impl External {
             | Input::ReadDir(_)
             | Input::CreateDir(_)
             | Input::CreateDirAll(_)
+            | Input::WriteAtomic(..)
             | Input::RemoveDir(_)
             | Input::Metadata(_) => {
                 return Err(FsError::new(

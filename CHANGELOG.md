@@ -7,6 +7,7 @@
 
 - 新增 `joky/path.Path`，提供拥有型 UTF-8 路径及同步本机词法操作。`fs.open` 可通过 `IntoPath` 接受 `String` 和 `Path`。
 - 新增 `fs.create_dir_all`，在文件工作线程递归创建缺失目录。
+- 新增 `fs.write_atomic` 和 `fs.write_text_atomic`，在 Unix 本机文件服务上以同目录临时文件原子替换目标。
 - 共享流水线的 `map` 可产出独立的 `String`、`Array` 等无引用拥有值。游标副本仍可各自推进。
 - 独占流水线的 `filter` 支持同步只读捕获，可按外部阈值筛选后原地修改元素。自定义 `ExclusivePlan` 需实现按值返回后继计划的 `step`。
 - `joky/iter` 为拥有迭代器和共享流水线提供 `chain`，惰性地顺序遍历两个元素类型相同的来源。

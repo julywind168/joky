@@ -78,6 +78,7 @@ fn filesystem_path_operations_require_host_capabilities() {
                 assert(fs.remove_file("old").err()!.kind == fs.ErrorKind.Unsupported, "remove")
                 assert(fs.create_dir("dir").err()!.kind == fs.ErrorKind.Unsupported, "create directory")
                 assert(fs.create_dir_all("dir/child").err()!.kind == fs.ErrorKind.Unsupported, "create directories")
+                assert(fs.write_text_atomic("file", "text").err()!.kind == fs.ErrorKind.Unsupported, "atomic replacement")
                 assert(fs.remove_dir("dir").err()!.kind == fs.ErrorKind.Unsupported, "remove directory")
                 assert(fs.metadata("dir").err()!.kind == fs.ErrorKind.Unsupported, "metadata")
                 assert(fs.read_dir(".").err()!.kind == fs.ErrorKind.Unsupported, "list")
@@ -179,6 +180,47 @@ fn filesystem_native_roundtrip() {
 #[cfg(unix)]
 #[path = "support/runtime.rs"]
 mod runtime;
+
+#[test]
+#[cfg(unix)]
+fn filesystem_atomic_replacement_runs_in_all_backends() {
+    use std::process::Command;
+    let work = scratch::ScratchDir::new("fs-atomic");
+    let base = work.path();
+    std::fs::create_dir(base.join("directory")).unwrap();
+    std::fs::write(base.join("oversized"), vec![0; 1048577]).unwrap();
+    std::fs::write(
+        base.join("atomic.jk"),
+        include_str!("fixtures/fs_atomic.jk"),
+    )
+    .unwrap();
+    let cli = env!("CARGO_BIN_EXE_joky");
+    let output = Command::new(cli)
+        .args(["build", "--parallel", "atomic.jk", "-o", "native"])
+        .env("JOKY_RUNTIME", runtime::runtime_archive())
+        .current_dir(base)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let mut jit = Command::new(cli);
+    jit.args(["run", "atomic.jk"]);
+    let mut interpreter = Command::new(cli);
+    interpreter.args(["run", "--interpreter", "atomic.jk"]);
+    for mut command in [jit, interpreter, Command::new(base.join("native"))] {
+        std::fs::write(base.join("target"), b"a much longer old file").unwrap();
+        let output = command.current_dir(base).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(base.join("directory").is_dir());
+        assert!(std::fs::read_dir(base).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".joky-write-")
+        }));
+    }
+}
+
 #[test]
 #[cfg(unix)]
 fn filesystem_cli_and_standalone_aot() {

@@ -35,6 +35,7 @@ struct State {
     signal: Condvar,
     entered: AtomicUsize,
     closed: AtomicUsize,
+    atomic_cancelled: AtomicBool,
 }
 impl State {
     fn wait(&self) {
@@ -61,6 +62,16 @@ impl FileSystem for Backend {
     }
     fn create_dir_all(&self, _path: &str) -> Result<(), FsError> {
         self.0.wait();
+        Ok(())
+    }
+    fn write_atomic(
+        &self,
+        _path: &str,
+        _bytes: &[u8],
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), FsError> {
+        self.0.wait();
+        self.0.atomic_cancelled.store(cancelled(), Ordering::SeqCst);
         Ok(())
     }
     fn stdin(&self) -> Result<Box<dyn FileHandle>, FsError> {
@@ -159,26 +170,32 @@ impl Drop for Fixture {
 }
 #[test]
 fn path_cancellation_withdraws_queued_work_and_refunds_running_work() {
-    for create in [false, true] {
-        let action = |path| {
-            if create {
-                Input::CreateDirAll(path)
-            } else {
-                Input::RemoveFile(path)
-            }
-        };
+    for (running, queued) in [
+        (Input::RemoveFile("running"), Input::RemoveFile("queued")),
+        (
+            Input::CreateDirAll("running"),
+            Input::CreateDirAll("queued"),
+        ),
+        (
+            Input::WriteAtomic("running", b"new"),
+            Input::WriteAtomic("queued", b"new"),
+        ),
+    ] {
         let f = Fixture::new();
-        let running = f.submit(action("running"), None);
+        let reserved = 4096 + running.size();
+        let atomic = matches!(running, Input::WriteAtomic(..));
+        let running = f.submit(running, None);
         until(|| f.state.entered.load(Ordering::SeqCst) == 1);
-        let queued = f.submit(action("queued"), None);
+        let queued = f.submit(queued, None);
         queued.stop();
         drop(queued);
         running.stop();
         drop(running);
-        assert_eq!(f.service.usage(), (0, 1, 4096 + "running".len()));
+        assert_eq!(f.service.usage(), (0, 1, reserved));
         f.state.release();
         f.drained();
         assert_eq!(f.state.entered.load(Ordering::SeqCst), 1);
+        assert_eq!(f.state.atomic_cancelled.load(Ordering::SeqCst), atomic);
     }
 }
 

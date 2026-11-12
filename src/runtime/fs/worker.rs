@@ -57,6 +57,19 @@ pub trait FileSystem: Send + Sync + 'static {
     fn create_dir_all(&self, _path: &str) -> Result<(), FsError> {
         Err(FsError::new(1, "Host does not provide create_dir_all"))
     }
+    /// Publish a complete replacement in one operation. Check cancellation
+    /// before committing. Returning an error before publication keeps the old entry.
+    fn write_atomic(
+        &self,
+        _path: &str,
+        _bytes: &[u8],
+        _cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), FsError> {
+        Err(FsError::new(
+            1,
+            "Host does not provide atomic file replacement",
+        ))
+    }
     fn remove_dir(&self, _path: &str) -> Result<(), FsError> {
         Err(FsError::new(1, "Host does not provide remove_dir"))
     }
@@ -97,6 +110,15 @@ impl FileSystem for Native {
     }
     fn create_dir_all(&self, path: &str) -> Result<(), FsError> {
         std::fs::create_dir_all(self.0.join(path)).map_err(Into::into)
+    }
+    #[cfg(unix)]
+    fn write_atomic(
+        &self,
+        path: &str,
+        bytes: &[u8],
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), FsError> {
+        super::atomic::replace(&self.0.join(path), bytes, cancelled)
     }
     fn remove_dir(&self, path: &str) -> Result<(), FsError> {
         std::fs::remove_dir(self.0.join(path)).map_err(Into::into)
@@ -432,6 +454,7 @@ impl NativeService {
                 | Input::ReadDir(_)
                 | Input::CreateDir(_)
                 | Input::CreateDirAll(_)
+                | Input::WriteAtomic(..)
                 | Input::RemoveDir(_)
                 | Input::Metadata(_)
         ) {
@@ -523,6 +546,7 @@ pub(crate) enum Input<'a> {
     RemoveFile(&'a str),
     CreateDir(&'a str),
     CreateDirAll(&'a str),
+    WriteAtomic(&'a str, &'a [u8]),
     RemoveDir(&'a str),
     Metadata(&'a str),
     ReadDir(&'a str),
@@ -541,6 +565,7 @@ impl Input<'_> {
             | Self::Metadata(p)
             | Self::RemoveFile(p) => p.len(),
             Self::Rename(from, to) => from.len() + to.len(),
+            Self::WriteAtomic(path, bytes) => path.len() + bytes.len(),
             Self::ReadDir(p) => p.len() + DIRECTORY_BYTES,
             Self::Read(n) => (*n).min(1048576) as usize,
             Self::Write(b) => b.len().min(1048576),
@@ -554,6 +579,7 @@ impl Input<'_> {
             Self::RemoveFile(p) => Action::RemoveFile(p.into()),
             Self::CreateDir(p) => Action::CreateDir(p.into()),
             Self::CreateDirAll(p) => Action::CreateDirAll(p.into()),
+            Self::WriteAtomic(p, bytes) => Action::WriteAtomic(p.into(), bytes.to_vec()),
             Self::RemoveDir(p) => Action::RemoveDir(p.into()),
             Self::Metadata(p) => Action::Metadata(p.into()),
             Self::ReadDir(p) => Action::ReadDir(p.into()),
@@ -572,6 +598,7 @@ pub(crate) enum Action {
     RemoveFile(String),
     CreateDir(String),
     CreateDirAll(String),
+    WriteAtomic(String, Vec<u8>),
     RemoveDir(String),
     Metadata(String),
     ReadDir(String),
@@ -741,7 +768,12 @@ fn pack_directory(entries: DirectoryNames<'_>) -> Result<Data, FsError> {
     Ok(Data::Bytes(bytes))
 }
 
-fn execute(backend: &dyn FileSystem, file: Option<&Arc<NativeFile>>, action: Action) -> Packet {
+fn execute(
+    backend: &dyn FileSystem,
+    file: Option<&Arc<NativeFile>>,
+    action: Action,
+    cancelled: &dyn Fn() -> bool,
+) -> Packet {
     let file = match action {
         Action::Rename(from, to) => {
             return backend
@@ -761,6 +793,11 @@ fn execute(backend: &dyn FileSystem, file: Option<&Arc<NativeFile>>, action: Act
         Action::CreateDirAll(path) => {
             return backend
                 .create_dir_all(&path)
+                .map_or_else(Packet::error, |()| Packet::ok(Data::Unit))
+        }
+        Action::WriteAtomic(path, bytes) => {
+            return backend
+                .write_atomic(&path, &bytes, cancelled)
                 .map_or_else(Packet::error, |()| Packet::ok(Data::Unit))
         }
         Action::RemoveDir(path) => {
@@ -827,6 +864,7 @@ fn execute(backend: &dyn FileSystem, file: Option<&Arc<NativeFile>>, action: Act
         | Action::RemoveFile(_)
         | Action::CreateDir(_)
         | Action::CreateDirAll(_)
+        | Action::WriteAtomic(..)
         | Action::RemoveDir(_)
         | Action::Metadata(_)
         | Action::ReadDir(_) => unreachable!(),
@@ -874,7 +912,9 @@ fn work(core: Arc<Core>) {
             }
             drop(q);
             let mut packet = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                execute(&*core.backend, ticket.file.as_ref(), action)
+                execute(&*core.backend, ticket.file.as_ref(), action, &|| {
+                    lock(&ticket.state).cancelled
+                })
             }))
             .unwrap_or_else(|_| {
                 if let Some(file) = &ticket.file {

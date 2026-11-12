@@ -202,6 +202,14 @@ impl FileSystem for Backend {
     fn create_dir_all(&self, path: &str) -> Result<(), FsError> {
         self.native.create_dir_all(path)
     }
+    fn write_atomic(
+        &self,
+        path: &str,
+        bytes: &[u8],
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), FsError> {
+        self.native.write_atomic(path, bytes, cancelled)
+    }
     fn remove_dir(&self, path: &str) -> Result<(), FsError> {
         self.native.remove_dir(path)
     }

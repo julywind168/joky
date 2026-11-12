@@ -8091,6 +8091,8 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 | `fs.remove_file(path: &String) @suspends` | `Result<Unit, IoError>` |
 | `fs.create_dir(path: &String)` / `fs.remove_dir(path: &String)` @suspends | `Result<Unit, IoError>`，创建一级目录或删除空目录 |
 | `fs.create_dir_all<P: IntoPath>(path: &P) @suspends` | `Result<Unit, IoError>`，递归创建缺失目录，已有目录视为成功 |
+| `fs.write_atomic<P: IntoPath>(path: &P, bytes: &Slice<UInt8>) @suspends` | `Result<Unit, IoError>`，原子发布完整的字节内容 |
+| `fs.write_text_atomic<P: IntoPath>(path: &P, text: &String) @suspends` | `Result<Unit, IoError>`，原子发布 UTF-8 文本 |
 | `fs.metadata(path: &String) @suspends` | `Result<Metadata, IoError>`，kind 为 Regular、Directory、Symlink 或 Other，size 为宿主报告的字节数。末级符号链接返回链接本身的信息，包括悬空链接 |
 | `fs.read_dir(path: &String) @suspends` | `Result<Array<String>, IoError>` |
 | `file.read(&mut self, limit: UInt64) @suspends` | `Result<Array<UInt8>, IoError>` |
@@ -8105,8 +8107,8 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 | `file.sync_all(&mut self) @suspends` | `Result<Unit, IoError>` |
 | `file.close(self) @suspends` | `Result<Unit, IoError>` |
 
-`open` 和 `create_dir_all` 共享借用 `String` 或 `Path`，调用后仍可复用原值。支持自动共享借用，也可显式传 `&path`。
-带 `IntoPath` 约束的文件操作在 4096 字节限额内通过 `copy_path` 取得本地快照。
+带 `IntoPath` 约束的文件操作共享借用 `String` 或 `Path`。可显式传 `&path`，也可让调用自动共享借用。
+这些操作在 4096 字节限额内通过 `copy_path` 取得本地快照。
 文件服务在提交异步请求时建立所需路径快照，不把语言字符串的引用交给后台工作线程。
 字面量和临时字符串保活到调用结束；失败或取消后借用结束，已提交操作仍遵循原有取消规则。
 `write_text(text: String)` 继续消费文本，将 UTF-8 缓冲区转交给完整写入流程。
@@ -8114,6 +8116,12 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 这些路径操作与 `open` 共用服务基准目录。输入路径须为非空 UTF-8 字符串，最多 4096 字节，且不能含 NUL。
 `create_dir_all` 在文件工作线程处理路径，中间组件为文件时返回错误。失败或取消可留下已经创建的目录。
 缺省服务、未提供此能力的 Rust 宿主和文件服务 V1 描述符返回 `Unsupported`。
+
+原子写入允许空内容，单次上限为 1 MiB。Unix 本机服务在目标目录独占创建临时文件，写完并关闭后原子替换目标目录项。
+读者通过目标路径打开文件时只会看到完整旧版或新版。新文件以 `0600` 创建并受 umask 约束，替换会使用新文件的元数据。
+如果目标是符号链接，替换的是链接目录项。目标父目录必须存在。
+写入失败或提交前观察到取消时，工作线程清理临时文件并保留旧文件。提交后即使结果未交付，新内容也可能已经可见。
+此接口保证原子可见性。断电持久化需要独立的同步协议。缺省服务、非 Unix 本机实现及文件服务 V1 返回 `Unsupported`。
 本机 `rename` 直接请求操作系统重命名；可在同一文件系统内将写好并关闭的临时文件替换到目标文件名。
 跨文件系统移动会返回错误。`remove_file` 删除单个文件，缺失返回 `NotFound`，不会递归删除目录。
 两种操作开始执行后，即使调用被取消，文件系统也可能已经改变。

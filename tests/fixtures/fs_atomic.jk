@@ -1,0 +1,48 @@
+import joky/array.{type Array}
+import joky/fs
+import joky/path.{type Path}
+
+fn read(path: &Path) @suspends -> Array<UInt8> {
+    var file = fs.open(path, fs.OpenOptions.default())!
+    let result = file.read_all_limited(1048577)!
+    file.close()!
+    result
+}
+
+fn is_binary(bytes: Array<UInt8>) -> Bool {
+    bytes.len() == 3 && bytes[0] == 0 && bytes[1] == 255 && bytes[2] == 42
+}
+
+fn main() @suspends {
+    let target = Path.from("target")
+    fs.write_text_atomic(target, "short")!
+    assert(String.from_utf8(read(&target))! == "short", "replace complete old contents")
+
+    let data: Array<UInt8> = [0, 255, 42]
+    fs.write_atomic(&target, &data[..])!
+    assert(is_binary(read(&target)), "binary replacement")
+    assert(
+        fs.write_text_atomic("target/.", "unexpected").err()!.kind == fs.ErrorKind.InvalidInput,
+        "file name required"
+    )
+    assert(fs.write_text_atomic("directory", "unexpected").is_err(), "directory is not replaced")
+    let oversized = read(Path.from("oversized"))
+    assert(
+        fs.write_atomic(target, &oversized[..]).err()!.kind == fs.ErrorKind.LimitExceeded,
+        "atomic write limit"
+    )
+    assert(is_binary(read(&target)), "errors preserve the target")
+
+    let empty: Array<UInt8> = []
+    fs.write_atomic(&target, &empty[..])!
+    assert(read(&target).is_empty(), "empty write replaces the file")
+
+    let (first, second) = join {
+        fs.write_text_atomic("target", "first"),
+        fs.write_text_atomic("target", "second")
+    }
+    first!
+    second!
+    let last = String.from_utf8(read(&target))!
+    assert(last == "first" || last == "second", "one complete replacement wins")
+}

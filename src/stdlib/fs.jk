@@ -137,6 +137,7 @@ extern fn __fs_rename(from: &String, to: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_remove_file(path: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_create_dir(path: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_create_dir_all(path: &String) @suspends -> fs.OutcomeOwner
+extern fn __fs_write_atomic(path: &String, bytes: &Slice<UInt8>) @suspends -> fs.OutcomeOwner
 extern fn __fs_remove_dir(path: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_metadata(path: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_kind(result: &mut fs.OutcomeOwner) @suspends -> UInt64
@@ -238,6 +239,20 @@ pub fn create_dir(path: &String) @suspends -> Result<Unit, IoError> {
 pub fn create_dir_all<P: IntoPath>(path: &P) @suspends -> Result<Unit, IoError> {
     let text = file_path(path)?
     status(__fs_create_dir_all(&text))
+}
+
+/// Publishes a complete replacement using a temporary file in the same directory.
+pub fn write_atomic<P: IntoPath>(
+    path: &P,
+    bytes: &Slice<UInt8>
+) @suspends -> Result<Unit, IoError> {
+    let text = file_path(path)?
+    status(__fs_write_atomic(&text, bytes))
+}
+
+/// Publishes UTF-8 text using the same replacement protocol as `write_atomic`.
+pub fn write_text_atomic<P: IntoPath>(path: &P, text: &String) @suspends -> Result<Unit, IoError> {
+    write_atomic(path, text.bytes())
 }
 
 pub fn remove_dir(path: &String) @suspends -> Result<Unit, IoError> {

@@ -1,5 +1,7 @@
 //! Optional file capability and compiler-checked asynchronous resource operations.
 pub mod abi;
+#[cfg(unix)]
+mod atomic;
 mod service;
 mod testing;
 mod worker;
@@ -111,6 +113,7 @@ pub(crate) enum Operation {
     Metadata,
     Kind,
     CreateDirAll,
+    WriteAtomic,
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
@@ -119,6 +122,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__fs_remove_file" => Operation::RemoveFile,
         "__fs_create_dir" => Operation::CreateDir,
         "__fs_create_dir_all" => Operation::CreateDirAll,
+        "__fs_write_atomic" => Operation::WriteAtomic,
         "__fs_remove_dir" => Operation::RemoveDir,
         "__fs_metadata" => Operation::Metadata,
         "__fs_kind" => Operation::Kind,
@@ -153,8 +157,10 @@ impl Operation {
         let result = Type::reference(outcome.clone(), true);
         let bytes = |t: &Type| matches!(t,Type::Record(r)if r.name=="joky/array.Array"&&r.arguments==[Type::UInt8]&&r.fields.len()==1&&matches!(&r.fields[0].ty,Type::Buffer(t)if **t==Type::UInt8));
         let path = Type::reference(Type::String, false);
+        let byte_view = || Type::reference(Type::BufferSlice(Arc::new(Type::UInt8)), false);
         let (params, ret) = match self {
             Self::Open => (vec![path, Type::UInt64], outcome),
+            Self::WriteAtomic => (vec![path, byte_view()], outcome),
             Self::Rename => (vec![path.clone(), path], outcome),
             Self::CreateDir
             | Self::CreateDirAll
@@ -173,13 +179,7 @@ impl Operation {
             ),
             Self::TestInput => (vec![Type::UInt64, Type::String, Type::String], outcome),
             Self::Read => (vec![file, Type::UInt64], outcome),
-            Self::Write => (
-                vec![
-                    file,
-                    Type::reference(Type::BufferSlice(Arc::new(Type::UInt8)), false),
-                ],
-                outcome,
-            ),
+            Self::Write => (vec![file, byte_view()], outcome),
             Self::Seek => (vec![file, Type::UInt64, Type::UInt64], outcome),
             Self::Sync | Self::Close => (vec![file], outcome),
             Self::Code | Self::Kind | Self::Count => (vec![result], Type::UInt64),
@@ -431,6 +431,7 @@ pub(crate) unsafe fn poll(
                     | Operation::ReadDir
                     | Operation::CreateDir
                     | Operation::CreateDirAll
+                    | Operation::WriteAtomic
                     | Operation::RemoveDir
                     | Operation::Metadata
             ) {
@@ -451,6 +452,7 @@ pub(crate) unsafe fn poll(
                 | Operation::ReadDir
                 | Operation::CreateDir
                 | Operation::CreateDirAll
+                | Operation::WriteAtomic
                 | Operation::RemoveDir
                 | Operation::Metadata => {
                     let path = super::owned_text::borrow(frame.slots[0] as usize as *const Buffer)?;
@@ -472,6 +474,13 @@ pub(crate) unsafe fn poll(
                         Operation::RemoveFile => Input::RemoveFile(path),
                         Operation::CreateDir => Input::CreateDir(path),
                         Operation::CreateDirAll => Input::CreateDirAll(path),
+                        Operation::WriteAtomic => {
+                            let bytes = (&*(frame.slots[1] as usize as *const Buffer)).bytes()?;
+                            if bytes.len() > 1048576 && immediate.is_none() {
+                                immediate = Some(FsError::new(8, "Atomic write exceeds 1 MiB"));
+                            }
+                            Input::WriteAtomic(path, bytes)
+                        }
                         Operation::RemoveDir => Input::RemoveDir(path),
                         Operation::Metadata => Input::Metadata(path),
                         Operation::ReadDir => Input::ReadDir(path),
@@ -604,6 +613,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut CpsFrame, kind: u32) -> 
         20 => Operation::Metadata,
         21 => Operation::Kind,
         22 => Operation::CreateDirAll,
+        23 => Operation::WriteAtomic,
         _ => return super::cps::INVALID_STATE,
     };
     match poll(&mut *super::cps::arena(frame), &mut *frame, op) {
