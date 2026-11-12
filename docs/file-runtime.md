@@ -2,7 +2,7 @@
 
 状态：FS0–FS5 首版实现于 2026-10-17；正式模块为 `joky/fs`。FS6 便利 API 见第 12 节。
 契约与 FS0 探针见第 10 节，实现、验收证据及平台限制见第 11 节。首版不包含全部文件系统 API。
-Path 与 IntoPath 的后续设计见第 14 节；FS6P、FS7、FS8 均未实现。
+`joky/path.Path` 的纯词法操作已实现，见第 14 节。文件入口接入 IntoPath、FS7、FS8 待实现。
 
 当前实现语义以 [language.md](language.md) 为准；已有资源与线程边界见
 [architecture.md](architecture.md)，DNS 的实施经验见
@@ -632,18 +632,17 @@ FileAccess 不变，不向脚本授予文件能力。现有其他嵌入验证功
 
 ## 14. 路径抽象与后续文件能力设计
 
-2026-10-18：本节为待实现设计，阶段名为 FS6P，先于 FS7/FS8。当前 `fs.open` 仍只消费
-String；`joky/path`、Path 和 IntoPath 尚未提供。本节签名是接口草案，不是可运行示例。
-实施完成后，将实际用户接口归入 language.md，并在本文记录验证证据。
+FS6P 的纯路径操作已实现，使用运行平台的本机路径规则。`fs.open` 当前借用 `&String`，
+IntoPath 接入是本阶段的下一步。实际接口见 [语言参考](language.md#本机路径模块-jokypath)。
 
 ### 14.1 拥有型 Path
 
-新增 `joky/path` 模块，导出拥有型记录 `Path`，首版私有存储为一个 UTF-8 String。
+`joky/path` 导出拥有型记录 `Path`，私有存储为一个 UTF-8 String。
 Path 非 Copy，沿用普通记录的移动、借用与清理规则；显式 clone 复制文本。
 首版只提供 Path 和普通 `&Path` 借用，不引入独立的 PathBuf 或新的借用类型。
 路径只保存数据，没有需要关闭的系统句柄，不引入 PathOwner 一类内部资源。
 
-| 拟议接口 | 契约 |
+| 接口 | 契约 |
 | --- | --- |
 | `Path.from(text: String) -> Path` | 接管文本，保留原始拼写；不检查存在性或操作系统是否接受该路径 |
 | `clone(&self) -> Path` | 复制路径文本，原值保持可用 |

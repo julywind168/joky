@@ -1,0 +1,67 @@
+//! Owning UTF-8 paths with lexical operations for the runtime platform.
+//!
+//! Path operations work independently of the file service.
+//!
+//! ```joky
+//! import joky/path.{type Path}
+//!
+//! fn main() {
+//!     let base = Path.from("notes")
+//!     let file = base.join("todo.txt")
+//!     assert_eq(file.file_name()!, "todo.txt")
+//!     assert_eq(file.extension()!, "txt")
+//! }
+//! ```
+
+import joky/internal/buffer
+import joky/option.{type Option, Some, None}
+import joky/string
+
+/// An owning path that preserves the spelling passed to `from`.
+pub struct Path { text: String }
+
+impl Path {
+    pub fn from(text: String) -> Path {
+        Path { text }
+    }
+    pub fn clone(&self) -> Path {
+        Path.from(self.to_string())
+    }
+    pub fn into_string(self) -> String {
+        self.text
+    }
+    pub fn to_string(&self) -> String {
+        string.clone(&self.text)
+    }
+    /// Appends `child` according to the runtime platform's path rules.
+    pub fn join(&self, child: &String) -> Path {
+        Path.from(buffer.path_join(&self.text, child))
+    }
+    /// A single relative component has an empty parent. A root has no parent.
+    pub fn parent(&self) -> Option<Path> {
+        match part(&self.text, 1) {
+            Some(text) => Some(Path.from(text)),
+            None => None
+        }
+    }
+    pub fn file_name(&self) -> Option<String> {
+        part(&self.text, 2)
+    }
+    pub fn extension(&self) -> Option<String> {
+        part(&self.text, 3)
+    }
+    pub fn is_absolute(&self) -> Bool {
+        buffer.path_query(&self.text, 0) != 0
+    }
+    pub fn is_empty(&self) -> Bool {
+        string.byte_length(&self.text) == 0
+    }
+}
+
+fn part(text: &String, kind: UInt64) -> Option<String> {
+    let range = buffer.path_query(text, kind)
+    if range == UInt64.MAX {
+        return None
+    }
+    string.substring(text, range >> 32, range & 4294967295)
+}

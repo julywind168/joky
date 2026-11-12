@@ -33,6 +33,12 @@ pub fn random_fill(destination: &mut Slice<UInt8>) -> Bool
 #intrinsic("buffer.utf8_prefix")
 pub fn utf8_prefix(source: &Slice<UInt8>) -> UInt64
 
+#intrinsic("buffer.path_join")
+pub fn path_join(base: &String, child: &String) -> String
+
+#intrinsic("buffer.path_query")
+pub fn path_query(base: &String, part: UInt64) -> UInt64
+
 #intrinsic("buffer.take_last")
 pub fn take_last<T>(source: &mut Buffer<T>) -> T
 

@@ -8061,6 +8061,22 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 组合消息/行读取；[真实引擎对端](../integrations/godot/demo/tests/network_messages.gd)验证分片与生命周期。
 
 
+## 本机路径模块 joky/path
+
+`import joky/path.{type Path}` 提供拥有 UTF-8 文本的 `Path`。`Path.from(text)` 移入原文本并保留拼写。
+`into_string()` 消费路径并取回文本，`to_string()` 和 `clone()` 创建独立副本。
+
+| 方法 | 行为 |
+| --- | --- |
+| `join(child: &String) -> Path` | 按运行平台的本机路径规则拼接。绝对子路径可替换原路径 |
+| `parent() -> Option<Path>` | 根和空路径返回 None，单个相对组件的父路径为空路径 |
+| `file_name() -> Option<String>` | 取最后的文件名，忽略末尾分隔符 |
+| `extension() -> Option<String>` | 取最后一个点后的扩展名。单个前导点不算扩展名，末尾点可产生空扩展名 |
+| `is_absolute()` / `is_empty()` | 判断本机绝对路径或原文本为空 |
+
+这些操作同步执行词法处理，无需文件服务，也不查询当前目录或符号链接。空路径和 NUL 等文件输入限制
+在提交文件请求时检查。路径的拼接和父路径判断不提供目录隔离。
+
 ## 内置文件模块 joky/fs
 
 显式 `import joky/fs`。`File` 是非 Copy 的拥有型记录，私有字段为内部资源

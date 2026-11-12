@@ -85,12 +85,14 @@ impl BufferIntrinsic {
             _ => None,
         }
     }
-    pub(crate) const ALL: [Self; 60] = [
+    pub(crate) const ALL: [Self; 62] = [
         Self::Allocate,
         Self::Transfer,
         Self::AppendBytes,
         Self::FindByte,
         Self::Utf8Prefix,
+        Self::PathJoin,
+        Self::PathQuery,
         Self::RandomFill,
         Self::Sha256,
         Self::HmacSha256,
@@ -182,6 +184,7 @@ impl BufferIntrinsic {
         matches!(
             self,
             Self::Allocate
+                | Self::PathJoin
                 | Self::Sha256New
                 | Self::HmacSha256New
                 | Self::Slice
@@ -250,6 +253,8 @@ impl BufferIntrinsic {
             Self::AppendBytes
                 | Self::FindByte
                 | Self::Utf8Prefix
+                | Self::PathJoin
+                | Self::PathQuery
                 | Self::RandomFill
                 | Self::Sha256
                 | Self::HmacSha256
@@ -379,6 +384,11 @@ impl BufferIntrinsic {
                 Type::UInt64,
             ),
             Self::Utf8Prefix => (vec![Type::reference(slice, false)], Type::UInt64),
+            Self::PathJoin => (vec![Type::reference(Type::String, false); 2], Type::String),
+            Self::PathQuery => (
+                vec![Type::reference(Type::String, false), Type::UInt64],
+                Type::UInt64,
+            ),
             Self::RandomFill => (vec![Type::reference(slice, true)], Type::Bool),
             Self::PasswordNeedsRehash => (vec![Type::reference(slice, false)], Type::UInt64),
             Self::Sha256New => (vec![], Type::Resource("crypto.Sha256Owner".into())),
@@ -600,6 +610,8 @@ impl BufferIntrinsic {
             Self::AppendBytes => "__joky_buffer_append_bytes",
             Self::FindByte => "__joky_buffer_find_byte",
             Self::Utf8Prefix => "__joky_buffer_utf8_prefix",
+            Self::PathJoin => "__joky_buffer_path_join",
+            Self::PathQuery => "__joky_buffer_path_query",
             Self::RandomFill => "__joky_buffer_random_fill",
             Self::Sha256 => "__joky_buffer_sha256",
             Self::Sha256New => "__joky_buffer_sha256_new",

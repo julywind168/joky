@@ -353,6 +353,18 @@ pub(super) fn execute(
                     BufferIntrinsic::Utf8Prefix => {
                         Value::UInt64((*pointer(arg(0))?).utf8_prefix()?)
                     }
+                    BufferIntrinsic::PathJoin => Value::Reference(
+                        crate::runtime::buffer::path::join(
+                            arena,
+                            pointer(arg(0))?,
+                            pointer(arg(1))?,
+                        )?
+                        .as_ptr()
+                        .cast(),
+                    ),
+                    BufferIntrinsic::PathQuery => Value::UInt64(
+                        crate::runtime::buffer::path::query(pointer(arg(0))?, count(arg(1))?)?,
+                    ),
                     BufferIntrinsic::CapacityLimit => {
                         Value::UInt64(Buffer::capacity_limit(layout.size))
                     }

@@ -1,0 +1,25 @@
+import joky/check.{assert}
+import joky/path.{type Path}
+
+fn check_paths(windows: Bool) -> Int32 {
+    let text = "dir//./旧.txt/"
+    let path = Path.from(text)
+    assert(path.to_string() == "dir//./旧.txt/", "construction preserves spelling")
+    assert(path.clone().into_string() == "dir//./旧.txt/", "clone owns a copy")
+    assert(path.file_name()! == "旧.txt" && path.extension()! == "txt", "UTF-8 components")
+    assert(path.parent()!.into_string() == "dir", "lexical parent")
+    assert(Path.from("name").parent()!.is_empty(), "single relative component")
+    assert(Path.from("").parent().is_none() && Path.from("").is_empty(), "empty path")
+    assert(Path.from("/").parent().is_none(), "root parent")
+    assert(Path.from(".").file_name().is_none(), "current directory has no file name")
+    assert(Path.from("dir/..").file_name().is_none(), "parent directory has no file name")
+    assert(Path.from(".hidden").extension().is_none(), "leading dot")
+    assert(Path.from("name.").extension()! == "", "trailing dot")
+    assert(Path.from("dir").join("file").into_string() == if windows { "dir\\file" } else { "dir/file" }, "native separator")
+    assert(Path.from("base").join(if windows { "C:\\root" } else { "/root" }).is_absolute(), "absolute child")
+    assert(Path.from("C:\\root").is_absolute() == windows, "drive prefix")
+    assert(Path.from("/").is_absolute() == !windows, "root without drive")
+    assert(Path.from("a\0b").into_string() == "a\0b", "validation belongs to file service")
+    assert(path.into_string() == "dir//./旧.txt/", "consume original path")
+    42
+}

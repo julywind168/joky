@@ -1008,6 +1008,8 @@ pub(crate) enum BufferIntrinsic {
     AppendBytes,
     FindByte,
     Utf8Prefix,
+    PathJoin,
+    PathQuery,
     RandomFill,
     Sha256,
     HmacSha256,

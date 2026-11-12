@@ -230,6 +230,13 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
+        kind: SourceKind::BufferLibrary,
+        path: "joky/path",
+        source: include_str!("../../stdlib/path.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
         kind: SourceKind::Embedded,
         path: "joky/log",
         source: include_str!("../../stdlib/log.jk"),

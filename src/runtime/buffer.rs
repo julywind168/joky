@@ -5,6 +5,7 @@ use std::{alloc::Layout, cell::Cell, ptr::NonNull};
 
 mod bytes;
 pub(crate) mod crypto;
+pub(crate) mod path;
 pub(crate) mod random;
 pub(crate) const BYTE_CHUNK: usize = 16 * 1024;
 
@@ -1778,7 +1779,7 @@ unsafe extern "C" fn cleanup_owner(buffer: *mut Buffer, offset: usize) {
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 50] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 52] {
     [
         (
             "__joky_buffer_password_needs_rehash",
@@ -1787,6 +1788,8 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 50] {
         ("__joky_buffer_append_bytes", bytes::append as *const u8),
         ("__joky_buffer_find_byte", bytes::find as *const u8),
         ("__joky_buffer_utf8_prefix", bytes::utf8_prefix as *const u8),
+        ("__joky_buffer_path_join", path::join_native as *const u8),
+        ("__joky_buffer_path_query", path::query_native as *const u8),
         ("__joky_buffer_random_fill", random::fill as *const u8),
         ("__joky_buffer_sha256", crypto::sha256 as *const u8),
         ("__joky_buffer_sha256_new", crypto::sha256_new as *const u8),

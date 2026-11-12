@@ -7,6 +7,42 @@ use joky::{
     },
     vm::{VmEngine, VmMode},
 };
+
+#[test]
+fn lexical_paths_work_without_file_service_in_all_backends() {
+    let source = format!(
+        "{}\nfn probe() -> Int32 {{ check_paths({}) }}",
+        include_str!("fixtures/path.jk"),
+        cfg!(windows),
+    );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
+        vm.load_source(&source)
+            .unwrap_or_else(|error| panic!("{mode:?}: {error}"));
+        assert_eq!(vm.call_int32_0("probe").unwrap(), 42);
+    }
+    let work = scratch::ScratchDir::new("lexical-path");
+    std::fs::write(
+        work.path().join("path.jk"),
+        format!("{source}\nfn main() -> Int32 {{ probe() }}"),
+    )
+    .unwrap();
+    let mut build = std::process::Command::new(env!("CARGO_BIN_EXE_joky"));
+    #[cfg(unix)]
+    build.env("JOKY_RUNTIME", runtime::runtime_archive());
+    let output = build
+        .args(["build", "--no-prelude", "path.jk", "-o", "path-native"])
+        .current_dir(work.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let output = std::process::Command::new(work.path().join("path-native"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(42), "{output:?}");
+}
+
 #[test]
 fn filesystem_default_is_unsupported() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {

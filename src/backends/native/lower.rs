@@ -842,6 +842,8 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
                 vec![types::I64],
             ),
             BufferIntrinsic::Utf8Prefix => (vec![ptr], vec![types::I64]),
+            BufferIntrinsic::PathJoin => (vec![ptr, ptr, ptr], vec![ptr]),
+            BufferIntrinsic::PathQuery => (vec![ptr, types::I64], vec![types::I64]),
             BufferIntrinsic::RandomFill => (vec![ptr], vec![types::I8]),
             BufferIntrinsic::PasswordNeedsRehash => (vec![ptr], vec![types::I64]),
             BufferIntrinsic::Sha256New => (vec![ptr], vec![ptr]),
@@ -2290,6 +2292,7 @@ fn lower_ops(
                         }
                         BufferIntrinsic::Sha256New
                         | BufferIntrinsic::HmacSha256New
+                        | BufferIntrinsic::PathJoin
                         | BufferIntrinsic::Replace
                         | BufferIntrinsic::Release
                         | BufferIntrinsic::Truncate => {
