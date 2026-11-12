@@ -31,7 +31,12 @@ fn json_derive_rejections_point_to_attributes_and_fields() {
             None,
         ),
         ("#derive(ToJson(1)) struct Bad {}", "Only #derive", None),
-        ("#derive(ToJson) enum Bad { A }", "require a struct", None),
+        ("#derive(ToJson, ToJson) enum Bad { A }", "Duplicate ToJson derive", Some("ToJson")),
+        (
+            "#derive(FromJson) enum Bad { Pair((Int32, Bool)) }",
+            "Cannot derive",
+            Some("Pair((Int32, Bool))"),
+        ),
         ("#derive(ToJson) fn bad() {}", "require a struct", None),
         (r#"struct Bad { #json(rename: "x") value: Int32 }"#, "requires a ToJson or FromJson derive", None),
         ("#derive(ToJson) struct Bad { #other value: Int32 }", "Unknown field attribute #other", Some("#other")),
@@ -78,8 +83,15 @@ fn json_derive_rejections_point_to_attributes_and_fields() {
 
 #[test]
 fn json_derive_normalization_is_idempotent_and_manual_impls_conflict() {
-    let source =
-        "#derive(ToJson, FromJson) struct Value<T> { value: T } fn probe() -> Int32 { 42 }";
+    let source = r##"
+        import joky/json/typed
+        #derive(ToJson, FromJson) struct Value<T> { value: T }
+        #derive(FromJson) enum Status { Ready }
+        fn probe() -> Int32 {
+            let status = typed.decode::<Status>(r#"{"type":"Ready"}"#)!
+            if status is Ready { 42 } else { 0 }
+        }
+    "##;
     let registry = crate::TypeRegistry::new().with_prelude(false);
     let parsed = crate::parser::parse(source).unwrap();
     let first = registry.resolve_aliases(&parsed).unwrap();

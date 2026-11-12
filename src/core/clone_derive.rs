@@ -95,12 +95,6 @@ pub(super) fn expand(module: &mut Module) -> Result<(), Error> {
                 span,
             ));
         }
-        if let Some(attribute) = enumeration.attributes.first() {
-            return Err(error(
-                attribute.span,
-                "JSON derives require a struct; enums support #derive(Clone, Eq, Hash)",
-            ));
-        }
     }
     if requests.is_empty() {
         return Ok(());

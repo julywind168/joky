@@ -1,12 +1,20 @@
 //! Expand JSON derives into ordinary, hygienic trait implementations before binding.
-use crate::core::types::{ParameterKind, Type, TypeApplication, TypeParameter};
+use crate::core::types::{ParameterKind, Substitutions, Type, TypeApplication, TypeParameter};
 use crate::parser::ast::{
-    AnonymousFunction, AttributeValue, Expr, FieldInit, FnDef, ImplDef, Import, Literal, MatchArm,
-    MethodCall, Module, NoEscape, Param, Pattern, PayloadPattern, RecordDef, UnaryOp,
+    AnonymousFunction, Attribute, AttributeValue, Expr, FieldInit, FnDef, ImplDef, Import, Literal,
+    MatchArm, MethodCall, Module, NoEscape, Param, Pattern, PayloadPattern, RecordDef, UnaryOp,
 };
 use crate::{Error, ErrorCode, ErrorPhase, Span};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+mod enums;
+
+struct JsonImports {
+    typed: String,
+    json: String,
+    result: String,
+}
 
 fn error(span: Span, message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch, message).with_span(span)
@@ -17,85 +25,118 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
     super::postgres_derive::expand(module)?;
     super::key_derive::expand(module)?;
     super::clone_derive::expand(module)?;
-    let mut requests = Vec::new();
+    let mut records = Vec::new();
     for (index, record) in module.records.iter().enumerate() {
-        let mut seen = Vec::new();
-        for attribute in record.attributes.iter().filter(|a| a.path == "derive") {
-            if record
-                .type_params
-                .iter()
-                .any(|p| p.kind == ParameterKind::Const)
-            {
-                return Err(error(attribute.span,"Derive with const parameters requires unsupported generic trait implementations"));
-            }
-            let Some(arguments) = &attribute.arguments else {
-                return Err(error(
-                    attribute.span,
-                    "#derive requires Clone, Eq, Hash, ToJson, FromJson and/or FromRow",
-                ));
-            };
-            if arguments.is_empty() {
-                return Err(error(attribute.span, "#derive requires at least one trait"));
-            }
-            for argument in arguments {
-                let AttributeValue::Name(name) = &argument.value else {
-                    return Err(error(
-                        argument.span,
-                        "Expected ToJson or FromJson in #derive",
-                    ));
-                };
-                if argument.name.is_some()
-                    || name.arguments.is_some()
-                    || !matches!(name.path.as_str(), "ToJson" | "FromJson")
-                {
-                    return Err(error(
-                        argument.span,
-                        "Only #derive(Clone, Eq, Hash, ToJson, FromJson, FromRow) is supported",
-                    ));
-                }
-                if seen.iter().any(|(capability, _)| capability == &name.path) {
-                    return Err(error(
-                        argument.span,
-                        format!("Duplicate {} derive", name.path),
-                    ));
-                }
-                seen.push((name.path.clone(), argument.span));
-            }
-        }
-        if seen.is_empty() && record.field_attributes.is_empty() {
+        let derives = requests(&record.attributes, &record.type_params)?;
+        if derives.is_empty() && record.field_attributes.is_empty() {
             continue;
         }
-        let fields = json_fields(record, &seen)?;
-        if !seen.is_empty() {
-            requests.push((index, seen, fields));
+        let fields = json_fields(record, &derives)?;
+        if !derives.is_empty() {
+            records.push((index, derives, fields));
         }
     }
-    if requests.is_empty() {
-        return Ok(());
+    let mut enumerations = Vec::new();
+    for (index, enumeration) in module.enums.iter().enumerate() {
+        if let Some(attribute) = enumeration.attributes.iter().find(|a| a.path != "derive") {
+            return Err(error(
+                attribute.span,
+                format!("Unknown enum attribute #{}", attribute.path),
+            ));
+        }
+        let derives = requests(&enumeration.attributes, &enumeration.type_params)?;
+        if !derives.is_empty() {
+            enumerations.push((index, derives));
+        }
     }
-    let span = requests[0].1[0].1;
-    let typed = import(module, "joky/json/typed", "$json_derive_typed", span);
-    let json = import(module, "joky/json", "$json_derive_value", span);
-    let result = import(module, "joky/result", "$json_derive_result", span);
-    for (index, derives, fields) in requests {
-        let record = &module.records[index];
+    let Some(span) = records
+        .first()
+        .map(|r| r.1[0].1)
+        .or_else(|| enumerations.first().map(|e| e.1[0].1))
+    else {
+        return Ok(());
+    };
+    let imports = JsonImports {
+        typed: import(module, "joky/json/typed", "$json_derive_typed", span),
+        json: import(module, "joky/json", "$json_derive_value", span),
+        result: import(module, "joky/result", "$json_derive_result", span),
+    };
+    for (index, derives, fields) in records {
+        let record = &mut module.records[index];
         for (capability, span) in derives {
             module.implementations.push(implementation(
                 record,
                 &fields,
                 &capability,
                 span,
-                &typed,
-                &json,
-                &result,
+                &imports,
             ));
         }
-    }
-    for record in &mut module.records {
         record.attributes.retain(|a| a.path != "derive");
         record.field_attributes.clear();
     }
+    for (index, derives) in enumerations {
+        let enumeration = &mut module.enums[index];
+        for (capability, span) in derives {
+            module.implementations.push(enums::implementation(
+                enumeration,
+                &capability,
+                span,
+                &imports,
+            ));
+        }
+        enumeration.attributes.retain(|a| a.path != "derive");
+    }
     Ok(())
+}
+
+fn requests(
+    attributes: &[Attribute],
+    parameters: &[Arc<TypeParameter>],
+) -> Result<Vec<(String, Span)>, Error> {
+    let mut seen = Vec::new();
+    for attribute in attributes.iter().filter(|a| a.path == "derive") {
+        if parameters.iter().any(|p| p.kind == ParameterKind::Const) {
+            return Err(error(
+                attribute.span,
+                "Derive with const parameters requires unsupported generic trait implementations",
+            ));
+        }
+        let Some(arguments) = &attribute.arguments else {
+            return Err(error(
+                attribute.span,
+                "#derive requires Clone, Eq, Hash, ToJson, FromJson and/or FromRow",
+            ));
+        };
+        if arguments.is_empty() {
+            return Err(error(attribute.span, "#derive requires at least one trait"));
+        }
+        for argument in arguments {
+            let AttributeValue::Name(name) = &argument.value else {
+                return Err(error(
+                    argument.span,
+                    "Expected ToJson or FromJson in #derive",
+                ));
+            };
+            if argument.name.is_some()
+                || name.arguments.is_some()
+                || !matches!(name.path.as_str(), "ToJson" | "FromJson")
+            {
+                return Err(error(
+                    argument.span,
+                    "Only #derive(Clone, Eq, Hash, ToJson, FromJson, FromRow) is supported",
+                ));
+            }
+            if seen.iter().any(|(capability, _)| capability == &name.path) {
+                return Err(error(
+                    argument.span,
+                    format!("Duplicate {} derive", name.path),
+                ));
+            }
+            seen.push((name.path.clone(), argument.span));
+        }
+    }
+    Ok(seen)
 }
 
 enum JsonField {
@@ -304,17 +345,10 @@ fn propagate(value: Expr, result: &str, span: Span) -> Expr {
     }
 }
 
-fn implementation(
-    record: &RecordDef,
-    json_fields: &[JsonField],
-    capability: &str,
-    span: Span,
-    typed: &str,
-    json: &str,
-    result: &str,
-) -> ImplDef {
-    let type_params: Vec<_> = record
-        .type_params
+fn derive_parameters(
+    parameters: &[Arc<TypeParameter>],
+) -> (Vec<Arc<TypeParameter>>, Substitutions) {
+    let type_params: Vec<_> = parameters
         .iter()
         .map(|p| {
             let mut parameter = TypeParameter::new(p.name.clone(), p.span);
@@ -322,12 +356,64 @@ fn implementation(
             Arc::new(parameter)
         })
         .collect();
-    let substitutions: crate::core::types::Substitutions = record
-        .type_params
+    let substitutions = parameters
         .iter()
         .zip(&type_params)
         .map(|(old, new)| (old.id, Type::Parameter(new.clone())))
         .collect();
+    (type_params, substitutions)
+}
+
+fn string(text: &str, span: Span) -> Expr {
+    Expr::Literal {
+        literal: Literal::String(text.into()),
+        span,
+    }
+}
+
+fn start_object(encoding: bool, result: &str, span: Span) -> Expr {
+    let object = if encoding {
+        context_call("object", vec![], vec![], span)
+    } else {
+        context_call("read_object", vec![], vec![ident("$value", span)], span)
+    };
+    Expr::Var {
+        name: "$fields".into(),
+        annotation: None,
+        value: Box::new(propagate(object, result, span)),
+        span,
+    }
+}
+
+fn finish_object(result: &str, span: Span) -> Expr {
+    propagate(
+        context_call("finish_object", vec![], vec![ident("$fields", span)], span),
+        result,
+        span,
+    )
+}
+
+fn object_value(json: &str, span: Span) -> Expr {
+    call(
+        format!("{json}.Value.Object"),
+        vec![ident("$fields", span)],
+        span,
+    )
+}
+
+fn ok(value: Expr, result: &str, span: Span) -> Expr {
+    call(format!("{result}.Result.Ok"), vec![value], span)
+}
+
+fn implementation(
+    record: &RecordDef,
+    json_fields: &[JsonField],
+    capability: &str,
+    span: Span,
+    imports: &JsonImports,
+) -> ImplDef {
+    let result = &imports.result;
+    let (type_params, substitutions) = derive_parameters(&record.type_params);
     let fields: Vec<_> = record
         .fields
         .iter()
@@ -338,32 +424,8 @@ fn implementation(
             span: f.span,
         })
         .collect();
-    let target = if type_params.is_empty() {
-        Type::Named(record.name.clone())
-    } else {
-        applied(
-            record.name.clone(),
-            type_params.iter().cloned().map(Type::Parameter).collect(),
-        )
-    };
-    let value_type = Type::Named(format!("{json}.Value"));
     let encoding = capability == "ToJson";
-    let object = context_call(
-        if encoding { "object" } else { "read_object" },
-        vec![],
-        if encoding {
-            vec![]
-        } else {
-            vec![ident("$value", span)]
-        },
-        span,
-    );
-    let mut body = vec![Expr::Var {
-        name: "$fields".into(),
-        annotation: None,
-        value: Box::new(propagate(object, result, span)),
-        span,
-    }];
+    let mut body = vec![start_object(encoding, result, span)];
     for (index, (field, options)) in fields.iter().zip(json_fields).enumerate() {
         let span = field.span;
         let (key, default) = match options {
@@ -385,10 +447,7 @@ fn implementation(
         };
         let mut args = vec![
             borrow(ident("$fields", span), true, span),
-            Expr::Literal {
-                literal: Literal::String(key.clone()),
-                span,
-            },
+            string(key, span),
         ];
         if encoding {
             args.push(borrow(
@@ -433,17 +492,9 @@ fn implementation(
         }
     }
     let output = if encoding {
-        call(
-            format!("{json}.Value.Object"),
-            vec![ident("$fields", span)],
-            span,
-        )
+        object_value(&imports.json, span)
     } else {
-        body.push(propagate(
-            context_call("finish_object", vec![], vec![ident("$fields", span)], span),
-            result,
-            span,
-        ));
+        body.push(finish_object(result, span));
         Expr::Record {
             base: None,
             name: record.name.clone(),
@@ -460,7 +511,47 @@ fn implementation(
             span,
         }
     };
-    body.push(call(format!("{result}.Result.Ok"), vec![output], span));
+    body.push(ok(output, result, span));
+    let obligations = fields
+        .into_iter()
+        .zip(json_fields)
+        .filter_map(|(field, options)| matches!(options, JsonField::Mapped { .. }).then_some(field))
+        .collect();
+    mapping_impl(
+        &record.name,
+        type_params,
+        obligations,
+        body,
+        encoding,
+        imports,
+        span,
+    )
+}
+
+fn mapping_impl(
+    name: &str,
+    type_params: Vec<Arc<TypeParameter>>,
+    fields: Vec<Param>,
+    body: Vec<Expr>,
+    encoding: bool,
+    imports: &JsonImports,
+    span: Span,
+) -> ImplDef {
+    let JsonImports {
+        typed,
+        json,
+        result,
+    } = imports;
+    let target = if type_params.is_empty() {
+        Type::Named(name.into())
+    } else {
+        applied(
+            name.into(),
+            type_params.iter().cloned().map(Type::Parameter).collect(),
+        )
+    };
+    let capability = if encoding { "ToJson" } else { "FromJson" };
+    let value_type = Type::Named(format!("{json}.Value"));
     let method = FnDef {
         every: None,
         kind: if encoding {
@@ -514,17 +605,11 @@ fn implementation(
         scope: None,
         derive_fields: Some(crate::parser::ast::DeriveFields {
             trait_name: format!("{typed}.{capability}"),
-            fields: fields
-                .into_iter()
-                .zip(json_fields)
-                .filter_map(|(field, options)| {
-                    matches!(options, JsonField::Mapped { .. }).then_some(field)
-                })
-                .collect(),
+            fields,
         }),
         type_params,
         target,
-        target_name: record.name.clone(),
+        target_name: name.into(),
         associated_types: vec![],
         methods: vec![method],
         constants: vec![],
@@ -532,8 +617,7 @@ fn implementation(
     }
 }
 
-/// Copy fields in an owning record need a local snapshot before borrowing.
-/// Select this after substitution: a generic field can become Copy or owning.
+/// Choose the borrow shape after substitution of generic fields and payloads.
 pub(crate) fn prepare_encoding(function: &FnDef) -> std::borrow::Cow<'_, FnDef> {
     if function.kind != crate::parser::ast::FunctionKind::JsonEncode {
         return std::borrow::Cow::Borrowed(function);
@@ -542,29 +626,51 @@ pub(crate) fn prepare_encoding(function: &FnDef) -> std::borrow::Cow<'_, FnDef> 
     let Expr::Block { exprs, .. } = &mut function.body else {
         unreachable!()
     };
+    prepare_encoding_block(exprs);
+    std::borrow::Cow::Owned(function)
+}
+
+fn prepare_encoding_block(exprs: &mut Vec<Expr>) {
     let mut body = Vec::new();
     for (index, mut expression) in std::mem::take(exprs).into_iter().enumerate() {
-        if let Expr::Match { value, span, .. } = &mut expression {
+        if let Expr::Match {
+            value, span, arms, ..
+        } = &mut expression
+        {
             if let Expr::MethodCall(call) = value.as_mut() {
-                if call.name == "put_field"
-                    && !call.type_args[0].as_type().is_some_and(Type::is_owner)
-                {
+                if call.name == "put_field" {
                     let Expr::Unary { operand, .. } = &call.args[2] else {
                         unreachable!()
                     };
-                    let name = format!("$copy_{index}");
-                    body.push(Expr::Let {
-                        name: name.clone(),
-                        annotation: None,
-                        value: operand.clone(),
-                        span: *span,
-                    });
-                    call.args[2] = borrow(ident(&name, *span), false, *span);
+                    let owner = call.type_args[0].as_type().is_some_and(Type::is_owner);
+                    match operand.as_ref() {
+                        // Borrowed enum matches already bind owning payloads by reference.
+                        Expr::Ident { name, .. } if owner && name == "$payload" => {
+                            call.args[2] = *operand.clone();
+                        }
+                        // Copy fields of an owning record must be read into a local first.
+                        Expr::Field { .. } if !owner => {
+                            let name = format!("$copy_{index}");
+                            body.push(Expr::Let {
+                                name: name.clone(),
+                                annotation: None,
+                                value: operand.clone(),
+                                span: *span,
+                            });
+                            call.args[2] = borrow(ident(&name, *span), false, *span);
+                        }
+                        _ => {}
+                    }
+                }
+            } else {
+                for arm in arms {
+                    if let Expr::Block { exprs, .. } = &mut arm.body {
+                        prepare_encoding_block(exprs);
+                    }
                 }
             }
         }
         body.push(expression);
     }
     *exprs = body;
-    std::borrow::Cow::Owned(function)
 }

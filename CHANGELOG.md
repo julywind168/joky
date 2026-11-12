@@ -5,6 +5,7 @@
 
 ## Unreleased
 
+- enum 支持派生 `ToJson` 和 `FromJson`，使用 `type` 标签，有载荷的变体使用 `value` 键。
 - struct 的 JSON 派生支持 `#json(skip)`，解码时可用 `default` 构造跳过的字段。
 - `FromJson` 派生支持 `#json(default: ...)`，为缺失字段提供字面量或无参函数的结果。
 - struct 的 JSON 派生支持 `#json(rename: "key")`，为编解码和错误路径指定字段键。

@@ -59,6 +59,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
         StringLimit => 9, NumberLimit => 10, InvalidLimits => 11, DuplicateField => 12
         ExpectedString => 13, ExpectedObject => 14, ExpectedArray => 15, CallLimit => 16
         ExpectedNull => 17, ExpectedBoolean => 18
+        UnknownVariant => 19
     }
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {

@@ -883,6 +883,16 @@ fn json_derive_composition_and_example_run_in_all_backends() {
 }
 
 #[test]
+fn json_enum_derive_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "enum_derive.jk",
+        include_str!("../fixtures/json_enum_derive.jk"),
+    );
+    work.assert_all_backends("enum_derive.jk", &[], b"", 0);
+}
+
+#[test]
 fn json_derive_dependencies_keep_private_fields_and_generic_definition_scope() {
     let work = Workspace::new();
     work.write(

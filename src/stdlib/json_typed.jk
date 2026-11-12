@@ -1,6 +1,6 @@
 //! Typed JSON encoding and decoding.
 //!
-//! Derive `ToJson` and `FromJson` for application structs. Missing optional
+//! Derive `ToJson` and `FromJson` for application structs and enums. Missing optional
 //! fields decode as `None`; unknown fields are allowed by default. Set
 //! `Options.reject_unknown_fields` to reject them. Mapping errors include a path
 //! whose `pointer` method renders a JSON Pointer.
@@ -60,6 +60,7 @@ pub enum MappingErrorKind {
     StringLimit,
     NumberLimit,
     CallLimit,
+    UnknownVariant,
 }
 impl Show for MappingErrorKind {
     fn show(&self, output: &mut StringBuilder) @noescape {
@@ -83,6 +84,7 @@ impl Show for MappingErrorKind {
                 StringLimit => "JSON string limit exceeded"
                 NumberLimit => "JSON number limit exceeded"
                 CallLimit => "JSON call limit exceeded"
+                UnknownVariant => "unknown enum variant"
             }
         )
     }
@@ -356,6 +358,19 @@ impl Context {
         array.take_last(&mut self.path)
         result
     }
+    /// Requires a key even when the field type accepts missing values.
+    pub fn take_required_field<T: FromJson>(
+        &mut self,
+        fields: &mut Map<String, Value>,
+        name: String
+    ) @noescape -> Result<T, MappingError> {
+        let result = match self.enter_field(fields, name) {
+            Some(value) => self.read::<T>(value)
+            None => Err(self.error(MappingErrorKind.MissingField))
+        }
+        array.take_last(&mut self.path)
+        result
+    }
     fn enter_field(
         &mut self,
         fields: &mut Map<String, Value>,
@@ -365,13 +380,17 @@ impl Context {
         array.push(&mut self.path, PathSegment.Field(name))
         value
     }
+    /// Reports an error at a child field of the current path.
+    pub fn field_error(&mut self, name: String, kind: MappingErrorKind) -> MappingError {
+        array.push(&mut self.path, PathSegment.Field(name))
+        let error = self.error(kind)
+        array.take_last(&mut self.path)
+        error
+    }
     pub fn finish_object(&mut self, var fields: Map<String, Value>) -> Result<Unit, MappingError> {
         if self.options.reject_unknown_fields {
             if let Some((name, _)) = map.pop(&mut fields) {
-                array.push(&mut self.path, PathSegment.Field(name))
-                let error = self.error(MappingErrorKind.UnknownField)
-                array.take_last(&mut self.path)
-                return Err(error)
+                return Err(self.field_error(name, MappingErrorKind.UnknownField))
             }
         }
         Ok({})

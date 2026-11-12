@@ -22,6 +22,8 @@ struct User {
 }
 #derive(FromJson)
 struct Batch { value: Array<User> }
+#derive(FromJson)
+enum BatchEnvelope { BatchValue(Batch) }
 fn ensure(ok: Bool) { let message = "typed JSON contract"; assert(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
@@ -39,6 +41,7 @@ fn code(kind: MappingErrorKind) -> Int32 {
         StringLimit => 9, NumberLimit => 10, InvalidLimits => 11, DuplicateField => 12
         ExpectedString => 13, ExpectedObject => 14, ExpectedArray => 15, CallLimit => 16
         ExpectedNull => 17, ExpectedBoolean => 18
+        UnknownVariant => 19
     }
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
@@ -93,7 +96,8 @@ fn json_derive_probe() -> Int32 {
     42
 }
 fn json_derive_failure() -> Int32 {
-    bad::<Batch>("{{\"value\":[{{\"name\":\"a\",\"age\":1}},{{\"name\":\"b\",\"age\":999}}]}}", 5, "/value/1/age")
+    let input = r#"{"type":"BatchValue","value":{"value":[{"name":"a","age":1},{"name":"b","age":999}]}}"#
+    bad::<BatchEnvelope>(input, 5, "/value/value/1/age")
     42
 }
 fn json_derive_work() @suspends -> Int32 {

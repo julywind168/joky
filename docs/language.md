@@ -8348,7 +8348,7 @@ Limits 的硬上限和计数方式同上；编码忽略 max_input_bytes，解码
 ### Struct 与类型化 JSON
 
 `joky/json/typed` 在值 codec 上提供普通 `ToJson` / `FromJson` trait。
-struct 可以自动派生或手写字段映射，再调用 `typed.encode(&value)` 或 `typed.decode::<User>(&text)`。
+struct 和 enum 可以自动派生或手写映射，再调用 `typed.encode(&value)` 或 `typed.decode::<User>(&text)`。
 [自动派生示例](../examples/json_derive.jk)与[手写示例](../examples/json_struct.jk)均输出 `Ada`、`37`、`/age`。
 
 ```joky
@@ -8362,8 +8362,8 @@ struct User { name: String, age: UInt8, nickname: Option<String> }
 struct Envelope<T> { value: T }
 ```
 
-- JSON `#derive` 位于 struct/pub 前，支持 `ToJson`、`FromJson`；可以只选择一个方向，
-  也可分成多个属性或与 `Clone`、`Eq`、`Hash` 组合。重复、空列表、未知派生名均拒绝；JSON 派生仍只接受 struct。
+- JSON `#derive` 位于 struct、enum 或其 pub 修饰符之前，支持 `ToJson`、`FromJson`。可以只选择一个方向，
+  也可分成多个属性或与 `Clone`、`Eq`、`Hash` 组合。重复、空列表、未知派生名均拒绝。
   用户同名 trait 或导入别名不改变派生协议；生成代码自动取得所需标准库依赖。
 - 支持命名字段 struct，包括空 struct、泛型及经拥有容器间接存储的有限递归树。
   字段按声明顺序映射，默认使用原字段名。字段前的 `#json(rename: "userId")` 为编解码和错误路径指定 JSON 键。
@@ -8377,7 +8377,12 @@ struct Envelope<T> { value: T }
   同一方向同时派生和手写实现按重叠 trait impl 拒绝。可与有效的 `#repr(C)` 组合。
 - 每个派生实现的约束推导最多 256 次义务展开、32 层依赖；派生方法及其调用产生的泛型实例
   继续计入全局生成预算。
-  本版不提供 enum 派生，也不引入运行时反射。
+
+派生 enum 使用带标签的 JSON 对象。`enum Payment { Pending, Paid(UInt64) }` 的
+`Pending` 编码为 `{"type":"Pending"}`，`Paid(42)` 编码为 `{"type":"Paid","value":42}`。
+`type` 必须是与变体同名的字符串，未知标签返回路径为 `/type` 的 `UnknownVariant`。
+有载荷的变体要求 `value` 存在，显式 null 由载荷的 `FromJson` 处理。无载荷变体只映射 `type`，
+多出的键沿用未知字段规则。泛型条件从载荷的 JSON trait 义务推导，载荷错误的路径从 `/value` 开始。
 
 | 接口 | 行为 |
 | --- | --- |
@@ -8416,7 +8421,7 @@ Syntax 保留原始字节 offset，包括解析阶段的限额错误；Mapping �
 和 `kind`。路径段为 Field(String) / Index(UInt64)，`error.pointer()` 生成诊断 JSON Pointer：
 根为 `""`、字段/索引用 `/` 分隔，键里的 `~` 与 `/` 转为 `~0` / `~1`，例如 `/users/1/age`。
 Mapping 不声称能恢复原始文本 offset。kind 包括 ExpectedNull/Boolean/Number/String/Array/Object、
-MissingField、UnknownField、DuplicateField、NotInteger、OutOfRange、NonFinite、InvalidLimits、
+MissingField、UnknownField、DuplicateField、UnknownVariant、NotInteger、OutOfRange、NonFinite、InvalidLimits、
 DepthLimit、NodeLimit、StringLimit、NumberLimit、CallLimit。
 
 Context 不可从外部构造。嵌套映射必须经过 `context.write` / `context.read::<T>`，

@@ -1,0 +1,89 @@
+import joky/json/typed.{type CodecError, type FromJson, type MappingErrorKind, type Options}
+import joky/array.{type Array}
+
+#derive(Clone, Eq, Hash, ToJson, FromJson)
+enum Flag { On, Off }
+
+#derive(ToJson, FromJson)
+enum Payment<T> { Pending, Paid(T), Maybe(Option<T>) }
+
+#derive(ToJson, FromJson)
+enum Tree { Leaf(String), Branch(Array<Tree>) }
+
+#derive(FromJson)
+struct WireNumber {
+    #json(rename: "type")
+    tag: String,
+    value: Int32
+}
+
+fn error_code(kind: MappingErrorKind) -> Int32 {
+    match kind {
+        MissingField => 1
+        UnknownField => 2
+        ExpectedString => 3
+        ExpectedNumber => 4
+        ExpectedObject => 5
+        UnknownVariant => 6
+        NodeLimit => 7
+        _ => 0
+    }
+}
+
+fn mapping(error: CodecError, kind: Int32, path: &String) {
+    match error {
+        Mapping(error) => {
+            assert(error_code(error.kind) == kind, "mapping error kind")
+            assert(error.pointer() == path, "mapping error path")
+        }
+        _ => assert(false, "expected a mapping error")
+    }
+}
+
+fn bad<T: FromJson>(text: &String, kind: Int32, path: &String) {
+    mapping(typed.decode::<T>(text).err()!, kind, path)
+}
+
+fn main() {
+    let on = Flag.On
+    let text = typed.encode(on)!
+    assert(text == r#"{"type":"On"}"#, "unit variant encoding")
+    assert(typed.decode::<Flag>(text)! == on, "unit variant round trip")
+
+    let copy = Payment.Paid::<Int32>(42)
+    let text = typed.encode(&copy)!
+    let wire = typed.decode::<WireNumber>(text)!
+    assert(wire.tag == "Paid" && wire.value == 42, "payload encoding")
+    assert(typed.decode::<Payment<Int32>>(text)! is Paid(42), "Copy payload round trip")
+    let owner = Payment.Paid("receipt")
+    let text = typed.encode(&owner)!
+    assert(typed.decode::<Payment<String>>(text)! is Paid("receipt"), "owning payload round trip")
+    assert(owner is Paid("receipt"), "encoding borrows the value")
+    let null = r#"{"type":"Maybe","value":null}"#
+    assert(typed.decode::<Payment<Int32>>(null)! is Maybe(None), "explicit null payload")
+
+    let tree = Tree.Branch([Tree.Leaf("left"), Tree.Leaf("right")])
+    let output = typed.encode(&tree)!
+    let decoded = typed.decode::<Tree>(output)!
+    let Branch(children) = &decoded else {
+        assert(false, "expected decoded branch")
+        return
+    }
+    assert(children.borrow_ref(1) is Leaf("right"), "recursive payload round trip")
+
+    bad::<Payment<Int32>>("[]", 5, "")
+    bad::<Payment<Int32>>(r#"{}"#, 1, "/type")
+    bad::<Payment<Int32>>(r#"{"type":false}"#, 3, "/type")
+    bad::<Payment<Int32>>(r#"{"type":"Other"}"#, 6, "/type")
+    bad::<Payment<Int32>>(r#"{"type":"Maybe"}"#, 1, "/value")
+    bad::<Payment<Int32>>(r#"{"type":"Paid","value":"x"}"#, 4, "/value")
+    bad::<Tree>(r#"{"type":"Branch","value":[{"type":"Other"}]}"#, 6, "/value/0/type")
+
+    let extra = r#"{"type":"Pending","value":42}"#
+    assert(typed.decode::<Payment<Int32>>(extra)! is Pending, "extra field is ignored by default")
+    var options = Options.default()
+    options.reject_unknown_fields = true
+    mapping(typed.decode_with_options::<Payment<Int32>>(extra, options).err()!, 2, "/value")
+    options.limits.max_nodes = 1
+    mapping(typed.encode_with_options(&copy, options).err()!, 7, "/type")
+}
