@@ -17,11 +17,11 @@ fn compute() -> Int32 {
     for value in iter.exclusive(&mut values).take(2).filter(positive) { *value += 100 }
     assert(values[0] == 111 && values[2] == 12, "take before filter")
     var empty: Array<Int32> = []
-    for _ in iter.exclusive(&mut empty).filter(positive).take(2) { panic("empty") }
+    for _ in iter.exclusive(&mut empty).filter(positive).take(2).skip(1) { panic("empty") }
     for _ in iter.exclusive(&mut values).filter(observed).take(0) { panic("take zero") }
     var names = ["a", "", "b"]
-    for name in iter.exclusive(&mut names).filter(nonempty).take(1) { *name = "replaced" }
-    assert(names[0] == "replaced" && names[2] == "b", "owned elements stay in source")
+    for name in iter.exclusive(&mut names).filter(nonempty).skip(1).take(1) { *name = "replaced" }
+    assert(names[0] == "a" && names[1] == "" && names[2] == "replaced", "skipped elements stay in source")
     values.push(7)
     assert(values.len() == 5, "source reusable after loop")
     42
@@ -35,16 +35,21 @@ fn lazy() -> Int32 {
     assert(values[0] == 1 && values[2] == 22 && values[3] == 3, "index and continue")
     for value in iter.exclusive(&mut values).filter(observed) { *value += 5; break }
     assert(values[0] == 6, "break")
+    for value in iter.exclusive(&mut values).filter(observed).skip(1).take(1) { *value += 1 }
+    assert(values[0] == 6 && values[2] == 23 && values[3] == 3, "skip counts filtered items")
     42
 }
 fn manual() -> Int32 {
     var values = [1, 0, 2]
-    var (cursor, plan) = iter.exclusive(&mut values).filter(positive).take(1).into_parts()
+    var (cursor, plan) = iter.exclusive(&mut values).filter(positive).skip(0).take(1).into_parts()
     assert(iter.advance_exclusive(&mut plan, cursor), "manual advance")
     let value = iter.current_mut(cursor)
     *value = 42
     assert(!iter.advance_exclusive(&mut plan, cursor), "take exhausted")
     assert(!iter.advance_exclusive(&mut plan, cursor), "fused take")
+    var (cursor, plan) = iter.exclusive(&mut values).skip(18446744073709551615).into_parts()
+    assert(!iter.advance_exclusive(&mut plan, cursor), "skip past end")
+    assert(!iter.advance_exclusive(&mut plan, cursor), "fused skip")
     values[0]
 }
 fn nested() -> Int32 {
@@ -58,12 +63,12 @@ fn nested() -> Int32 {
 }
 fn early() -> Int32 {
     var values = ["owned", "later"]
-    for _ in iter.exclusive(&mut values).filter(nonempty) { return 42 }
+    for _ in iter.exclusive(&mut values).skip(1).filter(nonempty) { return 42 }
     0
 }
 fn failed() {
     var values = ["owned"]
-    for _ in iter.exclusive(&mut values).filter(fail) {}
+    for _ in iter.exclusive(&mut values).filter(fail).skip(1) {}
 }
 fn main() {
     assert(compute() == 42 && lazy() == 42 && manual() == 42 && nested() == 42 && early() == 42, "exclusive pipeline")

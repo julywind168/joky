@@ -5,6 +5,7 @@
 
 ## Unreleased
 
+- `joky/iter` 为拥有迭代器、共享迭代器和独占流水线提供惰性 `skip`，跳过前若干项后交付其余元素。
 - `if`、`else if` 和 `while` 条件可用 `&&` 串联模式绑定和布尔测试，成功绑定对后续条件可见。
 - `value is Pattern` 返回模式匹配的 `Bool` 结果，支持 `|` 备选模式。
 - `let Pattern = value else { ... }` 支持可失败的绑定。成功后绑定进入当前作用域，失败块必须退出控制流。

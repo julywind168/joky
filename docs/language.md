@@ -3927,12 +3927,14 @@ Item 可以是受支持的普通值或拥有值；每项的移动、忽略、失
 | 函数 | 行为 |
 | --- | --- |
 | `take(input, count)` | count 为 UInt64，最多交付 count 项；零次不调用源 next |
+| `skip(input, count)` | count 为 UInt64，首次推进时跳过前 count 项，随即清理被跳过的拥有值 |
 | `zip(left, right)` | 每轮先取左项再取右项，返回二元组；任一源结束即结束 |
 | `map(input, transform)` | `FnMut(Item) -> T`，每取一项才调用转换；支持拥有型输入与输出 |
 | `filter(input, predicate)` | `FnMut(&Item) -> Bool`，短暂借用当前项判断，接受时移动原项，拒绝时清理该项 |
 
-返回的 Take、Zip、Map、Filter 都实现 Iterator，字段私有。四种组合器首次收到 None 后保持耗尽，
+返回的 Take、Skip、Zip、Map、Filter 都实现 Iterator，字段私有。组合器首次收到 None 后保持耗尽，
 不再调用源或回调。zip 右源先结束时，本轮已经取得的左项会被清理；不保证左源零额外消费。
+skip(0) 直接交付来源的首项，跳过数量达到或超过输入长度时返回空迭代。
 提前 break、return、失败或丢弃组合器会清理剩余输入和回调环境。
 
 `iter.count(input) -> UInt64` 与 `iter.fold(input, initial, combine) -> A` 是立即执行的终结操作：
@@ -4066,6 +4068,7 @@ Array 的 `values.iter_shared()` / `array.iter_shared(&values)` 返回
 | 入口 | 行为 |
 | --- | --- |
 | `iter.take_shared(input, count)` | 最多取 count 项，零项不推进输入 |
+| `iter.skip_shared(input, count)` | 首次推进时跳过前 count 项，保留共享借用和原元素 |
 | `iter.filter_shared(input, predicate)` | 按原顺序保留满足条件的共享元素；输入元素须为 `&T` |
 | `iter.zip_shared(left, right)` | 返回两侧元素的元组，任一侧结束即永久耗尽；先推进左侧 |
 | `iter.step_shared(input)` | 返回 `(后继状态, Option<元素>)`，用于显式推进和泛型 helper |
@@ -4104,7 +4107,7 @@ filter_shared 接收 `fn(&T) @noescape -> Bool`，仅允许同步、不保存参
 ### 共享流水线方法
 
 `iter.shared(&values)` 借用 Array，返回 SharedPipeline；支持跨行
-`.filter(predicate).map(transform).take(count).zip(other)` 方法链。它实现 SharedIterator，
+`.filter(predicate).map(transform).skip(count).take(count).zip(other)` 方法链。它实现 SharedIterator，
 可用于普通 for、编号循环和 `I: Copy + SharedIterator` 泛型入口。
 包装类型使用现有泛型固有方法，没有新增关键字或通用扩展方法。
 
@@ -4114,8 +4117,8 @@ filter_shared 接收 `fn(&T) @noescape -> Bool`，仅允许同步、不保存参
 - 回调可以是同步 noescape 函数指针，或只读 Copy 借用闭包；闭包可直接捕获局部阈值、
   偏移量、字符串等，不需要手写参数类型或 noescape 注解。编译器检查回调不保留元素引用。
   修改捕获变量的 FnMut 闭包和拥有型 move 环境不满足此接口的 Copy + Fn 要求。
-- map 后可继续 filter、take 或 zip；此时回调接收转换后的值。
-- take/zip 保留既有共享组合规则；zip 接收另一个 SharedPipeline。
+- map 后可继续 filter、skip、take 或 zip；此时回调接收转换后的值。
+- skip 跳过的是前一个组合器的输出项；zip 接收另一个 SharedPipeline。
 - `.count() -> UInt64` / `.fold(initial, combine) -> A` 立即遍历当前管线副本，到第一个 None 停止。
   fold 接受 `FnMut(A, Item) @noescape -> A`，A 必须不含引用，支持拥有型累积值与可变捕获；回调不能保存或返回参数中的借用。
   例如可复制文本内容至 StringBuilder，但不能把借用元素收集进结果。count 和 fold 都不消费原容器；
@@ -4137,9 +4140,10 @@ Array 已实现该协议。返回引用须来自源对象，首个缺失项表�
 ### 独占流水线方法
 
 `iter.exclusive(&mut values)` 返回只可转移的 ExclusivePipeline，支持
-`.filter(predicate).take(count)`，也允许重复组合及交换顺序。filter 回调为同步
+`.filter(predicate).skip(count).take(count)`，也允许重复组合及交换顺序。filter 回调为同步
 `fn(&T) @noescape -> Bool`，只临时读取元素，不支持捕获闭包；循环体获得 &mut T。
 filter 后 take 计数命中项，take 后 filter 只检查前 count 个输入项。
+filter 后 skip 跳过命中项，skip 后 filter 从未跳过的首项开始检查。被跳过的元素留在原数组中。
 构造和组合不执行回调，take(0) 不推进来源，首次耗尽后保持结束。
 
 流水线按值进入 for 后不能再次使用或复制，也不满足 Copy。支持编号、continue、break、

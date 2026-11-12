@@ -111,6 +111,33 @@ impl<I: Iterator> Iterator for Take<I> {
     }
 }
 
+pub struct Skip<I> { source: I, remaining: UInt64, done: Bool }
+
+/// Lazily discards the first `count` items, releasing owned items as it skips them.
+pub fn skip<I: IntoIterator>(input: I, count: UInt64) -> Skip<I.IntoIter> {
+    Skip { source: IntoIterator.into_iter(input), remaining: count, done: false }
+}
+
+impl<I: Iterator> Iterator for Skip<I> {
+    type Item
+    = I.Item
+    fn next(&mut self) -> Option<I.Item> {
+        if self.done {
+            return None
+        }
+        while self.remaining != 0 {
+            if Iterator.next(&mut self.source).is_none() {
+                self.done = true
+                return None
+            }
+            self.remaining -= 1
+        }
+        let value = Iterator.next(&mut self.source)
+        self.done = value.is_none()
+        value
+    }
+}
+
 pub struct Zip<I, J> { left: I, right: J, done: Bool }
 
 pub fn zip<I: IntoIterator, J: IntoIterator>(left: I, right: J) -> Zip<I.IntoIter, J.IntoIter> {
@@ -450,6 +477,35 @@ impl<I: Copy + SharedIterator> SharedIterator for SharedTake<I> {
     }
 }
 
+pub struct SharedSkip<I: Copy> { source: I, remaining: UInt64, done: Bool }
+
+/// Lazily steps past the first `count` items of a shared iterator.
+pub fn skip_shared<I: Copy + SharedIterator>(input: I, count: UInt64) -> SharedSkip<I> {
+    SharedSkip { source: input, remaining: count, done: false }
+}
+
+impl<I: Copy + SharedIterator> SharedIterator for SharedSkip<I> {
+    type Item
+    = I.Item
+    fn step(self) -> (Self, Option<I.Item>) {
+        if self.done {
+            return (self, None)
+        }
+        var source = self.source
+        var remaining = self.remaining
+        while remaining != 0 {
+            let (next, value) = SharedIterator.step(source)
+            source = next
+            if value.is_none() {
+                return (SharedSkip { source, remaining: 0, done: true }, None)
+            }
+            remaining -= 1
+        }
+        let (source, value) = SharedIterator.step(source)
+        (SharedSkip { source, remaining: 0, done: value.is_none() }, value)
+    }
+}
+
 pub struct SharedZip<I: Copy, J: Copy> { left: I, right: J, done: Bool }
 
 pub fn zip_shared<I: Copy + SharedIterator, J: Copy + SharedIterator>(
@@ -588,6 +644,10 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
     pub fn take(self, count: UInt64) -> SharedPipeline<SharedTake<I>, T> {
         SharedPipeline { source: take_shared(self.source, count) }
     }
+    /// Skips the first `count` items in this pipeline's output order.
+    pub fn skip(self, count: UInt64) -> SharedPipeline<SharedSkip<I>, T> {
+        SharedPipeline { source: skip_shared(self.source, count) }
+    }
     pub fn filter<F: Copy + Fn(T) @noescape -> Bool>(
         self,
         predicate: F
@@ -693,6 +753,14 @@ impl<P: Copy + ExclusivePlan<Item = T>, T> ExclusivePipeline<P, T> {
         let ExclusivePipeline { cursor, plan } = self
         ExclusivePipeline { cursor, plan: ExclusiveTake { source: plan, remaining: count } }
     }
+    /// Advances past the first `count` items before yielding a mutable borrow.
+    pub fn skip(self, count: UInt64) -> ExclusivePipeline<ExclusiveSkip<P>, T> {
+        let ExclusivePipeline { cursor, plan } = self
+        ExclusivePipeline {
+            cursor,
+            plan: ExclusiveSkip { source: plan, remaining: count, done: false }
+        }
+    }
     pub fn filter(
         self,
         predicate: fn(&T) @noescape -> Bool
@@ -736,6 +804,26 @@ impl<P: Copy + ExclusivePlan> ExclusivePlan for ExclusiveTake<P> {
             self.remaining = 0
             false
         }
+    }
+}
+pub struct ExclusiveSkip<P: Copy> { source: P, remaining: UInt64, done: Bool }
+impl<P: Copy + ExclusivePlan> ExclusivePlan for ExclusiveSkip<P> {
+    type Item
+    = P.Item
+    fn advance(&mut self, cursor: &Iter<P.Item>) @noescape -> Bool {
+        if self.done {
+            return false
+        }
+        while self.remaining != 0 {
+            if !ExclusivePlan.advance(&mut self.source, cursor) {
+                self.done = true
+                return false
+            }
+            self.remaining -= 1
+        }
+        let advanced = ExclusivePlan.advance(&mut self.source, cursor)
+        self.done = !advanced
+        advanced
     }
 }
 pub struct ExclusiveFilter<P: Copy, T> {

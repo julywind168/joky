@@ -274,14 +274,31 @@ const ADAPTERS: &str = include_str!("../../../../tests/fixtures/iterator_adapter
 
 #[test]
 fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
+    let source = format!(
+        "{ADAPTERS}\n{}",
+        r#"
+        extern fn delayed_value(value: Int32) @suspends -> Int32
+        fn skip_pause(with_prefix: Int32) @suspends -> Int32 {
+            let values = if with_prefix == 0 { [owned(42)] } else { [owned(0), owned(42)] }
+            let count: UInt64 = if with_prefix == 0 { 0 } else { 1 }
+            for value in iter.skip(values, count) {
+                delayed_value(value.id)
+                return value.id
+            }
+            0
+        }
+        "#
+    );
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = parity_vm_with_prelude(ADAPTERS, mode, false);
+        let vm = parity_vm_with_prelude(&source, mode, false);
         assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
         assert_eq!(vm.call_int32_0("fields").unwrap(), 42);
         for (name, expected) in [
             (
                 "lazy",
-                vec![1, 2, 3, 4, 13, 14, 13, 14, 13, 20, 21, 30, 31, 32],
+                vec![
+                    1, 2, 3, 4, 13, 14, 13, 14, 13, 20, 21, 30, 31, 32, 5, 33, 33, 33, 34,
+                ],
             ),
             ("cleanup", vec![]),
             ("zip_cleanup", vec![]),
@@ -311,6 +328,23 @@ fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
         drop(task);
         EVENTS.with(|events| assert_eq!(*events.borrow(), [14, 16]));
         LIVE.with(|live| assert_eq!(live.get(), 0));
+
+        // Compare the same paused frame with and without a discarded payload.
+        let [without_prefix, with_prefix] = [0, 1].map(|prefix| {
+            EVENTS.with(|events| events.borrow_mut().clear());
+            let mut task = vm.call_async("skip_pause", &[prefix]).unwrap();
+            task.resume().unwrap();
+            assert!(!task.is_finished());
+            EVENTS.with(|events| assert_eq!(*events.borrow(), [42]));
+            let live = LIVE.with(|live| live.get());
+            drop(task);
+            LIVE.with(|live| assert_eq!(live.get(), 0));
+            live
+        });
+        assert_eq!(
+            with_prefix, without_prefix,
+            "{mode:?}: skipped owner still live"
+        );
     }
 }
 
@@ -448,7 +482,7 @@ fn shared_pipeline_chains_map_plain_results_and_preserve_lazy_borrowing() {
         EVENTS.with(|events| assert_eq!(*events.borrow(), [5, 105, 0, 3, 103, 105]));
         EVENTS.with(|events| events.borrow_mut().clear());
         assert_eq!(vm.call_int32_0("early").unwrap(), 1);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [101]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [102, 101]));
         assert!(vm
             .call_unit_0("failed")
             .unwrap_err()
@@ -536,7 +570,7 @@ fn exclusive_pipeline_chains_transfer_cursors_and_end_each_element_loan() {
         assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
         EVENTS.with(|events| assert!(events.borrow().is_empty()));
         assert_eq!(vm.call_int32_0("lazy").unwrap(), 42);
-        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 0, 2, 1]));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 0, 2, 1, 6, 0, 22]));
         for entry in ["manual", "nested", "early"] {
             assert_eq!(vm.call_int32_0(entry).unwrap(), 42);
         }

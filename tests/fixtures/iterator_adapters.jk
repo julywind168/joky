@@ -46,6 +46,9 @@ fn compute() -> Int32 {
     let zero = iter.take(0..10, 0)
     expect(sum(zero) == 0)
     expect(sum(iter.take(0..2, 18446744073709551615)) == 2)
+    expect(sum(iter.skip(0..2, 0)) == 2)
+    expect(sum(iter.skip(0..0, 1)) == 0)
+    expect(iter.fold(iter.skip([1, 2, 3, 4], 2), 0, |acc, value| { acc * 10 + value }) == 34)
     expect(sum(iter.zip(0..0, 0..3)) == 0)
     expect(sum(iter.zip(0..3, 0..0)) == 0)
     expect(sum(iter.filter(0..3, move |x| { *x > 10 })) == 0)
@@ -88,6 +91,14 @@ fn lazy() {
     var taken = iter.take(Source { position: 0, end: 1, tag: 32 }, 10)
     expect(iter.next(&mut taken).is_none())
     expect(iter.next(&mut taken).is_none())
+    let unused_skip = iter.skip(Input { tag: 5 }, 1)
+    var skipped = iter.skip(Source { position: 0, end: 3, tag: 33 }, 1)
+    expect(iter.next(&mut skipped)! == 2)
+    expect(iter.next(&mut skipped).is_none())
+    expect(iter.next(&mut skipped).is_none())
+    var overskipped = iter.skip(Source { position: 0, end: 1, tag: 34 }, 18446744073709551615)
+    expect(iter.next(&mut overskipped).is_none())
+    expect(iter.next(&mut overskipped).is_none())
 }
 struct Owned { id: Int32, values: Array<Int32> }
 
@@ -119,11 +130,12 @@ fn zip_cleanup() {
 }
 fn fail_map() {
     let capture = owned(9)
-    for _ in iter.map([owned(1), owned(2)], move |value| {
+    let mapped = iter.map([owned(1), owned(2), owned(3)], move |value| {
         expect(capture.id == 9)
-        assert(false, "Map callback failure")
+        assert(value.id != 2, "Map callback failure")
         value
-    }) {}
+    })
+    for _ in iter.skip(mapped, 2) {}
 }
 fn fail_filter() {
     let capture = owned(9)
@@ -135,13 +147,15 @@ fn fail_filter() {
 }
 fn early() -> Int32 {
     let capture = owned(9)
-    for value in iter.map([owned(1), owned(2)], move |value| { expect(capture.id == 9); value }) {
+    let mapped = iter.map([owned(0), owned(1), owned(2)], move |value| { expect(capture.id == 9); value })
+    for value in iter.skip(mapped, 1) {
         return value.id
     }
     0
 }
 fn pending() @suspends -> Int32 {
-    for (left, right) in iter.zip(iter.take([owned(1), owned(2)], 2), [owned(3), owned(4)]) {
+    let left = iter.skip([owned(0), owned(1), owned(2)], 1)
+    for (left, right) in iter.zip(iter.take(left, 2), [owned(3), owned(4)]) {
         record(left.id + right.id + 10)
         task.yield_now()
     }

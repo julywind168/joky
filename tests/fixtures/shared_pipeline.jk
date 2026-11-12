@@ -25,6 +25,8 @@ fn count<I: Copy + iter.SharedIterator>(values: I) -> UInt64 {
 fn compute() -> Int32 {
     var names = ["Alice", "", "Bob", "Carol"]
     assert(iter.shared(&names).filter(|name| { name != "" }).count() == 3, "filtered count")
+    let tail = iter.shared(&names).filter(|name| { name != "" }).skip(1).take(1)
+    assert(tail.fold(false, |found, name| { found || name == "Bob" }), "skip counts filtered items")
     assert(iter.shared(&names).take(0).fold(42, |acc, name| { assert(false, "empty fold"); acc }) == 42, "empty fold")
     let built = iter.shared(&names).take(1).fold(StringBuilder.new(), |var acc, name| {
         acc.push_str(name)
@@ -59,7 +61,7 @@ fn compute() -> Int32 {
     }
     assert(total == 35, "shared zip order and shorter side")
     let empty: Array<String> = []
-    assert(count(iter.shared(&empty).map(measure)) == 0, "empty pipeline")
+    assert(count(iter.shared(&empty).map(measure).skip(1)) == 0, "empty pipeline")
     names.push("last")
     assert(names.len() == 5, "pipeline does not consume source")
     42
@@ -77,12 +79,12 @@ fn lazy() -> Int32 {
     42
 }
 fn early() -> Int32 {
-    let names = ["a", "b"]
-    for value in iter.shared(&names).map(length) { return int32(value) }
+    let names = ["aa", "b", "ccc"]
+    for value in iter.shared(&names).map(length).skip(1) { return int32(value) }
     0
 }
 fn failed() {
     let names = ["owned"]
-    for _ in iter.shared(&names).map(failed_length) {}
+    for _ in iter.shared(&names).map(failed_length).skip(1) {}
 }
 fn main() { assert(compute() == 42 && lazy() == 42 && early() == 1, "shared pipeline") }
