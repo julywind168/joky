@@ -589,6 +589,14 @@ fn shared_pipeline_maps_copy_and_owning_results_and_preserves_lazy_borrowing() {
             .message()
             .contains("pipeline callback failed"));
         LIVE.with(|live| assert_eq!(live.get(), 0));
+        EVENTS.with(|events| events.borrow_mut().clear());
+        assert!(vm
+            .call_unit_0("fail_collect")
+            .unwrap_err()
+            .message()
+            .contains("pipeline collect callback failed"));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [104]));
+        LIVE.with(|live| assert_eq!(live.get(), 0));
     }
 }
 
@@ -615,6 +623,14 @@ fn shared_pipeline_rejects_borrowed_results_retaining_callbacks_and_owner_invali
     ] {
         frontend_error(&format!("import joky/array.{{type Array}} import joky/iter {source}"), &crate::ModuleSources::new());
     }
+    let error = frontend_error(
+        "import joky/iter fn bad() { let a = [1]; iter.shared(&a).collect(); }",
+        &crate::ModuleSources::new(),
+    );
+    assert!(
+        error.message().contains("reference-free storage"),
+        "{error}"
+    );
 }
 
 const EXCLUSIVE_PIPELINE: &str = include_str!("../../../../tests/fixtures/exclusive_pipeline.jk");

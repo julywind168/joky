@@ -327,6 +327,20 @@ pub fn count_shared<I: Copy + SharedIterator>(var input: I) -> UInt64 {
     }
 }
 
+/// Collects independent, reference-free outputs from a shared iterator in order.
+pub fn collect_shared<I: Copy + SharedIterator>(var input: I) -> array.Array<I.Item> {
+    types.require_reference_free::<I.Item>()
+    var output = array.new::<I.Item>()
+    while true {
+        let (next, item) = SharedIterator.step(input)
+        input = next
+        let option.Some(value) = item else {
+            return output
+        }
+        output.push(value)
+    }
+}
+
 pub fn fold_shared<I: Copy + SharedIterator, A, F: FnMut(A, I.Item) @noescape -> A>(
     var input: I,
     var initial: A,
@@ -570,6 +584,10 @@ impl<I: Copy + SharedIterator<Item = T>, T> SharedIterator for SharedPipeline<I,
 impl<I: Copy + SharedIterator<Item = T>, T> SharedPipeline<I, T> {
     pub fn count(self) -> UInt64 {
         count_shared(self.source)
+    }
+    /// Collects the pipeline's reference-free outputs into an array.
+    pub fn collect(self) -> array.Array<T> {
+        collect_shared(self.source)
     }
     pub fn fold<A, F: FnMut(A, T) @noescape -> A>(
         self,

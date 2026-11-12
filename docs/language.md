@@ -4146,7 +4146,7 @@ filter_shared 接收 `fn(&T) @noescape -> Bool`，仅允许同步、不保存参
 - 回调可以是同步 noescape 函数指针，或只读 Copy 借用闭包；闭包可直接捕获局部阈值、
   偏移量、字符串等，不需要手写参数类型或 noescape 注解。编译器检查回调不保留元素引用。
   修改捕获变量的 FnMut 闭包和拥有型 move 环境不满足此接口的 Copy + Fn 要求。
-- 拥有型 map 输出可继续 map、skip、enumerate、take、chain、zip、count 或 fold。
+- 拥有型 map 输出可继续 map、skip、enumerate、take、chain、zip、count、fold 或 collect。
   zip 的两侧输出须能组成合法的元素元组。筛选原元素可在生成拥有值之前调用 filter。
 - skip 跳过的是前一个组合器的输出项；chain 和 zip 接收另一个 SharedPipeline，chain 要求双方输出的 Item 类型相同。
 - enumerate 将后续操作的 Item 变为 `(UInt64, Item)`。直接对共享数组编号时得到 `(UInt64, &T)`，引用沿用原元素的借用范围。
@@ -4154,6 +4154,9 @@ filter_shared 接收 `fn(&T) @noescape -> Bool`，仅允许同步、不保存参
   fold 接受 `FnMut(A, Item) @noescape -> A`，A 必须不含引用，支持拥有型累积值与可变捕获；回调不能保存或返回参数中的借用。
   例如可复制文本内容至 StringBuilder，但不能把借用元素收集进结果。count 和 fold 都不消费原容器；
   空管线返回 0 或原 initial。底层对应 count_shared / fold_shared，累计项数为 UInt64。
+- `.collect() -> Array<Item>` 按顺序收集当前流水线副本的无引用输出，到第一个 None 停止。
+  空管线返回空数组。可以用 `iter.shared(&names).map(|name| { name.clone() }).collect()`
+  得到独立拥有的字符串数组，原数组释放后结果仍然可用。底层对应 `iter.collect_shared(input)`。
 - 构造与组合不执行回调，也不创建中间数组。每次推进才按方法顺序执行；
   第一次 None 后永久耗尽。take(0) 不推进输入，失败与提前退出沿普通清理路径处理。
 - 状态可复制，但所有副本仍借用原容器；最后使用结束后才允许修改原容器。

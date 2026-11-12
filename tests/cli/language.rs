@@ -2475,14 +2475,23 @@ fn shared_combinators_execute_in_standalone_aot() {
 #[cfg(unix)]
 fn shared_pipeline_executes_in_standalone_aot_without_prelude() {
     let work = Workspace::new();
-    work.write(
-        "pipeline.jk",
-        &include_str!("../fixtures/shared_pipeline.jk").replace(
-            "extern fn record(value: Int32) -> Int32",
-            "fn record(value: Int32) -> Int32 { value }",
-        ),
+    let source = include_str!("../fixtures/shared_pipeline.jk").replace(
+        "extern fn record(value: Int32) -> Int32",
+        "fn record(value: Int32) -> Int32 { value }",
     );
+    work.write("pipeline.jk", &source);
     work.assert_native("pipeline.jk", &["--no-prelude"], b"", 0);
+
+    let failure =
+        source.replace("fn main()", "fn run_pipeline()") + "\nfn main() { fail_collect() }";
+    work.write("pipeline_failure.jk", &failure);
+    success(&work.cli(&["build", "--no-prelude", "pipeline_failure.jk"]));
+    let output = Command::new(work.path().join("pipeline_failure"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("pipeline collect callback failed"));
 }
 
 #[test]

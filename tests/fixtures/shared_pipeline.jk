@@ -37,6 +37,14 @@ fn copy_first() -> String {
     assert(second! == "second" && copied! == "first", "independent copies of shared cursor")
     first!
 }
+fn collect_copies() -> Array<String> {
+    let names = ["first", "skip", "second"]
+    let copies = iter.shared(&names).filter(|name| { name != "skip" }).map(|name| { name.clone() })
+    let collected = copies.collect()
+    assert(copies.count() == 2 && names[1] == "skip", "shared cursor and source remain available")
+    names.release()
+    collected
+}
 fn compute() -> Int32 {
     var names = ["Alice", "", "Bob", "Carol"]
     assert(iter.shared(&names).filter(|name| { name != "" }).count() == 3, "filtered count")
@@ -69,6 +77,11 @@ fn compute() -> Int32 {
         int32(index) + *value
     })
     assert(mapped.fold(0, |sum, n| { sum + n }) == 6, "numbering starts after skip")
+    let collected = iter.collect_shared(mapped)
+    assert(collected.len() == 2 && collected[0] == 2 && collected[1] == 4, "ordered shared collect")
+    assert(iter.shared(&names).take(0).map(failed_copy).collect().is_empty(), "empty collect is lazy")
+    let copies = collect_copies()
+    assert(copies.len() == 2 && copies[0] == "first" && copies[1] == "second", "collected items survive their source")
     let more_digits = [3, 4, 5]
     let chained = iter.shared(&digits).take(2).chain(iter.shared(&more_digits).skip(1))
     assert(chained.fold(0, |acc, n| { acc * 10 + *n }) == 1245, "shared chain order")
@@ -126,5 +139,13 @@ fn failed() {
     let left = iter.shared(&names).map(copy_name)
     let right = iter.shared(&names).map(failed_copy)
     for _ in left.zip(right) {}
+}
+fn fail_collect() {
+    let names = ["kept", "failure"]
+    let copies = iter.shared(&names).map(|name| {
+        if name == "failure" { panic("pipeline collect callback failed") }
+        copy_name(name)
+    })
+    copies.collect();
 }
 fn main() { assert(compute() == 42 && lazy() == 42 && early() == 1, "shared pipeline") }
