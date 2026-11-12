@@ -298,7 +298,7 @@ fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
                 "lazy",
                 vec![
                     1, 2, 3, 4, 13, 14, 13, 14, 13, 20, 21, 30, 31, 32, 5, 33, 33, 33, 34, 6, 35,
-                    35,
+                    35, 7, 8, 36, 36, 37, 37,
                 ],
             ),
             ("cleanup", vec![]),
@@ -313,6 +313,7 @@ fn iterator_adapters_are_lazy_stateful_fused_and_release_owned_items() {
         EVENTS.with(|events| events.borrow_mut().clear());
         assert_eq!(vm.call_int32_0("early").unwrap(), 1);
         EVENTS.with(|events| assert!((*events.borrow()).is_empty()));
+        LIVE.with(|live| assert_eq!(live.get(), 0));
         for name in ["fail_map", "fail_filter", "fail_fold"] {
             EVENTS.with(|events| events.borrow_mut().clear());
             let error = vm.call_unit_0(name).unwrap_err();
@@ -439,6 +440,7 @@ fn iterator_adapters_reject_borrow_escape_consuming_callbacks_and_suspension() {
         "fn escape(x: &Int32) -> Bool { alloc(x); true } fn bad() { for _ in iter.filter(0..3, escape) {} }",
         "fn bad() { let values = { let a = [1]; let r = &a; iter.map(0..2, move |x| { r.len(); x }) }; for _ in values {} }",
         "fn fail() @suspends -> Int32 { 1 } fn bad() { let values = iter.map(0..2, fail); }",
+        "fn bad() { let values = iter.chain(0..2, [\"different item type\"]); }",
     ] {
         let source = format!("import joky/iter\nimport joky/task\n{source}");
         let error = frontend_error(&source, &crate::ModuleSources::new());
@@ -520,6 +522,7 @@ fn shared_combinators_reject_storage_escape_conflicts_and_suspending_callbacks()
         "fn leak(value: &Int32) -> Bool { alloc(value); true } fn bad() { let a = [1]; for _ in iter.filter_shared(a.iter_shared(), leak) {} }",
         "fn delayed(value: &String) @suspends @noescape -> Bool { true } fn bad() { let a = [\"a\"]; for _ in iter.filter_shared(a.iter_shared(), delayed) {} }",
         "fn bad() @suspends { let a = [\"a\"]; for _ in a.iter_shared() { task.yield_now() } }",
+        "fn bad() { var a = [1]; let b = [2]; let (cursor, _) = iter.step_shared(iter.chain_shared(iter.take_shared(a.iter_shared(), 0), b.iter_shared())); a.push(3); for _ in cursor {} }",
     ] {
         let source = format!("import joky/array.{{type Array}} import joky/iter import joky/task {body}");
         let error = frontend_error(&source, &crate::ModuleSources::new());
@@ -583,6 +586,8 @@ fn shared_pipeline_rejects_nonplain_results_retaining_callbacks_and_owner_invali
         "fn bad() { let a = [1]; alloc(iter.shared(&a)); }",
         "fn bad() { let a = [1]; let saved = [iter.shared(&a)]; }",
         "fn bad() { let p = { let a = [1]; iter.shared(&a) }; for _ in p {} }",
+        "fn bad() { let a = [1]; let b = [\"two\"]; let p = iter.shared(&a).chain(iter.shared(&b)); }",
+        "fn bad() { let a = [1]; let b = [2]; let p = iter.shared(&a).chain(iter.shared(&b)); b.release(); for _ in p {} }",
     ] {
         frontend_error(&format!("import joky/array.{{type Array}} import joky/iter {source}"), &crate::ModuleSources::new());
     }

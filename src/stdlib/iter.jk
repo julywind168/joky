@@ -170,6 +170,45 @@ impl<I: Iterator> Iterator for Enumerate<I> {
     }
 }
 
+pub struct Chain<I, J> { left: I, right: J, left_done: Bool, done: Bool }
+
+/// Lazily yields every item from `left` followed by every item from `right`.
+pub fn chain<
+    I: IntoIterator<IntoIter = L>,
+    J: IntoIterator<IntoIter = R>,
+    L: Iterator,
+    R: Iterator<Item = L.Item>
+>(
+    left: I,
+    right: J
+) -> Chain<L, R> {
+    Chain {
+        left: IntoIterator.into_iter(left),
+        right: IntoIterator.into_iter(right),
+        left_done: false,
+        done: false
+    }
+}
+
+impl<I: Iterator, J: Iterator<Item = I.Item>> Iterator for Chain<I, J> {
+    type Item
+    = I.Item
+    fn next(&mut self) -> Option<Self.Item> {
+        if self.done {
+            return None
+        }
+        if !self.left_done {
+            if let Some(item) = Iterator.next(&mut self.left) {
+                return Some(item)
+            }
+            self.left_done = true
+        }
+        let item = Iterator.next(&mut self.right)
+        self.done = item.is_none()
+        item
+    }
+}
+
 pub struct Zip<I, J> { left: I, right: J, done: Bool }
 
 pub fn zip<I: IntoIterator, J: IntoIterator>(left: I, right: J) -> Zip<I.IntoIter, J.IntoIter> {
@@ -565,6 +604,41 @@ impl<I: Copy + SharedIterator> SharedIterator for SharedEnumerate<I> {
     }
 }
 
+pub struct SharedChain<I: Copy, J: Copy> { left: I, right: J, left_done: Bool, done: Bool }
+
+/// Yields shared items from `left` before stepping `right`.
+pub fn chain_shared<I: Copy + SharedIterator, J: Copy + SharedIterator<Item = I.Item>>(
+    left: I,
+    right: J
+) -> SharedChain<I, J> {
+    SharedChain { left, right, left_done: false, done: false }
+}
+
+impl<I: Copy + SharedIterator, J: Copy + SharedIterator<Item = I.Item>> SharedIterator for SharedChain<
+    I,
+    J
+> {
+    type Item
+    = I.Item
+    fn step(var self) -> (Self, Option<Self.Item>) {
+        if self.done {
+            return (self, None)
+        }
+        if !self.left_done {
+            let (left, item) = SharedIterator.step(self.left)
+            self.left = left
+            if item.is_some() {
+                return (self, item)
+            }
+            self.left_done = true
+        }
+        let (right, item) = SharedIterator.step(self.right)
+        self.right = right
+        self.done = item.is_none()
+        (self, item)
+    }
+}
+
 pub struct SharedZip<I: Copy, J: Copy> { left: I, right: J, done: Bool }
 
 pub fn zip_shared<I: Copy + SharedIterator, J: Copy + SharedIterator>(
@@ -710,6 +784,13 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
     /// Pairs each pipeline item with its zero-based UInt64 index.
     pub fn enumerate(self) -> SharedPipeline<SharedEnumerate<I>, (UInt64, T)> {
         SharedPipeline { source: enumerate_shared(self.source) }
+    }
+    /// Yields this pipeline's items before advancing `other`.
+    pub fn chain<J: Copy + SharedIterator<Item = T>>(
+        self,
+        other: SharedPipeline<J, T>
+    ) -> SharedPipeline<SharedChain<I, J>, T> {
+        SharedPipeline { source: chain_shared(self.source, other.source) }
     }
     pub fn filter<F: Copy + Fn(T) @noescape -> Bool>(
         self,

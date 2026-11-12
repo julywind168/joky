@@ -52,18 +52,29 @@ fn compute() -> Int32 {
     let (_, c) = iter.step_shared(cursor)
     let (index, value) = a!
     assert(index == 0 && value == 0 && b.is_none() && c.is_none(), "fused enumerate")
+    let (cursor, a) = iter.step_shared(iter.chain_shared(Flicker { position: 0 }, Flicker { position: 0 }))
+    let (cursor, b) = iter.step_shared(cursor)
+    let (cursor, c) = iter.step_shared(cursor)
+    let (_, d) = iter.step_shared(cursor)
+    assert(a! == 0 && b! == 0 && c.is_none() && d.is_none(), "chain passes the first None and fuses after the second")
     let (zipped, a) = iter.step_shared(iter.zip_shared(Flicker { position: 0 }, Flicker { position: 0 }))
     let (zipped, b) = iter.step_shared(zipped)
     let (_, c) = iter.step_shared(zipped)
     assert(a.is_some() && b.is_none() && c.is_none(), "fused zip")
     for value in iter.take_shared(values.iter_shared(), 0) { panic("take zero advanced") }
-    let other = ["a", "b"]
+    var other = ["a", "b"]
     var paired = 0
     for (left, right) in iter.zip_shared(values.iter_shared(), other.iter_shared()) {
         assert(left != right, "zip references")
         paired += 1
     }
     assert(paired == 2, "shorter zip")
+    let chained = iter.chain_shared(iter.take_shared(values.iter_shared(), 1), other.iter_shared())
+    let (cursor, first) = iter.step_shared(chained)
+    let (_, second) = iter.step_shared(cursor)
+    assert(first! == "first" && second! == "a", "references from both sources stay live")
+    assert(total_count(chained) == 3, "copied chain starts at the original position")
+    other.push("c")
     let (cursor, first) = iter.step_shared(values.iter_shared())
     let (_, second) = iter.step_shared(cursor)
     assert(first! == "first" && second! == "skip", "element outlives next step")

@@ -2317,7 +2317,7 @@ fn iterator_adapters_execute_and_clean_up_in_standalone_aot() {
         (
             "adapters",
             "fn main() @suspends { println(compute()); println(fields()); lazy(); cleanup(); zip_cleanup(); println(early()); println(pending()) }",
-            "42\n42\n1\n2\n3\n4\n13\n14\n13\n14\n13\n20\n21\n30\n31\n32\n5\n33\n33\n33\n34\n6\n35\n35\n1\n14\n16\n42\n",
+            "42\n42\n1\n2\n3\n4\n13\n14\n13\n14\n13\n20\n21\n30\n31\n32\n5\n33\n33\n33\n34\n6\n35\n35\n7\n8\n36\n36\n37\n37\n1\n14\n16\n42\n",
             None,
         ),
         ("map_failure", "fn main() { fail_map() }", "", Some("Map callback failure")),
