@@ -20,6 +20,12 @@ import joky/string
 /// An owning path that preserves the spelling passed to `from`.
 pub struct Path { text: String }
 
+/// Conversion to an owning path and bounded copying for borrowed callers.
+pub trait IntoPath {
+    fn into_path(self) -> Path
+    fn copy_path(&self, max_bytes: UInt64) @noescape -> Option<Path>
+}
+
 impl Path {
     pub fn from(text: String) -> Path {
         Path { text }
@@ -55,6 +61,32 @@ impl Path {
     }
     pub fn is_empty(&self) -> Bool {
         string.byte_length(&self.text) == 0
+    }
+}
+
+impl IntoPath for String {
+    fn into_path(self) -> Path {
+        Path.from(self)
+    }
+    fn copy_path(&self, max_bytes: UInt64) @noescape -> Option<Path> {
+        copy_text(self, max_bytes)
+    }
+}
+
+impl IntoPath for Path {
+    fn into_path(self) -> Path {
+        self
+    }
+    fn copy_path(&self, max_bytes: UInt64) @noescape -> Option<Path> {
+        copy_text(&self.text, max_bytes)
+    }
+}
+
+fn copy_text(text: &String, max_bytes: UInt64) @noescape -> Option<Path> {
+    if string.byte_length(text) > max_bytes {
+        None
+    } else {
+        Some(Path.from(string.clone(text)))
     }
 }
 

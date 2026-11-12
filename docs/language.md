@@ -8065,6 +8065,8 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 
 `import joky/path.{type Path}` 提供拥有 UTF-8 文本的 `Path`。`Path.from(text)` 移入原文本并保留拼写。
 `into_string()` 消费路径并取回文本，`to_string()` 和 `clone()` 创建独立副本。
+`IntoPath.into_path(value)` 将 `String` 或 `Path` 移入 `Path`。`IntoPath.copy_path(&value, max_bytes)`
+在路径未超过字节限额时返回独立的 `Some(Path)`，否则返回 None。
 
 | 方法 | 行为 |
 | --- | --- |
@@ -8084,7 +8086,7 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 
 | 接口 | 结果 |
 | --- | --- |
-| `fs.open(path: &String, options: fs.OpenOptions) @suspends` | `Result<File, IoError>` |
+| `fs.open<P: IntoPath>(path: &P, options: fs.OpenOptions) @suspends` | `Result<File, IoError>`，接受 `String` 或 `Path` |
 | `fs.rename(from: &String, to: &String) @suspends` | `Result<Unit, IoError>` |
 | `fs.remove_file(path: &String) @suspends` | `Result<Unit, IoError>` |
 | `fs.create_dir(path: &String)` / `fs.remove_dir(path: &String)` @suspends | `Result<Unit, IoError>`，创建一级目录或删除空目录 |
@@ -8102,7 +8104,8 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 | `file.sync_all(&mut self) @suspends` | `Result<Unit, IoError>` |
 | `file.close(self) @suspends` | `Result<Unit, IoError>` |
 
-路径参数统一借用 `&String`，调用后仍可复用原字符串；支持自动共享借用，也可显式传 `&path`。
+`open` 共享借用 `String` 或 `Path`，调用后仍可复用原值。支持自动共享借用，也可显式传 `&path`。
+其他现有路径操作借用 `&String`。`open` 通过 `IntoPath.copy_path` 在 4096 字节限额内取得本地快照。
 文件服务在提交异步请求时建立所需路径快照，不把语言字符串的引用交给后台工作线程。
 字面量和临时字符串保活到调用结束；失败或取消后借用结束，已提交操作仍遵循原有取消规则。
 `write_text(text: String)` 继续消费文本，将 UTF-8 缓冲区转交给完整写入流程。

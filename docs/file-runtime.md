@@ -2,7 +2,7 @@
 
 状态：FS0–FS5 首版实现于 2026-10-17；正式模块为 `joky/fs`。FS6 便利 API 见第 12 节。
 契约与 FS0 探针见第 10 节，实现、验收证据及平台限制见第 11 节。首版不包含全部文件系统 API。
-`joky/path.Path` 的纯词法操作已实现，见第 14 节。文件入口接入 IntoPath、FS7、FS8 待实现。
+FS6P 的 `Path` 与 `IntoPath` 已实现，见第 14 节。FS7、FS8 待实现。
 
 当前实现语义以 [language.md](language.md) 为准；已有资源与线程边界见
 [architecture.md](architecture.md)，DNS 的实施经验见
@@ -632,8 +632,8 @@ FileAccess 不变，不向脚本授予文件能力。现有其他嵌入验证功
 
 ## 14. 路径抽象与后续文件能力设计
 
-FS6P 的纯路径操作已实现，使用运行平台的本机路径规则。`fs.open` 当前借用 `&String`，
-IntoPath 接入是本阶段的下一步。实际接口见 [语言参考](language.md#本机路径模块-jokypath)。
+FS6P 使用运行平台的本机路径规则。`fs.open` 通过 `IntoPath` 借用 `String` 或 `Path`。
+实际接口见 [语言参考](language.md#本机路径模块-jokypath)。
 
 ### 14.1 拥有型 Path
 
@@ -661,16 +661,13 @@ Path 非 Copy，沿用普通记录的移动、借用与清理规则；显式 clo
 
 ### 14.2 IntoPath 与文件入口
 
-`joky/path` 拟提供静态 trait `IntoPath`，方法为 `into_path(self) -> Path`。
-为 String 和 Path 分别提供实现：String 移入 Path，Path 返回自身；这两种转换都不要求
-复制文本。文件操作用普通泛型接受 `P: IntoPath`，不增加语言隐式转换或函数重载规则。
+`IntoPath.into_path(self) -> Path` 把 String 移入 Path，或返回传入的 Path 本身。
+`copy_path(&self, max_bytes) @noescape -> Option<Path>` 为借用调用生成有界拥有快照。
+文件入口沿用现有 `fs.open` 的借用习惯，签名为
+`open<P: IntoPath>(path: &P, options: OpenOptions) @suspends -> Result<File, IoError>`。
+字面量、String 或 Path 变量可直接传入，也可显式传引用。超过 4096 字节时在复制前返回 LimitExceeded。
 
-拟议 open 签名为 `open<P: IntoPath>(path: P, options: OpenOptions) @suspends -> Result<File, IoError>`。
-字符串字面量、String 变量和 Path 变量都可以直接传入；按值传参消费拥有者，保持现有
-open 的所有权习惯。调用后仍需使用原值时显式传入 clone 的结果。
-首版路径接口不承诺直接接收 `&String` 或 `&Path`；挂起调用的自动共享借用规则见[语言参考](language.md#showprint--println-与字符串插值)。
-
-实现先通过 IntoPath 得到拥有型 Path，再将其文本移交现有内部 open 入口。
+实现把快照的原始文本交给现有内部 open 入口，工作线程按原有机制取得独立的后台副本。
 后台继续只持有独立拥有的路径数据，不能保留语言借用。静态 trait 与泛型包装不改变
 FileServiceV1 的 UTF-8 传输形式、资源交接、取消计费或缺省 Unsupported 规则。
 宿主需要具体签名的导出入口时使用具体类型包装，不把泛型模板直接当作宿主 ABI。
@@ -706,7 +703,7 @@ Path 两套同义入口。文件入口转换必须保留原始文本，不能顺
 
 Path 词法操作不依赖 FileService，嵌入宿主未提供文件能力时仍可使用；合法文件请求才在
 缺省实现上返回 Unsupported。默认 Path 不识别 `res://` 等自定义命名空间。
-自定义宿主仍可接收直接传入 fs 的 String，并自行解释原始文本；不得假定本机 Path.join
+自定义宿主仍可接收传入 fs 的原始文本，并自行解释路径；不得假定本机 Path.join
 适用于该命名空间。本阶段不增加 Godot 文件功能或引擎路径适配。
 
 ### 14.5 与 FS7/FS8 的衔接和验收

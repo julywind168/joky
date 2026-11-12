@@ -49,8 +49,9 @@ fn filesystem_default_is_unsupported() {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(
             r#"import joky/fs
+            import joky/path.{type Path}
             fn run() @suspends -> Int32 {
-                match fs.open("missing", fs.OpenOptions.default()) {
+                match fs.open(Path.from("missing"), fs.OpenOptions.default()) {
                     Ok(file) => { let ignored = file.close(); 0 }
                     Err(error) => match error.kind { fs.ErrorKind.Unsupported => 42, _ => 1 }
                 }

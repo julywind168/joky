@@ -1,4 +1,5 @@
 import joky/fs
+import joky/path.{type IntoPath, type Path}
 
 fn main() @suspends {
     let directory = "paths"
@@ -10,9 +11,11 @@ fn main() @suspends {
     assert(entries.contains("旧.txt") && entries.contains("ready") && entries.contains("sub"), "entry names")
     assert(fs.read_dir("paths/sub")!.is_empty(), "empty directory")
     assert(fs.rename(source, destination).is_ok(), "replace existing destination")
-    var file = fs.open(destination, fs.OpenOptions.default())!
+    let path = IntoPath.into_path(destination.clone())
+    var file = fs.open(path, fs.OpenOptions.default())!
     assert(file.read_text()! == "new contents", "renamed file contents")
     file.close()!
+    assert(path.into_string() == destination, "open borrows Path")
     let info = fs.metadata(destination)!
     assert(info.kind == fs.FileKind.Regular && info.size == 12, "regular file metadata")
     fs.create_dir(created)!
@@ -28,4 +31,5 @@ fn main() @suspends {
     assert(fs.read_dir("paths/missing").err()!.kind == fs.ErrorKind.NotFound, "missing directory")
     assert(fs.rename("paths/sub", "").err()!.kind == fs.ErrorKind.InvalidInput, "invalid destination")
     assert(fs.read_dir("bad\0path").err()!.kind == fs.ErrorKind.InvalidInput, "invalid directory path")
+    assert(fs.open(Path.from("bad\0path"), fs.OpenOptions.default()).err()!.kind == fs.ErrorKind.InvalidInput, "Path input validation")
 }
