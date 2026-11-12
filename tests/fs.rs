@@ -77,6 +77,7 @@ fn filesystem_path_operations_require_host_capabilities() {
                 assert(fs.rename("old", "new").err()!.kind == fs.ErrorKind.Unsupported, "rename")
                 assert(fs.remove_file("old").err()!.kind == fs.ErrorKind.Unsupported, "remove")
                 assert(fs.create_dir("dir").err()!.kind == fs.ErrorKind.Unsupported, "create directory")
+                assert(fs.create_dir_all("dir/child").err()!.kind == fs.ErrorKind.Unsupported, "create directories")
                 assert(fs.remove_dir("dir").err()!.kind == fs.ErrorKind.Unsupported, "remove directory")
                 assert(fs.metadata("dir").err()!.kind == fs.ErrorKind.Unsupported, "metadata")
                 assert(fs.read_dir(".").err()!.kind == fs.ErrorKind.Unsupported, "list")

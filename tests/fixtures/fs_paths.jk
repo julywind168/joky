@@ -18,6 +18,17 @@ fn main() @suspends {
     assert(path.into_string() == destination, "open borrows Path")
     let info = fs.metadata(destination)!
     assert(info.kind == fs.FileKind.Regular && info.size == 12, "regular file metadata")
+    let tree = Path.from("paths/tree/branch/deep")
+    let (first, second) = join { fs.create_dir_all(&tree), fs.create_dir_all("paths/tree/branch/deep") }
+    first!
+    second!
+    assert(fs.metadata("paths/tree/branch/deep")!.kind == fs.FileKind.Directory, "recursive creation")
+    fs.create_dir_all(tree)!
+    assert(fs.create_dir_all("paths/ready/child").is_err(), "file in path")
+    assert(fs.create_dir_all("").err()!.kind == fs.ErrorKind.InvalidInput, "invalid directory path")
+    fs.remove_dir("paths/tree/branch/deep")!
+    fs.remove_dir("paths/tree/branch")!
+    fs.remove_dir("paths/tree")!
     fs.create_dir(created)!
     assert(fs.metadata(created)!.kind == fs.FileKind.Directory, "directory metadata")
     assert(fs.create_dir(created).err()!.kind == fs.ErrorKind.AlreadyExists, "existing directory")

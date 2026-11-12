@@ -8090,6 +8090,7 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 | `fs.rename(from: &String, to: &String) @suspends` | `Result<Unit, IoError>` |
 | `fs.remove_file(path: &String) @suspends` | `Result<Unit, IoError>` |
 | `fs.create_dir(path: &String)` / `fs.remove_dir(path: &String)` @suspends | `Result<Unit, IoError>`，创建一级目录或删除空目录 |
+| `fs.create_dir_all<P: IntoPath>(path: &P) @suspends` | `Result<Unit, IoError>`，递归创建缺失目录，已有目录视为成功 |
 | `fs.metadata(path: &String) @suspends` | `Result<Metadata, IoError>`，kind 为 Regular、Directory、Symlink 或 Other，size 为宿主报告的字节数。末级符号链接返回链接本身的信息，包括悬空链接 |
 | `fs.read_dir(path: &String) @suspends` | `Result<Array<String>, IoError>` |
 | `file.read(&mut self, limit: UInt64) @suspends` | `Result<Array<UInt8>, IoError>` |
@@ -8104,13 +8105,15 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 | `file.sync_all(&mut self) @suspends` | `Result<Unit, IoError>` |
 | `file.close(self) @suspends` | `Result<Unit, IoError>` |
 
-`open` 共享借用 `String` 或 `Path`，调用后仍可复用原值。支持自动共享借用，也可显式传 `&path`。
-其他现有路径操作借用 `&String`。`open` 通过 `IntoPath.copy_path` 在 4096 字节限额内取得本地快照。
+`open` 和 `create_dir_all` 共享借用 `String` 或 `Path`，调用后仍可复用原值。支持自动共享借用，也可显式传 `&path`。
+带 `IntoPath` 约束的文件操作在 4096 字节限额内通过 `copy_path` 取得本地快照。
 文件服务在提交异步请求时建立所需路径快照，不把语言字符串的引用交给后台工作线程。
 字面量和临时字符串保活到调用结束；失败或取消后借用结束，已提交操作仍遵循原有取消规则。
 `write_text(text: String)` 继续消费文本，将 UTF-8 缓冲区转交给完整写入流程。
 
 这些路径操作与 `open` 共用服务基准目录。输入路径须为非空 UTF-8 字符串，最多 4096 字节，且不能含 NUL。
+`create_dir_all` 在文件工作线程处理路径，中间组件为文件时返回错误。失败或取消可留下已经创建的目录。
+缺省服务、未提供此能力的 Rust 宿主和文件服务 V1 描述符返回 `Unsupported`。
 本机 `rename` 直接请求操作系统重命名；可在同一文件系统内将写好并关闭的临时文件替换到目标文件名。
 跨文件系统移动会返回错误。`remove_file` 删除单个文件，缺失返回 `NotFound`，不会递归删除目录。
 两种操作开始执行后，即使调用被取消，文件系统也可能已经改变。

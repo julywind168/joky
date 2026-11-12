@@ -54,6 +54,9 @@ pub trait FileSystem: Send + Sync + 'static {
     fn create_dir(&self, _path: &str) -> Result<(), FsError> {
         Err(FsError::new(1, "Host does not provide create_dir"))
     }
+    fn create_dir_all(&self, _path: &str) -> Result<(), FsError> {
+        Err(FsError::new(1, "Host does not provide create_dir_all"))
+    }
     fn remove_dir(&self, _path: &str) -> Result<(), FsError> {
         Err(FsError::new(1, "Host does not provide remove_dir"))
     }
@@ -91,6 +94,9 @@ impl FileSystem for Native {
     }
     fn create_dir(&self, path: &str) -> Result<(), FsError> {
         std::fs::create_dir(self.0.join(path)).map_err(Into::into)
+    }
+    fn create_dir_all(&self, path: &str) -> Result<(), FsError> {
+        std::fs::create_dir_all(self.0.join(path)).map_err(Into::into)
     }
     fn remove_dir(&self, path: &str) -> Result<(), FsError> {
         std::fs::remove_dir(self.0.join(path)).map_err(Into::into)
@@ -425,6 +431,7 @@ impl NativeService {
                 | Input::RemoveFile(_)
                 | Input::ReadDir(_)
                 | Input::CreateDir(_)
+                | Input::CreateDirAll(_)
                 | Input::RemoveDir(_)
                 | Input::Metadata(_)
         ) {
@@ -515,6 +522,7 @@ pub(crate) enum Input<'a> {
     Rename(&'a str, &'a str),
     RemoveFile(&'a str),
     CreateDir(&'a str),
+    CreateDirAll(&'a str),
     RemoveDir(&'a str),
     Metadata(&'a str),
     ReadDir(&'a str),
@@ -528,6 +536,7 @@ impl Input<'_> {
         match self {
             Self::Open(p, _)
             | Self::CreateDir(p)
+            | Self::CreateDirAll(p)
             | Self::RemoveDir(p)
             | Self::Metadata(p)
             | Self::RemoveFile(p) => p.len(),
@@ -544,6 +553,7 @@ impl Input<'_> {
             Self::Rename(from, to) => Action::Rename(from.into(), to.into()),
             Self::RemoveFile(p) => Action::RemoveFile(p.into()),
             Self::CreateDir(p) => Action::CreateDir(p.into()),
+            Self::CreateDirAll(p) => Action::CreateDirAll(p.into()),
             Self::RemoveDir(p) => Action::RemoveDir(p.into()),
             Self::Metadata(p) => Action::Metadata(p.into()),
             Self::ReadDir(p) => Action::ReadDir(p.into()),
@@ -561,6 +571,7 @@ pub(crate) enum Action {
     Rename(String, String),
     RemoveFile(String),
     CreateDir(String),
+    CreateDirAll(String),
     RemoveDir(String),
     Metadata(String),
     ReadDir(String),
@@ -747,6 +758,11 @@ fn execute(backend: &dyn FileSystem, file: Option<&Arc<NativeFile>>, action: Act
                 .create_dir(&path)
                 .map_or_else(Packet::error, |()| Packet::ok(Data::Unit))
         }
+        Action::CreateDirAll(path) => {
+            return backend
+                .create_dir_all(&path)
+                .map_or_else(Packet::error, |()| Packet::ok(Data::Unit))
+        }
         Action::RemoveDir(path) => {
             return backend
                 .remove_dir(&path)
@@ -810,6 +826,7 @@ fn execute(backend: &dyn FileSystem, file: Option<&Arc<NativeFile>>, action: Act
         | Action::Rename(..)
         | Action::RemoveFile(_)
         | Action::CreateDir(_)
+        | Action::CreateDirAll(_)
         | Action::RemoveDir(_)
         | Action::Metadata(_)
         | Action::ReadDir(_) => unreachable!(),

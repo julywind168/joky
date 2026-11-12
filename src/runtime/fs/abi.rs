@@ -183,6 +183,7 @@ impl External {
             | Input::RemoveFile(_)
             | Input::ReadDir(_)
             | Input::CreateDir(_)
+            | Input::CreateDirAll(_)
             | Input::RemoveDir(_)
             | Input::Metadata(_) => {
                 return Err(FsError::new(

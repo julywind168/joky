@@ -153,7 +153,7 @@ impl Operation {
                 match op {
                     Open => (vec![Bytes(1, false), Word], Resource),
                     Rename => (vec![Bytes(1, false), Bytes(1, false)], Resource),
-                    RemoveFile | ReadDir | CreateDir | RemoveDir | Metadata => {
+                    RemoveFile | ReadDir | CreateDir | CreateDirAll | RemoveDir | Metadata => {
                         (vec![Bytes(1, false)], Resource)
                     }
                     Process => (vec![Word, Word, Bytes(1, false)], Resource),

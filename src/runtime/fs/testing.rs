@@ -199,6 +199,9 @@ impl FileSystem for Backend {
     fn create_dir(&self, path: &str) -> Result<(), FsError> {
         self.native.create_dir(path)
     }
+    fn create_dir_all(&self, path: &str) -> Result<(), FsError> {
+        self.native.create_dir_all(path)
+    }
     fn remove_dir(&self, path: &str) -> Result<(), FsError> {
         self.native.remove_dir(path)
     }

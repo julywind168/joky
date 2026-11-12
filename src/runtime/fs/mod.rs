@@ -110,6 +110,7 @@ pub(crate) enum Operation {
     RemoveDir,
     Metadata,
     Kind,
+    CreateDirAll,
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
@@ -117,6 +118,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__fs_rename" => Operation::Rename,
         "__fs_remove_file" => Operation::RemoveFile,
         "__fs_create_dir" => Operation::CreateDir,
+        "__fs_create_dir_all" => Operation::CreateDirAll,
         "__fs_remove_dir" => Operation::RemoveDir,
         "__fs_metadata" => Operation::Metadata,
         "__fs_kind" => Operation::Kind,
@@ -155,6 +157,7 @@ impl Operation {
             Self::Open => (vec![path, Type::UInt64], outcome),
             Self::Rename => (vec![path.clone(), path], outcome),
             Self::CreateDir
+            | Self::CreateDirAll
             | Self::RemoveDir
             | Self::Metadata
             | Self::RemoveFile
@@ -427,6 +430,7 @@ pub(crate) unsafe fn poll(
                     | Operation::RemoveFile
                     | Operation::ReadDir
                     | Operation::CreateDir
+                    | Operation::CreateDirAll
                     | Operation::RemoveDir
                     | Operation::Metadata
             ) {
@@ -446,6 +450,7 @@ pub(crate) unsafe fn poll(
                 | Operation::RemoveFile
                 | Operation::ReadDir
                 | Operation::CreateDir
+                | Operation::CreateDirAll
                 | Operation::RemoveDir
                 | Operation::Metadata => {
                     let path = super::owned_text::borrow(frame.slots[0] as usize as *const Buffer)?;
@@ -466,6 +471,7 @@ pub(crate) unsafe fn poll(
                         }
                         Operation::RemoveFile => Input::RemoveFile(path),
                         Operation::CreateDir => Input::CreateDir(path),
+                        Operation::CreateDirAll => Input::CreateDirAll(path),
                         Operation::RemoveDir => Input::RemoveDir(path),
                         Operation::Metadata => Input::Metadata(path),
                         Operation::ReadDir => Input::ReadDir(path),
@@ -597,6 +603,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut CpsFrame, kind: u32) -> 
         19 => Operation::RemoveDir,
         20 => Operation::Metadata,
         21 => Operation::Kind,
+        22 => Operation::CreateDirAll,
         _ => return super::cps::INVALID_STATE,
     };
     match poll(&mut *super::cps::arena(frame), &mut *frame, op) {

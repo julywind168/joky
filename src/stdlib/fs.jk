@@ -136,6 +136,7 @@ extern fn __io_stdin() @suspends -> fs.OutcomeOwner
 extern fn __fs_rename(from: &String, to: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_remove_file(path: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_create_dir(path: &String) @suspends -> fs.OutcomeOwner
+extern fn __fs_create_dir_all(path: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_remove_dir(path: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_metadata(path: &String) @suspends -> fs.OutcomeOwner
 extern fn __fs_kind(result: &mut fs.OutcomeOwner) @suspends -> UInt64
@@ -231,6 +232,12 @@ pub fn remove_file(path: &String) @suspends -> Result<Unit, IoError> {
 
 pub fn create_dir(path: &String) @suspends -> Result<Unit, IoError> {
     status(__fs_create_dir(path))
+}
+
+/// Creates missing parent directories. Existing directories count as success.
+pub fn create_dir_all<P: IntoPath>(path: &P) @suspends -> Result<Unit, IoError> {
+    let text = file_path(path)?
+    status(__fs_create_dir_all(&text))
 }
 
 pub fn remove_dir(path: &String) @suspends -> Result<Unit, IoError> {

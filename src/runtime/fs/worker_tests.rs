@@ -59,6 +59,10 @@ impl FileSystem for Backend {
         self.0.wait();
         Ok(())
     }
+    fn create_dir_all(&self, _path: &str) -> Result<(), FsError> {
+        self.0.wait();
+        Ok(())
+    }
     fn stdin(&self) -> Result<Box<dyn FileHandle>, FsError> {
         self.open("read", 1)
     }
@@ -155,18 +159,27 @@ impl Drop for Fixture {
 }
 #[test]
 fn path_cancellation_withdraws_queued_work_and_refunds_running_work() {
-    let f = Fixture::new();
-    let running = f.submit(Input::RemoveFile("running"), None);
-    until(|| f.state.entered.load(Ordering::SeqCst) == 1);
-    let queued = f.submit(Input::RemoveFile("queued"), None);
-    queued.stop();
-    drop(queued);
-    running.stop();
-    drop(running);
-    assert_eq!(f.service.usage(), (0, 1, 4096 + "running".len()));
-    f.state.release();
-    f.drained();
-    assert_eq!(f.state.entered.load(Ordering::SeqCst), 1);
+    for create in [false, true] {
+        let action = |path| {
+            if create {
+                Input::CreateDirAll(path)
+            } else {
+                Input::RemoveFile(path)
+            }
+        };
+        let f = Fixture::new();
+        let running = f.submit(action("running"), None);
+        until(|| f.state.entered.load(Ordering::SeqCst) == 1);
+        let queued = f.submit(action("queued"), None);
+        queued.stop();
+        drop(queued);
+        running.stop();
+        drop(running);
+        assert_eq!(f.service.usage(), (0, 1, 4096 + "running".len()));
+        f.state.release();
+        f.drained();
+        assert_eq!(f.state.entered.load(Ordering::SeqCst), 1);
+    }
 }
 
 #[test]
