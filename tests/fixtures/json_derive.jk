@@ -113,7 +113,27 @@ fn json_derive_work() @suspends -> Int32 {
     ensure(recovered.age == 37)
     json_derive_failure()
 }
-fn main() { derived_names_and_associated_bounds(); derived_directions_and_keys(); derived_composition(); structs(); ensure(json_derive_probe() == 42); ensure(json_derive_failure() == 42) }
+fn main() { derived_names_and_associated_bounds(); derived_directions_and_keys(); derived_composition(); structs(); renamed_fields(); ensure(json_derive_probe() == 42); ensure(json_derive_failure() == 42) }
+
+#derive(ToJson, FromJson)
+struct Renamed {
+    #json(rename: "x/~")
+    age: UInt8
+}
+
+fn renamed_fields() {
+    let value = Renamed { age: 37 }
+    let text = encoded(&value)
+    ensure(text == "{{\"x/~\":37}}")
+    ensure(decoded::<Renamed>(text).age == 37)
+    bad::<Renamed>("{{\"age\":37}}", 1, "/x~1~0")
+    bad::<Renamed>("{{\"x/~\":false}}", 3, "/x~1~0")
+    let extra = "{{\"x/~\":37,\"age\":1}}"
+    ensure(typed.decode::<Renamed>(&extra)!.age == 37)
+    var options = Options.default()
+    options.reject_unknown_fields = true
+    mapping(typed.decode_with_options::<Renamed>(&extra, options).err()!, 2, "/age")
+}
 
 
 #derive(ToJson, FromJson)

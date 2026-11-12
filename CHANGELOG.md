@@ -5,6 +5,7 @@
 
 ## Unreleased
 
+- struct 的 JSON 派生支持 `#json(rename: "key")`，为编解码和错误路径指定字段键。
 - 新增 `joky/path.Path`，提供拥有型 UTF-8 路径及同步本机词法操作。`fs.open` 可通过 `IntoPath` 接受 `String` 和 `Path`。
 - 新增 `fs.create_dir_all`，在文件工作线程递归创建缺失目录。
 - 新增 `fs.write_atomic` 和 `fs.write_text_atomic`，在 Unix 本机文件服务上以同目录临时文件原子替换目标。

@@ -570,12 +570,17 @@ impl Parser<'_> {
         self.type_params.clone_from(&type_params);
         self.expect(&TokenKind::LBrace)?;
         let mut fields = Vec::new();
+        let mut field_attributes = std::collections::BTreeMap::new();
         let mut public_fields = Vec::new();
         while self.peek() != &TokenKind::RBrace {
             if self.peek() == &TokenKind::Comma {
                 return Err(self.error("Record fields cannot be empty".into()));
             }
             let start = self.peek_span().start();
+            let attributes = self.parse_attributes()?;
+            if !attributes.is_empty() {
+                field_attributes.insert(fields.len(), attributes);
+            }
             let field_public = self.peek() == &TokenKind::Pub;
             if field_public {
                 self.advance();
@@ -613,6 +618,7 @@ impl Parser<'_> {
             self.span(start, self.last_span.end()),
         );
         record.public_fields = public_fields;
+        record.field_attributes = field_attributes;
         record.attributes = attributes;
         record.public = public;
         record.type_params = type_params;

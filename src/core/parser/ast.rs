@@ -1,6 +1,7 @@
 //! Joky abstract syntax tree.
 use crate::core::types::fresh_type_id;
 use crate::Span;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 // Preserve the public AST paths for callers constructing type annotations.
@@ -1225,6 +1226,8 @@ pub struct RecordDef {
     pub fields: Vec<Param>,
     /// Fields explicitly marked `pub`; unmarked fields are module-private.
     pub public_fields: Vec<String>,
+    /// Source attributes indexed by field declaration order.
+    pub(crate) field_attributes: BTreeMap<usize, Vec<Attribute>>,
     pub(crate) imported: bool,
     pub name_span: Span,
     pub span: Span,
@@ -1252,6 +1255,7 @@ impl RecordDef {
             name,
             type_params: Vec::new(),
             fields,
+            field_attributes: BTreeMap::new(),
             public_fields: Vec::new(),
             imported: false,
             name_span,

@@ -67,6 +67,18 @@ impl Parser<'_> {
         })))
     }
 
+    pub(super) fn parse_attributes(&mut self) -> Result<Vec<Attribute>, Diagnostic> {
+        let mut attributes = Vec::new();
+        while self.peek() == &TokenKind::Hash {
+            let start = self.peek_span().start();
+            self.advance();
+            let mut attribute = self.parse_attribute(0)?;
+            attribute.span = self.span(start, self.last_span.end());
+            attributes.push(attribute);
+        }
+        Ok(attributes)
+    }
+
     pub(super) fn parse_attribute(&mut self, depth: usize) -> Result<Attribute, Diagnostic> {
         if depth >= 32 {
             return Err(self.error("Attribute nesting exceeds 32 levels".into()));

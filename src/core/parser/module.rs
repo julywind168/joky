@@ -24,14 +24,7 @@ impl Parser<'_> {
                 continue;
             }
             let start = self.peek_span().start();
-            let mut attributes = Vec::new();
-            while self.peek() == &TokenKind::Hash {
-                let attr_start = self.peek_span();
-                self.advance();
-                let mut attribute = self.parse_attribute(0)?;
-                attribute.span = self.span(attr_start.start(), self.last_span.end());
-                attributes.push(attribute);
-            }
+            let attributes = self.parse_attributes()?;
             let public = self.peek() == &TokenKind::Pub;
             if public {
                 self.advance();
