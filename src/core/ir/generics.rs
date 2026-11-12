@@ -995,7 +995,12 @@ impl FunctionPlan {
                 .then(|| member.to_owned());
         }
         self.scope.functions.get(name).cloned().or_else(|| {
-            (self.definition_scope.is_none()
+            // Root derives add a definition scope for inferred trait bounds
+            // while keeping the root's ordinary function lookup.
+            (self
+                .definition_scope
+                .as_ref()
+                .is_none_or(|scope| scope.module_name.is_empty())
                 && !self.scope.imported_functions.contains(name)
                 && !self.generics.borrow().members.functions.contains(name))
             .then(|| name.to_owned())

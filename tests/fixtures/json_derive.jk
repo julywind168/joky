@@ -173,6 +173,8 @@ struct Bag<K, T> { values: Map<K, Array<Option<T>>> }
 #derive(FromJson)
 struct Empty<T> {}
 struct Unmapped { value: Int32 }
+#derive(ToJson)
+struct SkipOnly<T> { #json(skip) value: T }
 #repr(C)
 #derive(ToJson, FromJson)
 struct Plain { value: Int32 }
@@ -202,6 +204,8 @@ fn derived_composition() {
     let empty = Empty::<Unmapped> {}
     let empty_text = "{{}}"
     ensure(encoded(&empty) == empty_text)
+    let skipped = SkipOnly { value: Unmapped { value: 42 } }
+    ensure(encoded(&skipped) == empty_text)
     decoded::<Empty<Unmapped>>(encoded(&empty));
     let plain = Plain { value: 42 }
     ensure(decoded::<Plain>(encoded(&plain)).value == 42)

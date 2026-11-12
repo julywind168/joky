@@ -98,9 +98,9 @@ pub(crate) fn expand(module: &mut Module) -> Result<(), Error> {
     Ok(())
 }
 
-struct JsonField {
-    key: String,
-    default: Option<Expr>,
+enum JsonField {
+    Mapped { key: String, default: Option<Expr> },
+    Skipped { default: Option<Expr> },
 }
 
 fn json_fields(record: &RecordDef, derives: &[(String, Span)]) -> Result<Vec<JsonField>, Error> {
@@ -110,6 +110,7 @@ fn json_fields(record: &RecordDef, derives: &[(String, Span)]) -> Result<Vec<Jso
     for (index, field) in record.fields.iter().enumerate() {
         let mut rename = None;
         let mut default = None;
+        let mut skip = None;
         for attribute in record.field_attributes.get(&index).into_iter().flatten() {
             if attribute.path != "json" {
                 return Err(error(
@@ -133,6 +134,13 @@ fn json_fields(record: &RecordDef, derives: &[(String, Span)]) -> Result<Vec<Jso
             for argument in arguments {
                 let span = argument.span;
                 match (argument.name.as_deref(), &argument.value) {
+                    (None, AttributeValue::Name(name))
+                        if name.path == "skip" && name.arguments.is_none() =>
+                    {
+                        if skip.replace(span).is_some() {
+                            return Err(error(span, "Duplicate #json skip"));
+                        }
+                    }
                     (Some("rename"), AttributeValue::Literal(Literal::String(key))) => {
                         if rename.replace((key, span)).is_some() {
                             return Err(error(span, "Duplicate #json rename"));
@@ -165,9 +173,22 @@ fn json_fields(record: &RecordDef, derives: &[(String, Span)]) -> Result<Vec<Jso
                     (Some(name), _) => {
                         return Err(error(span, format!("Unknown #json option '{name}'")))
                     }
-                    (None, _) => return Err(error(span, "Expected a named #json option")),
+                    (None, _) => return Err(error(span, "Expected #json skip or a named option")),
                 }
             }
+        }
+        if let Some(span) = skip {
+            if rename.is_some() {
+                return Err(error(span, "#json skip cannot be combined with rename"));
+            }
+            if decoding && default.is_none() {
+                return Err(error(
+                    span,
+                    "#json skip requires a default when deriving FromJson",
+                ));
+            }
+            fields.push(JsonField::Skipped { default });
+            continue;
         }
         let (key, span) = rename.map_or((&field.name, None), |(key, span)| (key, Some(span)));
         if let Some(previous) = seen.insert(key, span) {
@@ -175,7 +196,7 @@ fn json_fields(record: &RecordDef, derives: &[(String, Span)]) -> Result<Vec<Jso
                 return Err(error(span, format!("Duplicate JSON field name {key:?}")));
             }
         }
-        fields.push(JsonField {
+        fields.push(JsonField::Mapped {
             key: key.clone(),
             default,
         });
@@ -345,10 +366,27 @@ fn implementation(
     }];
     for (index, (field, options)) in fields.iter().zip(json_fields).enumerate() {
         let span = field.span;
+        let (key, default) = match options {
+            JsonField::Mapped { key, default } => (key, default),
+            JsonField::Skipped { default } => {
+                if !encoding {
+                    let fallback = default
+                        .as_ref()
+                        .expect("skipped decoder field has a default");
+                    body.push(Expr::Let {
+                        name: format!("$field_{index}"),
+                        annotation: Some(field.ty.clone()),
+                        value: Box::new(fallback.clone()),
+                        span: fallback.span(),
+                    });
+                }
+                continue;
+            }
+        };
         let mut args = vec![
             borrow(ident("$fields", span), true, span),
             Expr::Literal {
-                literal: Literal::String(options.key.clone()),
+                literal: Literal::String(key.clone()),
                 span,
             },
         ];
@@ -369,7 +407,7 @@ fn implementation(
                 span,
             ));
         } else {
-            let method = if let Some(fallback) = &options.default {
+            let method = if let Some(fallback) = default {
                 args.push(Expr::AnonymousFunction(Box::new(AnonymousFunction {
                     moving: false,
                     suspends: false,
@@ -476,7 +514,13 @@ fn implementation(
         scope: None,
         derive_fields: Some(crate::parser::ast::DeriveFields {
             trait_name: format!("{typed}.{capability}"),
-            fields,
+            fields: fields
+                .into_iter()
+                .zip(json_fields)
+                .filter_map(|(field, options)| {
+                    matches!(options, JsonField::Mapped { .. }).then_some(field)
+                })
+                .collect(),
         }),
         type_params,
         target,

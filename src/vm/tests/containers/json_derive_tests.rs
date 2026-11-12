@@ -42,6 +42,9 @@ fn json_derive_rejections_point_to_attributes_and_fields() {
         ("#derive(ToJson) struct Bad { #json(default: 0) value: Int32 }", "default requires a FromJson derive", Some("default: 0")),
         ("#derive(FromJson) struct Bad { #json(default: make()) value: Int32 }", "Expected a literal or a zero-argument function name", Some("default: make()")),
         ("#derive(FromJson) struct Bad { #json(default: 0) #json(default: 1) value: Int32 }", "Duplicate #json default", Some("default: 1")),
+        ("#derive(FromJson) struct Bad { #json(skip) value: Int32 }", "skip requires a default", Some("skip")),
+        (r#"#derive(ToJson) struct Bad { #json(skip, rename: "x") value: Int32 }"#, "skip cannot be combined with rename", Some("skip")),
+        ("#derive(ToJson) struct Bad { #json(skip, skip) value: Int32 }", "Duplicate #json skip", Some("skip")),
         (
             "#derive(ToJson) struct Bad { callback: fn() -> Int32 }",
             "Cannot derive",
