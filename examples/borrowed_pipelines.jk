@@ -12,6 +12,13 @@ fn shared_demo() {
 
     for index, length in lengths { println("{index}: {length}") }
     println(names.len()) // The source still owns all four strings.
+
+    let copied = {
+        let labels = ["Alice", "Bob"]
+        let (_, first) = iter.step_shared(iter.shared(&labels).map(|label| { label.clone() }))
+        first!
+    }
+    assert_eq(copied, "Alice")
 }
 
 fn exclusive_demo() {

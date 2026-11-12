@@ -943,6 +943,7 @@ pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
         && elements
             .iter()
             .any(|ty| !ty.is_owner() && ty.contains_references())
+        && !Type::is_scoped_owning_pair(&elements)
     {
         return Err(error(
             ErrorCode::TypeMismatch,

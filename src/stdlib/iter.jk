@@ -736,13 +736,13 @@ impl<S: SharedSource> SharedIterator for SharedView<S> {
     }
 }
 
-pub struct SharedPipeline<I: Copy, T: Copy> { source: I }
+pub struct SharedPipeline<I: Copy, T> { source: I }
 
 pub fn shared<S: SharedSource>(source: &S) -> SharedPipeline<SharedView<S>, &S.Item> {
     SharedPipeline { source: SharedView { source, index: 0, done: false } }
 }
 
-impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedIterator for SharedPipeline<I, T> {
+impl<I: Copy + SharedIterator<Item = T>, T> SharedIterator for SharedPipeline<I, T> {
     type Item
     = T
     fn step(self) -> (Self, Option<T>) {
@@ -750,7 +750,7 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedIterator for SharedPipel
         (SharedPipeline { source }, value)
     }
 }
-impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
+impl<I: Copy + SharedIterator<Item = T>, T> SharedPipeline<I, T> {
     pub fn count(self) -> UInt64 {
         count_shared(self.source)
     }
@@ -792,24 +792,28 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
     ) -> SharedPipeline<SharedChain<I, J>, T> {
         SharedPipeline { source: chain_shared(self.source, other.source) }
     }
+    /// Transforms each item into independent, reference-free data.
+    pub fn map<U, F: Copy + Fn(T) @noescape -> U>(
+        self,
+        transform: F
+    ) -> SharedPipeline<SharedMap<I, T, U, F>, U> {
+        types.require_reference_free::<U>()
+        SharedPipeline { source: SharedMap { source: self.source, transform, done: false } }
+    }
+    pub fn zip<J: Copy + SharedIterator<Item = U>, U>(
+        self,
+        other: SharedPipeline<J, U>
+    ) -> SharedPipeline<SharedZip<I, J>, (T, U)> {
+        SharedPipeline { source: zip_shared(self.source, other.source) }
+    }
+}
+
+impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
     pub fn filter<F: Copy + Fn(T) @noescape -> Bool>(
         self,
         predicate: F
     ) -> SharedPipeline<SharedSelect<I, T, F>, T> {
         SharedPipeline { source: SharedSelect { source: self.source, predicate, done: false } }
-    }
-    pub fn map<U: Copy, F: Copy + Fn(T) @noescape -> U>(
-        self,
-        transform: F
-    ) -> SharedPipeline<SharedMap<I, T, U, F>, U> {
-        types.require_plain_copy::<U>()
-        SharedPipeline { source: SharedMap { source: self.source, transform, done: false } }
-    }
-    pub fn zip<J: Copy + SharedIterator<Item = U>, U: Copy>(
-        self,
-        other: SharedPipeline<J, U>
-    ) -> SharedPipeline<SharedZip<I, J>, (T, U)> {
-        SharedPipeline { source: zip_shared(self.source, other.source) }
     }
 }
 
@@ -843,8 +847,8 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy, F: Copy + Fn(T) @noescape -> B
     }
 }
 
-pub struct SharedMap<I: Copy, T: Copy, U: Copy, F: Copy> { source: I, transform: F, done: Bool }
-impl<I: Copy + SharedIterator<Item = T>, T: Copy, U: Copy, F: Copy + Fn(T) @noescape -> U> SharedIterator for SharedMap<
+pub struct SharedMap<I: Copy, T, U, F: Copy> { source: I, transform: F, done: Bool }
+impl<I: Copy + SharedIterator<Item = T>, T, U, F: Copy + Fn(T) @noescape -> U> SharedIterator for SharedMap<
     I,
     T,
     U,
@@ -853,7 +857,7 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy, U: Copy, F: Copy + Fn(T) @noes
     type Item
     = U
     fn step(self) -> (Self, Option<U>) {
-        types.require_plain_copy::<U>()
+        types.require_reference_free::<U>()
         let SharedMap { source, transform, done } = self
         if done {
             return (SharedMap { source, transform, done }, None)

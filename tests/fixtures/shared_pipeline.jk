@@ -12,6 +12,10 @@ fn length(value: &String) @noescape -> UInt64 {
     record(100 + int32(string.byte_length(value)))
     string.byte_length(value)
 }
+fn copy_name(value: &String) @noescape -> String {
+    record(100 + int32(value.byte_length()))
+    value.clone()
+}
 fn long(value: UInt64) @noescape -> Bool { value > 3 }
 struct Measure { size: UInt64, present: Bool }
 fn measure(value: &String) @noescape -> Measure {
@@ -19,8 +23,19 @@ fn measure(value: &String) @noescape -> Measure {
 }
 fn discard(value: &String) @noescape { }
 fn failed_length(value: &String) @noescape -> UInt64 { panic("pipeline callback failed") }
+fn failed_copy(value: &String) @noescape -> String { panic("pipeline callback failed") }
 fn count<I: Copy + iter.SharedIterator>(values: I) -> UInt64 {
     iter.count_shared(values)
+}
+fn copy_first() -> String {
+    let names = ["first", "second"]
+    let copies = iter.shared(&names).map(|name| { name.clone() })
+    let (next, first) = iter.step_shared(copies)
+    let (_, second) = iter.step_shared(next)
+    let (_, copied) = iter.step_shared(copies)
+    names.release()
+    assert(second! == "second" && copied! == "first", "independent copies of shared cursor")
+    first!
 }
 fn compute() -> Int32 {
     var names = ["Alice", "", "Bob", "Carol"]
@@ -73,6 +88,16 @@ fn compute() -> Int32 {
     assert(total == 35, "shared zip order and shorter side")
     let empty: Array<String> = []
     assert(count(iter.shared(&empty).map(measure).skip(1)) == 0, "empty pipeline")
+    assert(copy_first() == "first", "owned item survives its source")
+    let offset = 5
+    let arrays = iter.shared(&digits).map(|n| { [*n + offset] }).skip(1).take(1)
+    let strings = iter.shared(&names).map(|name| { name.clone() })
+    let zipped_total = arrays.zip(strings).enumerate().fold(0, |acc, entry| {
+        let (index, (array, text)) = entry
+        assert(index == 0 && text == "Alice", "owning zip and enumerate")
+        acc + array[0]
+    })
+    assert(zipped_total == 7 && strings.count() == 4, "owned fold and discard")
     names.push("last")
     assert(names.len() == 5, "pipeline does not consume source")
     42
@@ -92,12 +117,14 @@ fn lazy() -> Int32 {
 fn early() -> Int32 {
     let names = ["aa", "b", "ccc"]
     let other = ["unvisited"]
-    let left = iter.shared(&names).map(length).skip(1)
-    for value in left.chain(iter.shared(&other).map(failed_length)) { return int32(value) }
+    let left = iter.shared(&names).map(copy_name).skip(1)
+    for value in left.chain(iter.shared(&other).map(failed_copy)) { return int32(value.byte_length()) }
     0
 }
 fn failed() {
     let names = ["owned"]
-    for _ in iter.shared(&names).map(failed_length).skip(1) {}
+    let left = iter.shared(&names).map(copy_name)
+    let right = iter.shared(&names).map(failed_copy)
+    for _ in left.zip(right) {}
 }
 fn main() { assert(compute() == 42 && lazy() == 42 && early() == 1, "shared pipeline") }

@@ -552,16 +552,18 @@ fn exhaustive_shared_combinators_instruction_cancellation() {
 const SHARED_PIPELINE: &str = include_str!("../../../../tests/fixtures/shared_pipeline.jk");
 
 #[test]
-fn shared_pipeline_chains_map_plain_results_and_preserve_lazy_borrowing() {
+fn shared_pipeline_maps_copy_and_owning_results_and_preserves_lazy_borrowing() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm_with_prelude(SHARED_PIPELINE, mode, false);
         assert_eq!(vm.call_int32_0("compute").unwrap(), 42);
+        LIVE.with(|live| assert_eq!(live.get(), 0));
         EVENTS.with(|events| events.borrow_mut().clear());
         assert_eq!(vm.call_int32_0("lazy").unwrap(), 42);
         EVENTS.with(|events| assert_eq!(*events.borrow(), [5, 105, 0, 3, 103, 105]));
         EVENTS.with(|events| events.borrow_mut().clear());
         assert_eq!(vm.call_int32_0("early").unwrap(), 1);
         EVENTS.with(|events| assert_eq!(*events.borrow(), [102, 101]));
+        LIVE.with(|live| assert_eq!(live.get(), 0));
         assert!(vm
             .call_unit_0("failed")
             .unwrap_err()
@@ -572,11 +574,10 @@ fn shared_pipeline_chains_map_plain_results_and_preserve_lazy_borrowing() {
 }
 
 #[test]
-fn shared_pipeline_rejects_nonplain_results_retaining_callbacks_and_owner_invalidation() {
+fn shared_pipeline_rejects_borrowed_results_retaining_callbacks_and_owner_invalidation() {
     for source in [
         "fn bad() { let a = [\"a\"]; iter.shared(&a).fold(0, |acc, value| { alloc(value); acc }) }",
         "fn bad() { let a = [1]; let n = 0; iter.shared(&a).take(0).fold(&n, |acc, value| { acc }) }",
-        "fn f(value: &String) @noescape -> String { \"new\" } fn bad() { let a = [\"a\"]; for _ in iter.shared(&a).map(f) {} }",
         "fn f(value: &String) -> &String { value } fn bad() { let a = [\"a\"]; for _ in iter.shared(&a).map(f) {} }",
         "fn f(value: &Int32) @noescape -> &Int32 { alloc(1) } fn bad() { let a = [1]; for _ in iter.shared(&a).map(f) {} }",
         "fn f(value: &String) -> Bool { alloc(value); true } fn bad() { let a = [\"a\"]; for _ in iter.shared(&a).filter(f) {} }",
@@ -588,6 +589,10 @@ fn shared_pipeline_rejects_nonplain_results_retaining_callbacks_and_owner_invali
         "fn bad() { let p = { let a = [1]; iter.shared(&a) }; for _ in p {} }",
         "fn bad() { let a = [1]; let b = [\"two\"]; let p = iter.shared(&a).chain(iter.shared(&b)); }",
         "fn bad() { let a = [1]; let b = [2]; let p = iter.shared(&a).chain(iter.shared(&b)); b.release(); for _ in p {} }",
+        "fn f(value: &Int32) @noescape -> Result<&Int32, String> { Ok(alloc(1)) } fn bad() { let a = [1]; iter.shared(&a).map(f); }",
+        "fn bad() { let a = [1]; let (next, _) = iter.step_shared(iter.shared(&a).map(|n| { [*n] })); a.release(); next.count(); }",
+        "fn bad() { let a = [1]; let step = iter.step_shared(iter.shared(&a).map(|n| { [*n] })); let saved = [step]; }",
+        "struct State { value: &Int32 } fn bad(step: (State, String)) @suspends {}",
     ] {
         frontend_error(&format!("import joky/array.{{type Array}} import joky/iter {source}"), &crate::ModuleSources::new());
     }

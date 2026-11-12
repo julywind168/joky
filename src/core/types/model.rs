@@ -434,6 +434,7 @@ impl Type {
         self.is_owner()
             && self.contains_references()
             && !self.contains_unstorable_closures()
+            && !TypeWalk::new(self, TypeEdges::Inline).any(Self::is_scoped_owning_tuple)
             && self.scalar_types().iter().all(|ty| {
                 if let Some(reference) = ty.reference_type() {
                     !reference.mutable && ty.is_suspend_safe_view()
@@ -518,7 +519,25 @@ impl Type {
             })
     }
     pub(crate) fn is_scoped_borrowed_value(&self) -> bool {
-        self.is_scoped_shared_value() || self.is_scoped_cursor_value()
+        self.is_scoped_shared_value()
+            || self.is_scoped_cursor_value()
+            || self.is_scoped_owning_tuple()
+    }
+
+    /// A synchronous transition can return Copy borrow state alongside an independent owner.
+    pub(super) fn is_scoped_owning_pair(elements: &[Self]) -> bool {
+        let [state, item] = elements else {
+            return false;
+        };
+        state.is_aggregate()
+            && state.contains_references()
+            && state.is_copy_argument()
+            && state.scalar_types().iter().all(Self::is_scoped_shared_lane)
+            && item.is_suspend_safe_owner()
+    }
+
+    fn is_scoped_owning_tuple(&self) -> bool {
+        matches!(self, Self::Tuple(tuple) if Self::is_scoped_owning_pair(&tuple.elements))
     }
 
     /// All underlying element types, including shallow nominal owner views.

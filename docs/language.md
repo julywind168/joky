@@ -3455,7 +3455,9 @@ fn answer() -> Int32 {
   `(Int32, Bool)` 与同结构别名等价，与 `(Bool, Int32)`、`(Int32,)` 不同；
   元组中的名义类型仍按原身份比较，重载产生的新记录或枚举不会因外层元组而变得兼容。
 - 全部元素为 Copy 时，元组为 Copy；包含拥有者时，整个元组按值移动。构造、传参、返回、赋值
-  都转移所有权，移动后不能再次使用原值。拥有型元组的其他元素必须是不含引用的 Copy 数据。
+  都转移所有权，移动后不能再次使用原值。拥有型元组通常只接受无引用的 Copy 数据作为其他元素。
+  同步二元组也可将含共享借用的 Copy 聚合放在第一项，将无引用的拥有值放在第二项。
+  共享迭代器用此规则同时交付后继状态和拥有型元素。整个元组仍受第一项的借用约束。
   解构消费整个元组，将每个名称对应的拥有型子树转移到独立绑定；忽略项在解构结束时清理。
   成员记录及嵌套拥有者按元素声明顺序清理。
   引用不允许从借用元组中解构出拥有者。无引用拥有型元组及其完整对象视图支持挂起调用，
@@ -4103,7 +4105,8 @@ fn sample() -> UInt64 {
 共享状态实现标准 `SharedIterator`：关联 Item，`step(self) -> (Self, Option<Self.Item>)`。
 泛型入口写 `I: Copy + SharedIterator`；for 按标准身份调用 step 并保存后继状态，
 同名用户函数或 trait 不改变协议。状态按值复制，每份状态独立推进；所有副本继续借用同一数组。
-返回元素不依赖游标存储，可跨后续 step 使用，但仍阻止原数组的修改、释放或移动。
+借用型元素不依赖游标存储，可跨后续 step 使用，但仍阻止原数组的修改、释放或移动。
+拥有型元素可在来源释放后继续使用。
 适配器第一次返回 None 后永久耗尽；提前退出只结束适配器借用，不消费原数组元素。
 chain_shared 在左源首次返回 None 时立即推进右源。切换后，状态及其副本继续借用两个来源，
 直到最后一次使用。借用检查也将交付的元素引用视为可能来自任一侧，使用这些引用时需保留两侧的共享借用。
@@ -4125,13 +4128,15 @@ filter_shared 接收 `fn(&T) @noescape -> Bool`，仅允许同步、不保存参
 可用于普通 for、编号循环和 `I: Copy + SharedIterator` 泛型入口。
 包装类型使用现有泛型固有方法，没有新增关键字或通用扩展方法。
 
-- filter 接受 `F: Copy + Fn(Item) @noescape -> Bool`，保留原元素；初始 Item 为 &T。
-- map 接受 `F: Copy + Fn(Item) @noescape -> U`，U 必须为不含引用的 Copy 数据，支持标量、
-  Unit、记录、枚举和元组；不支持拥有值或借用结果。
+- filter 接受 `F: Copy + Fn(Item) @noescape -> Bool`，要求 Item 为 Copy；初始 Item 为 &T。
+- map 接受 `F: Copy + Fn(Item) @noescape -> U`，U 必须是受支持的无引用值，例如标量、`String`、
+  `Array` 或拥有记录。`iter.shared(&names).map(|name| { name.clone() })` 每次推进生成一个独立拥有的字符串。
+  元素按值交给循环体或下一个组合器；游标副本各自推进、重新执行回调。
 - 回调可以是同步 noescape 函数指针，或只读 Copy 借用闭包；闭包可直接捕获局部阈值、
   偏移量、字符串等，不需要手写参数类型或 noescape 注解。编译器检查回调不保留元素引用。
   修改捕获变量的 FnMut 闭包和拥有型 move 环境不满足此接口的 Copy + Fn 要求。
-- map 后可继续 filter、skip、enumerate、take、chain 或 zip；此时回调接收转换后的值。
+- 拥有型 map 输出可继续 map、skip、enumerate、take、chain、zip、count 或 fold。
+  zip 的两侧输出须能组成合法的元素元组。筛选原元素可在生成拥有值之前调用 filter。
 - skip 跳过的是前一个组合器的输出项；chain 和 zip 接收另一个 SharedPipeline，chain 要求双方输出的 Item 类型相同。
 - enumerate 将后续操作的 Item 变为 `(UInt64, Item)`。直接对共享数组编号时得到 `(UInt64, &T)`，引用沿用原元素的借用范围。
 - `.count() -> UInt64` / `.fold(initial, combine) -> A` 立即遍历当前管线副本，到第一个 None 停止。
@@ -4149,7 +4154,7 @@ map 捕获加分值，原数组仍可读取。捕获变量在所有流水线副�
 
 SharedSource 的 `get_shared(&self, index: UInt64) -> Option<&Self.Item>` 接入共享源；
 Array 已实现该协议。返回引用须来自源对象，首个缺失项表示结束；实现不得依赖调用方的 prelude。
-`SharedPipeline<I, T>` 的 I 满足 Copy + SharedIterator<Item = T>，T 满足 Copy；
+`SharedPipeline<I, T>` 的 I 满足 Copy + SharedIterator<Item = T>；
 可借助公开协议编写泛型 helper，而不必展开包装类型。
 
 ### 独占流水线方法
@@ -4189,8 +4194,7 @@ for 与显式接口使用相同规则：`pipeline.into_parts()` 消费流水线�
 
 | 遇到的限制 | 原因与替代写法 |
 | --- | --- |
-| map 返回 String、Array 等拥有值，提示不满足 Copy | 共享状态和拥有结果的混合返回尚未开放；在普通 for 内创建结果，或在允许消费输入时使用普通 iter.map |
-| map 返回引用或含引用记录，提示 reference-free Copy | Copy 不代表无引用；返回数值等无引用 Copy 结果，或在普通共享 for 内直接使用借用值 |
+| map 返回引用或含引用的聚合，提示 reference-free storage | 返回无引用结果，例如数值或克隆出的 `String`，或在普通共享 for 内直接使用借用值 |
 | 共享 filter/map 回调不满足 Copy | 只读借用捕获可用；修改捕获变量的闭包与拥有型 move 环境不满足复制要求，需要这些能力时使用显式 for |
 | 独占 filter 回调不满足 Copy 或 Fn | 使用只读捕获。需要修改捕获变量时，可在显式 for 中判断并更新状态 |
 | 独占 filter 的捕获与来源或后续修改冲突 | 筛选前把阈值计算到独立变量，或等流水线最后一次使用后再修改捕获变量 |
@@ -4200,7 +4204,7 @@ for 与显式接口使用相同规则：`pipeline.into_parts()` 消费流水线�
 | 在 @suspends 函数中构造借用流水线 | 当前借用流水线只支持同步语言函数；把遍历放入同步 helper，只向挂起调用者返回无引用 Copy 或拥有结果 |
 
 这些诊断不表示需要更多类型参数。标准库在实例化时发现的类型资格错误指向触发它的调用，
-而不是要求修改 joky/iter 内部实现。当前尚未开放共享 map 的拥有/借用结果、
+而不是要求修改 joky/iter 内部实现。当前尚未开放共享 map 的借用结果、
 独占 map/zip 或 Slice 流水线。
 
 ### IntoIterator 与自动转换
