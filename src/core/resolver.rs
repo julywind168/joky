@@ -718,6 +718,38 @@ fn resolve_calls(
                 )?;
             }
         }
+        Expr::IfLetChain(chain) => {
+            let mut branch = locals.clone();
+            for clause in &mut chain.clauses {
+                let (expr, pattern) = clause.parts_mut();
+                resolve_calls(
+                    expr,
+                    functions,
+                    member_roots,
+                    call_forms,
+                    &mut branch.clone(),
+                )?;
+                if let Some(pattern) = pattern {
+                    branch.extend(pattern.binding_names());
+                }
+            }
+            resolve_calls(
+                &mut chain.then_branch,
+                functions,
+                member_roots,
+                call_forms,
+                &mut branch,
+            )?;
+            if let Some(other) = &mut chain.else_branch {
+                resolve_calls(
+                    other,
+                    functions,
+                    member_roots,
+                    call_forms,
+                    &mut locals.clone(),
+                )?;
+            }
+        }
         Expr::If {
             condition,
             then_branch,

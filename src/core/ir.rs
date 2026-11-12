@@ -2573,6 +2573,7 @@ impl FunctionPlan {
             Expr::While { .. }
             | Expr::If { .. }
             | Expr::IfChain { .. }
+            | Expr::IfLetChain(_)
             | Expr::Logical { .. }
             | Expr::Return { .. }
             | Expr::Break { .. }

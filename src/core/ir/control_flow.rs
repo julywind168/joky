@@ -1,5 +1,6 @@
 //! Shared control-flow typing and lowering. Abrupt exits have no normal value.
 use super::*;
+use crate::parser::ast::{ConditionClause, IfLetChain};
 
 pub(super) fn is_true_literal(expr: &Expr) -> bool {
     matches!(
@@ -379,7 +380,7 @@ impl FunctionPlan {
                     Ok(Flow::Value(None))
                 }
             }
-            Expr::If { .. } | Expr::IfChain { .. } | Expr::Logical { .. } => {
+            Expr::If { .. } | Expr::IfChain { .. } | Expr::IfLetChain(_) | Expr::Logical { .. } => {
                 self.conditional_expr(expr, vars, functions, suspends, types, expected)
             }
             _ => unreachable!("expected a control-flow expression"),
@@ -397,26 +398,13 @@ impl FunctionPlan {
         types: &TypeRegistry,
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
-        let values = arms.clone().map(|(_, body)| body).chain(fallback);
-        let hint = fallback.and_then(|_| {
-            values
-                .clone()
-                .find_map(|body| self.type_hint(body, vars, functions, types))
-        });
-        let aggregate = if hint.is_none() && expected.is_none() {
-            values
-                .clone()
-                .find_map(|body| self.aggregate_default_hint(body, vars, functions, types))
-        } else {
-            None
-        };
-        let expected = if expected
-            .is_some_and(|ty| ty.dyn_interface().is_some() || arrays::element_type(ty).is_some())
-        {
-            expected
-        } else {
-            hint.as_ref().or(expected).or(aggregate.as_ref())
-        };
+        let values = arms
+            .clone()
+            .map(|(_, body)| body)
+            .chain(fallback)
+            .map(|body| (body, vars));
+        let expected = self.if_result_hint(values, fallback.is_some(), functions, types, expected);
+        let expected = expected.as_ref();
         let exit = self.label_count;
         self.label_count += 1;
         let mut result = Flow::Diverged;
@@ -477,6 +465,163 @@ impl FunctionPlan {
         } else {
             result = Flow::Value(None);
         }
+        self.finish_if(result, exit)
+    }
+
+    fn if_let_chain(
+        &mut self,
+        chain: &IfLetChain,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Result<Flow, Error> {
+        let failure = self.label_count;
+        let exit = failure + 1;
+        self.label_count += 2;
+        let depth = self.local_scopes.len();
+        self.local_scopes.push(Vec::new());
+        let mut local = vars.clone();
+        for (i, clause) in chain.clauses.iter().enumerate() {
+            let following = chain
+                .clauses
+                .get(i + 1)
+                .map_or(&chain.then_branch, ConditionClause::expr);
+            match clause {
+                ConditionClause::Test(test) => {
+                    self.local_scopes.push(Vec::new());
+                    let test_value =
+                        self.expr(test, &mut local.clone(), functions, suspends, types)?;
+                    self.end_local_scope();
+                    let Flow::Value(test_value) = test_value else {
+                        return Err(unreachable_error(following));
+                    };
+                    if slot_type(&test_value) != Type::Bool {
+                        return Err(type_error(
+                            &test.span(),
+                            ErrorCode::TypeMismatch,
+                            "Condition chain test must be Bool",
+                        ));
+                    }
+                    let passed = self.label_count;
+                    self.label_count += 1;
+                    self.emit(Op::Branch {
+                        condition: test_value.unwrap(),
+                        then_label: passed,
+                        else_label: failure,
+                    });
+                    self.emit(Op::Label(passed));
+                }
+                ConditionClause::Let { pattern, value } => {
+                    let Flow::Value(input) =
+                        self.match_input(value, &local, functions, suspends, types, None)?
+                    else {
+                        return Err(unreachable_error(following));
+                    };
+                    let span = value.span();
+                    let mut input = input.ok_or_else(|| {
+                        type_error(
+                            &span,
+                            ErrorCode::TypeMismatch,
+                            "A let condition requires a matchable value",
+                        )
+                    })?;
+                    let (matched, borrowed) = self.match_type(&input.ty, types, span)?;
+                    let pattern = self.check_match_pattern(pattern, &matched, borrowed, types)?;
+                    if let Some(mutable) = borrowed {
+                        input.ty = Type::reference(matched, mutable);
+                        input = self.reference_value(Some(input), false)?.unwrap();
+                    }
+                    let choice =
+                        self.test_match_arm(&pattern, &input, borrowed.is_some(), Some(failure))?;
+                    self.bind_match_arm(
+                        &pattern,
+                        &input,
+                        borrowed.is_some(),
+                        choice.as_ref(),
+                        &mut local,
+                    )?;
+                }
+            }
+        }
+
+        let other = chain.else_branch.as_ref();
+        let branches =
+            std::iter::once((&chain.then_branch, &local)).chain(other.map(|body| (body, vars)));
+        let expected = self.if_result_hint(branches, other.is_some(), functions, types, expected);
+        let expected = expected.as_ref();
+        let mut result = Flow::Diverged;
+        if let Flow::Value(value) = self.expr_expected(
+            &chain.then_branch,
+            &mut local,
+            functions,
+            suspends,
+            types,
+            expected,
+        )? {
+            if other.is_none() && value.is_some() {
+                return Err(type_error(
+                    &chain.then_branch.span(),
+                    ErrorCode::TypeMismatch,
+                    "if without else must have a Unit then branch",
+                ));
+            }
+            self.merge_if_value(&mut result, &value)?;
+            self.escape_owner(&result);
+            self.end_locals_from(depth);
+            self.emit(Op::Jump(exit));
+        }
+
+        // Ownership and place cleanup only act on slots initialized on the
+        // current path. Every failed clause shares the same cleanup and else.
+        self.emit(Op::Label(failure));
+        self.end_local_scope();
+        if let Some(other) = other {
+            if let Flow::Value(value) = self.expr_expected(
+                other,
+                &mut vars.clone(),
+                functions,
+                suspends,
+                types,
+                expected,
+            )? {
+                self.merge_if_value(&mut result, &value)?;
+            }
+        } else {
+            result = Flow::Value(None);
+        }
+        self.finish_if(result, exit)
+    }
+
+    fn if_result_hint<'a>(
+        &self,
+        branches: impl Iterator<Item = (&'a Expr, &'a HashMap<String, Binding>)> + Clone,
+        has_else: bool,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Option<Type> {
+        if expected
+            .is_some_and(|ty| ty.dyn_interface().is_some() || arrays::element_type(ty).is_some())
+        {
+            return expected.cloned();
+        }
+        let hint = has_else
+            .then(|| {
+                branches
+                    .clone()
+                    .find_map(|(body, vars)| self.type_hint(body, vars, functions, types))
+            })
+            .flatten();
+        hint.or_else(|| expected.cloned()).or_else(|| {
+            branches
+                .clone()
+                .find_map(|(body, vars)| self.aggregate_default_hint(body, vars, functions, types))
+        })
+    }
+
+    fn finish_if(&mut self, result: Flow, exit: usize) -> Result<Flow, Error> {
         let Flow::Value(mut result) = result else {
             return Ok(Flow::Diverged);
         };
@@ -545,6 +690,9 @@ impl FunctionPlan {
                 types,
                 expected,
             ),
+            Expr::IfLetChain(chain) => {
+                self.if_let_chain(chain, vars, functions, suspends, types, expected)
+            }
             Expr::Logical { op, lhs, rhs, .. } => {
                 let Flow::Value(left) = self.expr(lhs, vars, functions, suspends, types)? else {
                     return Err(unreachable_error(rhs));

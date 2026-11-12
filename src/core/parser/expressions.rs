@@ -1,6 +1,11 @@
 //! Expressions syntax.
 use super::*;
 
+pub(super) enum ParsedCondition {
+    Boolean(Expr),
+    Pattern(Vec<ConditionClause>),
+}
+
 impl Parser<'_> {
     /// Semicolons sequence expressions at the lowest precedence. Declarations
     /// and assignment RHSs use parse_assignment so they cannot swallow the
@@ -108,6 +113,10 @@ impl Parser<'_> {
             _ => {}
         }
         let lhs = self.parse_range(subscript)?;
+        self.parse_assignment_tail(lhs)
+    }
+
+    fn parse_assignment_tail(&mut self, lhs: Expr) -> Result<Expr, Diagnostic> {
         if self.at_expression_break()
             || !matches!(self.peek(), TokenKind::Eq | TokenKind::CompoundAssign(_))
         {
@@ -161,13 +170,25 @@ impl Parser<'_> {
         let start = if subscript && self.peek() == &TokenKind::DotDot {
             None
         } else {
-            let start = self.parse_logical_or()?;
-            if self.at_expression_break()
-                || !matches!(self.peek(), TokenKind::DotDot | TokenKind::DotDotEq)
+            Some(self.parse_logical_or()?)
+        };
+        self.parse_range_tail(start, offset, subscript)
+    }
+
+    fn parse_range_tail(
+        &mut self,
+        start: Option<Expr>,
+        offset: usize,
+        subscript: bool,
+    ) -> Result<Expr, Diagnostic> {
+        let start = match start {
+            Some(start)
+                if self.at_expression_break()
+                    || !matches!(self.peek(), TokenKind::DotDot | TokenKind::DotDotEq) =>
             {
                 return Ok(start);
             }
-            Some(start)
+            start => start,
         };
         let inclusive = self.peek() == &TokenKind::DotDotEq;
         let open_end = subscript
@@ -238,15 +259,102 @@ impl Parser<'_> {
             self.check_expression_depth(depth, self.peek_span())?;
             self.advance();
             let rhs = operand(self)?;
-            let span = self.span(lhs.span().start(), rhs.span().end());
-            lhs = Expr::Logical {
-                op: op.clone(),
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
-                span,
-            };
+            lhs = self.logical_expr(op.clone(), lhs, rhs);
         }
         Ok(lhs)
+    }
+
+    fn logical_expr(&self, op: LogicalOp, lhs: Expr, rhs: Expr) -> Expr {
+        let span = self.span(lhs.span().start(), rhs.span().end());
+        Expr::Logical {
+            op,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            span,
+        }
+    }
+
+    pub(super) fn parse_branch_condition(&mut self) -> Result<ParsedCondition, Diagnostic> {
+        let previous = std::mem::replace(&mut self.allow_record, false);
+        let result = self.nested_parse(Self::parse_branch_condition_inner);
+        self.allow_record = previous;
+        result
+    }
+
+    fn parse_branch_condition_inner(&mut self) -> Result<ParsedCondition, Diagnostic> {
+        if matches!(
+            self.peek(),
+            TokenKind::Return | TokenKind::Break | TokenKind::Continue
+        ) {
+            return self
+                .parse_assignment_inner(false)
+                .map(ParsedCondition::Boolean);
+        }
+        let start = self.peek_span().start();
+        let mut condition = self.parse_condition_conjunction()?;
+        let mut depth = 1;
+        let or_error = "Parenthesize `||` expressions in a condition containing `let`";
+        while !self.at_expression_break() && self.peek() == &TokenKind::OrOr {
+            let ParsedCondition::Boolean(left) = condition else {
+                return Err(self.error(or_error.into()));
+            };
+            let line = self.peek_line();
+            let span = self.peek_span();
+            depth += 1;
+            self.check_expression_depth(depth, span)?;
+            self.advance();
+            let ParsedCondition::Boolean(right) = self.parse_condition_conjunction()? else {
+                return Err(Diagnostic::at(line, span, or_error));
+            };
+            condition = ParsedCondition::Boolean(self.logical_expr(LogicalOp::Or, left, right));
+        }
+        if let ParsedCondition::Boolean(expr) = condition {
+            let expr = self.parse_range_tail(Some(expr), start, false)?;
+            self.parse_assignment_tail(expr)
+                .map(ParsedCondition::Boolean)
+        } else {
+            Ok(condition)
+        }
+    }
+
+    fn parse_condition_conjunction(&mut self) -> Result<ParsedCondition, Diagnostic> {
+        let first = self.parse_condition_clause()?;
+        if self.at_expression_break() || self.peek() != &TokenKind::AndAnd {
+            return Ok(match first {
+                ConditionClause::Test(expr) => ParsedCondition::Boolean(expr),
+                binding => ParsedCondition::Pattern(vec![binding]),
+            });
+        }
+
+        let mut clauses = vec![first];
+        while !self.at_expression_break() && self.peek() == &TokenKind::AndAnd {
+            self.check_expression_depth(clauses.len() + 1, self.peek_span())?;
+            self.advance();
+            clauses.push(self.parse_condition_clause()?);
+        }
+        if clauses.iter().any(|clause| clause.pattern().is_some()) {
+            return Ok(ParsedCondition::Pattern(clauses));
+        }
+        let expr = clauses
+            .into_iter()
+            .map(|clause| match clause {
+                ConditionClause::Test(expr) => expr,
+                ConditionClause::Let { .. } => unreachable!(),
+            })
+            .reduce(|left, right| self.logical_expr(LogicalOp::And, left, right))
+            .unwrap();
+        Ok(ParsedCondition::Boolean(expr))
+    }
+
+    fn parse_condition_clause(&mut self) -> Result<ConditionClause, Diagnostic> {
+        if self.peek() != &TokenKind::Let {
+            return self.parse_comparison().map(ConditionClause::Test);
+        }
+        self.advance();
+        let pattern = self.parse_match_pattern()?;
+        self.expect(&TokenKind::Eq)?;
+        let value = self.parse_comparison()?;
+        Ok(ConditionClause::Let { pattern, value })
     }
 
     fn comparison_op(&self) -> Option<BinOp> {

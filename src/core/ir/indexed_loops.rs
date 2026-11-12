@@ -321,6 +321,38 @@ impl Inference<'_> {
                     depends |= descend(body, &mut vars.clone(), &mut tracked.clone(), ty.as_ref())?;
                 }
             }
+            Expr::IfLetChain(chain) => {
+                let mut local = vars.clone();
+                let mut names = tracked.clone();
+                for clause in &chain.clauses {
+                    let pattern = clause.pattern();
+                    let dependent = descend(
+                        clause.expr(),
+                        &mut local.clone(),
+                        &mut names.clone(),
+                        pattern.is_none().then_some(&Type::Bool),
+                    )?;
+                    if let Some(pattern) = pattern {
+                        let input =
+                            self.plan
+                                .bound_hint(clause.expr(), &local, self.functions, self.types);
+                        self.plan
+                            .hint_pattern_bindings(pattern, input, &mut local, self.types);
+                        for name in pattern.binding_names() {
+                            names.remove(&name);
+                            if dependent {
+                                names.insert(name);
+                            }
+                        }
+                    }
+                }
+                let ty = expected.cloned().or_else(|| self.hint(expr, vars));
+                depends = descend(&chain.then_branch, &mut local, &mut names, ty.as_ref())?;
+                if let Some(other) = &chain.else_branch {
+                    depends |=
+                        descend(other, &mut vars.clone(), &mut tracked.clone(), ty.as_ref())?;
+                }
+            }
             Expr::BinOp { op, lhs, rhs, .. } => {
                 let ty = self
                     .plan

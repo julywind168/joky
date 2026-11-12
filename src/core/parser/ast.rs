@@ -293,6 +293,43 @@ pub enum Expr {
         pattern: Box<Pattern>,
         span: Span,
     },
+    IfLetChain(Box<IfLetChain>),
+}
+
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
+pub struct IfLetChain {
+    pub clauses: Vec<ConditionClause>,
+    pub then_branch: Expr,
+    pub else_branch: Option<Expr>,
+    pub span: Span,
+}
+
+#[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
+pub enum ConditionClause {
+    Test(Expr),
+    Let { pattern: Pattern, value: Expr },
+}
+
+impl ConditionClause {
+    pub(crate) fn expr(&self) -> &Expr {
+        match self {
+            Self::Test(expr) | Self::Let { value: expr, .. } => expr,
+        }
+    }
+
+    pub(crate) fn pattern(&self) -> Option<&Pattern> {
+        match self {
+            Self::Test(_) => None,
+            Self::Let { pattern, .. } => Some(pattern),
+        }
+    }
+
+    pub(crate) fn parts_mut(&mut self) -> (&mut Expr, Option<&mut Pattern>) {
+        match self {
+            Self::Test(expr) => (expr, None),
+            Self::Let { pattern, value } => (value, Some(pattern)),
+        }
+    }
 }
 
 #[derive(joky_image_derive::Image, Debug, Clone, PartialEq)]
@@ -358,6 +395,7 @@ impl Expr {
         match self {
             Self::IndexedLoop(loop_) => loop_.span,
             Self::LetElse(binding) => binding.span,
+            Self::IfLetChain(chain) => chain.span,
             Self::When(block) => block.span,
             Self::AnonymousFunction(function) => function.span,
             Self::GenericName(name) => name.span,
@@ -403,6 +441,10 @@ impl Expr {
 
     pub(crate) fn with_span(self, span: Span) -> Self {
         match self {
+            Self::IfLetChain(mut chain) => {
+                chain.span = span;
+                Self::IfLetChain(chain)
+            }
             Self::Is { value, pattern, .. } => Self::Is {
                 value,
                 pattern,
@@ -1518,6 +1560,13 @@ impl Expr {
     pub(crate) fn children(&self) -> Vec<&Expr> {
         match self {
             Expr::LetElse(binding) => vec![&binding.value, &binding.fallback],
+            Expr::IfLetChain(chain) => chain
+                .clauses
+                .iter()
+                .map(ConditionClause::expr)
+                .chain(std::iter::once(&chain.then_branch))
+                .chain(chain.else_branch.iter())
+                .collect(),
             Expr::IndexedLoop(loop_) => vec![&loop_.body],
             Expr::When(w) => w
                 .paths

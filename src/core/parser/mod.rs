@@ -174,17 +174,24 @@ impl<'src> Parser<'src> {
         &mut self,
         parse: fn(&mut Self) -> Result<Expr, Diagnostic>,
     ) -> Result<Expr, Diagnostic> {
-        self.check_expression_depth(self.expression_depth + 1, self.peek_span())?;
-        self.expression_depth += 1;
-        let result = parse(self);
-        self.expression_depth -= 1;
-        let expr = result?;
+        let expr = self.nested_parse(parse)?;
         // Postfix and generated syntax can build deep trees without parser recursion.
         // Bound them before cloning, resolving, or destroying a larger enclosing tree.
         if let Some(span) = expr.excessive_depth(MAX_EXPRESSION_DEPTH) {
             return Err(self.expression_depth_error(span));
         }
         Ok(expr)
+    }
+
+    fn nested_parse<T>(
+        &mut self,
+        parse: fn(&mut Self) -> Result<T, Diagnostic>,
+    ) -> Result<T, Diagnostic> {
+        self.check_expression_depth(self.expression_depth + 1, self.peek_span())?;
+        self.expression_depth += 1;
+        let result = parse(self);
+        self.expression_depth -= 1;
+        result
     }
 
     fn peek(&self) -> &TokenKind {

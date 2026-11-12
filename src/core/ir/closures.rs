@@ -127,6 +127,19 @@ fn walk_free(
                     descend(child, &mut bound.clone())?;
                 }
             }
+            Expr::IfLetChain(chain) => {
+                let mut inner = bound.clone();
+                for clause in &chain.clauses {
+                    descend(clause.expr(), &mut inner.clone())?;
+                    if let Some(pattern) = clause.pattern() {
+                        inner.extend(pattern.binding_names());
+                    }
+                }
+                descend(&chain.then_branch, &mut inner)?;
+                if let Some(other) = &chain.else_branch {
+                    descend(other, &mut bound.clone())?;
+                }
+            }
             Expr::If {
                 condition,
                 then_branch,

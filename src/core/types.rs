@@ -1471,6 +1471,17 @@ pub(crate) fn resolve_pattern_heads(
                     pending.extend(arms.iter_mut().flat_map(|(test, body)| [test, body]));
                     pending.extend(fallback.as_deref_mut());
                 }
+                Expr::IfLetChain(chain) => {
+                    for clause in &mut chain.clauses {
+                        let (expr, pattern) = clause.parts_mut();
+                        for payload in pattern.into_iter().flat_map(|p| p.payloads_mut()) {
+                            walk_payload(payload, aliases, registry)?;
+                        }
+                        pending.push(expr);
+                    }
+                    pending.push(&mut chain.then_branch);
+                    pending.extend(chain.else_branch.iter_mut());
+                }
                 Expr::If {
                     condition,
                     then_branch,
@@ -1676,6 +1687,19 @@ pub(crate) fn map_syntax(
                 map_syntax(body, map, substitutions)?;
             }
             if let Some(other) = fallback {
+                map_syntax(other, map, substitutions)?;
+            }
+        }
+        Expr::IfLetChain(chain) => {
+            for clause in &mut chain.clauses {
+                let (expr, pattern) = clause.parts_mut();
+                for payload in pattern.into_iter().flat_map(|p| p.payloads_mut()) {
+                    map_payload_types(payload, map, substitutions)?;
+                }
+                map_syntax(expr, map, substitutions)?;
+            }
+            map_syntax(&mut chain.then_branch, map, substitutions)?;
+            if let Some(other) = &mut chain.else_branch {
                 map_syntax(other, map, substitutions)?;
             }
         }

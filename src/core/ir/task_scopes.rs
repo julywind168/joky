@@ -470,6 +470,24 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                     scopes.pop();
                 }
             }
+            Expr::IfLetChain(chain) => {
+                scopes.push(std::collections::HashSet::new());
+                for clause in &chain.clauses {
+                    scopes.push(std::collections::HashSet::new());
+                    visit(clause.expr(), scopes, walk);
+                    scopes.pop();
+                    if let Some(pattern) = clause.pattern() {
+                        scopes.last_mut().unwrap().extend(pattern.binding_names());
+                    }
+                }
+                visit(&chain.then_branch, scopes, walk);
+                scopes.pop();
+                if let Some(other) = &chain.else_branch {
+                    scopes.push(std::collections::HashSet::new());
+                    visit(other, scopes, walk);
+                    scopes.pop();
+                }
+            }
             Expr::If {
                 condition,
                 then_branch,

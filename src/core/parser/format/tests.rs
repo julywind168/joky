@@ -208,6 +208,14 @@ fn format_keeps_negative_patterns_and_attribute_literals_together() {
 }
 
 #[test]
+fn format_if_let_condition_chain_and_fallback() {
+    assert_format(
+        "fn f(x:Option<Int32>)->Int32{if true&&let Some(n)=x&&n>0{n}else{0}}",
+        "fn f(x: Option<Int32>) -> Int32 {\n    if true && let Some(n) = x && n > 0 {\n        n\n    } else {\n        0\n    }\n}\n",
+    );
+}
+
+#[test]
 fn format_let_else_and_following_binding_use() {
     assert_format(
         "fn f(value: Option<Int32>) -> Int32 {let Some(n)=value else {return 0};n}",

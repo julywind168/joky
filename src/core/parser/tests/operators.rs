@@ -99,6 +99,21 @@ fn incomplete_conditionals_and_logical_operators_report_located_errors() {
 }
 
 #[test]
+fn if_let_condition_chains_require_grouped_disjunctions() {
+    for condition in [
+        "let Some(x) = input || true",
+        "true || let Some(x) = input",
+        "true || false && let Some(x) = input",
+        "let Some(x) = input && x > 0 || false",
+    ] {
+        let source = format!("fn f(input: Option<Int32>) {{ if {condition} {{}} }}");
+        let error = parse(&source).unwrap_err();
+        assert_eq!(error.span.slice(&source), Some("||"));
+        assert!(error.message.contains("Parenthesize"), "{error}");
+    }
+}
+
+#[test]
 fn comparisons_require_explicit_grouping_and_unary_operators_require_operands() {
     for expression in [
         "1 < 2 < 3",

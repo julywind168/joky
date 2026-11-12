@@ -1519,6 +1519,104 @@ fn conditional_patterns_run_on_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn if_let_condition_chains_execute_on_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "condition_chains.jk",
+        r#"
+        import joky/array.{type Array}
+        import joky/task
+        enum Packet { Data((Int32, Option<Int32>)), Empty }
+
+        fn choose(input: Packet, active: Bool) @suspends -> Int32 {
+            let x = 11
+            var calls = 0
+            let result = if active && let Data((x, rest)) = input &&
+                { calls += 1; task.yield_now(); x > 0 } &&
+                let Some(x) = rest && (x == 6 || x == 7) {
+                let read = move || { x }
+                read()
+            } else if let Some(out) = Some(x) && out > 0 {
+                out
+            } else {
+                -1
+            }
+            result + 100 * calls
+        }
+
+        fn drain() -> Int32 {
+            var i = 0
+            var sum = 0
+            while i < 6 && let Some(n) = { i += 1; Some(i) } && n < 5 {
+                if n == 2 { continue }
+                sum += n
+            }
+            sum * 10 + i
+        }
+
+        fn borrowed(var value: Option<Array<Int32>>) -> Int32 {
+            if let Some(items) = &mut value && items.len() == 1 {
+                items.push(22)
+            }
+            if let Some(items) = &value && items.len() == 2 { items[0] + items[1] } else { 0 }
+        }
+
+        fn owning(value: Option<String>, flag: Bool) -> String {
+            if let Some(text) = value && flag { text } else { "none" }
+        }
+
+        fn grouped(a: Bool, b: Bool) -> Int32 {
+            if let false = (a && b) && true { 1 } else { 0 }
+        }
+
+        fn offset(index: UInt64) -> UInt64 { index + 40 }
+
+        fn indexed() -> UInt64 {
+            var result: UInt64 = 0
+            for index, _ in [0, 0, 0] {
+                if let Some(n) = Some(index) && n > 0 {
+                    result = offset(n)
+                }
+            }
+            result
+        }
+
+        fn main() @suspends {
+            println(choose(Packet.Data((2, Some(6))), true))
+            println(choose(Packet.Data((2, Some(6))), false))
+            println(choose(Packet.Empty, true))
+            println(choose(Packet.Data((-1, Some(6))), true))
+            println(choose(Packet.Data((2, None)), true))
+            println(choose(Packet.Data((2, Some(0))), true))
+            println(drain())
+            println(borrowed(Some([20])))
+            println(owning(Some("kept"), true))
+            println(owning(Some("discarded"), false))
+            println(grouped(false, true))
+            println(indexed())
+            let value = 77
+            scope {
+                branch {
+                    if let Some(value) = Some(3) && value < 0 {
+                        println(value)
+                    } else {
+                        println(value)
+                    }
+                }
+            }
+        }
+        "#,
+    );
+    work.assert_all_backends(
+        "condition_chains.jk",
+        &[],
+        b"106\n11\n11\n111\n111\n111\n85\n42\nkept\nnone\n1\n42\n77\n",
+        0,
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn is_pattern_tests_execute_on_all_backends() {
     let work = Workspace::new();
     work.write(

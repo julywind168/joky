@@ -208,6 +208,12 @@ impl Syntax {
                             syntax.anchor(body, *span);
                         }
                     }
+                    Expr::IfLetChain(chain) => {
+                        syntax.anchor(&chain.then_branch, chain.span);
+                        if let Some(body) = &chain.else_branch {
+                            syntax.anchor(body, chain.span);
+                        }
+                    }
                     Expr::While { body, span, .. }
                     | Expr::Isolate { body, span }
                     | Expr::TaskScope { body, span }

@@ -1,4 +1,5 @@
 //! Control flow syntax.
+use super::expressions::ParsedCondition;
 use super::*;
 
 impl Parser<'_> {
@@ -66,7 +67,7 @@ impl Parser<'_> {
     }
 
     /// Share enum pattern syntax with match, including recursive payloads.
-    fn parse_match_pattern(&mut self) -> Result<Pattern, Diagnostic> {
+    pub(super) fn parse_match_pattern(&mut self) -> Result<Pattern, Diagnostic> {
         if matches!(
             self.peek(),
             TokenKind::LBracket
@@ -111,17 +112,6 @@ impl Parser<'_> {
         Ok(pattern)
     }
 
-    fn parse_let_condition(&mut self) -> Result<Option<(Pattern, Expr)>, Diagnostic> {
-        if self.peek() != &TokenKind::Let {
-            return Ok(None);
-        }
-        self.advance();
-        let pattern = self.parse_match_pattern()?;
-        self.expect(&TokenKind::Eq)?;
-        let value = self.parse_condition()?;
-        Ok(Some((pattern, value)))
-    }
-
     /// Conditional patterns lower to two match arms, retaining normal match
     /// binding, ownership and borrow planning. The fallback is always implicit.
     fn conditional_match(
@@ -151,6 +141,35 @@ impl Parser<'_> {
             ],
             span,
         }
+    }
+
+    fn pattern_condition(
+        mut clauses: Vec<ConditionClause>,
+        then_branch: Expr,
+        else_branch: Option<Expr>,
+        span: Span,
+    ) -> Expr {
+        if clauses.len() == 1 {
+            let ConditionClause::Let { pattern, value } = clauses.pop().unwrap() else {
+                unreachable!("a pattern condition contains a let clause");
+            };
+            return Self::conditional_match(
+                pattern,
+                value,
+                then_branch,
+                else_branch.unwrap_or(Expr::Block {
+                    exprs: vec![],
+                    span,
+                }),
+                span,
+            );
+        }
+        Expr::IfLetChain(Box::new(IfLetChain {
+            clauses,
+            then_branch,
+            else_branch,
+            span,
+        }))
     }
 
     /// Lower to ordinary scoped bindings, match and while. Unspellable aliases
@@ -314,27 +333,29 @@ impl Parser<'_> {
     pub(super) fn parse_while(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
         self.expect(&TokenKind::While)?;
-        let matched = self.parse_let_condition()?;
-        let condition = if matched.is_some() {
-            Expr::Literal {
-                literal: Literal::Bool(true),
-                span: self.last_span,
-            }
-        } else {
-            self.parse_condition()?
-        };
-        let mut body = self.parse_block()?;
+        let condition = self.parse_branch_condition()?;
+        let condition_end = self.last_span;
+        let body = self.parse_block()?;
         let span = self.span(start, self.last_span.end());
-        if let Some((pattern, value)) = matched {
-            let body_span = body.span();
-            // Loop bodies discard their values even when the fallback diverges.
-            let success = Expr::Sequence {
-                exprs: vec![body],
-                trailing: true,
-                span: body_span,
-            };
-            body = Self::conditional_match(pattern, value, success, Expr::Break { span }, span);
-        }
+        let (condition, body) = match condition {
+            ParsedCondition::Boolean(condition) => (condition, body),
+            ParsedCondition::Pattern(clauses) => {
+                // Loop bodies discard their values even when the fallback diverges.
+                let body_span = body.span();
+                let success = Expr::Sequence {
+                    exprs: vec![body],
+                    trailing: true,
+                    span: body_span,
+                };
+                (
+                    Expr::Literal {
+                        literal: Literal::Bool(true),
+                        span: condition_end,
+                    },
+                    Self::pattern_condition(clauses, success, Some(Expr::Break { span }), span),
+                )
+            }
+        };
         Ok(Expr::While {
             condition: Box::new(condition),
             body: Box::new(body),
@@ -348,31 +369,28 @@ impl Parser<'_> {
         let fallback = loop {
             let arm_start = self.peek_span().start();
             self.expect(&TokenKind::If)?;
-            if let Some((pattern, value)) = self.parse_let_condition()? {
-                let body = self.parse_block()?;
-                let other = if self.peek() == &TokenKind::Else {
-                    self.advance();
-                    if self.peek() == &TokenKind::If {
-                        Some(self.nested_expression(Self::parse_if)?)
+            let condition = self.parse_branch_condition()?;
+            let body = self.parse_block()?;
+            let condition = match condition {
+                ParsedCondition::Boolean(condition) => condition,
+                ParsedCondition::Pattern(clauses) => {
+                    let other = if self.peek() == &TokenKind::Else {
+                        self.advance();
+                        if self.peek() == &TokenKind::If {
+                            Some(self.nested_expression(Self::parse_if)?)
+                        } else {
+                            Some(self.parse_block()?)
+                        }
                     } else {
-                        Some(self.parse_block()?)
-                    }
-                } else {
-                    None
-                };
-                let span = self.span(arm_start, self.last_span.end());
-                break Some(Box::new(Self::conditional_match(
-                    pattern,
-                    value,
-                    body,
-                    other.unwrap_or(Expr::Block {
-                        exprs: vec![],
-                        span,
-                    }),
-                    span,
-                )));
-            }
-            arms.push((self.parse_condition()?, self.parse_block()?));
+                        None
+                    };
+                    let span = self.span(arm_start, self.last_span.end());
+                    break Some(Box::new(Self::pattern_condition(
+                        clauses, body, other, span,
+                    )));
+                }
+            };
+            arms.push((condition, body));
             if self.peek() != &TokenKind::Else {
                 break None;
             }

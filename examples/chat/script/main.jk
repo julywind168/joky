@@ -153,8 +153,8 @@ fn forget(client: Client) @suspends {
     }
 }
 fn reclaim(host: Host, room: &Option<String>) @suspends {
-    if host.config.reclaim_empty {
-        if let Some(name) = room { domain.remove_named_if(host.rooms, name, empty); }
+    if host.config.reclaim_empty && let Some(name) = room {
+        domain.remove_named_if(host.rooms, name, empty);
     }
 }
 

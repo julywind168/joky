@@ -209,10 +209,8 @@ fn add(record: &mut Map<String, json.Value>, field: Field) -> Result<Unit, LogEr
     if record.contains_key(&name) {
         return Err(DuplicateField)
     }
-    if let Text(s) = &value {
-        if s.byte_length() > 4096 {
-            return Err(ValueTooLong)
-        }
+    if let Text(s) = &value && s.byte_length() > 4096 {
+        return Err(ValueTooLong)
     }
     record.insert(name, value)
     Ok({})

@@ -7,6 +7,107 @@ use crate::ErrorCode;
 const SOURCE: &str = include_str!("../../../../tests/fixtures/conditional_patterns.jk");
 
 #[test]
+fn if_let_condition_chains_check_binding_scope_and_boolean_tests() {
+    for (source, code, message) in [
+        (
+            "fn f() -> Int32 { if let Some(n) = Some(1) && true { n } else { n } }",
+            ErrorCode::UnknownName,
+            "n",
+        ),
+        (
+            "fn f() { if n > 0 && let Some(n) = Some(1) {} }",
+            ErrorCode::UnknownName,
+            "n",
+        ),
+        (
+            "fn f() { if let Some(n) = Some(1) && n {} }",
+            ErrorCode::TypeMismatch,
+            "must be Bool",
+        ),
+        (
+            "fn f() { if let Some(n) = Some(1) && true { n } }",
+            ErrorCode::TypeMismatch,
+            "Unit then branch",
+        ),
+    ] {
+        let error = frontend_error(source, &crate::ModuleSources::new());
+        assert_eq!(error.code(), code, "{source}: {error}");
+        assert!(error.message().contains(message), "{source}: {error}");
+    }
+}
+
+#[test]
+fn if_let_condition_chains_resume_once_and_clean_failed_bindings_before_else() {
+    let source = r#"
+        import joky/array.{type Array}
+        extern fn record(value: Int32) -> Int32
+        extern fn delayed_value(value: Int32) @suspends -> Int32
+        enum Packet { Data((Array<Int32>, Array<Int32>)) }
+
+        fn packet(select: Int32) -> Packet {
+            if record(select) == 1 { Packet.Data(([20], [2])) } else { Packet.Data(([30], [2])) }
+        }
+
+        fn follow(n: Int32) -> Option<Array<Int32>> {
+            Some([record(n + 100)])
+        }
+
+        fn run(select: Int32) @suspends -> Int32 {
+            if select > 0 && let Packet.Data((first, _)) = packet(select) &&
+                delayed_value(record(first[0])) == 21 && let Some(next) = follow(first[0]) {
+                delayed_value(record(next[0]))
+            } else {
+                delayed_value(record(-1))
+            }
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        for (select, before, after, result) in [
+            (0, &[-1, -1][..], &[-1, -1][..], 0),
+            (1, &[1, 20, 20][..], &[1, 20, 20, 120, 120, 120][..], 121),
+            (2, &[2, 30, 30][..], &[2, 30, 30, -1, -1][..], 0),
+        ] {
+            for cancel in [false, true] {
+                READY.with(|ready| ready.set(false));
+                EVENTS.with(|events| events.borrow_mut().clear());
+                let mut task = vm.call_async("run", &[select]).unwrap();
+                for _ in 0..20 {
+                    if EVENTS.with(|events| events.borrow().len()) == before.len() {
+                        break;
+                    }
+                    task.resume().unwrap();
+                }
+                EVENTS.with(|events| assert_eq!(*events.borrow(), before));
+                assert!(!task.is_finished());
+                READY.with(|ready| ready.set(true));
+                for _ in 0..20 {
+                    if EVENTS.with(|events| events.borrow().len()) == after.len() {
+                        break;
+                    }
+                    task.resume().unwrap();
+                }
+                EVENTS.with(|events| assert_eq!(*events.borrow(), after));
+                assert!(!task.is_finished());
+                LIVE.with(|live| assert_eq!(live.get() == 0, select != 1));
+                if !cancel {
+                    for _ in 0..20 {
+                        if task.is_finished() {
+                            break;
+                        }
+                        task.resume().unwrap();
+                    }
+                    assert_eq!(task.cps_result(), Some(result));
+                }
+                drop(task);
+                EVENTS.with(|events| assert_eq!(*events.borrow(), after));
+                LIVE.with(|live| assert_eq!(live.get(), 0));
+            }
+        }
+    }
+}
+
+#[test]
 fn match_alternatives_release_owned_payloads_on_completion_and_cancellation() {
     let source = r#"
         import joky/array.{type Array}

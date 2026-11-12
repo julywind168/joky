@@ -421,7 +421,7 @@ impl FunctionPlan {
         }
     }
 
-    fn match_input(
+    pub(super) fn match_input(
         &mut self,
         input: &Expr,
         vars: &HashMap<String, Binding>,

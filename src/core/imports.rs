@@ -218,6 +218,11 @@ fn uses_equality(module: &Module) -> bool {
             Expr::Match { arms, .. } => arms.iter().any(|arm| has_string_pattern(&arm.pattern)),
             Expr::LetElse(binding) => has_string_pattern(&binding.pattern),
             Expr::Is { pattern, .. } => has_string_pattern(pattern),
+            Expr::IfLetChain(chain) => chain
+                .clauses
+                .iter()
+                .filter_map(crate::parser::ast::ConditionClause::pattern)
+                .any(has_string_pattern),
             _ => false,
         };
         if uses_equality {

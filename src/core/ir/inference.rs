@@ -1,5 +1,6 @@
 //! Contextual integer literals. Hints inspect types without evaluating expressions.
 use super::*;
+use crate::parser::ast::Pattern;
 
 const MAX_HINT_STEPS: usize = 65_536;
 
@@ -613,6 +614,26 @@ impl FunctionPlan {
                     default,
                 )
             }
+            Expr::IfLetChain(chain) => {
+                let Some(other) = &chain.else_branch else {
+                    return Some(Type::Unit);
+                };
+                let mut local = vars.clone();
+                for clause in &chain.clauses {
+                    if let Some(pattern) = clause.pattern() {
+                        let input = self.bound_hint(clause.expr(), &local, functions, types);
+                        self.hint_pattern_bindings(pattern, input, &mut local, types);
+                    }
+                }
+                sibling_hint(
+                    [
+                        self.hint(&chain.then_branch, &local, functions, types, default),
+                        self.hint(other, vars, functions, types, default),
+                    ]
+                    .into_iter(),
+                    default,
+                )
+            }
             Expr::BinOp { op, lhs, rhs, .. } => {
                 if op.is_comparison() {
                     return Some(Type::Bool);
@@ -810,6 +831,25 @@ impl FunctionPlan {
         self.hint(expr, vars, functions, types, true)
     }
 
+    pub(super) fn hint_pattern_bindings(
+        &self,
+        pattern: &Pattern,
+        input: Option<Type>,
+        vars: &mut HashMap<String, Binding>,
+        types: &TypeRegistry,
+    ) {
+        for name in pattern.binding_names() {
+            vars.remove(&name);
+        }
+        if let Some((ty, borrowed)) =
+            input.and_then(|ty| self.match_type(&ty, types, pattern.span()).ok())
+        {
+            if let Ok(pattern) = self.check_match_pattern(pattern, &ty, borrowed, types) {
+                pattern.hints(vars, borrowed);
+            }
+        }
+    }
+
     pub(super) fn hint_bindings(
         &self,
         expr: &Expr,
@@ -852,21 +892,11 @@ impl FunctionPlan {
                 bind_pattern(pattern, ty.as_ref(), vars);
             }
             Expr::LetElse(binding) => {
-                let matched = binding
+                let input = binding
                     .annotation
                     .clone()
-                    .or_else(|| self.bound_hint(&binding.value, vars, functions, types))
-                    .and_then(|ty| self.match_type(&ty, types, binding.span).ok());
-                for name in binding.pattern.binding_names() {
-                    vars.remove(&name);
-                }
-                if let Some((ty, borrowed)) = matched {
-                    if let Ok(pattern) =
-                        self.check_match_pattern(&binding.pattern, &ty, borrowed, types)
-                    {
-                        pattern.hints(vars, borrowed);
-                    }
-                }
+                    .or_else(|| self.bound_hint(&binding.value, vars, functions, types));
+                self.hint_pattern_bindings(&binding.pattern, input, vars, types);
             }
             Expr::Sequence { exprs, .. }
             | Expr::Array {

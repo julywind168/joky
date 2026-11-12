@@ -3816,7 +3816,25 @@ fn drain(values: &mut Array<Int32>) {
 
 所有权与借用规则沿用 `match`：按值匹配移动拥有者，失败的模式及未使用载荷仍会清理；
 匹配 `&value` / `&mut value` 保留原拥有者，Copy 载荷按值读取，非 Copy 载荷绑定为对应引用。
-`if let` / `while let` 暂不支持 `&&` 模式链；需要附加条件时可使用 match 守卫。
+
+### 条件链
+
+`if`、`else if` 和 `while` 的条件可用 `&&` 串联任意顺序的 `let Pattern = value` 和 Bool 测试。
+每项从左到右求值一次，首个匹配失败或为 false 的条件会跳过后续项。成功绑定只在后续条件和成功分支内可见。
+
+```joky
+fn choose(input: Option<(Int32, Option<Int32>)>, enabled: Bool) -> Int32 {
+    if enabled && let Some((low, next)) = input && let Some(high) = next && high > low {
+        high
+    } else {
+        0
+    }
+}
+```
+
+链内的 `||` 表达式需要括号，例如 `if let Some(n) = value && (n == 1 || n == 2) { ... }`。
+把逻辑表达式作为模式输入时也用括号，例如 `if let false = (ready && active) { ... }`。
+失败时先清理本轮匹配产生的拥有值，再执行 `else` 或退出循环。条件允许按所在函数的规则挂起，恢复后继续当前条件。
 
 ### 布尔模式测试
 
