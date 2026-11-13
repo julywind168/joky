@@ -1,11 +1,12 @@
-//! Full-document synchronization, diagnostics and source navigation over LSP stdio.
+//! Full-document synchronization and language features over LSP stdio.
+mod completion;
 mod wire;
 
 use super::check;
 use joky::{Error, SemanticIndex, SourceFile, Span};
 use serde_json::{json, Value};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     io::{self, BufRead, Write},
     path::{Path, PathBuf},
     sync::{
@@ -18,6 +19,7 @@ use std::{
 use url::Url;
 
 const DEBOUNCE: Duration = Duration::from_millis(150);
+const COMPLETION_DISPATCH: Duration = Duration::from_millis(5);
 
 #[derive(Clone)]
 struct Document {
@@ -32,6 +34,11 @@ struct Job {
     roots: Vec<PathBuf>,
 }
 
+enum Work {
+    Check(Job),
+    Complete(Job, CompletionRequest),
+}
+
 struct Report {
     version: Option<i64>,
     diagnostic: Value,
@@ -40,6 +47,7 @@ struct Report {
 enum Event {
     Input(io::Result<Option<serde_json::Result<Value>>>),
     Checked(u64, Analysis),
+    Completed(u64, Value),
 }
 
 #[derive(Default)]
@@ -52,13 +60,20 @@ struct Analysis {
 enum QueryKind {
     Hover,
     Definition,
+    Completion,
 }
 
 struct Query {
     id: Value,
     kind: QueryKind,
+    uri: String,
     path: PathBuf,
     offset: usize,
+}
+
+struct CompletionRequest {
+    ticket: u64,
+    query: Query,
 }
 
 #[derive(Default)]
@@ -76,26 +91,36 @@ struct Session {
     client_revision: Option<u64>,
     indexes: Option<Vec<(PathBuf, SemanticIndex)>>,
     queries: Vec<Query>,
+    completions: VecDeque<CompletionRequest>,
+    completing: BTreeMap<u64, Value>,
+    next_completion: u64,
 }
 
 pub(super) fn execute() -> u8 {
     let (events, receiver) = mpsc::channel();
     let reader = events.clone();
     thread::spawn(move || read_messages(io::stdin().lock(), reader));
-    let (jobs, work) = mpsc::sync_channel::<Job>(1);
+    let (jobs, work) = mpsc::sync_channel::<Work>(1);
     let revision = Arc::new(AtomicU64::new(0));
     let current = revision.clone();
     thread::spawn(move || {
         let checker = joky::Checker::new();
-        while let Ok(mut job) = work.recv() {
-            while let Ok(newer) = work.try_recv() {
-                job = newer;
-            }
-            if job.revision != current.load(Ordering::Relaxed) {
-                continue;
-            }
-            let analysis = analyze(&job, &checker);
-            if events.send(Event::Checked(job.revision, analysis)).is_err() {
+        while let Ok(work) = work.recv() {
+            let job = match &work {
+                Work::Check(job) | Work::Complete(job, _) => job,
+            };
+            let rev = job.revision;
+            let event = match work {
+                Work::Check(job) if rev == current.load(Ordering::Relaxed) => {
+                    Event::Checked(rev, analyze(&job, &checker))
+                }
+                Work::Complete(job, request) if rev == current.load(Ordering::Relaxed) => {
+                    let result = completion::complete(&job, &request.query, &checker);
+                    Event::Completed(request.ticket, result)
+                }
+                _ => continue,
+            };
+            if events.send(event).is_err() {
                 break;
             }
         }
@@ -121,14 +146,19 @@ fn read_messages(mut input: impl BufRead, events: mpsc::Sender<Event>) {
 
 fn serve(
     events: mpsc::Receiver<Event>,
-    jobs: mpsc::SyncSender<Job>,
+    jobs: mpsc::SyncSender<Work>,
     revision: &AtomicU64,
     out: &mut impl Write,
 ) -> io::Result<u8> {
     let mut session = Session::default();
     loop {
-        let event = if session.pending {
-            match events.recv_timeout(DEBOUNCE) {
+        let timeout = if session.completions.is_empty() {
+            DEBOUNCE
+        } else {
+            COMPLETION_DISPATCH
+        };
+        let event = if session.pending || !session.completions.is_empty() {
+            match events.recv_timeout(timeout) {
                 Ok(event) => event,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     let job = Job {
@@ -136,8 +166,17 @@ fn serve(
                         documents: session.documents.clone(),
                         roots: session.roots.clone(),
                     };
-                    match jobs.try_send(job) {
+                    let work = match session.completions.pop_front() {
+                        Some(query) => Work::Complete(job, query),
+                        None => Work::Check(job),
+                    };
+                    let checking = matches!(work, Work::Check(_));
+                    match jobs.try_send(work) {
+                        Ok(()) if !checking => {}
                         Ok(()) => session.pending = false,
+                        Err(mpsc::TrySendError::Full(Work::Complete(_, query))) => {
+                            session.completions.push_front(query)
+                        }
                         Err(mpsc::TrySendError::Full(_)) => {}
                         Err(mpsc::TrySendError::Disconnected(_)) => {
                             return Err(io::Error::other("LSP check worker stopped"));
@@ -170,6 +209,11 @@ fn serve(
                         response(out, &query.id, session.lookup(&query))?;
                     }
                     session.publish(analysis.reports, analysis.messages, out)?;
+                }
+            }
+            Event::Completed(ticket, result) => {
+                if let Some(id) = session.completing.remove(&ticket) {
+                    response(out, &id, result)?;
                 }
             }
         }
@@ -216,6 +260,7 @@ impl Session {
                             "positionEncoding": "utf-16",
                             "hoverProvider": true,
                             "definitionProvider": true,
+                            "completionProvider": {"triggerCharacters": ["."]},
                             "textDocumentSync": {"openClose": true, "change": 1, "save": true}
                         },
                         "serverInfo": {"name": "Joky", "version": env!("CARGO_PKG_VERSION")}
@@ -232,11 +277,14 @@ impl Session {
                 self.clear_queries(out)?;
                 response(out, id, Value::Null)?;
             }
-            ("textDocument/hover" | "textDocument/definition", Some(id)) => {
-                let kind = if method == "textDocument/hover" {
-                    QueryKind::Hover
-                } else {
-                    QueryKind::Definition
+            (
+                "textDocument/hover" | "textDocument/definition" | "textDocument/completion",
+                Some(id),
+            ) => {
+                let kind = match method {
+                    "textDocument/hover" => QueryKind::Hover,
+                    "textDocument/definition" => QueryKind::Definition,
+                    _ => QueryKind::Completion,
                 };
                 self.query(id, kind, params, out)?;
             }
@@ -249,6 +297,15 @@ impl Session {
                 {
                     let query = self.queries.remove(index);
                     failure(out, &query.id, -32800, "Request cancelled")?;
+                }
+                let ticket = self
+                    .completing
+                    .iter()
+                    .find_map(|(ticket, id)| (*id == params["id"]).then_some(*ticket));
+                if let Some(ticket) = ticket {
+                    let id = self.completing.remove(&ticket).unwrap();
+                    self.completions.retain(|request| request.ticket != ticket);
+                    failure(out, &id, -32800, "Request cancelled")?;
                 }
             }
             (_, None) if self.initialized && !self.shutdown && self.update(method, params) => {
@@ -269,6 +326,10 @@ impl Session {
         self.indexes = None;
         for query in self.queries.drain(..) {
             response(out, &query.id, Value::Null)?;
+        }
+        self.completions.clear();
+        for id in std::mem::take(&mut self.completing).into_values() {
+            response(out, &id, Value::Null)?;
         }
         Ok(())
     }
@@ -298,10 +359,18 @@ impl Session {
         let query = Query {
             id: id.clone(),
             kind,
+            uri: uri.to_owned(),
             path: document.path.clone(),
             offset,
         };
-        if self.indexes.is_some() {
+        if matches!(query.kind, QueryKind::Completion) {
+            let ticket = self.next_completion;
+            self.next_completion += 1;
+            self.completing.insert(ticket, id.clone());
+            self.completions
+                .push_back(CompletionRequest { ticket, query });
+            Ok(())
+        } else if self.indexes.is_some() {
             response(out, id, self.lookup(&query))
         } else {
             self.queries.push(query);
@@ -354,6 +423,7 @@ impl Session {
                     })
                 })
             }
+            QueryKind::Completion => unreachable!("completion runs on the checker worker"),
         }
     }
 

@@ -237,6 +237,20 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
         }
       },
     }),
+    vscode.languages.registerCompletionItemProvider({ scheme: 'file', language: 'joky' }, {
+      async provideCompletionItems(document, position, token) {
+        const result = await request('textDocument/completion', 'completionProvider', document, position, token);
+        if (!result || token.isCancellationRequested) return;
+        const items = result.items.map(item => {
+          const value = new vscode.CompletionItem(item.label, item.kind - 1);
+          value.detail = item.detail;
+          value.range = range(item.textEdit.range);
+          value.insertText = item.textEdit.newText;
+          return value;
+        });
+        return new vscode.CompletionList(items, result.isIncomplete);
+      },
+    }, '.'),
     vscode.workspace.onDidOpenTextDocument(document => {
       if (!enabled(document)) return;
       collection.clear();

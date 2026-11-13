@@ -19,6 +19,7 @@ mod string_query_model;
 
 // Stable public entry points; implementation modules remain private.
 pub use backends::aot;
+pub use core::completion::{CompletionItem, CompletionKind, CompletionSite};
 pub use core::ffi;
 pub use core::imports::documentation;
 pub use core::imports::packages::{PackageSources, SourcePackage};

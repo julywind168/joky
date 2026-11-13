@@ -43,6 +43,7 @@ pub(crate) struct SemanticRecorder {
     index: SemanticIndex,
     tokens: HashMap<SourceId, Vec<Token>>,
     functions: HashMap<String, Function>,
+    pub(crate) completion: Option<super::completion::CompletionQuery>,
 }
 
 struct Function {
@@ -60,11 +61,19 @@ impl SemanticRecorder {
             },
             tokens: HashMap::new(),
             functions: HashMap::new(),
+            completion: None,
         }))
     }
 
     pub(crate) fn finish(&mut self) -> SemanticIndex {
         std::mem::take(self).index
+    }
+
+    pub(crate) fn for_completion(query: super::completion::CompletionQuery) -> Recorder {
+        Rc::new(RefCell::new(Self {
+            completion: Some(query),
+            ..Self::default()
+        }))
     }
 
     fn tokens(&mut self, span: Span) -> &[Token] {
@@ -103,6 +112,9 @@ impl SemanticRecorder {
     }
 
     pub(crate) fn binding(&mut self, span: Span, name: &str, ty: &Type) -> Option<Span> {
+        if self.completion.is_some() {
+            return None;
+        }
         let token = self.tokens(span).iter().find(|token| {
             !matches!(
                 token.kind,
@@ -126,6 +138,9 @@ impl SemanticRecorder {
     }
 
     pub(crate) fn declare_function(&mut self, item: &Item, signature: &FunctionSignature) {
+        if self.completion.is_some() {
+            return;
+        }
         let (canonical, params, suspends, span, type_params) = match item {
             Item::FnDef(f) => (
                 &f.name,
@@ -191,6 +206,9 @@ impl SemanticRecorder {
         signature: &FunctionSignature,
         suspends: bool,
     ) {
+        if self.completion.is_some() {
+            return;
+        }
         let Some(occurrence) = self.path_name(span, written) else {
             return;
         };
@@ -218,6 +236,31 @@ impl SemanticRecorder {
         }
         Some(name.with_source(span.source_id()))
     }
+}
+
+pub(crate) fn function_display(item: &Item) -> String {
+    let (name, params, ret, suspends, type_params) = match item {
+        Item::FnDef(f) => (
+            &f.name,
+            &f.params,
+            &f.ret_ty,
+            f.suspends,
+            f.type_params.as_slice(),
+        ),
+        Item::ExternFn(f) => (&f.name, &f.params, &f.ret_ty, f.suspends, &[][..]),
+    };
+    let function = Function {
+        definition: None,
+        name: name.rsplit('.').next().unwrap().to_owned(),
+        parameters: params.iter().map(|p| p.name.clone()).collect(),
+    };
+    let signature =
+        FunctionSignature::new(params.iter().map(|p| p.ty.clone()).collect(), ret.clone());
+    let generic_names = type_params
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect::<Vec<_>>();
+    function.display(&signature, suspends, &generic_names)
 }
 
 impl Function {

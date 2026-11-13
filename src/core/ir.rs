@@ -990,6 +990,37 @@ impl ModulePlan {
         crate::core::source::validate_module_path(&module.logical_name)?;
         generics.borrow_mut().members = members.clone();
         generics.borrow_mut().semantics = semantics;
+        let semantics = generics.borrow().semantics.clone();
+        if let Some(recorder) = &semantics {
+            let completion_function = {
+                let recorder = recorder.borrow();
+                recorder.completion.as_ref().map(|query| {
+                    module.items.iter().find_map(|item| match item {
+                        Item::FnDef(f) if query.in_function(f.body.span()) => Some(f),
+                        _ => None,
+                    })
+                })
+            };
+            if let Some(function) = completion_function {
+                // Only this body supplies lexical bindings for the cursor.
+                if let Some(f) = function {
+                    constants::validate_all(
+                        &members,
+                        &functions,
+                        types,
+                        &nominals,
+                        generics.clone(),
+                    )?;
+                    let local = types.with_parameters(&f.type_params)?;
+                    generics.borrow_mut().checking = !f.type_params.is_empty();
+                    FunctionPlan::new(f, &functions, &local, &nominals, generics, 0)?;
+                }
+                return Ok(Self {
+                    functions,
+                    bodies: HashMap::new(),
+                });
+            }
+        }
         when::validate_states(module, &functions, types, &nominals, generics.clone())?;
         constants::validate_all(&members, &functions, types, &nominals, generics.clone())?;
         let mut template_bodies = HashMap::new();
@@ -2056,6 +2087,17 @@ impl FunctionPlan {
     ) -> Result<Flow, Error> {
         let previous = self.current_span;
         self.current_span = expr.span();
+        if let Some(semantics) = &self.semantics {
+            if let Some(query) = &mut semantics.borrow_mut().completion {
+                if query.contains(self.current_span) {
+                    query.scope(
+                        self.current_span,
+                        vars.iter()
+                            .map(|(name, binding)| (name.as_str(), slot_type(&binding.slot))),
+                    );
+                }
+            }
+        }
         let hint_scope = if inference::has_nested_call(expr) {
             self.hint_work.enter(vars, functions, types)
         } else {

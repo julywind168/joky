@@ -115,6 +115,116 @@ fn symbol_range(source: &str, line: usize, token: &str, last: bool) -> Value {
 }
 
 #[test]
+fn lsp_completes_incomplete_calls_and_module_paths_from_unsaved_sources() {
+    let work = Workspace::new();
+    work.write(
+        "app/joky.toml",
+        "[project]\nname='app'\nentry='main.jk'\n[dependencies]\nlib={path='../lib'}",
+    );
+    work.write("lib/joky.toml", "[package]\nname='lib'");
+    work.write("lib/value.jk", "pub fn saved() -> Int32 { 1 }");
+    work.write(
+        "lib/helpers.jk",
+        "pub fn calculate(value: Int32) -> Int32 { value }",
+    );
+    work.write("app/main.jk", "fn main() {}");
+    let uri = |relative: &str| Url::from_file_path(work.path().join(relative)).unwrap();
+    let entry = uri("app/main.jk");
+    let dependency = uri("lib/value.jk");
+    let mut client = Client::start(&work);
+    client.send(json!({"id": 1, "method": "initialize", "params": {"rootUri": uri("").as_str()}}));
+    assert_eq!(
+        client.until(|msg| msg["id"] == 1)["result"]["capabilities"]["completionProvider"]
+            ["triggerCharacters"],
+        json!(["."])
+    );
+    let original = concat!(
+        "import lib/value as values\n",
+        "import lib/helpers.{calculate as convert}\n",
+        "fn helper() {}\n",
+        "fn main() {}",
+    );
+    for (uri, text) in [
+        (&entry, original),
+        (&dependency, "pub fn answer(input: Bool) -> Int32 { if input { 42 } else { 0 } }\nfn private_answer() {}"),
+    ] {
+        client.send(json!({"method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri.as_str(), "version": 1, "text": text}
+        }}));
+    }
+    let mut complete = |version: u64, text: &str| {
+        let (left, right) = text.split_once('¦').unwrap();
+        let line = left.bytes().filter(|&c| c == b'\n').count();
+        let character = left.rsplit('\n').next().unwrap().encode_utf16().count();
+        let text = format!("{left}{right}");
+        client.send(json!({"method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": entry.as_str(), "version": version},
+            "contentChanges": [{"text": text}]
+        }}));
+        client.send(json!({"id": version, "method": "textDocument/completion", "params": {
+            "textDocument": {"uri": entry.as_str()}, "position": {"line": line, "character": character},
+        }}));
+        let response = client.until(|msg| msg["id"] == version);
+        assert!(response.get("error").is_none(), "{response}");
+        response["result"]["items"].as_array().unwrap().clone()
+    };
+    let imports = "import lib/value as values\nimport lib/helpers.{calculate as convert}";
+    let items = complete(2, &format!("{imports}\nfn main() {{ values.¦ }}"));
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0]["label"], "answer");
+    assert_eq!(items[0]["detail"], "fn answer(input: Bool) -> Int32");
+    let items = complete(
+        3,
+        &format!("{imports}\nfn main() {{ values.an¦swer(true) }}"),
+    );
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(
+        items[0]["textEdit"],
+        json!({"newText": "answer", "range": {
+            "start": {"line": 2, "character": 19}, "end": {"line": 2, "character": 25}
+        }})
+    );
+    let items = complete(4, &format!(
+        "{imports}\nfn helper() {{}}\nfn broken() {{ missing() }}\nfn run(argument: Int32) {{\n let local = argument\n {{ let gone = 2 }}\n {{ let local = true; println(¦\n }}\n}}\nfn main() {{}}"
+    ));
+    let item = |name: &str| items.iter().find(|item| item["label"] == name).unwrap();
+    assert_eq!(item("local")["detail"], "Bool");
+    assert_eq!(item("argument")["detail"], "Int32");
+    assert_eq!(item("helper")["detail"], "fn helper()");
+    assert_eq!(
+        item("convert")["detail"],
+        "fn calculate(value: Int32) -> Int32"
+    );
+    assert!(!items
+        .iter()
+        .any(|item| ["gone", "calculate", "private_answer"]
+            .iter()
+            .any(|name| item["label"] == *name)));
+    assert!(complete(
+        5,
+        &format!("{imports}\nfn main() {{ let values = 3; values.¦ }}")
+    )
+    .is_empty());
+    assert!(complete(
+        6,
+        &format!("{imports}\nfn main() {{ println(\"values.¦\") }}")
+    )
+    .is_empty());
+    let items = complete(
+        7,
+        &format!("{imports}\nfn main() {{\n let 名称 = 42\n \"🙂\"; println(名¦"),
+    );
+    assert_eq!(items[0]["label"], "名称");
+    assert_eq!(items[0]["detail"], "Int32");
+    assert_eq!(
+        items[0]["textEdit"]["range"],
+        json!({
+            "start": {"line": 4, "character": 15}, "end": {"line": 4, "character": 16}
+        })
+    );
+}
+
+#[test]
 fn lsp_resolves_inferred_bindings_and_function_definitions_in_the_current_snapshot() {
     let work = Workspace::new();
     work.write("joky.toml", "[project]\nname='app'\nentry='main.jk'");

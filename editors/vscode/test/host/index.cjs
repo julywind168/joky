@@ -113,6 +113,17 @@ async function run() {
   assert.equal(updated.uri.fsPath, values);
   assert.equal(updated.range.start.line, 1);
 
+  const completionEditor = await vscode.window.showTextDocument(projectDocument);
+  const answer = new vscode.Range(2, 24, 2, 32);
+  assert.ok(await completionEditor.edit(edit => edit.delete(answer)));
+  const suggestions = await vscode.commands.executeCommand('vscode.executeCompletionItemProvider',
+    projectDocument.uri, answer.start, '.');
+  const candidate = suggestions.items.find(item => item.label === 'answer' && item.detail);
+  assert.equal(candidate?.detail, 'fn answer() -> Int32');
+  assert.equal(candidate.kind, vscode.CompletionItemKind.Function);
+  assert.ok(candidate.range.start.isEqual(answer.start) && candidate.range.end.isEqual(answer.start));
+  assert.ok(await completionEditor.edit(edit => edit.insert(answer.start, 'answer()')));
+
   const dependency = path.join(project, 'bad.jk');
   const bad = '// heading\r\npub fn fail() { let text = "🙂" $ }\r\n';
   await fs.writeFile(dependency, `\uFEFF${bad}`);
@@ -145,7 +156,7 @@ async function run() {
   await vscode.window.showTextDocument(untitled);
   const unsavedEdits = await vscode.commands.executeCommand('vscode.executeFormatDocumentProvider', untitled.uri, { tabSize: 4, insertSpaces: true });
   assert.ok(unsavedEdits.length > 0, 'untitled Joky documents can be formatted');
-  console.log('Joky extension host: formatting, diagnostics, navigation, standalone tasks and project tasks passed.');
+  console.log('Joky extension host: formatting, diagnostics, navigation, completion and tasks passed.');
   await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
   await fs.writeFile(path.join(root, 'host-result.txt'), 'passed');
 }

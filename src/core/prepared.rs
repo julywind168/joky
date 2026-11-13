@@ -1,11 +1,12 @@
 //! Immutable front-end inputs shared by VM and object compilation.
 use super::{
+    completion::{CompletionItem, CompletionQuery, CompletionSite},
     ir::ModulePlan,
     resolver::{self, BindingRegistry},
     semantics::{Recorder, SemanticIndex, SemanticRecorder},
 };
 use crate::{parser::ast::Module, Error, TypeRegistry};
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 /// Standalone front-end checking with the standard host declarations.
 /// No VM, executable code, runtime services, or entry point is created.
@@ -51,6 +52,22 @@ impl Checker {
         let result = self.check(module, Some(recorder.clone()));
         let index = recorder.borrow_mut().finish();
         (index, result)
+    }
+
+    /// Complete against a resolved module containing the query's temporary source.
+    pub fn complete_module(
+        &self,
+        module: &Module,
+        path: &Path,
+        site: &CompletionSite,
+    ) -> Vec<CompletionItem> {
+        let Some(query) = CompletionQuery::new(module, path, site) else {
+            return Vec::new();
+        };
+        let recorder = SemanticRecorder::for_completion(query);
+        let _ = self.check(module, Some(recorder.clone()));
+        let query = recorder.borrow_mut().completion.take().unwrap();
+        query.finish()
     }
 
     fn check(&self, module: &Module, semantics: Option<Recorder>) -> Result<(), Error> {

@@ -39,6 +39,8 @@ function harness(t, trusted = true, diagnostics = true) {
     Uri: { parse: uri },
     Range: class { constructor(...positions) { this.positions = positions; } },
     Hover: class { constructor(contents, range) { Object.assign(this, { contents, range }); } },
+    CompletionItem: class { constructor(label, kind) { Object.assign(this, { label, kind }); } },
+    CompletionList: class { constructor(items, isIncomplete) { Object.assign(this, { items, isIncomplete }); } },
     MarkdownString: class { appendCodeblock(value, language) { Object.assign(this, { value, language }); } },
     Diagnostic: class { constructor(range, message) { Object.assign(this, { range, message }); } },
     Location: class { constructor(uri, range) { Object.assign(this, { uri, range }); } },
@@ -47,6 +49,10 @@ function harness(t, trusted = true, diagnostics = true) {
     languages: {
       registerHoverProvider(_selector, provider) { return on('hover')(provider.provideHover); },
       registerDefinitionProvider(_selector, provider) { return on('definition')(provider.provideDefinition); },
+      registerCompletionItemProvider(_selector, provider, ...triggers) {
+        assert.deepEqual(triggers, ['.']);
+        return on('completion')(provider.provideCompletionItems);
+      },
       createDiagnosticCollection: () => ({
         set(uri, diagnostics) { problems.set(uri.toString(), diagnostics); },
         clear() { problems.clear(); },
@@ -129,7 +135,7 @@ test('navigation uses the latest synchronized snapshot with diagnostics disabled
   const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) };
   const pending = h.request('hover', main, token);
   h.receive({ id: 1, result: { capabilities: {
-    textDocumentSync: { change: 1 }, hoverProvider: true, definitionProvider: true,
+    textDocumentSync: { change: 1 }, hoverProvider: true, definitionProvider: true, completionProvider: {},
   } } });
   await Promise.resolve();
   const hover = h.calls.at(-1);
@@ -150,6 +156,18 @@ test('navigation uses the latest synchronized snapshot with diagnostics disabled
   await Promise.resolve();
   h.receive({ id: h.calls.at(-1).id, result: { contents: { value: 'name: Bool' }, range } });
   assert.equal((await current).contents.value, 'name: Bool');
+  const completion = h.request('completion', main, token);
+  await Promise.resolve();
+  assert.equal(h.calls.at(-1).method, 'textDocument/completion');
+  h.receive({ id: h.calls.at(-1).id, result: { isIncomplete: true, items: [{
+    label: 'name', kind: 6, detail: 'Bool', textEdit: { range, newText: 'name' },
+  }] } });
+  const suggestions = await completion;
+  assert.equal(suggestions.isIncomplete, true);
+  assert.equal(suggestions.items[0].kind, 5);
+  assert.equal(suggestions.items[0].detail, 'Bool');
+  assert.equal(suggestions.items[0].insertText, 'name');
+  assert.deepEqual(suggestions.items[0].range.positions, [0, 3, 0, 7]);
   h.receive({ method: 'textDocument/publishDiagnostics', params: {
     uri: dep.uri.toString(), diagnostics: [{ code: 'syntax_error', message: 'Bad token', range }],
     jokySnapshotRevision: 3, jokySnapshotVersions: { [main.uri.toString()]: 1, [dep.uri.toString()]: 2 },
