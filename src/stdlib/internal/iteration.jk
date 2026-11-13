@@ -8,14 +8,12 @@ pub trait Iterator {
 }
 
 pub trait IntoIterator {
-    type IntoIter
-    : Iterator
+    type IntoIter: Iterator
     fn into_iter(self) -> Self.IntoIter
 }
 
 impl<I: Iterator> IntoIterator for I {
-    type IntoIter
-    = I
+    type IntoIter = I
     fn into_iter(self) -> I {
         self
     }
@@ -146,8 +144,7 @@ pub fn range_inclusive<T: Copy + Step>(start: T, end: T) -> Range<T> {
 }
 
 impl<T: Copy + Step> Iterator for Range<T> {
-    type Item
-    = T
+    type Item = T
     fn next(&mut self) -> Option<T> {
         if self.done {
             return None

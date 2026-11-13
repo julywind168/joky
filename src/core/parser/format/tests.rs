@@ -89,6 +89,18 @@ fn format_requires_syntax_but_not_import_resolution_or_a_main_function() {
 }
 
 #[test]
+fn format_keeps_associated_types_together() {
+    assert_format(
+        "trait Source {type Item\n : Read + io.Write\ntype End}\nimpl Source for Int32 {type Item\n =\n Array<Int32>\ntype End = Unit}",
+        "trait Source {\n    type Item: Read + io.Write\n    type End\n}\nimpl Source for Int32 {\n    type Item = Array<Int32>\n    type End = Unit\n}\n",
+    );
+    assert_format(
+        "impl Source for Int32 {type Item // result type\n = Int32}",
+        "impl Source for Int32 {\n    type Item // result type\n    = Int32\n}\n",
+    );
+}
+
+#[test]
 fn format_examples_and_standard_modules_are_idempotent() {
     fn visit(path: &std::path::Path) {
         for entry in std::fs::read_dir(path).unwrap() {

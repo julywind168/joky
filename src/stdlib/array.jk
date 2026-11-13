@@ -33,16 +33,14 @@ pub struct Array<T> { storage: Buffer<T> }
 pub struct IntoIter<T> { values: Array<T> }
 
 impl<T> IntoIterator for Array<T> {
-    type IntoIter
-    = IntoIter<T>
+    type IntoIter = IntoIter<T>
     fn into_iter(self) -> IntoIter<T> {
         into_iter(self)
     }
 }
 
 impl<T> Iterator for IntoIter<T> {
-    type Item
-    = T
+    type Item = T
     fn next(&mut self) -> Option<T> {
         pop(&mut self.values)
     }
@@ -596,8 +594,7 @@ pub fn iter_shared<T>(values: &Array<T>) -> SharedIter<T> {
 }
 
 impl<T> iteration.SharedIterator for SharedIter<T> {
-    type Item
-    = &T
+    type Item = &T
     fn step(var self) -> (Self, Option<&T>) {
         let value = get_ref(self.values, self.index)
         if value.is_some() {
@@ -608,16 +605,14 @@ impl<T> iteration.SharedIterator for SharedIter<T> {
 }
 
 impl<T> iteration.SharedSource for Array<T> {
-    type Item
-    = T
+    type Item = T
     fn get_shared(&self, index: UInt64) -> Option<&T> {
         get_ref(self, index)
     }
 }
 
 impl<T> iteration.ExclusiveSource for Array<T> {
-    type Item
-    = T
+    type Item = T
     fn exclusive_cursor(&mut self) -> &mut Iter<T> {
         iter_mut(self)
     }

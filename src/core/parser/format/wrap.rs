@@ -56,6 +56,13 @@ impl<'a> Wrap<'a> {
             }
         }
         let mut flat_gaps = vec![false; pieces.len()];
+        for header in &syntax.associated_type_headers {
+            let start = token_pieces[header.start];
+            let end = token_pieces[header.end - 1] + 1;
+            if (start..end).all(|i| pieces[i].token.is_some() && !protected[i]) {
+                flat_gaps[start + 1..end].fill(true);
+            }
+        }
         let mut signatures = Vec::new();
         for signature in &syntax.signatures {
             let open = token_pieces[signature.parameters];

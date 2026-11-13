@@ -219,7 +219,7 @@ fn with_attributes(span: Span, attributes: &[Attribute]) -> Span {
         span.end(),
     )
 }
-fn associated_span(tokens: &[Token], name: Span, end: Option<usize>) -> Span {
+pub(super) fn associated_span(tokens: &[Token], name: Span, end: Option<usize>) -> Span {
     let index = tokens.partition_point(|t| t.span.start() < name.start());
     // Associated-type AST spans identify the name for diagnostics. Recover the
     // declaration extent from its grammar, retaining written bounds and aliases.

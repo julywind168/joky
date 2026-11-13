@@ -3,6 +3,7 @@
 use super::{is_close, is_open, Role};
 use crate::core::parser::{
     ast::{Expr, FnDef, Item, Module},
+    documentation::associated_span,
     lexer::{Lexer, Token, TokenKind},
     Diagnostic, Parser,
 };
@@ -21,6 +22,7 @@ pub(super) struct Syntax {
     pub top_level: Vec<(Range<usize>, bool)>,
     pub separators: Vec<Separator>,
     pub signatures: Vec<Signature>,
+    pub associated_type_headers: Vec<Range<usize>>,
     shape: Shape,
 }
 
@@ -85,6 +87,7 @@ impl Syntax {
             top_level: Vec::new(),
             separators: Vec::new(),
             signatures: Vec::new(),
+            associated_type_headers: Vec::new(),
             tokens,
             roles,
             shape: Shape::default(),
@@ -417,6 +420,15 @@ impl Syntax {
         self.anchor(&f.body, f.span);
     }
 
+    fn associated_type(&mut self, name: Span, target: Option<Span>) {
+        let span = associated_span(&self.tokens, name, target.map(|span| span.end()));
+        let range = self.range(span);
+        // Keep the name and its `=` or `:` with the start of the type or bound.
+        self.associated_type_headers
+            .push(range.start..range.end.min(range.start + 4));
+        self.declaration("associated type", span, target.into_iter());
+    }
+
     fn declarations(&mut self, module: &Module) {
         for import in &module.imports {
             // The parser also inserts imports for desugared language features.
@@ -464,7 +476,7 @@ impl Syntax {
                 self.function(method);
             }
             for ty in &implementation.associated_types {
-                self.declaration("associated type", ty.span, std::iter::once(ty.target_span));
+                self.associated_type(ty.span, Some(ty.target_span));
             }
             for constant in &implementation.constants {
                 self.declaration(
@@ -488,7 +500,7 @@ impl Syntax {
                 }
             }
             for ty in &definition.associated_types {
-                self.declaration("associated type", ty.span, std::iter::empty());
+                self.associated_type(ty.span, None);
             }
         }
     }
