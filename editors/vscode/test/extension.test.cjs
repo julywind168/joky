@@ -35,6 +35,7 @@ function harness(overrides = {}, trusted = true) {
     if (parent?.filename === file && request === 'vscode') return vscode;
     if (parent?.filename === file && request === './toolchain.cjs') return tools;
     if (parent?.filename === file && request === './terminal.cjs') return { processTerminal() {} };
+    if (parent?.filename === file && request === './diagnostics.cjs') return { registerDiagnostics() {} };
     return load.call(this, request, parent, ...rest);
   };
   const subscriptions = [];

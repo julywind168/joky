@@ -50,13 +50,13 @@ async function resolveTarget(file, workspaceRoot) {
   return { target: file, cwd: path.dirname(file), project: false };
 }
 
-function execute(executable, args, { cwd, input = '', signal, timeout = 15000 } = {}) {
+function execute(executable, args, { cwd, input = '', signal, timeout = 15000, acceptDiagnosticFailure = false } = {}) {
   return new Promise((resolve, reject) => {
     const child = execFile(executable, args, {
       cwd, signal, timeout, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8', windowsHide: true,
       env: { ...process.env, NO_COLOR: '1', CLICOLOR_FORCE: '0' },
     }, (error, stdout, stderr) => {
-      if (error) {
+      if (error && !(acceptDiagnosticFailure && error.code === 1 && stdout && !stderr.trim())) {
         error.message = stderr.trim() || error.message;
         reject(error);
       } else resolve(stdout);

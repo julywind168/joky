@@ -40,6 +40,12 @@ test('target selection uses the nearest manifest within the selected workspace',
 test('process input, failures, cancellation and timeout are bounded', async () => {
   assert.equal(await execute(process.execPath, ['-e', 'process.stdin.pipe(process.stdout)'], { input: '中文\r\n🙂' }), '中文\r\n🙂');
   await assert.rejects(execute(process.execPath, ['-e', 'process.stderr.write("syntax error"); process.exit(1)']), /syntax error/);
+  const diagnostic = ['-e', 'process.stdout.write("diagnostics"); process.exit(1)'];
+  await assert.rejects(execute(process.execPath, diagnostic), { code: 1 });
+  assert.equal(await execute(process.execPath, diagnostic, { acceptDiagnosticFailure: true }), 'diagnostics');
+  await assert.rejects(execute(process.execPath, ['-e', 'process.stderr.write("Unknown check option"); process.exit(1)'], {
+    acceptDiagnosticFailure: true,
+  }), /Unknown check option/);
   const controller = new AbortController();
   const pending = execute(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { signal: controller.signal });
   controller.abort();

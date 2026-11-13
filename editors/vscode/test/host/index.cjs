@@ -44,6 +44,16 @@ async function runTask(command, uri, expectedTarget) {
   }
 }
 
+async function waitForDiagnostics(uri, count) {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const diagnostics = vscode.languages.getDiagnostics(uri).filter(value => value.source === 'Joky');
+    if (diagnostics.length === count) return diagnostics;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error(`Expected ${count} Joky diagnostics for ${uri.fsPath}`);
+}
+
 async function run() {
   const root = process.env.JOKY_TEST_WORKSPACE;
   const compiler = process.env.JOKY_TEST_COMPILER;
@@ -64,7 +74,7 @@ async function run() {
   const change = new vscode.WorkspaceEdit();
   change.set(document.uri, edits);
   assert.ok(await vscode.workspace.applyEdit(change));
-  assert.equal(document.getText(), '// unsaved 中文🙂\nfn main() { println(42) }\n');
+  assert.equal(document.getText(), '// unsaved 中文🙂\nfn main() {\n    println(42)\n}\n');
   assert.equal(await fs.readFile(file, 'utf8'), original, 'formatting must not write the file');
   assert.equal(document.isDirty, true);
   await runTask('joky.check', document.uri, file);
@@ -80,11 +90,31 @@ async function run() {
   await runTask('joky.check', vscode.Uri.file(entry), manifest);
   await runTask('joky.run', vscode.Uri.file(entry), manifest);
 
+  const dependency = path.join(project, 'bad.jk');
+  const bad = '// heading\r\npub fn fail() { let text = "🙂" $ }\r\n';
+  await fs.writeFile(dependency, `\uFEFF${bad}`);
+  const projectDocument = await vscode.workspace.openTextDocument(entry);
+  const projectEditor = await vscode.window.showTextDocument(projectDocument);
+  await projectEditor.edit(edit => edit.insert(new vscode.Position(0, 0), 'import bad\n'));
+  assert.ok(await projectDocument.save());
+  const dependencyUri = vscode.Uri.file(dependency);
+  const [problem] = await waitForDiagnostics(dependencyUri, 1);
+  assert.equal(problem.code, 'syntax_error');
+  assert.equal(problem.range.start.line, 1);
+  assert.equal(problem.range.start.character, bad.split('\r\n')[1].indexOf('$'));
+  assert.equal(problem.range.end.character, problem.range.start.character + 1);
+
+  const dependencyDocument = await vscode.workspace.openTextDocument(dependencyUri);
+  const dependencyEditor = await vscode.window.showTextDocument(dependencyDocument);
+  await dependencyEditor.edit(edit => edit.replace(problem.range, ''));
+  await waitForDiagnostics(dependencyUri, 0);
+  assert.ok(await dependencyDocument.save());
+
   const untitled = await vscode.workspace.openTextDocument({ language: 'joky', content: original });
   await vscode.window.showTextDocument(untitled);
   const unsavedEdits = await vscode.commands.executeCommand('vscode.executeFormatDocumentProvider', untitled.uri, { tabSize: 4, insertSpaces: true });
   assert.ok(unsavedEdits.length > 0, 'untitled Joky documents can be formatted');
-  console.log('Joky extension host: formatting, standalone tasks and project tasks passed.');
+  console.log('Joky extension host: formatting, diagnostics, standalone tasks and project tasks passed.');
   await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
   await fs.writeFile(path.join(root, 'host-result.txt'), 'passed');
 }

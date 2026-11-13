@@ -1,7 +1,7 @@
 {
   "name": "joky",
   "displayName": "Joky",
-  "description": "Joky syntax highlighting, run and check commands, and document formatting.",
+  "description": "Joky syntax highlighting, compiler commands, diagnostics, and document formatting.",
   "version": "0.2.0",
   "publisher": "joky-local",
   "private": true,
@@ -80,6 +80,12 @@
     "configuration": {
       "title": "Joky",
       "properties": {
+        "joky.checkOnSave": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Check saved Joky files and projects and display errors in Problems. Requires a compiler with JSON diagnostics."
+        },
         "joky.executablePath": {
           "type": "string",
           "default": "joky",

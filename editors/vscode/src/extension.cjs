@@ -2,6 +2,7 @@ const vscode = require('vscode');
 const path = require('node:path');
 const toolchain = require('./toolchain.cjs');
 const { processTerminal } = require('./terminal.cjs');
+const { registerDiagnostics } = require('./diagnostics.cjs');
 
 const installation = 'https://github.com/julywind168/joky/blob/main/README.md#安装与产物';
 
@@ -162,6 +163,7 @@ function activate(context) {
     ], provider),
     vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('joky.executablePath')) missing.clear(); }),
   );
+  registerDiagnostics(context, vscode, toolchain, compiler, output);
 }
 
 module.exports = { activate };
