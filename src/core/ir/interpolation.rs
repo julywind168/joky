@@ -11,6 +11,10 @@ impl FunctionPlan {
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
         let (value, output, span, callee) = part;
+        // The borrow path can skip ordinary expression planning for the hole.
+        if self.semantics.is_some() {
+            self.record_completion(value, vars, functions, suspends, types)?;
+        }
         let hint = self.type_hint(value, vars, functions, types);
         let reference = hint
             .as_ref()

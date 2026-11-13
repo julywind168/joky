@@ -3,7 +3,7 @@ use super::{
     imports::ImportScope,
     parser::{
         ast::{Item, Module},
-        lexer::{Lexer, TokenKind},
+        lexer::{InterpolationPart, Lexer, Token, TokenKind},
     },
 };
 use crate::{SourceId, Span, Type};
@@ -38,9 +38,9 @@ impl CompletionSite {
         // Preserve the receiver so the ordinary planner can resolve its type.
         source.replace_range(start..suffix, MARKER);
         let tokens = Lexer::tokenize(&source).ok()?;
-        let token = tokens.iter().position(|t| {
-            t.span.start() == start && matches!(&t.kind, TokenKind::Ident(name) if name == MARKER)
-        })?;
+        let mut context = Vec::new();
+        completion_context(&tokens, start, &mut context)?;
+        let (tokens, token) = context[0];
         let preceding = &tokens[..token];
         let member = preceding.last().is_some_and(|t| t.kind == TokenKind::Dot);
         let qualifier = match preceding {
@@ -55,47 +55,9 @@ impl CompletionSite {
             }
             _ => None,
         };
-        let mut delimiters = Vec::new();
         let mut repairs = Vec::new();
-        for (index, t) in tokens.iter().enumerate() {
-            let end = match t.kind {
-                TokenKind::LParen => Some(')'),
-                TokenKind::LBracket => Some(']'),
-                TokenKind::LBrace => Some('}'),
-                _ => None,
-            };
-            if let Some(end) = end {
-                delimiters.push((end, index));
-                continue;
-            }
-            let closing = match t.kind {
-                TokenKind::RParen => Some(')'),
-                TokenKind::RBracket => Some(']'),
-                TokenKind::RBrace => Some('}'),
-                TokenKind::Eof => None,
-                _ => continue,
-            };
-            // Only close delimiters which were already open at the cursor.
-            let mut missing = String::new();
-            while let Some(&(end, opening)) = delimiters.last() {
-                if Some(end) == closing || opening > token || index <= token {
-                    break;
-                }
-                delimiters.pop();
-                missing.push(end);
-            }
-            if !missing.is_empty() {
-                if closing.is_none() {
-                    missing.insert(0, '\n');
-                }
-                repairs.push((t.span.start(), missing));
-            }
-            if delimiters
-                .last()
-                .is_some_and(|(end, _)| Some(*end) == closing)
-            {
-                delimiters.pop();
-            }
+        for (tokens, cursor) in context {
+            repair_delimiters(tokens, cursor, &mut repairs);
         }
         for (offset, closers) in repairs.into_iter().rev() {
             source.insert_str(offset, &closers);
@@ -118,6 +80,78 @@ impl CompletionSite {
     /// The range in the original text to replace when a candidate is accepted.
     pub fn replacement(&self) -> Span {
         self.replacement
+    }
+}
+
+// Keep each interpolation's tokens separate so braces and delimiters cannot
+// affect another hole or the surrounding source. Inner streams come first.
+fn completion_context<'a>(
+    tokens: &'a [Token],
+    offset: usize,
+    context: &mut Vec<(&'a [Token], usize)>,
+) -> Option<()> {
+    let index = tokens.partition_point(|token| token.span.end() <= offset);
+    let token = tokens.get(index)?;
+    if !token.span.contains(offset) {
+        return None;
+    }
+    match &token.kind {
+        TokenKind::Ident(name) if token.span.start() == offset && name == MARKER => {}
+        TokenKind::Interpolated(parts) | TokenKind::SqlTemplate(parts) => {
+            parts.iter().find_map(|part| match part {
+                InterpolationPart::Expression(tokens) | InterpolationPart::Parameter(tokens) => {
+                    completion_context(tokens, offset, context)
+                }
+                InterpolationPart::Text(..) => None,
+            })?;
+        }
+        _ => return None,
+    }
+    context.push((tokens, index));
+    Some(())
+}
+
+fn repair_delimiters(tokens: &[Token], cursor: usize, repairs: &mut Vec<(usize, String)>) {
+    let mut delimiters = Vec::new();
+    for (index, t) in tokens.iter().enumerate() {
+        let end = match t.kind {
+            TokenKind::LParen => Some(')'),
+            TokenKind::LBracket => Some(']'),
+            TokenKind::LBrace => Some('}'),
+            _ => None,
+        };
+        if let Some(end) = end {
+            delimiters.push((end, index));
+            continue;
+        }
+        let closing = match t.kind {
+            TokenKind::RParen => Some(')'),
+            TokenKind::RBracket => Some(']'),
+            TokenKind::RBrace => Some('}'),
+            TokenKind::Eof => None,
+            _ => continue,
+        };
+        // Only close delimiters which were already open at the cursor.
+        let mut missing = String::new();
+        while let Some(&(end, opening)) = delimiters.last() {
+            if Some(end) == closing || opening > cursor || index <= cursor {
+                break;
+            }
+            delimiters.pop();
+            missing.push(end);
+        }
+        if !missing.is_empty() {
+            if closing.is_none() && t.span.is_empty() {
+                missing.insert(0, '\n');
+            }
+            repairs.push((t.span.start(), missing));
+        }
+        if delimiters
+            .last()
+            .is_some_and(|(end, _)| Some(*end) == closing)
+        {
+            delimiters.pop();
+        }
     }
 }
 

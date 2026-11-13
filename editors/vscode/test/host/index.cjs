@@ -142,6 +142,24 @@ async function run() {
   assert.equal(method.kind, vscode.CompletionItemKind.Method);
   assert.ok(field.range.start.isEqual(memberPosition) && field.range.end.isEqual(memberPosition));
   assert.ok(!members.items.some(item => item.label === 'hidden' && item.detail));
+
+  const interpolation = [
+    'struct User { name: String, age: UInt64 }',
+    'fn main() {',
+    '    let user = User { name: "Alice", age: 30 }',
+    '    println("User: {user.}, Age: {user.age}")',
+    '}',
+    '',
+  ];
+  assert.ok(await completionEditor.edit(edit => edit.replace(
+    new vscode.Range(0, 0, projectDocument.lineCount, 0), interpolation.join('\n'))));
+  const hole = new vscode.Position(3, interpolation[3].indexOf('user.') + 'user.'.length);
+  const suggestionsInHole = await vscode.commands.executeCommand('vscode.executeCompletionItemProvider',
+    projectDocument.uri, hole, '.');
+  const name = suggestionsInHole.items.find(item => item.label === 'name' && item.detail);
+  assert.equal(name?.detail, 'String');
+  assert.equal(name.kind, vscode.CompletionItemKind.Field);
+  assert.ok(name.range.start.isEqual(hole) && name.range.end.isEqual(hole));
   assert.ok(await completionEditor.edit(edit => edit.replace(
     new vscode.Range(0, 0, projectDocument.lineCount, 0), navigation)));
 

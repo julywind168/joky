@@ -210,6 +210,9 @@ impl FunctionPlan {
         let place = expression_path(arg)
             .is_some_and(|path| vars.contains_key(path.split('.').next().unwrap()));
         if place && !target.is_copy_value() {
+            if self.semantics.is_some() {
+                self.record_completion(arg, vars, functions, suspends, types)?;
+            }
             return self
                 .borrow_local(arg, false, vars, suspends, arg.span())
                 .map(|flow| (flow, true));

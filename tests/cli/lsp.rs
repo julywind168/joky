@@ -330,6 +330,87 @@ fn lsp_completes_visible_fields_and_inherent_methods_of_resolved_receivers() {
 }
 
 #[test]
+fn lsp_completes_inside_interpolation_expressions() {
+    let work = Workspace::new();
+    work.write("main.jk", "fn main() {}");
+    let uri = Url::from_file_path(work.path().join("main.jk")).unwrap();
+    let mut client = Client::start(&work);
+    client.send(json!({"id": 1, "method": "initialize", "params": {}}));
+    client.until(|message| message["id"] == 1);
+    client.send(json!({"method": "textDocument/didOpen", "params": {
+        "textDocument": {"uri": uri.as_str(), "version": 1, "text": "fn main() {}"}
+    }}));
+
+    let prefix = concat!(
+        "struct User { name: String, age: UInt64 }\n",
+        "fn main() {\n",
+        "    let user = User { name: \"Alice\", age: 30 }\n",
+    );
+    for (index, (line, expected, replaced)) in [
+        (
+            r#"    println("User: {user.¦}, Age: {user.age}")"#,
+            &["age", "name"][..],
+            "",
+        ),
+        (
+            r#"    println("🙂 User: {user.na¦me}")"#,
+            &["name"][..],
+            "name",
+        ),
+        (
+            r#"    println("User: { "nested: {user.a¦ge}" }")"#,
+            &["age"][..],
+            "age",
+        ),
+        (
+            r#"    println("User: {identity(user.na¦}")"#,
+            &["name"][..],
+            "na",
+        ),
+        (r#"    println("literal {{user.¦}}")"#, &[][..], ""),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = index + 2;
+        let (left, right) = line.split_once('¦').unwrap();
+        let character = left.encode_utf16().count();
+        let source = format!(
+            "{prefix}{left}{right}\n}}\nfn identity(value: &String) -> &String {{ value }}"
+        );
+        client.send(json!({"method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": uri.as_str(), "version": id},
+            "contentChanges": [{"text": source}]
+        }}));
+        client.send(json!({"id": id, "method": "textDocument/completion", "params": {
+            "textDocument": {"uri": uri.as_str()}, "position": {"line": 3, "character": character},
+        }}));
+        let response = client.until(|message| message["id"] == id);
+        let items = response["result"]["items"].as_array().unwrap();
+        let labels = items
+            .iter()
+            .map(|item| item["label"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, expected, "{line}");
+        let start = character - left.rsplit('.').next().unwrap().len();
+        for item in items {
+            let label = item["label"].as_str().unwrap();
+            assert_eq!(
+                item["detail"],
+                if label == "age" { "UInt64" } else { "String" }
+            );
+            assert_eq!(
+                item["textEdit"],
+                json!({"newText": label, "range": {
+                    "start": {"line": 3, "character": start},
+                    "end": {"line": 3, "character": start + replaced.len()}
+                }})
+            );
+        }
+    }
+}
+
+#[test]
 fn lsp_resolves_inferred_bindings_and_function_definitions_in_the_current_snapshot() {
     let work = Workspace::new();
     work.write("joky.toml", "[project]\nname='app'\nentry='main.jk'");
