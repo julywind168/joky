@@ -405,7 +405,7 @@ fn read_remaining(
                 IO_CHUNK_SIZE
             }
         }
-        let chunk = file.read(limit)?
+        var chunk = file.read(limit)?
         if chunk.is_empty() {
             return Ok(output)
         }
@@ -417,8 +417,7 @@ fn read_remaining(
                 }
             )
         }
-        let size = chunk.len()
-        array.extend_bytes(&mut output, &chunk[..size], 0, size)
+        output.append(&mut chunk)
     }
 }
 

@@ -134,7 +134,7 @@ impl Uuid {
         var digits: UInt64 = 0
         for i in uint64(0) .. 36 {
             let byte = *slice.borrow_ref(bytes, i)
-            if i == 8 || i == 13 || i == 18 || i == 23 {
+            if i is 8 | 13 | 18 | 23 {
                 if byte != b'-' {
                     return Err(ParseError.InvalidByte(i))
                 }
@@ -156,7 +156,7 @@ impl Uuid {
     pub fn to_text(self) -> String {
         var output = Array.with_capacity::<UInt8>(36)
         for i in uint64(0) .. 16 {
-            if i == 4 || i == 6 || i == 8 || i == 10 {
+            if i is 4 | 6 | 8 | 10 {
                 output.push(b'-')
             }
             let word = if i < 8 {

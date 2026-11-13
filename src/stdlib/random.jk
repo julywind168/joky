@@ -23,7 +23,6 @@ import joky/array.{type Array}
 import joky/internal/buffer
 import joky/result.{type Result, Ok, Err}
 import joky/option.{type Option, Some, None}
-import joky/check
 
 pub enum RandomError { Unavailable }
 impl Show for RandomError {
@@ -108,10 +107,7 @@ impl Rng {
 pub fn shuffle<T>(rng: &mut Rng, values: &mut Array<T>) {
     var remaining = values.len()
     while remaining > 1 {
-        let index = match rng.range(0, remaining) {
-            Some(value) => value
-            None => check.panic("Invalid shuffle range")
-        }
+        let index = rng.range(0, remaining).expect("Invalid shuffle range")
         remaining -= 1
         values.swap(remaining, index)
     }

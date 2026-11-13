@@ -125,13 +125,11 @@ pub fn iter_shared<T>(list: &List<T>) -> SharedIter<T> {
 }
 
 impl<T> SharedIterator for SharedIter<T> {
-    type Item
-    = &T
+    type Item = &T
     fn step(self) -> (Self, Option<&T>) {
         let SharedIter { source, next } = self
-        let slot = match next {
-            Some(slot) => slot,
-            None => return (self, None)
+        let Some(slot) = next else {
+            return (self, None)
         }
         let node = links(source, slot)
         let item = source.values.borrow_ref(node.value_index)

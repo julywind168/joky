@@ -65,10 +65,8 @@ impl Lines {
     }
 }
 impl Reader for Lines {
-    type Message
-    = String
-    type Error
-    = ReadError
+    type Message = String
+    type Error = ReadError
     fn read(
         &mut self,
         input: &mut BufferedTcpReader
@@ -84,10 +82,8 @@ impl LengthPrefixed {
     }
 }
 impl Reader for LengthPrefixed {
-    type Message
-    = Array<UInt8>
-    type Error
-    = ReadError
+    type Message = Array<UInt8>
+    type Error = ReadError
     fn read(
         &mut self,
         input: &mut BufferedTcpReader
@@ -171,9 +167,8 @@ fn receive<R: Reader, H: Handler<Message = R.Message>>(
 
 fn send(queue: &mut outbox.Mailbox, var writer: TcpWriter) @suspends -> Result<Unit, IoError> {
     while true {
-        let bytes = match queue.receive() {
-            Some(bytes) => bytes,
-            None => return Ok({})
+        let Some(bytes) = queue.receive() else {
+            return Ok({})
         }
         writer.write_all(bytes)?
     }

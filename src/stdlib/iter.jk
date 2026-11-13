@@ -78,16 +78,10 @@ pub fn fold<I: IntoIterator, A, F: FnMut(A, I.IntoIter.Item) -> A>(
     var combine: F
 ) -> A {
     var source = IntoIterator.into_iter(input)
-    while true {
-        match Iterator.next(&mut source) {
-            option.Some(value) => {
-                initial = (&mut combine)(initial, value)
-            }
-            option.None => {
-                return initial
-            }
-        }
+    while let option.Some(value) = Iterator.next(&mut source) {
+        initial = (&mut combine)(initial, value)
     }
+    initial
 }
 
 // Adapters own their inputs and stop permanently after the first None.
@@ -98,8 +92,7 @@ pub fn take<I: IntoIterator>(input: I, count: UInt64) -> Take<I.IntoIter> {
 }
 
 impl<I: Iterator> Iterator for Take<I> {
-    type Item
-    = I.Item
+    type Item = I.Item
     fn next(&mut self) -> option.Option<I.Item> {
         if self.remaining == 0 {
             return option.None
@@ -123,8 +116,7 @@ pub fn skip<I: IntoIterator>(input: I, count: UInt64) -> Skip<I.IntoIter> {
 }
 
 impl<I: Iterator> Iterator for Skip<I> {
-    type Item
-    = I.Item
+    type Item = I.Item
     fn next(&mut self) -> option.Option<I.Item> {
         if self.done {
             return option.None
@@ -157,8 +149,7 @@ fn enumerate_index(next_index: option.Option<UInt64>) -> UInt64 {
 }
 
 impl<I: Iterator> Iterator for Enumerate<I> {
-    type Item
-    = (UInt64, I.Item)
+    type Item = (UInt64, I.Item)
     fn next(&mut self) -> option.Option<Self.Item> {
         if self.done {
             return option.None
@@ -194,8 +185,7 @@ pub fn chain<
 }
 
 impl<I: Iterator, J: Iterator<Item = I.Item>> Iterator for Chain<I, J> {
-    type Item
-    = I.Item
+    type Item = I.Item
     fn next(&mut self) -> option.Option<Self.Item> {
         if self.done {
             return option.None
@@ -219,25 +209,18 @@ pub fn zip<I: IntoIterator, J: IntoIterator>(left: I, right: J) -> Zip<I.IntoIte
 }
 
 impl<I: Iterator, J: Iterator> Iterator for Zip<I, J> {
-    type Item
-    = (I.Item, J.Item)
+    type Item = (I.Item, J.Item)
     fn next(&mut self) -> option.Option<Self.Item> {
         if self.done {
             return option.None
         }
-        let left = match Iterator.next(&mut self.left) {
-            option.Some(value) => value,
-            option.None => {
-                self.done = true
-                return option.None
-            }
+        let option.Some(left) = Iterator.next(&mut self.left) else {
+            self.done = true
+            return option.None
         }
-        let right = match Iterator.next(&mut self.right) {
-            option.Some(value) => value,
-            option.None => {
-                self.done = true
-                return option.None
-            }
+        let option.Some(right) = Iterator.next(&mut self.right) else {
+            self.done = true
+            return option.None
         }
         option.Some((left, right))
     }
@@ -253,8 +236,7 @@ pub fn map<I: IntoIterator, T, F: FnMut(I.IntoIter.Item) -> T>(
 }
 
 impl<I: Iterator, T, F: FnMut(I.Item) -> T> Iterator for Map<I, T, F> {
-    type Item
-    = T
+    type Item = T
     fn next(&mut self) -> option.Option<T> {
         if self.done {
             return option.None
@@ -279,19 +261,15 @@ pub fn filter<I: IntoIterator, F: FnMut(&I.IntoIter.Item) -> Bool>(
 }
 
 impl<I: Iterator, F: FnMut(&I.Item) -> Bool> Iterator for Filter<I, F> {
-    type Item
-    = I.Item
+    type Item = I.Item
     fn next(&mut self) -> option.Option<I.Item> {
         if self.done {
             return option.None
         }
         while true {
-            let value = match Iterator.next(&mut self.source) {
-                option.Some(value) => value,
-                option.None => {
-                    self.done = true
-                    return option.None
-                }
+            let option.Some(value) = Iterator.next(&mut self.source) else {
+                self.done = true
+                return option.None
             }
             if (&mut self.predicate)(&value) {
                 return option.Some(value)
@@ -350,14 +328,10 @@ pub fn fold_shared<I: Copy + SharedIterator, A, F: FnMut(A, I.Item) @noescape ->
     while true {
         let (next, value) = SharedIterator.step(input)
         input = next
-        match value {
-            option.Some(value) => {
-                initial = (&mut combine)(initial, value)
-            }
-            option.None => {
-                return initial
-            }
+        let option.Some(value) = value else {
+            return initial
         }
+        initial = (&mut combine)(initial, value)
     }
 }
 
@@ -368,8 +342,7 @@ pub fn take_shared<I: Copy + SharedIterator>(input: I, count: UInt64) -> SharedT
 }
 
 impl<I: Copy + SharedIterator> SharedIterator for SharedTake<I> {
-    type Item
-    = I.Item
+    type Item = I.Item
     fn step(self) -> (Self, option.Option<I.Item>) {
         let SharedTake { source, remaining } = self
         if remaining == 0 {
@@ -393,8 +366,7 @@ pub fn skip_shared<I: Copy + SharedIterator>(input: I, count: UInt64) -> SharedS
 }
 
 impl<I: Copy + SharedIterator> SharedIterator for SharedSkip<I> {
-    type Item
-    = I.Item
+    type Item = I.Item
     fn step(self) -> (Self, option.Option<I.Item>) {
         if self.done {
             return (self, option.None)
@@ -422,8 +394,7 @@ pub fn enumerate_shared<I: Copy + SharedIterator>(input: I) -> SharedEnumerate<I
 }
 
 impl<I: Copy + SharedIterator> SharedIterator for SharedEnumerate<I> {
-    type Item
-    = (UInt64, I.Item)
+    type Item = (UInt64, I.Item)
     fn step(self) -> (Self, option.Option<Self.Item>) {
         let SharedEnumerate { source, next_index, done } = self
         if done {
@@ -455,8 +426,7 @@ impl<I: Copy + SharedIterator, J: Copy + SharedIterator<Item = I.Item>> SharedIt
     I,
     J
 > {
-    type Item
-    = I.Item
+    type Item = I.Item
     fn step(var self) -> (Self, option.Option<Self.Item>) {
         if self.done {
             return (self, option.None)
@@ -486,26 +456,19 @@ pub fn zip_shared<I: Copy + SharedIterator, J: Copy + SharedIterator>(
 }
 
 impl<I: Copy + SharedIterator, J: Copy + SharedIterator> SharedIterator for SharedZip<I, J> {
-    type Item
-    = (I.Item, J.Item)
+    type Item = (I.Item, J.Item)
     fn step(self) -> (Self, option.Option<Self.Item>) {
         let SharedZip { left, right, done } = self
         if done {
             return (SharedZip { left, right, done }, option.None)
         }
         let (left, value) = SharedIterator.step(left)
-        let a = match value {
-            option.Some(value) => value,
-            option.None => {
-                return (SharedZip { left, right, done: true }, option.None)
-            }
+        let option.Some(a) = value else {
+            return (SharedZip { left, right, done: true }, option.None)
         }
         let (right, value) = SharedIterator.step(right)
-        let b = match value {
-            option.Some(value) => value,
-            option.None => {
-                return (SharedZip { left, right, done: true }, option.None)
-            }
+        let option.Some(b) = value else {
+            return (SharedZip { left, right, done: true }, option.None)
         }
         (SharedZip { left, right, done: false }, option.Some((a, b)))
     }
@@ -525,8 +488,7 @@ pub fn filter_shared<I: Copy + SharedIterator<Item = &T>, T>(
 }
 
 impl<I: Copy + SharedIterator<Item = &T>, T> SharedIterator for SharedFilter<I, T> {
-    type Item
-    = &T
+    type Item = &T
     fn step(self) -> (Self, option.Option<&T>) {
         let SharedFilter { source, predicate, done } = self
         if done {
@@ -536,11 +498,8 @@ impl<I: Copy + SharedIterator<Item = &T>, T> SharedIterator for SharedFilter<I, 
         while true {
             let (next, value) = SharedIterator.step(cursor)
             cursor = next
-            let item = match value {
-                option.Some(item) => item,
-                option.None => {
-                    return (SharedFilter { source: cursor, predicate, done: true }, option.None)
-                }
+            let option.Some(item) = value else {
+                return (SharedFilter { source: cursor, predicate, done: true }, option.None)
             }
             if predicate(item) {
                 return (SharedFilter { source: cursor, predicate, done: false }, option.Some(item))
@@ -551,8 +510,7 @@ impl<I: Copy + SharedIterator<Item = &T>, T> SharedIterator for SharedFilter<I, 
 
 pub struct SharedView<S> { source: &S, index: UInt64, done: Bool }
 impl<S: SharedSource> SharedIterator for SharedView<S> {
-    type Item
-    = &S.Item
+    type Item = &S.Item
     fn step(var self) -> (Self, option.Option<&S.Item>) {
         if self.done {
             return (self, option.None)
@@ -574,8 +532,7 @@ pub fn shared<S: SharedSource>(source: &S) -> SharedPipeline<SharedView<S>, &S.I
 }
 
 impl<I: Copy + SharedIterator<Item = T>, T> SharedIterator for SharedPipeline<I, T> {
-    type Item
-    = T
+    type Item = T
     fn step(self) -> (Self, option.Option<T>) {
         let (source, value) = SharedIterator.step(self.source)
         (SharedPipeline { source }, value)
@@ -599,14 +556,10 @@ impl<I: Copy + SharedIterator<Item = T>, T> SharedPipeline<I, T> {
         while true {
             let (next, value) = SharedIterator.step(source)
             source = next
-            match value {
-                option.Some(value) => {
-                    initial = (&mut combine)(initial, value)
-                }
-                option.None => {
-                    return initial
-                }
+            let option.Some(value) = value else {
+                return initial
             }
+            initial = (&mut combine)(initial, value)
         }
     }
     pub fn take(self, count: UInt64) -> SharedPipeline<SharedTake<I>, T> {
@@ -658,8 +611,7 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy, F: Copy + Fn(T) @noescape -> B
     T,
     F
 > {
-    type Item
-    = T
+    type Item = T
     fn step(self) -> (Self, option.Option<T>) {
         let SharedSelect { source, predicate, done } = self
         if done {
@@ -669,11 +621,8 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy, F: Copy + Fn(T) @noescape -> B
         while true {
             let (next, value) = SharedIterator.step(cursor)
             cursor = next
-            let item = match value {
-                option.Some(item) => item,
-                option.None => {
-                    return (SharedSelect { source: cursor, predicate, done: true }, option.None)
-                }
+            let option.Some(item) = value else {
+                return (SharedSelect { source: cursor, predicate, done: true }, option.None)
             }
             if predicate(item) {
                 return (SharedSelect { source: cursor, predicate, done: false }, option.Some(item))
@@ -689,8 +638,7 @@ impl<I: Copy + SharedIterator<Item = T>, T, U, F: Copy + Fn(T) @noescape -> U> S
     U,
     F
 > {
-    type Item
-    = U
+    type Item = U
     fn step(self) -> (Self, option.Option<U>) {
         types.require_reference_free::<U>()
         let SharedMap { source, transform, done } = self
@@ -716,8 +664,7 @@ pub trait ExclusivePlan {
 }
 pub struct ExclusiveAll<T> {}
 impl<T> ExclusivePlan for ExclusiveAll<T> {
-    type Item
-    = T
+    type Item = T
     fn step(self, cursor: &Iter<T>) @noescape(cursor) -> (Self, Bool) {
         (self, advance(cursor))
     }
@@ -783,8 +730,7 @@ pub fn step_exclusive<P: Copy + ExclusivePlan>(
 
 pub struct ExclusiveTake<P: Copy> { source: P, remaining: UInt64 }
 impl<P: Copy + ExclusivePlan> ExclusivePlan for ExclusiveTake<P> {
-    type Item
-    = P.Item
+    type Item = P.Item
     fn step(var self, cursor: &Iter<P.Item>) @noescape(cursor) -> (Self, Bool) {
         if self.remaining == 0 {
             return (self, false)
@@ -801,8 +747,7 @@ impl<P: Copy + ExclusivePlan> ExclusivePlan for ExclusiveTake<P> {
 }
 pub struct ExclusiveSkip<P: Copy> { source: P, remaining: UInt64, done: Bool }
 impl<P: Copy + ExclusivePlan> ExclusivePlan for ExclusiveSkip<P> {
-    type Item
-    = P.Item
+    type Item = P.Item
     fn step(var self, cursor: &Iter<P.Item>) @noescape(cursor) -> (Self, Bool) {
         if self.done {
             return (self, false)
@@ -832,8 +777,7 @@ impl<P: Copy + ExclusivePlan<Item = T>, T, F: Copy + Fn(&T) @noescape -> Bool> E
     T,
     F
 > {
-    type Item
-    = T
+    type Item = T
     fn step(var self, cursor: &Iter<T>) @noescape(cursor) -> (Self, Bool) {
         if self.done {
             return (self, false)

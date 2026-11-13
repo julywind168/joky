@@ -330,14 +330,14 @@ fn valid_media_type(value: &String) -> Bool {
         return false
     }
     while i < n {
-        while i < n && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        while i < n && bytes[i] is b' ' | b'\t' {
             i += 1
         }
         if i == n || bytes[i] != b';' {
             return false
         }
         i += 1
-        while i < n && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        while i < n && bytes[i] is b' ' | b'\t' {
             i += 1
         }
         let name = i
@@ -476,10 +476,7 @@ fn request_line(bytes: Array<UInt8>) -> Result<(Method, String), ReadFailure> {
         }
     }
     let text = String.from_utf8(bytes)!
-    let first = match text.find(" ") {
-        Some(i) => i,
-        None => return Err(ReadFailure.Bad)
-    }
+    let first = text.find(" ").ok_or(ReadFailure.Bad)?
     let method = text.substring(0, first)!
     if method.is_empty() {
         return Err(ReadFailure.Bad)
@@ -490,10 +487,7 @@ fn request_line(bytes: Array<UInt8>) -> Result<(Method, String), ReadFailure> {
         }
     }
     let rest = text.substring(first + 1, text.byte_length())!
-    let end = match rest.find(" ") {
-        Some(i) => i,
-        None => return Err(ReadFailure.Bad)
-    }
+    let end = rest.find(" ").ok_or(ReadFailure.Bad)?
     if rest.substring(end + 1, rest.byte_length())! != "HTTP/1.1" {
         return Err(ReadFailure.Bad)
     }
@@ -522,10 +516,10 @@ fn header(var bytes: Array<UInt8>) -> Result<Header, ReadFailure> {
     }
     var start = i + 1
     var end = bytes.len()
-    while start < end && (bytes[start] == b' ' || bytes[start] == b'\t') {
+    while start < end && bytes[start] is b' ' | b'\t' {
         start += 1
     }
-    while end > start && (bytes[end - 1] == b' ' || bytes[end - 1] == b'\t') {
+    while end > start && bytes[end - 1] is b' ' | b'\t' {
         end -= 1
     }
     for j in start .. end {
@@ -748,10 +742,8 @@ fn respond(
     if let Some(duration) = read_duration {
         fields.push(log.field("read_duration_ms", duration.as_millis()))
     }
-    if let Some(started) = started {
-        if let Some(duration) = finished.duration_since(started) {
-            fields.push(log.field("duration_ms", duration.as_millis()))
-        }
+    if let Some(started) = started && let Some(duration) = finished.duration_since(started) {
+        fields.push(log.field("duration_ms", duration.as_millis()))
     }
     if let Some((method, path)) = request_info {
         fields.push(log.field("method", method_name(method)))
@@ -796,8 +788,7 @@ pub trait ContextSource {
     fn for_request(&self) @suspends @noescape -> Self.Context
 }
 impl ContextSource for Unit {
-    type Context
-    = Unit
+    type Context = Unit
     fn share(&self) @suspends @noescape -> Self {
         {}
     }
@@ -1411,9 +1402,8 @@ fn exchange_deadline(timeout: Duration) @suspends -> Result<ClientResponse, Clie
 }
 
 fn reserved_field(name: &String) -> Bool {
-    name == "host" || name == "content-length" || name == "connection" || name ==
-        "transfer-encoding" ||
-        name == "expect" || name == "trailer" || name == "upgrade"
+    name is "host" | "content-length" | "connection" | "transfer-encoding" | "expect" | "trailer" |
+        "upgrade"
 }
 
 fn outgoing_field(field: &Header, seen_type: &mut Bool) -> Result<String, ClientError> {
@@ -1564,8 +1554,8 @@ fn chunked_body(io: &mut Wire, limit: UInt64) @suspends -> Result<Array<UInt8>, 
             }
             return result.Ok(body)
         }
-        let chunk = exact_body(io, n)?
-        array.extend_bytes(&mut body, &chunk[..n], 0, n)
+        var chunk = exact_body(io, n)?
+        body.append(&mut chunk)
         if !response_line(io, &mut metadata)?.is_empty() {
             return Err(InvalidResponse)
         }
@@ -1581,7 +1571,7 @@ fn eof_body(io: &mut Wire, limit: UInt64) @suspends -> Result<Array<UInt8>, Clie
         } else {
             left + 1
         }
-        let part = match io {
+        var part = match io {
             Plain(s) => match s.read(n) {
                 result.Ok(b) => b,
                 Err(_) => return Err(Transport)
@@ -1597,7 +1587,7 @@ fn eof_body(io: &mut Wire, limit: UInt64) @suspends -> Result<Array<UInt8>, Clie
         if part.len() > left {
             return Err(SizeLimit)
         }
-        array.extend_bytes(&mut body, &part[..], 0, part.len())
+        body.append(&mut part)
     }
 }
 

@@ -3,18 +3,12 @@ import joky/iter
 fn main() {
     let scores = [55, 80, 65, 90]
     let threshold = 60
-    let passed = iter.shared(&scores)
-        .filter(|score| { *score >= threshold })
-        .take(2)
+    let passed = iter.shared(&scores).filter(|score| { *score >= threshold }).take(2)
 
     for score in passed { println(*score) }
 
     let bonus = 5
-    for score in iter.shared(&scores)
-        .filter(|score| { *score >= threshold })
-        .map(|score| { *score + bonus })
-        .take(2)
-    {
+    for score in passed.map(|score| { *score + bonus }) {
         println(score)
     }
     println(scores.len()) // Captures and the source are borrowed, not consumed.

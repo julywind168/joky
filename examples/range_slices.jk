@@ -20,7 +20,7 @@ fn main() {
     println(first[0]) // 31; subslice indices are relative to tail.
 
     let fixed: FixedArray<Int32, 3> = [1, 2, 3]
-    let prefix = &fixed[0 ..= 1]
+    let prefix = &fixed[..2]
     println(prefix.len()) // 2
     let empty = &values[4..]
     println(empty.len()) // 0; an empty half-open slice is valid.

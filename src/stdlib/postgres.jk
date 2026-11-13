@@ -18,6 +18,7 @@
 
 // Runtime SQL uses positional PostgreSQL parameters. Values never become SQL text.
 import joky/array.{type Array}
+import joky/iter
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 import joky/check.{panic}
@@ -275,24 +276,22 @@ impl ToSql for Float64 {
 }
 
 fn copy_text_array(values: &Array<Option<String>>) @noescape -> Array<Option<String>> {
-    var result: Array<Option<String>> = []
-    for i in 0 .. values.len() {
-        result.push(
-            match values.borrow_ref(i) {
-                Some(value) => Some(value.clone()),
+    iter.shared(values).map(
+        |value| {
+            match value {
+                Some(text) => Some(text.clone()),
                 None => None
             }
-        )
-    }
-    result
+        }
+    ).collect()
 }
 
 fn copy_int_array(values: &Array<Option<Int64>>) @noescape -> Array<Option<Int64>> {
-    var result: Array<Option<Int64>> = []
-    for i in 0 .. values.len() {
-        result.push(*values.borrow_ref(i))
-    }
-    result
+    iter.shared(values).map(
+        |value| {
+            *value
+        }
+    ).collect()
 }
 
 impl ToSql for Array<String> {
@@ -300,10 +299,11 @@ impl ToSql for Array<String> {
         TextArray
     }
     fn to_sql(&self) @noescape -> Value {
-        var values: Array<Option<String>> = []
-        for i in 0 .. self.len() {
-            values.push(Some(self.borrow_ref(i).clone()))
-        }
+        let values = iter.shared(self).map(
+            |text| {
+                Some(text.clone())
+            }
+        ).collect()
         TextArrayValue(values)
     }
 }
@@ -320,10 +320,11 @@ impl ToSql for Array<Int64> {
         IntArray
     }
     fn to_sql(&self) @noescape -> Value {
-        var values: Array<Option<Int64>> = []
-        for i in 0 .. self.len() {
-            values.push(Some(*self.borrow_ref(i)))
-        }
+        let values = iter.shared(self).map(
+            |value| {
+                Some(*value)
+            }
+        ).collect()
         IntArrayValue(values)
     }
 }
@@ -774,7 +775,7 @@ fn blob(out: &mut Array<UInt8>, tag: UInt8, bytes: &Array<UInt8>) -> Result<Unit
     }
     out.push(tag)
     word(out, size, 4)
-    array.extend_bytes(out, &bytes[..size], 0, size)
+    out.extend(&bytes[..])
     Ok({})
 }
 
@@ -785,7 +786,7 @@ fn text_blob(out: &mut Array<UInt8>, tag: UInt8, text: &String) -> Result<Unit, 
     }
     out.push(tag)
     word(out, size, 4)
-    array.extend_bytes(out, text.bytes(), 0, size)
+    out.extend(text.bytes())
     Ok({})
 }
 

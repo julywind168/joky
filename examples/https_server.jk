@@ -8,11 +8,13 @@ import joky/shutdown
 import joky/tcp
 
 fn main() @suspends -> Int32 {
-    let chain_path = match process.env("JOKY_TLS_CERT")! {
-        Some(path) => path, None => { eprintln("Set JOKY_TLS_CERT to the PEM chain path"); return 2 }
+    let Some(chain_path) = process.env("JOKY_TLS_CERT")! else {
+        eprintln("Set JOKY_TLS_CERT to the PEM chain path")
+        return 2
     }
-    let key_path = match process.env("JOKY_TLS_KEY")! {
-        Some(path) => path, None => { eprintln("Set JOKY_TLS_KEY to the PEM private key path"); return 2 }
+    let Some(key_path) = process.env("JOKY_TLS_KEY")! else {
+        eprintln("Set JOKY_TLS_KEY to the PEM private key path")
+        return 2
     }
     var chain = fs.open(chain_path, fs.OpenOptions.default())!
     var key = fs.open(key_path, fs.OpenOptions.default())!

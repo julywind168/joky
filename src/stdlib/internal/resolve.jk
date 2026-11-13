@@ -36,10 +36,8 @@ extern fn __dns_lookup(host: &String, port: UInt16, error: &mut UInt64) @suspend
 
 fn word(bytes: &Array<UInt8>, offset: UInt64) -> UInt64 {
     var value: UInt64 = 0
-    var index: UInt64 = 0
-    while index < 8 {
+    for index in uint64(0) .. 8 {
         value = (value << 8) | bytes.get(offset + index).unwrap_or(0).to_u64().unwrap_or(0)
-        index = index + 1
     }
     value
 }
