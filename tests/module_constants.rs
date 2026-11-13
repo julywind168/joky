@@ -176,7 +176,7 @@ fn module_constant_arithmetic_follows_the_shared_scalar_kernel() {
     // `const` counts as a declaration: imports cannot follow one.
     reject(
         "const A: Int32 = 1 import joky/io fn main() -> Int32 { A }",
-        ErrorCode::Generic,
+        ErrorCode::SyntaxError,
         "Imports must precede all declarations",
     );
 }

@@ -124,8 +124,9 @@ fn resolve_entry(
     registry: &TypeRegistry,
     include_tests: bool,
 ) -> Result<Module, Error> {
-    let entry = read_file(path)?;
-    let path = path.canonicalize().map_err(|e| io_error(path, e))?;
+    let canonical = path.canonicalize().map_err(|e| io_error(path, e))?;
+    let entry = read_file(path, &canonical)?;
+    let path = canonical;
     let root = root.canonicalize().map_err(|e| io_error(root, e))?;
     if !root.is_dir() {
         return Err(Error::new_with_code(
@@ -165,7 +166,7 @@ fn resolve_entry(
             if file == path {
                 Ok(entry.clone())
             } else {
-                read_file(&file)
+                read_file(&file, &file)
             }
         },
         &|_, _| Ok(()),
@@ -174,9 +175,9 @@ fn resolve_entry(
     registry.resolve_aliases(&expanded)
 }
 
-fn read_file(path: &Path) -> Result<SourceFile, Error> {
-    let text = std::fs::read_to_string(path).map_err(|e| io_error(path, e))?;
-    Ok(SourceFile::new(path.display().to_string(), text))
+fn read_file(path: &Path, canonical: &Path) -> Result<SourceFile, Error> {
+    let text = std::fs::read_to_string(canonical).map_err(|e| io_error(path, e))?;
+    Ok(SourceFile::from_path(path, canonical, text))
 }
 
 fn io_error(path: &Path, cause: std::io::Error) -> Error {

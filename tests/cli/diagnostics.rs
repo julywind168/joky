@@ -797,10 +797,59 @@ fn ownership_diagnostics_render_related_locations_from_imported_sources() {
     let work = Workspace::new();
     work.write("main.jk", "import app/bad\nfn main() { bad.fail() }");
     // All three ranges must use the imported source, including BOM/UTF-8/CRLF offsets.
-    work.write(
-        "app/bad.jk",
-        "\u{feff}// Unicode source\r\npub fn fail() {\r\n    let 文本 = \"hello\"\r\n    let moved = 文本\r\n    println(文本)\r\n    println(moved)\r\n}\r\n",
-    );
+    let source = "\u{feff}// Unicode source\r\npub fn fail() {\r\n    let 文本 = \"hello\"\r\n    let moved = 文本\r\n    println(文本)\r\n    println(moved)\r\n}\r\n";
+    work.write("app/bad.jk", source);
+    let output = work.cli(&["check", "--diagnostic-format", "json", "main.jk"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let diagnostic = &json["diagnostics"][0];
+    let message = "Use of a moved or uninitialized owning value";
+    assert_eq!(diagnostic["code"], "invalid_assignment");
+    assert_eq!(diagnostic["phase"], "typecheck");
+    assert_eq!(diagnostic["message"], message);
+    let expected_path = work.path().join("app/bad.jk").canonicalize().unwrap();
+    let range = |location: &serde_json::Value| {
+        assert_eq!(location["source"]["kind"], "file");
+        assert_eq!(location["source"]["path"], expected_path.to_str().unwrap());
+        let start = location["startByte"].as_u64().unwrap() as usize;
+        let end = location["endByte"].as_u64().unwrap() as usize;
+        start..end
+    };
+    let primary = range(&diagnostic["primary"]);
+    assert_eq!(&source[primary.clone()], "println(文本)");
+    assert_eq!(primary.start, source.find("println(文本)").unwrap());
+    let labels = diagnostic["labels"].as_array().unwrap();
+    assert_eq!(labels.len(), 3);
+    for (label, kind, expected, fragment) in [
+        (
+            &labels[0],
+            "context",
+            "`文本` declared here",
+            "let 文本 = \"hello\"",
+        ),
+        (
+            &labels[1],
+            "secondary",
+            "`文本` moved or consumed here",
+            "文本",
+        ),
+        (
+            &labels[2],
+            "primary",
+            "`文本` used again here",
+            "println(文本)",
+        ),
+    ] {
+        assert_eq!(label["kind"], kind);
+        assert!(label["message"].as_str().unwrap().starts_with(expected));
+        assert_eq!(&source[range(&label["location"])], fragment);
+    }
+    assert_eq!(range(&labels[2]["location"]), primary);
+    let help = diagnostic["help"].as_array().unwrap();
+    assert_eq!(help.len(), 2);
+    assert!(help[0].as_str().unwrap().contains("`&文本`"));
+    assert!(help[1].as_str().unwrap().contains("`文本.clone()`"));
     for args in [
         vec!["check", "main.jk"],
         vec!["run", "main.jk"],
@@ -822,12 +871,7 @@ fn ownership_diagnostics_render_related_locations_from_imported_sources() {
         ] {
             assert!(diagnostic.contains(expected), "{args:?}: {diagnostic}");
         }
-        assert_eq!(
-            diagnostic
-                .matches("Use of a moved or uninitialized owning value")
-                .count(),
-            1
-        );
+        assert_eq!(diagnostic.matches(message).count(), 1);
         assert!(output.stdout.is_empty());
     }
     // Exercise the actual CLI stream policy without changing the test process environment.

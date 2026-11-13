@@ -229,7 +229,7 @@ impl PackageSources {
         let read = |path: &Path| {
             let text = std::fs::read_to_string(path)
                 .map_err(|error| invalid(format!("Cannot read '{}': {error}", path.display())))?;
-            Ok(SourceFile::new(path.display().to_string(), text))
+            Ok(SourceFile::from_path(path, path, text))
         };
         let entry = read(&path)?;
         let mut sources = SourceMap::default();

@@ -2691,7 +2691,7 @@ I/O、超限或 UTF-8 错误后读者失效，后续读取返回 `Closed`；非�
 
 ## 静态检查
 
-`joky check [--no-prelude] [<file.jk> | <project-dir> | joky.toml]` 复用编译器完整前端，
+`joky check [--no-prelude] [--diagnostic-format <text|json>] [<file.jk> | <project-dir> | joky.toml]` 复用编译器完整前端，
 检查导入、语法、类型、泛型约束、所有权、借用、`@noescape` 和挂起限制。
 包含未调用的生产函数和泛型模板的检查；`#test` 函数体由[原生测试](#原生测试)检查。不执行 `main`、初始化 VM、生成机器码或字节码，也不调用链接器。
 无需系统 `cc` 或 runtime archive，不创建临时构建目录、可执行文件或 `dist`。
@@ -2704,7 +2704,8 @@ I/O、超限或 UTF-8 错误后读者失效，后续读取返回 `Closed`；非�
 - CLI 只接受标准宿主声明；任意自定义 `extern fn` 仍需嵌入方注册，不能靠静态检查推定存在实现。
 - 默认开启 prelude；`--no-prelude` 和显式导入规则与 `run/build` 相同。
   省略输入时从当前目录向上发现 `joky.toml`；`--` 后的参数作为文件路径。
-- 成功不输出内容，退出码为 0；参数、文件或源码错误写入 stderr，退出码为 1，保留错误码和依赖文件位置。
+- 默认文本模式成功时不输出内容，失败时将诊断写入 stderr。`--diagnostic-format json` 将检查结果写入 stdout，
+  见 [JSON 诊断](cli.md#json-诊断)。两种模式均以 `0` 表示成功，`1` 表示失败。
 - 不接受 `--interpreter`、`--parallel`、`--task-workers` 或 `-o`，也不读取 `JOKY_TASK_WORKERS`。
   并行准入报告使用 `explain-parallel`；格式检查使用 `fmt --check`。
 

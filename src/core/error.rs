@@ -16,6 +16,7 @@ pub enum ErrorPhase {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorCode {
     Generic,
+    SyntaxError,
     InvalidImport,
     InvalidCall,
     InvalidAssignment,
@@ -53,6 +54,7 @@ impl ErrorCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Generic => "generic",
+            Self::SyntaxError => "syntax_error",
             Self::InvalidImport => "invalid_import",
             Self::InvalidCall => "invalid_call",
             Self::InvalidAssignment => "invalid_assignment",

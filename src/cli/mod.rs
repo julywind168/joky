@@ -27,7 +27,7 @@ Usage:
   joky init [--name <name>] [<directory>]
   joky doc [--std] [--open] [-o <directory>]
   joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture] [--timeout-ms N] [<file.jk> | <project-dir> | joky.toml]
-  joky check [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
+  joky check [--no-prelude] [--diagnostic-format <text|json>] [<file.jk> | <project-dir> | joky.toml]
   joky run [-q | -v] [--interpreter] [--no-prelude] [--strict-native-stack] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-- <program-args>...]
   joky build [--no-prelude] [--strict-native-stack] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
   joky explain-parallel [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
@@ -54,6 +54,7 @@ Options:
   --stdin             Read fmt input from stdin; write formatted source to stdout
   --interpreter       Execute 'run' or 'test' with the register bytecode interpreter
   --no-prelude        Disable implicit standard-library imports
+  --diagnostic-format <text|json>  Select check diagnostic output (default: text)
   --strict-native-stack  Require budgeted synchronous native paths (macOS arm64)
   --parallel          Enable checked Parallel execution (default: 1 worker)
   --task-workers N    Enable Parallel with 1..256 workers; build sets a startup default
@@ -66,7 +67,8 @@ Options:
 Use joky <command> --help or joky help <command> for command-specific usage.
 Without an input, check/test/run/build/fmt/explain-parallel find the nearest joky.toml in the current directory or its parents.
 Check allows single files without main; projects require a valid program entry.
-Successful checks are silent (exit 0); errors go to stderr (exit 1).
+Text checks are silent on success (exit 0); errors go to stderr (exit 1).
+JSON checks write one result to stdout on success or failure.
 Projects declare [project] name, entry, source-root (default \".\"), and resources.
 Project builds default to <project>/dist/<name>; run them directly after moving the bundle.
 Single-file builds default to the source path without .jk.
@@ -91,10 +93,7 @@ enum Command {
     Doc(doc::Options),
     Test(testing::Options),
     Format(format::Options),
-    Check {
-        source: PathBuf,
-        prelude: bool,
-    },
+    Check(check::Options),
     Explain {
         source: PathBuf,
         prelude: bool,
@@ -365,7 +364,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
         Command::Doc(output) => return doc::execute(output),
         Command::Test(options) => return testing::execute(options),
         Command::Format(options) => return format::execute(options),
-        Command::Check { source, prelude } => return check::execute(source, *prelude),
+        Command::Check(options) => return check::execute(options),
         Command::Explain { source, prelude } => return explain::execute(source, *prelude),
         Command::Run { source: path, .. } | Command::Build { source: path, .. } => path,
     };

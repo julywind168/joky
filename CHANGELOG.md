@@ -5,6 +5,7 @@
 
 ## Unreleased
 
+- `joky check --diagnostic-format json` 输出带版本的结构化诊断，包含稳定错误码和跨文件源码范围。
 - `iter.collect(input)` 按顺序把拥有迭代器的剩余元素移入 `Array`。
 - 共享流水线 `.collect()` 和 `iter.collect_shared(input)` 将无引用输出收集进独立的 `Array`。
 - `Array<T: Copy>.extend(&Slice<T>)` 按原顺序批量复制切片元素到数组尾部。

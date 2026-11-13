@@ -72,18 +72,21 @@ Examples:
 
 pub(super) const CHECK: &str = "Check syntax and semantics without executing or generating code.
 
-Usage: joky check [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
+Usage: joky check [--no-prelude] [--diagnostic-format <text|json>] [<file.jk> | <project-dir> | joky.toml]
 
 Options:
-  --no-prelude  Disable implicit standard-library imports
-  -h, --help    Show this help
+  --no-prelude                     Disable implicit standard-library imports
+  --diagnostic-format <text|json>  Select diagnostic output (default: text)
+  -h, --help                       Show this help
 
 Without an input, find the nearest joky.toml in the current directory or its parents.
 Single files and library packages do not require main; application projects require an entry.
-Success is silent (exit 0); errors go to stderr (exit 1).
+Text checks are silent on success (exit 0); errors go to stderr (exit 1).
+JSON checks write one result to stdout with the same exit statuses.
 Examples:
   joky check
-  joky check hello.jk";
+  joky check hello.jk
+  joky check --diagnostic-format json hello.jk";
 
 pub(super) const TEST: &str = "Run #test functions in isolated processes.
 

@@ -39,7 +39,7 @@ pub struct Diagnostic {
 impl Diagnostic {
     fn at(line: usize, span: impl Into<Span>, message: impl Into<String>) -> Self {
         Self {
-            code: crate::ErrorCode::Generic,
+            code: crate::ErrorCode::SyntaxError,
             line,
             message: message.into(),
             span: span.into(),

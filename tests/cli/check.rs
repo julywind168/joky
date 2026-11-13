@@ -1,5 +1,15 @@
 //! Static checks share semantic passes without executing or publishing code.
 use super::*;
+use serde_json::{json, Value};
+
+fn json_check(work: &Workspace, args: &[&str], status: i32) -> Value {
+    let output = work.cli(args);
+    assert_eq!(output.status.code(), Some(status), "{args:?}: {output:?}");
+    assert!(output.stderr.is_empty(), "{args:?}: {output:?}");
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["schemaVersion"], 1);
+    result["diagnostics"].clone()
+}
 
 #[test]
 fn check_is_silent_without_execution_linker_or_artifacts() {
@@ -150,4 +160,103 @@ fn check_reports_argument_and_input_errors() {
         "[project]\nname='demo'\nentry='../escape.jk'",
     );
     failure(&work.cli(&["check", "app"]), "relative");
+}
+
+#[test]
+fn check_json_preserves_exit_status_and_separates_output_modes() {
+    let work = Workspace::new();
+    work.write("-file.jk", "pub fn answer() -> Int32 { 42 }");
+    assert_eq!(
+        json_check(
+            &work,
+            &["check", "--diagnostic-format", "json", "--", "-file.jk"],
+            0
+        ),
+        json!([])
+    );
+    for (args, code, phase) in [
+        (
+            &["check", "--diagnostic-format", "json", "missing.jk"][..],
+            "io_error",
+            "resolve",
+        ),
+        (
+            &["check", "--diagnostic-format", "json", "bad.txt"][..],
+            "invalid_argument",
+            "cli",
+        ),
+    ] {
+        let diagnostics = json_check(&work, args, 1);
+        assert_eq!(diagnostics.as_array().unwrap().len(), 1);
+        let error = &diagnostics[0];
+        assert_eq!(error["code"], code);
+        assert_eq!(error["severity"], "error");
+        assert_eq!(error["phase"], phase);
+        assert_eq!(error["primary"], Value::Null);
+        assert_eq!(error["labels"], json!([]));
+        assert_eq!(error["help"], json!([]));
+    }
+
+    let output = work.cli(&["check", "--diagnostic-format", "text", "missing.jk"]);
+    failure(&output, "Cannot read");
+    assert!(output.stdout.is_empty());
+    for args in [
+        &["check", "--diagnostic-format"][..],
+        &["check", "--diagnostic-format", "xml"][..],
+        &[
+            "check",
+            "--diagnostic-format",
+            "json",
+            "--diagnostic-format",
+            "text",
+        ][..],
+    ] {
+        failure(&work.cli(args), "--diagnostic-format");
+    }
+}
+
+#[test]
+fn check_json_uses_original_utf8_byte_spans_and_canonical_file_paths() {
+    let work = Workspace::new();
+    work.write("main.jk", "import app/bad\nfn main() {}");
+    let file = "app/bad.jk";
+    let source = "\u{feff}// heading\r\npub fn bad() { let text = \"🙂\" $ }\r\n";
+    work.write(file, source);
+    let bad_path = work.path().join(file).canonicalize().unwrap();
+    let start = source.find('$').unwrap();
+    let diagnostics = json_check(
+        &work,
+        &["check", "main.jk", "--diagnostic-format", "json"],
+        1,
+    );
+    let error = &diagnostics[0];
+    assert_eq!(error["code"], "syntax_error");
+    assert_eq!(error["phase"], "parse");
+    assert_eq!(
+        error["primary"],
+        json!({
+            "source": {"kind": "file", "path": bad_path},
+            "startByte": start,
+            "endByte": start + 1,
+        })
+    );
+    let message = error["message"].as_str().unwrap();
+    assert!(message.contains("Unexpected character"));
+    failure(&work.cli(&["check", "main.jk"]), message);
+
+    let source = "fn unfinished(\r\n";
+    work.write("eof.jk", source);
+    let diagnostics = json_check(
+        &work,
+        &["check", "--diagnostic-format", "json", "./eof.jk"],
+        1,
+    );
+    assert_eq!(
+        diagnostics[0]["primary"],
+        json!({
+            "source": {"kind": "file", "path": work.path().join("eof.jk").canonicalize().unwrap()},
+            "startByte": source.len(),
+            "endByte": source.len(),
+        })
+    );
 }

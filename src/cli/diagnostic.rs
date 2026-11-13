@@ -1,8 +1,67 @@
-//! Terminal rendering for source diagnostics.
+//! Terminal and JSON output for source diagnostics.
 use ariadne::{sources, Color, Config, IndexType, Label, Report, ReportKind};
 use joky::{parser::escape_diagnostic_text, Error, ErrorCode, ErrorLabelKind, Span};
+use serde_json::{json, Value};
 use std::borrow::Cow;
+use std::io::{self, Write};
 use std::path::Path;
+
+pub(super) fn write_json(error: Option<&Error>) -> io::Result<()> {
+    let diagnostics: Vec<_> = error.into_iter().map(json_diagnostic).collect();
+    let mut stdout = io::stdout().lock();
+    serde_json::to_writer(
+        &mut stdout,
+        &json!({
+            "schemaVersion": 1,
+            "diagnostics": diagnostics,
+        }),
+    )?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()
+}
+
+fn json_diagnostic(error: &Error) -> Value {
+    let labels: Vec<_> = error
+        .labels()
+        .iter()
+        .map(|label| {
+            let kind = match label.kind {
+                ErrorLabelKind::Primary => "primary",
+                ErrorLabelKind::Secondary => "secondary",
+                ErrorLabelKind::Context => "context",
+            };
+            json!({
+                "kind": kind,
+                "message": label.message,
+                "location": json_location(error, label.span),
+            })
+        })
+        .collect();
+    json!({
+        "code": error.code().as_str(),
+        "severity": "error",
+        "phase": error.phase().to_string(),
+        "message": error.message(),
+        "primary": diagnostic_span(error).and_then(|span| json_location(error, span)),
+        "labels": labels,
+        "help": error.help(),
+    })
+}
+
+fn json_location(error: &Error, span: Span) -> Option<Value> {
+    let source = error.sources().get(span.source_id())?;
+    span.slice(source.text())?;
+    let file = if let Some(path) = source.path() {
+        json!({ "kind": "file", "path": path.to_str()? })
+    } else {
+        json!({ "kind": "builtin", "module": source.builtin_module()? })
+    };
+    Some(json!({
+        "source": file,
+        "startByte": span.start(),
+        "endByte": span.end(),
+    }))
+}
 
 /// Render a structured compiler, resolver or runtime error with its source
 /// context. Machine-readable error codes appear in the report header; errors
@@ -199,4 +258,37 @@ fn normalize_span(source: &str, span: Span) -> std::ops::Range<usize> {
             .map_or(start, |ch| start + ch.len_utf8());
     }
     start..end
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use joky::{Checker, ErrorPhase};
+
+    #[test]
+    fn json_locations_distinguish_builtin_sources_from_disk_paths() {
+        let module = joky::parser::parse("import joky/array fn main() {}").unwrap();
+        let checker = Checker::new();
+        let resolved = checker
+            .type_registry()
+            .resolve_with_modules(&module, &joky::ModuleSources::new())
+            .unwrap();
+        let file = resolved
+            .sources()
+            .files()
+            .find(|file| file.name() == "joky/array.jk")
+            .unwrap();
+        let span = Span::new(0, 1).with_source(file.id());
+        let error = Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch, "test")
+            .with_sources(resolved.sources())
+            .with_span(span);
+        assert_eq!(
+            json_diagnostic(&error)["primary"],
+            json!({
+                "source": {"kind": "builtin", "module": "joky/array"},
+                "startByte": 0,
+                "endByte": 1,
+            })
+        );
+    }
 }

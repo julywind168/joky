@@ -2,11 +2,19 @@
 use crate::{Error, ErrorCode, ErrorPhase};
 use std::{
     collections::BTreeMap,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SourceOrigin {
+    Memory,
+    File(PathBuf),
+    Builtin,
+}
 
 #[derive(
     joky_image_derive::Image, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash,
@@ -28,6 +36,7 @@ pub struct SourceFile {
     id: SourceId,
     name: String,
     text: Arc<str>,
+    origin: SourceOrigin,
 }
 
 // Source text already lives in the embedded source table. The image keeps
@@ -45,7 +54,12 @@ impl crate::core::image::Image for SourceFile {
         let name = String::read(input);
         let text =
             crate::core::imports::embedded_source_text(name.strip_suffix(".jk").unwrap()).into();
-        Self { id, name, text }
+        Self {
+            id,
+            name,
+            text,
+            origin: SourceOrigin::Builtin,
+        }
     }
 }
 
@@ -59,8 +73,38 @@ impl SourceFile {
             ),
             name: name.into(),
             text: text.into(),
+            origin: SourceOrigin::Memory,
         }
     }
+
+    pub(crate) fn from_path(path: &Path, canonical: &Path, text: String) -> Self {
+        let mut file = Self::new(path.display().to_string(), text);
+        file.origin = SourceOrigin::File(canonical.to_owned());
+        file
+    }
+
+    pub(crate) fn builtin(module: &str, text: &'static str) -> Self {
+        let mut file = Self::new(format!("{module}.jk"), text);
+        file.origin = SourceOrigin::Builtin;
+        file
+    }
+
+    /// Canonical absolute path of a source loaded from the filesystem.
+    pub fn path(&self) -> Option<&Path> {
+        match &self.origin {
+            SourceOrigin::File(path) => Some(path),
+            _ => None,
+        }
+    }
+
+    /// Module path of a source embedded in the compiler.
+    pub fn builtin_module(&self) -> Option<&str> {
+        match self.origin {
+            SourceOrigin::Builtin => self.name.strip_suffix(".jk"),
+            _ => None,
+        }
+    }
+
     pub fn id(&self) -> SourceId {
         self.id
     }

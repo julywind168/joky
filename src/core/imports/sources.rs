@@ -612,7 +612,7 @@ impl StandardLibrary {
         stack.push(path.into());
         // Embedded modules parse against a real source snapshot so their
         // diagnostics point into the stdlib text instead of the import site.
-        let file = crate::SourceFile::new(format!("{path}.jk"), source.source);
+        let file = crate::SourceFile::builtin(path, source.source);
         let mut module =
             crate::parser::parse_with_source(source.source, file.id()).map_err(|error| {
                 let mut sources = crate::SourceMap::default();

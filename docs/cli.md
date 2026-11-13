@@ -66,7 +66,7 @@ cargo run -- check examples/chat
 
 安装后可直接使用 `joky check <file.jk | project-dir | joky.toml>`；省略输入时向上查找最近的项目清单。
 检查覆盖语法、类型、泛型约束、所有权、借用、`@noescape` 和挂起限制，包括未调用的生产函数及泛型模板；`#test` 函数体由 `joky test` 检查。
-错误沿用源码位置和错误码，写入 stderr。`--no-prelude` 关闭隐式导入；以 `-` 开头的文件名放在 `--` 后。
+默认文本输出在 stderr 显示错误码和源码位置。`--no-prelude` 关闭隐式导入。以 `-` 开头的文件名放在 `--` 后。
 应用项目检查入口及导入依赖；`[package]` 库包检查自身源码根中的全部模块；详细边界见[静态检查](language.md#静态检查)。
 
 移动后再次使用拥有值时，诊断会关联绑定声明、使值失效的移动或消费操作，以及再次使用的位置。
@@ -74,6 +74,42 @@ cargo run -- check examples/chat
 如果之前的操作只需读取值，可以考虑改为借用，并同步调整接收方的参数或绑定类型。
 String 还会提示在较早的移动位置显式调用 `.clone()`，但这会分配新字符串；
 其他类型不会被一概建议复制。诊断保留原错误码，额外位置和建议也可从 Rust `Error.labels()` / `Error.help()` 读取。
+
+### JSON 诊断
+
+`joky check --diagnostic-format json hello.jk` 将一份 JSON 结果写入 stdout。
+检查成功时退出码为 `0`，`diagnostics` 为空数组。失败时退出码为 `1`，数组包含首条错误。
+默认的 `text` 模式在成功时保持静默，失败时将文本写入 stderr。命令帮助及诊断格式选项本身的错误沿用普通 CLI 输出。
+
+```json
+{
+  "schemaVersion": 1,
+  "diagnostics": [
+    {
+      "code": "type_mismatch",
+      "severity": "error",
+      "phase": "typecheck",
+      "message": "Return type mismatch for `main`: expected Int32, got Bool",
+      "primary": {
+        "source": { "kind": "file", "path": "/project/hello.jk" },
+        "startByte": 0,
+        "endByte": 27
+      },
+      "labels": [],
+      "help": []
+    }
+  ]
+}
+```
+
+`code` 使用 Rust `ErrorCode::as_str()` 的稳定字符串，普通语法错误为 `syntax_error`。
+`severity` 当前为 `error`，`phase` 表示产生错误的阶段。`message` 和 `help` 提供面向人的说明。
+`labels` 中每项含 `kind`（`primary`、`secondary` 或 `context`）、`message` 和 `location`。
+主位置和关联位置各自包含 `source` 和从零起算的半开 UTF-8 字节区间 `[startByte, endByte)`。
+偏移基于检查时读取的原始源码，包含 BOM 和 CRLF 字节。EOF 可以是零宽区间。
+文件身份使用规范化绝对路径，内置源码使用 `{ "kind": "builtin", "module": "joky/array" }`。
+源码位置无法映射到有效字节区间或文件路径无法表示为 UTF-8 时，相应的 `primary` 或 `location` 为 `null`。
+编辑器应依据同一版本的源码将字节偏移转换为自身坐标。
 
 ## 用 Joky 写测试
 

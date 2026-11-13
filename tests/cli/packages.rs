@@ -89,6 +89,35 @@ fn package_diamonds_and_scoped_modules_execute_on_three_backends() {
 }
 
 #[test]
+fn package_check_json_identifies_sources_in_path_dependencies() {
+    let work = Workspace::new();
+    fixture(&work);
+    let path = "shared/src/model.jk";
+    let source = "// 🙂\r\n$";
+    work.write(path, source);
+    let output = work.cli(&[
+        "check",
+        "app",
+        "--no-prelude",
+        "--diagnostic-format",
+        "json",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let diagnostic = &result["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "syntax_error");
+    assert_eq!(
+        diagnostic["primary"],
+        serde_json::json!({
+            "source": {"kind": "file", "path": work.path().join(path).canonicalize().unwrap()},
+            "startByte": source.len() - 1,
+            "endByte": source.len(),
+        })
+    );
+}
+
+#[test]
 fn package_libraries_check_and_test_without_entries_or_inherited_tests() {
     let work = Workspace::new();
     fixture(&work);
