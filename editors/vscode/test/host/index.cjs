@@ -125,7 +125,8 @@ async function run() {
   assert.ok(await completionEditor.edit(edit => edit.insert(answer.start, 'answer()')));
 
   const record = 'pub struct Item { pub amount: Int32, hidden: Bool }\n' +
-    'impl Item { pub fn read(&self) -> Int32 { self.amount } }\n' +
+    'pub trait Read { fn read(&self) @noescape -> Int32 }\n' +
+    'impl Read for Item { fn read(&self) -> Int32 { self.amount } }\n' +
     'pub fn load() -> Item { Item { amount: 42, hidden: false } }\n';
   await fs.writeFile(path.join(project, 'record.jk'), record);
   const memberSource = 'import record\nfn main() {\n    record.load().\n}\n';
@@ -142,6 +143,21 @@ async function run() {
   assert.equal(method.kind, vscode.CompletionItemKind.Method);
   assert.ok(field.range.start.isEqual(memberPosition) && field.range.end.isEqual(memberPosition));
   assert.ok(!members.items.some(item => item.label === 'hidden' && item.detail));
+
+  const memberUses = 'import record\nfn main() {\n    let item = record.load()\n    println(item.amount + item.read())\n}\n';
+  assert.ok(await completionEditor.edit(edit => edit.replace(
+    new vscode.Range(0, 0, projectDocument.lineCount, 0), memberUses)));
+  const memberLine = memberUses.split('\n')[3];
+  const recordUri = vscode.Uri.file(path.join(project, 'record.jk'));
+  for (const [member, line, detail] of [['amount', 0, 'amount: Int32'], ['read', 2, '-> Int32']]) {
+    const at = new vscode.Position(3, memberLine.indexOf(member));
+    const [location] = await vscode.commands.executeCommand('vscode.executeDefinitionProvider', projectDocument.uri, at);
+    assert.equal(location.uri.fsPath, recordUri.fsPath);
+    assert.equal(location.range.start.line, line);
+    assert.equal(location.range.start.character, record.split('\n')[line].indexOf(member));
+    const hovers = await vscode.commands.executeCommand('vscode.executeHoverProvider', projectDocument.uri, at);
+    assert.ok(hovers.some(hover => hover.contents.some(content => content.value.includes(detail))));
+  }
 
   const interpolation = [
     'struct User { name: String, age: UInt64 }',

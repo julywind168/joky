@@ -428,6 +428,18 @@ impl FunctionPlan {
                 "An exclusive dyn method requires an exclusive view",
             ));
         }
+        if let Some(semantics) = &self.semantics {
+            let key = format!("joky/trait/{}/{}", interface.trait_id, slot.name);
+            let mut signature = slot.signature.clone();
+            signature.params[0] = Type::reference(
+                ty.reference_type()
+                    .map_or_else(|| ty.clone(), |r| r.target.clone()),
+                slot.mutable,
+            );
+            semantics
+                .borrow_mut()
+                .method(span, &key, &signature, slot.suspends);
+        }
         let receiver = if matches!(ty, Type::DynTrait(_)) {
             Expr::Unary {
                 op: if slot.mutable {

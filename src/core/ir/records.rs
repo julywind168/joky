@@ -49,12 +49,29 @@ impl FunctionPlan {
         span: Span,
     ) -> Result<Type, Error> {
         for name in path {
-            target = self.field_member(&target, name, &span)?.1;
+            target = self.lookup_field(&target, name, &span)?.1;
         }
         Ok(target)
     }
 
     pub(super) fn field_member(
+        &self,
+        target: &Type,
+        name: &str,
+        span: &Span,
+    ) -> Result<(usize, Type), Error> {
+        let field = self.lookup_field(target, name, span)?;
+        if let Type::Record(record) = target {
+            if let Some(semantics) = &self.semantics {
+                semantics
+                    .borrow_mut()
+                    .field(*span, record.id, name, &field.1);
+            }
+        }
+        Ok(field)
+    }
+
+    pub(super) fn lookup_field(
         &self,
         target: &Type,
         name: &str,
@@ -89,6 +106,31 @@ impl FunctionPlan {
                     },
                 )
             })
+    }
+
+    /// Record each component when place lowering uses a flattened field path.
+    pub(super) fn record_field_path(&self, mut expr: &Expr, mut target: &Type) {
+        let Some(semantics) = &self.semantics else {
+            return;
+        };
+        let mut path = Vec::new();
+        while let Expr::Field {
+            base, name, span, ..
+        } = expr
+        {
+            path.push((name.as_str(), *span));
+            expr = base;
+        }
+        let mut recorder = semantics.borrow_mut();
+        for (name, span) in path.into_iter().rev() {
+            let Some((_, field)) = target.inline_field(name) else {
+                return;
+            };
+            if let Type::Record(record) = target {
+                recorder.field(span, record.id, name, field);
+            }
+            target = field;
+        }
     }
 
     pub(super) fn record_type(

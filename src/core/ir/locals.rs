@@ -527,6 +527,7 @@ impl FunctionPlan {
                     ));
                 }
                 let target = self.field_target(root.clone(), &path, span)?;
+                self.record_field_path(operand, &root);
                 self.owner_borrow_target(&target, span)?;
                 let dst = self.slot(Type::reference(target, mutable))?;
                 let mut src = src.clone();
@@ -586,6 +587,7 @@ impl FunctionPlan {
             .is_some_and(|s| self.captured_owners.contains(&s.index) && s.ty.is_owner())
         {
             let target = self.field_target(slot_type(&binding.slot), &path, span)?;
+            self.record_field_path(operand, &slot_type(&binding.slot));
             self.owner_borrow_target(&target, span)?;
             let dst = self.slot(Type::reference(target, mutable))?;
             if path.is_empty() {
@@ -606,6 +608,7 @@ impl FunctionPlan {
         }
         if let Some(src) = binding.slot.as_ref().filter(|slot| slot.ty.is_owner()) {
             let target = self.field_target(src.ty.clone(), &path, span)?;
+            self.record_field_path(operand, &src.ty);
             self.owner_borrow_target(&target, span)?;
             let project = binding.place.is_some() && !path.is_empty();
             let dst = self.slot(Type::reference(
@@ -642,6 +645,7 @@ impl FunctionPlan {
             )
         })?;
         let target = self.field_target(slot_type(&binding.slot), &path, span)?;
+        self.record_field_path(operand, &slot_type(&binding.slot));
         let dst = self.slot(Type::reference(target, mutable))?;
         if path.is_empty() {
             self.emit(Op::Reference {
@@ -855,6 +859,7 @@ impl FunctionPlan {
             return Ok(None);
         };
         let target = self.field_target(slot_type(&binding.slot), &path, expr.span())?;
+        self.record_field_path(field, &slot_type(&binding.slot));
         let owner = binding
             .slot
             .as_ref()

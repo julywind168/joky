@@ -276,7 +276,7 @@ impl FunctionPlan {
                     let pointee = self.pointee(&r.target, types)?;
                     let mut field = pointee;
                     for name in path.iter().rev() {
-                        field = self.field_member(&field, name, &expr.span())?.1;
+                        field = self.lookup_field(&field, name, &expr.span())?.1;
                     }
                     if !field.is_owner() {
                         return Ok(None);
@@ -294,7 +294,7 @@ impl FunctionPlan {
                     if target.reference_type().is_some() {
                         return Ok(None);
                     }
-                    target = self.field_member(&target, name, &expr.span())?.1;
+                    target = self.lookup_field(&target, name, &expr.span())?.1;
                 }
             }
         }
@@ -332,6 +332,7 @@ impl FunctionPlan {
         }
         path.reverse();
         let field = self.field_target(target.clone(), &path, expr.span())?;
+        self.record_field_path(expr, &target);
         let handle = target.is_owner() && !target.is_inline_owner() && field.is_owner();
         let dst = self.slot(Type::reference(field, mutable))?;
         if handle {

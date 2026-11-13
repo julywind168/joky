@@ -431,21 +431,51 @@ impl FunctionPlan {
 
         let context = self.generics.borrow();
         let members = &context.members;
-        for method in &members.methods {
-            if method.trait_id.is_some()
-                || !query.matches(&method.name)
-                || !same_owner(&method.target, &target)
-            {
+        if let Some(interface) = receiver.dyn_interface() {
+            for slot in &interface.methods {
+                if !query.matches(&slot.name) || slot.mutable && !mutable_place {
+                    continue;
+                }
+                let key = format!("joky/trait/{}/{}", interface.trait_id, slot.name);
+                let Some(names) = query.method_parameters(&key) else {
+                    continue;
+                };
+                let arguments = names
+                    .iter()
+                    .zip(slot.signature.params.iter().skip(1))
+                    .map(|(name, ty)| format!("{name}: {ty}"))
+                    .collect::<Vec<_>>();
+                query.add_member(
+                    &slot.name,
+                    CompletionKind::Method,
+                    crate::core::semantics::signature_display(
+                        &slot.name,
+                        &arguments,
+                        slot.suspends,
+                        &slot.signature.ret,
+                        &[],
+                    ),
+                );
+            }
+            return;
+        }
+        let mut seen = HashSet::new();
+        for candidate in &members.methods {
+            let name = &candidate.name;
+            if !query.matches(name) || !seen.insert(name) {
                 continue;
             }
-            let Some(selected) =
-                members.method(&target, &method.name, self.definition_scope.as_deref())
-            else {
+            let inherent = members
+                .method(&target, name, self.definition_scope.as_deref())
+                .filter(|_| self.member_visible(&target, name));
+            let Some(method) = inherent.or_else(|| {
+                members
+                    .trait_method(&target, name, None, &self.scope, span)
+                    .ok()
+                    .flatten()
+            }) else {
                 continue;
             };
-            if selected.function != method.function || !self.member_visible(&target, &method.name) {
-                continue;
-            }
             match (method.receiver, reference) {
                 (None, _) | (Some(Receiver::Value), Some(_)) => continue,
                 (Some(Receiver::Borrowed { mutable: true }), _) if !mutable_place => continue,

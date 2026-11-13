@@ -43,6 +43,7 @@ pub(crate) struct SemanticRecorder {
     index: SemanticIndex,
     tokens: HashMap<SourceId, Vec<Token>>,
     functions: HashMap<String, Function>,
+    fields: HashMap<u64, HashMap<String, Span>>,
     pub(crate) completion: Option<super::completion::CompletionQuery>,
 }
 
@@ -54,15 +55,37 @@ struct Function {
 
 impl SemanticRecorder {
     pub(crate) fn new(module: &Module) -> Recorder {
-        Rc::new(RefCell::new(Self {
+        let mut recorder = Self {
             index: SemanticIndex {
                 sources: module.sources().clone(),
                 symbols: BTreeMap::new(),
             },
-            tokens: HashMap::new(),
-            functions: HashMap::new(),
-            completion: None,
-        }))
+            ..Self::default()
+        };
+        for record in &module.records {
+            for field in &record.fields {
+                let tokens = recorder.tokens(field.span);
+                let Some(name) = tokens.windows(2).find_map(|pair| {
+                    (pair[1].kind == TokenKind::Colon)
+                        .then(|| ident(&pair[0], &field.name))
+                        .flatten()
+                }) else {
+                    continue;
+                };
+                let definition = name.with_source(field.span.source_id());
+                recorder
+                    .fields
+                    .entry(record.id)
+                    .or_default()
+                    .insert(field.name.clone(), definition);
+                recorder.add(
+                    definition,
+                    Some(definition),
+                    format!("{}: {}", field.name, field.ty),
+                );
+            }
+        }
+        Rc::new(RefCell::new(recorder))
     }
 
     pub(crate) fn finish(&mut self) -> SemanticIndex {
@@ -151,7 +174,7 @@ impl SemanticRecorder {
             ),
             Item::ExternFn(f) => (&f.name, &f.params, f.suspends, f.span, &[][..]),
         };
-        let name = canonical.rsplit('.').next().unwrap();
+        let name = canonical.rsplit(['.', '/']).next().unwrap();
         let definition = self.function_name(span, name);
         if definition.is_none()
             && !self
@@ -209,6 +232,10 @@ impl SemanticRecorder {
         if self.completion.is_some() {
             return;
         }
+        if written.starts_with("joky/member/") {
+            self.method(span, canonical, signature, suspends);
+            return;
+        }
         let Some(occurrence) = self.path_name(span, written) else {
             return;
         };
@@ -218,6 +245,119 @@ impl SemanticRecorder {
                 function.definition,
                 function.display(signature, suspends, &[]),
             );
+        }
+    }
+
+    pub(crate) fn method(
+        &mut self,
+        span: Span,
+        canonical: &str,
+        signature: &FunctionSignature,
+        suspends: bool,
+    ) {
+        let Some(name) = self
+            .functions
+            .get(canonical)
+            .map(|function| function.name.clone())
+        else {
+            return;
+        };
+        if let Some(occurrence) = self.method_name(span, &name) {
+            let function = &self.functions[canonical];
+            self.add(
+                occurrence,
+                function.definition,
+                function.display(signature, suspends, &[]),
+            );
+        }
+    }
+
+    pub(crate) fn field(&mut self, span: Span, record: u64, name: &str, ty: &Type) {
+        let Some(definition) = self
+            .fields
+            .get(&record)
+            .and_then(|fields| fields.get(name))
+            .copied()
+        else {
+            return;
+        };
+        let tokens = self.tokens(span);
+        let occurrence = match tokens {
+            [first, second, ..] if second.kind == TokenKind::Colon => ident(first, name),
+            _ => {
+                let mut tokens = tokens
+                    .iter()
+                    .rev()
+                    .skip_while(|t| t.kind == TokenKind::RParen);
+                let occurrence = tokens.next().and_then(|token| ident(token, name));
+                occurrence.filter(|_| tokens.next().is_some_and(|t| t.kind == TokenKind::Dot))
+            }
+        };
+        if let Some(occurrence) = occurrence {
+            self.add(
+                occurrence.with_source(span.source_id()),
+                Some(definition),
+                format!("{name}: {ty}"),
+            );
+        }
+    }
+
+    fn method_name(&mut self, span: Span, name: &str) -> Option<Span> {
+        let mut tokens = self.tokens(span);
+        loop {
+            let end = tokens
+                .iter()
+                .rposition(|token| token.kind == TokenKind::RParen)?;
+            if end + 1 != tokens.len() {
+                return None;
+            }
+            let mut depth = 0;
+            let open = tokens[..end].iter().rposition(|token| match token.kind {
+                TokenKind::RParen => {
+                    depth += 1;
+                    false
+                }
+                TokenKind::LParen if depth == 0 => true,
+                TokenKind::LParen => {
+                    depth -= 1;
+                    false
+                }
+                _ => false,
+            })?;
+            if open == 0 {
+                tokens = &tokens[1..end];
+                continue;
+            }
+            let mut head = &tokens[..open];
+            // Explicit method type arguments follow a double colon.
+            if matches!(head.last()?.kind, TokenKind::Gt | TokenKind::Shr) {
+                let mut depth = 0;
+                let types = head.iter().rposition(|token| match token.kind {
+                    TokenKind::Gt => {
+                        depth += 1;
+                        false
+                    }
+                    TokenKind::Shr => {
+                        depth += 2;
+                        false
+                    }
+                    TokenKind::Lt => {
+                        depth -= 1;
+                        depth == 0
+                    }
+                    _ => false,
+                })?;
+                let colon = types.checked_sub(1)?;
+                if head[colon].kind != TokenKind::ColonColon {
+                    return None;
+                }
+                head = &head[..colon];
+            }
+            let [.., dot, member] = head else { return None };
+            if dot.kind != TokenKind::Dot {
+                return None;
+            }
+            return Some(ident(member, name)?.with_source(span.source_id()));
         }
     }
 

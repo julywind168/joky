@@ -411,6 +411,187 @@ fn lsp_completes_inside_interpolation_expressions() {
 }
 
 #[test]
+fn lsp_completes_trait_methods_for_concrete_and_constrained_receivers() {
+    let work = Workspace::new();
+    work.write(
+        "model.jk",
+        concat!(
+            "pub struct Counter { pub value: Int32 }\n",
+            "pub trait Read { type Item; fn read(&self) @noescape -> Self.Item }\n",
+            "impl Read for Counter { type Item = Int32; fn read(&self) -> Int32 { self.value } }\n",
+            "trait Private { fn private_read(&self) @noescape -> Bool }\n",
+            "impl Private for Counter { fn private_read(&self) -> Bool { true } }\n",
+            "pub trait Score { fn score(self) -> Int32 }\n",
+            "impl Score for Counter { fn score(self) -> Int32 { self.value } }\n",
+            "impl Counter { pub fn score(self) -> Bool { true } }\n",
+        ),
+    );
+    work.write(
+        "alternate.jk",
+        concat!(
+            "import model.{type Counter}\n",
+            "pub trait Alternate { fn read(&self) @noescape -> Bool }\n",
+            "impl Alternate for Counter { fn read(&self) -> Bool { true } }\n",
+        ),
+    );
+    work.write("main.jk", "fn main() {}");
+    let uri = Url::from_file_path(work.path().join("main.jk")).unwrap();
+    let mut client = Client::start(&work);
+    client.send(json!({"id": 1, "method": "initialize", "params": {}}));
+    client.until(|message| message["id"] == 1);
+    client.send(json!({"method": "textDocument/didOpen", "params": {
+        "textDocument": {"uri": uri.as_str(), "version": 1, "text": "fn main() {}"}
+    }}));
+    for (index, (imports, code, detail)) in [
+        (
+            "import model.{type Counter, type Read}",
+            "fn inspect(c: &Counter) { c.re¦ }",
+            Some("fn read() -> Int32"),
+        ),
+        (
+            "import model.{type Read}",
+            "fn inspect<T: Read<Item = Int32>>(c: &T) { c.re¦ }",
+            Some("fn read() -> Int32"),
+        ),
+        (
+            "import model.{type Read}",
+            "fn inspect<T: Read>(c: &T) { c.re¦ }",
+            Some("fn read() -> <T as model.Read>::Item"),
+        ),
+        (
+            "import model.{type Counter}",
+            "fn inspect(c: &Counter) { c.private_¦ }",
+            None,
+        ),
+        (
+            "import model.{type Counter, type Read} import alternate",
+            "fn inspect(c: &Counter) { c.re¦ }",
+            None,
+        ),
+        (
+            "import model.{type Counter, type Score}",
+            "fn inspect(c: Counter) { c.sco¦ }",
+            Some("fn score() -> Bool"),
+        ),
+        (
+            "import model.{type Read}",
+            "fn inspect(c: &dyn Read<Item = Int32>) { c.re¦ }",
+            Some("fn read() -> Int32"),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = index + 2;
+        let (left, right) = code.split_once('¦').unwrap();
+        let source = format!("{imports}\n{left}{right}\nfn main() {{}}");
+        client.send(json!({"method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": uri.as_str(), "version": id}, "contentChanges": [{"text": source}]
+        }}));
+        client.send(json!({"id": id, "method": "textDocument/completion", "params": {
+            "textDocument": {"uri": uri.as_str()}, "position": {"line": 1, "character": left.encode_utf16().count()}
+        }}));
+        let response = client.until(|message| message["id"] == id);
+        let items = response["result"]["items"].as_array().unwrap();
+        let details: Vec<_> = items
+            .iter()
+            .map(|item| {
+                assert_eq!(item["kind"], 2);
+                item["detail"].as_str().unwrap()
+            })
+            .collect();
+        assert_eq!(details, detail.into_iter().collect::<Vec<_>>(), "{code}");
+    }
+}
+
+#[test]
+fn lsp_navigates_record_fields_and_resolved_methods() {
+    let work = Workspace::new();
+    let model = concat!(
+        "pub struct Counter { pub value: Int32, pub label: String }\n",
+        "pub trait Read { fn read(&self) @noescape -> Int32 }\n",
+        "impl Read for Counter { fn read(&self) -> Int32 { self.value } }\n",
+        "impl Counter { pub fn echo<T>(self, value: T) -> T { value } }\n",
+        "pub fn load() -> Counter { Counter { value: 42, label: \"count\" } }\n",
+    );
+    let main = concat!(
+        "import model.{type Counter, type Read, load}\n",
+        "fn inspect<T: Read>(c: &T) -> Int32 { c.read() }\n",
+        "fn get(c: &Counter) -> Int32 { c.value + c.read() }\n",
+        "fn main() {\n",
+        "    let c = load()\n",
+        "    println(\"🙂 {c.label}: {get(c)}\")\n",
+        "    println(load().echo::<Bool>(true))\n",
+        "}\n",
+        "fn view(c: &dyn Read) -> Int32 { c.read() }\n",
+        "fn explicit(c: &Counter) -> Int32 { Read.read(c) }\n",
+    );
+    work.write("model.jk", model);
+    work.write("main.jk", main);
+    let uri = |name: &str| Url::from_file_path(work.path().join(name)).unwrap();
+    let entry = uri("main.jk");
+    let dependency = uri("model.jk");
+    let mut client = Client::start(&work);
+    client.send(json!({"id": 1, "method": "initialize", "params": {}}));
+    client.until(|message| message["id"] == 1);
+    client.send(json!({"method": "textDocument/didOpen", "params": {
+        "textDocument": {"uri": entry.as_str(), "version": 1, "text": main}
+    }}));
+    for (index, (line, name, definition_line, last, display)) in [
+        (1, "read", 1, false, "fn read(self: &T) -> Int32"),
+        (2, "value", 0, false, "value: Int32"),
+        (
+            2,
+            "read",
+            2,
+            false,
+            "fn read(self: &model.Counter) -> Int32",
+        ),
+        (5, "label", 0, false, "label: String"),
+        (
+            6,
+            "echo",
+            3,
+            false,
+            "fn echo(self: model.Counter, value: Bool) -> Bool",
+        ),
+        (8, "read", 1, false, "fn read(self: &dyn Read) -> Int32"),
+        (
+            9,
+            "read",
+            2,
+            false,
+            "fn read(self: &model.Counter) -> Int32",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let site = symbol_range(main, line, name, false);
+        let definition = symbol_range(model, definition_line, name, last);
+        for (method, expected) in [
+            (
+                "hover",
+                json!({"contents": {"kind": "plaintext", "value": display}, "range": site}),
+            ),
+            (
+                "definition",
+                json!({"uri": dependency.as_str(), "range": definition}),
+            ),
+        ] {
+            let id = (index + 2) * 2 + usize::from(method == "definition");
+            client.send(
+                json!({"id": id, "method": format!("textDocument/{method}"), "params": {
+                    "textDocument": {"uri": entry.as_str()}, "position": site["start"]
+                }}),
+            );
+            let response = client.until(|message| message["id"] == id);
+            assert_eq!(response["result"], expected, "{method} {line} {name}");
+        }
+    }
+}
+
+#[test]
 fn lsp_resolves_inferred_bindings_and_function_definitions_in_the_current_snapshot() {
     let work = Workspace::new();
     work.write("joky.toml", "[project]\nname='app'\nentry='main.jk'");
