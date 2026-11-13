@@ -942,9 +942,18 @@ impl ModulePlan {
                 extern_abi.validate(f, &info.signature, &nominals, types)?;
             }
             if let Some(semantics) = &semantics {
-                semantics
-                    .borrow_mut()
-                    .declare_function(item, &info.signature);
+                let mut recorder = semantics.borrow_mut();
+                if let Some(query) = &mut recorder.completion {
+                    if let Item::FnDef(f) = item {
+                        if f.params.first().is_some_and(|p| p.name == "self")
+                            && members.functions.contains(name)
+                        {
+                            query.declare_method(f);
+                        }
+                    }
+                } else {
+                    recorder.declare_function(item, &info.signature);
+                }
             }
             if functions.insert(name.clone(), info).is_some() {
                 return Err(type_error(
@@ -2085,19 +2094,11 @@ impl FunctionPlan {
         types: &TypeRegistry,
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
+        if self.semantics.is_some() {
+            self.record_completion(expr, vars, functions, suspends, types)?;
+        }
         let previous = self.current_span;
         self.current_span = expr.span();
-        if let Some(semantics) = &self.semantics {
-            if let Some(query) = &mut semantics.borrow_mut().completion {
-                if query.contains(self.current_span) {
-                    query.scope(
-                        self.current_span,
-                        vars.iter()
-                            .map(|(name, binding)| (name.as_str(), slot_type(&binding.slot))),
-                    );
-                }
-            }
-        }
         let hint_scope = if inference::has_nested_call(expr) {
             self.hint_work.enter(vars, functions, types)
         } else {

@@ -36,8 +36,10 @@ fn candidates(job: &Job, query: &Query, checker: &Checker) -> Option<Vec<Value>>
             .into_iter()
             .map(|item| {
                 let kind = match item.kind {
+                    CompletionKind::Method => 2,
                     CompletionKind::Function => 3,
                     CompletionKind::Constructor => 4,
+                    CompletionKind::Field => 5,
                     CompletionKind::Variable => 6,
                     CompletionKind::Module => 9,
                     CompletionKind::Type => 7,

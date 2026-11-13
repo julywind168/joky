@@ -270,21 +270,31 @@ impl Function {
             .iter()
             .zip(&signature.params)
             .map(|(name, ty)| format!("{name}: {ty}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let generics = if generics.is_empty() {
-            String::new()
-        } else {
-            format!("<{}>", generics.join(", "))
-        };
-        let effect = if suspends { " @suspends" } else { "" };
-        let ret = if signature.ret == Type::Unit {
-            String::new()
-        } else {
-            format!(" -> {}", signature.ret)
-        };
-        format!("fn {}{generics}({parameters}){effect}{ret}", self.name)
+            .collect::<Vec<_>>();
+        signature_display(&self.name, &parameters, suspends, &signature.ret, generics)
     }
+}
+
+pub(crate) fn signature_display(
+    name: &str,
+    parameters: &[String],
+    suspends: bool,
+    ret: &Type,
+    generics: &[&str],
+) -> String {
+    let parameters = parameters.join(", ");
+    let generics = if generics.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", generics.join(", "))
+    };
+    let effect = if suspends { " @suspends" } else { "" };
+    let ret = if *ret == Type::Unit {
+        String::new()
+    } else {
+        format!(" -> {ret}")
+    };
+    format!("fn {name}{generics}({parameters}){effect}{ret}")
 }
 
 fn ident(token: &Token, name: &str) -> Option<Span> {

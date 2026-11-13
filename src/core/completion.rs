@@ -9,13 +9,14 @@ use super::{
 use crate::{SourceId, Span, Type};
 use std::{collections::BTreeMap, path::Path};
 
-const MARKER: &str = "__joky_editor_completion";
+pub(crate) const MARKER: &str = "__joky_editor_completion";
 
 /// The current word and a private source snapshot that can be passed to the checker.
 pub struct CompletionSite {
     source: String,
     replacement: Span,
     prefix: String,
+    member: bool,
     qualifier: Option<String>,
     marker: usize,
 }
@@ -33,27 +34,27 @@ impl CompletionSite {
             .char_indices()
             .find(|(_, ch)| !name_character(*ch))
             .map_or(text.len(), |(i, _)| offset + i);
-        let left = text[..start].trim_end_matches([' ', '\t']);
-        let (marker, qualifier) = if let Some(root) = left.strip_suffix('.') {
-            let root = root.trim_end_matches([' ', '\t']);
-            let qualifier = trailing_word(root);
-            let marker = root.len() - qualifier.len();
-            if !starts_name(qualifier)
-                || text[..marker].trim_end_matches([' ', '\t']).ends_with('.')
-            {
-                return None;
-            }
-            (marker, Some(qualifier.to_owned()))
-        } else {
-            (start, None)
-        };
         let mut source = text.to_owned();
-        // Replace the full member path so a dangling dot parses as an expression.
-        source.replace_range(marker..suffix, MARKER);
+        // Preserve the receiver so the ordinary planner can resolve its type.
+        source.replace_range(start..suffix, MARKER);
         let tokens = Lexer::tokenize(&source).ok()?;
         let token = tokens.iter().position(|t| {
-            t.span.start() == marker && matches!(&t.kind, TokenKind::Ident(name) if name == MARKER)
+            t.span.start() == start && matches!(&t.kind, TokenKind::Ident(name) if name == MARKER)
         })?;
+        let preceding = &tokens[..token];
+        let member = preceding.last().is_some_and(|t| t.kind == TokenKind::Dot);
+        let qualifier = match preceding {
+            [before @ .., receiver, dot]
+                if dot.kind == TokenKind::Dot
+                    && before.last().is_none_or(|t| t.kind != TokenKind::Dot) =>
+            {
+                match &receiver.kind {
+                    TokenKind::Ident(name) => Some(name.clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
         let mut delimiters = Vec::new();
         let mut repairs = Vec::new();
         for (index, t) in tokens.iter().enumerate() {
@@ -103,8 +104,9 @@ impl CompletionSite {
             source,
             replacement: Span::new(start, suffix),
             prefix: word.into(),
+            member,
             qualifier,
-            marker,
+            marker: start,
         })
     }
 
@@ -137,6 +139,8 @@ fn trailing_word(text: &str) -> &str {
 #[derive(Clone, Copy)]
 pub enum CompletionKind {
     Function,
+    Field,
+    Method,
     Variable,
     Module,
     Type,
@@ -155,11 +159,14 @@ pub(crate) struct CompletionQuery {
     source: SourceId,
     marker: usize,
     prefix: String,
+    pub(crate) member: bool,
     qualifier: Option<String>,
     best_span: Option<Span>,
     names: BTreeMap<String, CompletionItem>,
     locals: BTreeMap<String, CompletionItem>,
     hidden_module: bool,
+    members: Option<BTreeMap<String, CompletionItem>>,
+    method_parameters: BTreeMap<String, Vec<String>>,
 }
 
 impl CompletionQuery {
@@ -172,11 +179,14 @@ impl CompletionQuery {
             source: file.id(),
             marker: site.marker,
             prefix: site.prefix.clone(),
+            member: site.member,
             qualifier: site.qualifier.clone(),
             best_span: None,
             names: BTreeMap::new(),
             locals: BTreeMap::new(),
             hidden_module: false,
+            members: None,
+            method_parameters: BTreeMap::new(),
         };
         let scope = module
             .items
@@ -204,8 +214,11 @@ impl CompletionQuery {
                 (name.as_str(), item)
             })
             .collect();
-        if let Some(qualifier) = self.qualifier.clone() {
-            if let Some(scope) = scope.filter(|scope| scope.modules.contains_key(&qualifier)) {
+        if self.member {
+            if let Some((scope, qualifier)) = scope
+                .zip(self.qualifier.clone())
+                .filter(|(scope, qualifier)| scope.modules.contains_key(qualifier))
+            {
                 let qualified = format!("{qualifier}.");
                 for (name, canonical) in scope.functions.range(qualified.clone()..) {
                     let Some(name) = name.strip_prefix(&qualified) else {
@@ -278,7 +291,7 @@ impl CompletionQuery {
         }
     }
 
-    fn matches(&self, name: &str) -> bool {
+    pub(crate) fn matches(&self, name: &str) -> bool {
         starts_name(name)
             && name.chars().all(name_character)
             && name != "_"
@@ -318,7 +331,7 @@ impl CompletionQuery {
         for (name, ty) in bindings {
             if let Some(qualifier) = &self.qualifier {
                 self.hidden_module |= qualifier == name;
-            } else if self.matches(name) {
+            } else if !self.member && self.matches(name) {
                 self.locals.insert(
                     name.into(),
                     CompletionItem {
@@ -332,10 +345,71 @@ impl CompletionQuery {
     }
 
     pub(crate) fn finish(mut self) -> Vec<CompletionItem> {
+        if let Some(members) = self.members {
+            return members.into_values().collect();
+        }
         if self.hidden_module {
             return Vec::new();
         }
         self.names.append(&mut self.locals);
         self.names.into_values().collect()
+    }
+
+    pub(crate) fn declare_method(&mut self, method: &super::parser::ast::FnDef) {
+        if self.member {
+            self.method_parameters.insert(
+                method.name.clone(),
+                method
+                    .params
+                    .iter()
+                    .skip(1)
+                    .map(|p| p.name.clone())
+                    .collect(),
+            );
+        }
+    }
+
+    pub(crate) fn method_parameters(&self, name: &str) -> Option<&[String]> {
+        self.method_parameters.get(name).map(Vec::as_slice)
+    }
+
+    pub(crate) fn value_receiver(&mut self) {
+        self.members.get_or_insert_with(BTreeMap::new);
+    }
+
+    pub(crate) fn add_member(&mut self, name: &str, kind: CompletionKind, detail: String) {
+        self.members
+            .as_mut()
+            .unwrap()
+            .entry(name.into())
+            .or_insert_with(|| CompletionItem {
+                label: name.into(),
+                kind,
+                detail,
+            });
+    }
+}
+
+pub(crate) fn member_receiver<'a>(
+    expr: &'a super::parser::ast::Expr,
+    local_callee: impl FnOnce(&str, Span) -> Option<super::parser::ast::Expr>,
+) -> Option<std::borrow::Cow<'a, super::parser::ast::Expr>> {
+    use super::parser::ast::Expr;
+    use std::borrow::Cow;
+    let expr = match expr {
+        Expr::FieldAssign { target, .. } => target.as_ref(),
+        _ => expr,
+    };
+    match expr {
+        Expr::Field { base, name, .. } if name == MARKER => Some(Cow::Borrowed(base)),
+        Expr::MethodCall(call) if call.name == MARKER => Some(Cow::Borrowed(&call.receiver)),
+        Expr::Call { callee, span, .. } => {
+            let (receiver, member) = callee.rsplit_once('.')?;
+            if member != MARKER {
+                return None;
+            }
+            local_callee(receiver, *span).map(Cow::Owned)
+        }
+        _ => None,
     }
 }

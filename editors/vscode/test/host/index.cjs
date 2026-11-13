@@ -124,6 +124,27 @@ async function run() {
   assert.ok(candidate.range.start.isEqual(answer.start) && candidate.range.end.isEqual(answer.start));
   assert.ok(await completionEditor.edit(edit => edit.insert(answer.start, 'answer()')));
 
+  const record = 'pub struct Item { pub amount: Int32, hidden: Bool }\n' +
+    'impl Item { pub fn read(&self) -> Int32 { self.amount } }\n' +
+    'pub fn load() -> Item { Item { amount: 42, hidden: false } }\n';
+  await fs.writeFile(path.join(project, 'record.jk'), record);
+  const memberSource = 'import record\nfn main() {\n    record.load().\n}\n';
+  assert.ok(await completionEditor.edit(edit => edit.replace(
+    new vscode.Range(0, 0, projectDocument.lineCount, 0), memberSource)));
+  const memberPosition = new vscode.Position(2, 18);
+  const members = await vscode.commands.executeCommand('vscode.executeCompletionItemProvider',
+    projectDocument.uri, memberPosition, '.');
+  const field = members.items.find(item => item.label === 'amount' && item.detail);
+  const method = members.items.find(item => item.label === 'read' && item.detail);
+  assert.equal(field?.detail, 'Int32');
+  assert.equal(field.kind, vscode.CompletionItemKind.Field);
+  assert.equal(method?.detail, 'fn read() -> Int32');
+  assert.equal(method.kind, vscode.CompletionItemKind.Method);
+  assert.ok(field.range.start.isEqual(memberPosition) && field.range.end.isEqual(memberPosition));
+  assert.ok(!members.items.some(item => item.label === 'hidden' && item.detail));
+  assert.ok(await completionEditor.edit(edit => edit.replace(
+    new vscode.Range(0, 0, projectDocument.lineCount, 0), navigation)));
+
   const dependency = path.join(project, 'bad.jk');
   const bad = '// heading\r\npub fn fail() { let text = "🙂" $ }\r\n';
   await fs.writeFile(dependency, `\uFEFF${bad}`);

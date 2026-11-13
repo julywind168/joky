@@ -200,11 +200,12 @@ fn lsp_completes_incomplete_calls_and_module_paths_from_unsaved_sources() {
         .any(|item| ["gone", "calculate", "private_answer"]
             .iter()
             .any(|name| item["label"] == *name)));
-    assert!(complete(
+    assert!(!complete(
         5,
         &format!("{imports}\nfn main() {{ let values = 3; values.¦ }}")
     )
-    .is_empty());
+    .iter()
+    .any(|item| item["label"] == "answer"));
     assert!(complete(
         6,
         &format!("{imports}\nfn main() {{ println(\"values.¦\") }}")
@@ -222,6 +223,110 @@ fn lsp_completes_incomplete_calls_and_module_paths_from_unsaved_sources() {
             "start": {"line": 4, "character": 15}, "end": {"line": 4, "character": 16}
         })
     );
+}
+
+#[test]
+fn lsp_completes_visible_fields_and_inherent_methods_of_resolved_receivers() {
+    let work = Workspace::new();
+    work.write("joky.toml", "[project]\nname='app'\nentry='main.jk'");
+    let model = concat!(
+        "pub struct Item<T> { pub value: T, secret: Int32 }\n",
+        "impl<T: Copy> Item<T> {\n",
+        "    pub fn read(&self) -> T { self.value }\n",
+        "    pub fn change(&mut self, value: T) { self.value = value }\n",
+        "    pub fn take(self) -> T { self.value }\n",
+        "    fn hidden(&self) -> Int32 { self.secret }\n",
+        "    pub fn create(value: T) -> Self { Self { value: value, secret: 0 } }\n",
+        "}\n",
+        "pub struct Holder { pub item: Item<Int32> }\n",
+        "pub fn load() -> Holder { Holder { item: Item.create(42) } }\n",
+    );
+    work.write("model.jk", model);
+    work.write("main.jk", "import model\nfn main() {}");
+    let uri = |relative: &str| Url::from_file_path(work.path().join(relative)).unwrap();
+    let entry = uri("main.jk");
+    let dependency = uri("model.jk");
+    let mut client = Client::start(&work);
+    client.send(json!({"id": 1, "method": "initialize", "params": {"rootUri": uri("").as_str()}}));
+    client.until(|msg| msg["id"] == 1);
+    let mut version = 1;
+    let mut complete = |uri: &Url, marked: &str| {
+        let (left, right) = marked.split_once('¦').unwrap();
+        let line = left.bytes().filter(|&c| c == b'\n').count();
+        let character = left.rsplit('\n').next().unwrap().encode_utf16().count();
+        let source = format!("{left}{right}");
+        client.send(json!({"method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri.as_str(), "version": version, "text": source}
+        }}));
+        version += 1;
+        client.send(json!({"id": version, "method": "textDocument/completion", "params": {
+            "textDocument": {"uri": uri.as_str()}, "position": {"line": line, "character": character},
+        }}));
+        let response = client.until(|msg| msg["id"] == version);
+        response["result"]["items"].as_array().unwrap().clone()
+    };
+    let cases = [
+        (
+            "fn main() { var item = model.load().item; item.¦ }",
+            vec!["change", "read", "take", "value"],
+        ),
+        (
+            "fn main() { var item = model.load().item; item.ch¦ange(42) }",
+            vec!["change"],
+        ),
+        ("fn main() { model.load().¦ }", vec!["item"]),
+        ("fn main() { model.load().item.re¦ad() }", vec!["read"]),
+        (
+            "fn inspect(item: &model.Item<Int32>) { item.¦ } fn main() {}",
+            vec!["read", "value"],
+        ),
+        (
+            "fn main() { let item = model.load().item; item.¦ }",
+            vec!["read", "take", "value"],
+        ),
+        (
+            "fn main() { let model = model.load(); model.¦ }",
+            vec!["item"],
+        ),
+        ("fn main() { model.¦ }", vec!["load"]),
+    ];
+    for (source, expected) in cases {
+        let items = complete(&entry, &format!("import model\n{source}"));
+        let labels = items
+            .iter()
+            .map(|item| item["label"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, expected, "{source}");
+        for item in items {
+            match item["label"].as_str().unwrap() {
+                "value" => {
+                    assert_eq!(item["kind"], 5);
+                    assert_eq!(item["detail"], "Int32");
+                }
+                "change" => {
+                    assert_eq!(item["kind"], 2);
+                    assert_eq!(item["detail"], "fn change(value: Int32)");
+                    if let Some((left, _)) = source.split_once("ch¦ange") {
+                        let start = left.encode_utf16().count();
+                        assert_eq!(
+                            item["textEdit"],
+                            json!({"newText": "change", "range": {
+                                "start": {"line": 1, "character": start}, "end": {"line": 1, "character": start + 6}
+                            }})
+                        );
+                    }
+                }
+                "read" => assert_eq!(item["detail"], "fn read() -> Int32"),
+                _ => {}
+            }
+        }
+    }
+    let local = complete(
+        &dependency,
+        &format!("{model}fn inspect(item: &Item<Int32>) {{ item.¦ }}"),
+    );
+    assert!(local.iter().any(|item| item["label"] == "secret"));
+    assert!(local.iter().any(|item| item["label"] == "hidden"));
 }
 
 #[test]

@@ -351,6 +351,226 @@ fn target_matches(
 }
 
 impl FunctionPlan {
+    pub(super) fn record_completion(
+        &mut self,
+        expr: &Expr,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<(), Error> {
+        let Some(semantics) = self.semantics.clone() else {
+            return Ok(());
+        };
+        {
+            let mut recorder = semantics.borrow_mut();
+            let Some(query) = &mut recorder.completion else {
+                return Ok(());
+            };
+            if query.contains(expr.span()) {
+                query.scope(
+                    expr.span(),
+                    vars.iter()
+                        .map(|(name, binding)| (name.as_str(), slot_type(&binding.slot))),
+                );
+            }
+            if !query.member || !query.in_function(expr.span()) {
+                return Ok(());
+            }
+        }
+        let Some(receiver) = crate::core::completion::member_receiver(expr, |path, span| {
+            self.local_callee(path, vars, span)
+        }) else {
+            return Ok(());
+        };
+        if let Flow::Value(value) = self.expr(&receiver, vars, functions, suspends, types)? {
+            let mut recorder = semantics.borrow_mut();
+            let query = recorder.completion.as_mut().unwrap();
+            query.value_receiver();
+            self.complete_members(query, &receiver, &slot_type(&value), vars, functions, types);
+        }
+        // The placeholder has no value and is never checked as a real member.
+        Err(type_error(
+            &expr.span(),
+            ErrorCode::UnknownName,
+            "Incomplete member expression",
+        ))
+    }
+
+    fn complete_members(
+        &self,
+        query: &mut crate::core::completion::CompletionQuery,
+        expression: &Expr,
+        receiver: &Type,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+    ) {
+        use crate::core::completion::CompletionKind;
+
+        let span = expression.span();
+        let reference = receiver.reference_type();
+        let mutable_place = reference.map_or_else(
+            || self.completion_mutable_place(expression, vars, functions, types),
+            |r| r.mutable,
+        );
+        let target = match reference {
+            Some(reference) => match self.pointee(&reference.target, types) {
+                Ok(target) => target,
+                Err(_) => return,
+            },
+            None => receiver.clone(),
+        };
+        if let Type::Record(record) = &target {
+            for field in &record.fields {
+                if query.matches(&field.name) && self.field_visible(record, &field.name) {
+                    query.add_member(&field.name, CompletionKind::Field, field.ty.to_string());
+                }
+            }
+        }
+
+        let context = self.generics.borrow();
+        let members = &context.members;
+        for method in &members.methods {
+            if method.trait_id.is_some()
+                || !query.matches(&method.name)
+                || !same_owner(&method.target, &target)
+            {
+                continue;
+            }
+            let Some(selected) =
+                members.method(&target, &method.name, self.definition_scope.as_deref())
+            else {
+                continue;
+            };
+            if selected.function != method.function || !self.member_visible(&target, &method.name) {
+                continue;
+            }
+            match (method.receiver, reference) {
+                (None, _) | (Some(Receiver::Value), Some(_)) => continue,
+                (Some(Receiver::Borrowed { mutable: true }), _) if !mutable_place => continue,
+                _ => {}
+            }
+            let Some(info) = functions.get(&method.function) else {
+                continue;
+            };
+            let Some(names) = query.method_parameters(&method.function) else {
+                continue;
+            };
+            let parameters = context
+                .templates
+                .get(&method.function)
+                .map_or(&[][..], |f| f.type_params.as_slice());
+            let mut substitutions = crate::core::types::Substitutions::default();
+            if method.impl_parameters > 0
+                && (generics::unify(
+                    &method.target,
+                    &target,
+                    &method.impl_type_params,
+                    &mut substitutions,
+                    span,
+                )
+                .is_err()
+                    || method.impl_type_params.iter().any(|parameter| {
+                        substitutions.argument(parameter).is_none_or(|argument| {
+                            types.validate_argument(parameter, &argument).is_err()
+                                || argument.as_type().is_some_and(|ty| {
+                                    members.traits.check_bounds(parameter, ty, span).is_err()
+                                        || types
+                                            .check_associated_bounds(
+                                                parameter,
+                                                ty,
+                                                &substitutions,
+                                                span,
+                                            )
+                                            .is_err()
+                                })
+                        })
+                    }))
+            {
+                continue;
+            }
+            let resolve = |ty: &Type| {
+                if method.impl_parameters == 0 {
+                    Ok(ty.clone())
+                } else {
+                    crate::core::types::substitute(ty, &substitutions, types)
+                }
+            };
+            let Ok(arguments) = names
+                .iter()
+                .zip(info.signature.params.iter().skip(1))
+                .map(|(name, ty)| resolve(ty).map(|ty| format!("{name}: {ty}")))
+                .collect::<Result<Vec<_>, _>>()
+            else {
+                continue;
+            };
+            let Ok(ret) = resolve(&info.signature.ret) else {
+                continue;
+            };
+            let generics = parameters
+                .iter()
+                .skip(method.impl_parameters)
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>();
+            query.add_member(
+                &method.name,
+                CompletionKind::Method,
+                crate::core::semantics::signature_display(
+                    &method.name,
+                    &arguments,
+                    info.suspends,
+                    &ret,
+                    &generics,
+                ),
+            );
+        }
+    }
+
+    fn completion_mutable_place(
+        &self,
+        mut expression: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+    ) -> bool {
+        let mut projected = false;
+        loop {
+            match expression {
+                Expr::Field { base, .. } | Expr::Index { base, .. } => {
+                    expression = base;
+                    projected = true;
+                    if let Some(Type::Reference(reference)) =
+                        self.type_hint(base, vars, functions, types)
+                    {
+                        return reference.mutable;
+                    }
+                }
+                Expr::Unary {
+                    op: UnaryOp::Deref,
+                    operand,
+                    ..
+                } => {
+                    return matches!(
+                        self.type_hint(operand, vars, functions, types),
+                        Some(Type::Reference(r)) if r.mutable
+                    );
+                }
+                Expr::Ident { name, .. } => {
+                    return vars.get(name).is_some_and(|binding| {
+                        if projected {
+                            if let Some(reference) = slot_type(&binding.slot).reference_type() {
+                                return reference.mutable;
+                            }
+                        }
+                        binding.mutable
+                    });
+                }
+                _ => return false,
+            }
+        }
+    }
+
     pub(super) fn member_visible(&self, ty: &Type, name: &str) -> bool {
         self.definition_scope.as_ref().map_or_else(
             || {
