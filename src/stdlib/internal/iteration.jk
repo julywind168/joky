@@ -188,10 +188,13 @@ pub fn advance<T>(iterator: &Iter<T>) -> Bool {
     buffer.iter_advance(iterator)
 }
 
+// Borrowed iteration may expose a dyn view whose owner remains in the container.
+#intrinsic("iteration.dyn_borrow")
 pub fn current<T>(iterator: &Iter<T>) -> &T {
     buffer.iter_current(iterator)
 }
 
+#intrinsic("iteration.dyn_borrow")
 pub fn current_mut<T>(iterator: &mut Iter<T>) -> &mut T {
     buffer.iter_current_mut(iterator)
 }

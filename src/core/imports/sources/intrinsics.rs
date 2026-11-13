@@ -62,6 +62,10 @@ pub(super) fn bind_functions(module: &mut Module, kind: SourceKind) -> Result<()
             (SourceKind::Arena, "arena.new") => ArenaNew,
             (SourceKind::Arena, "arena.alloc") => ArenaAlloc,
             (SourceKind::BufferLibrary, "outbox.emit") => OutboxEmit,
+            (SourceKind::InternalLibrary, "iteration.dyn_borrow") => {
+                adapter = true;
+                DynBorrowAdapter
+            }
             (SourceKind::Check, "check.assert") => Assert,
             (SourceKind::Check, "check.panic") => Panic,
             (SourceKind::Text | SourceKind::InternalText, "text.clone") => TextClone,
