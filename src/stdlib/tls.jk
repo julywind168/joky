@@ -238,7 +238,7 @@ impl TlsStream {
         self.usable = false
         var result: Array<UInt8> = []
         while result.len() < limit {
-            let part = self.read_part(limit - result.len(), delimiter)?
+            var part = self.read_part(limit - result.len(), delimiter)?
             let n = part.len()
             if n == 0 {
                 if !result.is_empty() {
@@ -248,7 +248,7 @@ impl TlsStream {
                 return Ok(None)
             }
             let found = uint64(part[n - 1]) == delimiter
-            array.extend_bytes(&mut result, &part[..n], 0, n)
+            result.append(&mut part)
             if found {
                 break
             }

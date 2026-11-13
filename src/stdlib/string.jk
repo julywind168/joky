@@ -776,18 +776,17 @@ pub fn replace(text: &String, from: &String, to: &String) -> String {
     let replacement = bytes(to)
     let length = slice.len(source)
     let width = slice.len(pattern)
-    let replacement_length = slice.len(replacement)
     var output = Array.new::<UInt8>()
     var start: UInt64 = 0
     var index: UInt64 = 0
     if width == 0 {
         // Empty patterns match the leading, intermediate and trailing Rune boundaries.
-        array.extend_bytes(&mut output, replacement, 0, replacement_length)
+        output.extend(replacement)
         while index < length {
             index += 1
             if boundary(source, index) {
                 array.extend_bytes(&mut output, source, start, index)
-                array.extend_bytes(&mut output, replacement, 0, replacement_length)
+                output.extend(replacement)
                 start = index
             }
         }
@@ -797,7 +796,7 @@ pub fn replace(text: &String, from: &String, to: &String) -> String {
                 // UTF-8 patterns only match complete scalar sequences. Skip the
                 // original match; inserted text is never searched again.
                 array.extend_bytes(&mut output, source, start, index)
-                array.extend_bytes(&mut output, replacement, 0, replacement_length)
+                output.extend(replacement)
                 index += width
                 start = index
             } else {
