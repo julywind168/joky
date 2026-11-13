@@ -14,7 +14,8 @@ pub(super) fn command(name: &str) -> Option<&'static str> {
     })
 }
 
-pub(super) const LSP: &str = "Serve language diagnostics using the Language Server Protocol.
+pub(super) const LSP: &str =
+    "Serve diagnostics, hover and definitions using the Language Server Protocol.
 
 Usage: joky lsp
 

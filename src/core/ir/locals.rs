@@ -285,6 +285,14 @@ impl FunctionPlan {
         mut binding: Binding,
     ) -> Result<Binding, Error> {
         let target = slot_type(&binding.slot);
+        if binding.definition.is_none() {
+            if let Some(semantics) = &self.semantics {
+                binding.definition =
+                    semantics
+                        .borrow_mut()
+                        .binding(self.current_span, name, &target);
+            }
+        }
         if !name.starts_with('$') {
             if let Some(slot) = &binding.slot {
                 for scalar in slot.scalars().filter(|s| s.ty.is_owner()) {
@@ -347,6 +355,32 @@ impl FunctionPlan {
             binding.place = Some(dst);
         }
         Ok(binding)
+    }
+
+    pub(super) fn record_local(&self, span: Span, name: &str, binding: &Binding) {
+        if let Some(definition) = binding.definition {
+            if let Some(semantics) = &self.semantics {
+                semantics.borrow_mut().local(span, name, definition);
+            }
+        }
+    }
+
+    pub(super) fn record_function(
+        &self,
+        span: Span,
+        written: &str,
+        canonical: &str,
+        info: &FunctionInfo,
+    ) {
+        if let Some(semantics) = &self.semantics {
+            semantics.borrow_mut().function(
+                span,
+                written,
+                canonical,
+                &info.signature,
+                info.suspends,
+            );
+        }
     }
 
     pub(super) fn read_local(&mut self, reference: Slot) -> Result<Option<Slot>, Error> {
@@ -474,6 +508,7 @@ impl FunctionPlan {
                 format!("Undefined local binding '{name}'"),
             )
         })?;
+        self.record_local(operand.span(), name, binding);
         if let Some(src) = binding
             .slot
             .as_ref()
@@ -810,6 +845,7 @@ impl FunctionPlan {
         let Some(binding) = vars.get(name) else {
             return Ok(None);
         };
+        self.record_local(field.span(), name, binding);
         // A captured reference lives in an environment field. Load it through
         // the ordinary reference projection path before accessing its pointee.
         if slot_type(&binding.slot).reference_type().is_some() {

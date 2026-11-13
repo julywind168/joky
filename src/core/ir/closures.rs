@@ -27,6 +27,7 @@ pub(super) struct ClosureDefinition {
     captures: Vec<(String, Type, bool)>,
     moving: bool,
     capabilities: Vec<Option<CallableKind>>,
+    capture_definitions: Vec<Option<Span>>,
 }
 
 pub(super) fn children(expr: &Expr) -> Vec<&Expr> {
@@ -841,6 +842,14 @@ impl FunctionPlan {
                         captures: captures.clone(),
                         moving: function.moving,
                         capabilities: capabilities.clone(),
+                        capture_definitions: if self.semantics.is_some() {
+                            captures
+                                .iter()
+                                .map(|(name, _, _)| vars[name].definition)
+                                .collect()
+                        } else {
+                            Vec::new()
+                        },
                     },
                 );
                 match FunctionPlan::new_with_return_inference(
@@ -966,6 +975,7 @@ impl FunctionPlan {
         };
         self.consuming_captures = definition.moving;
         for (index, (name, ty, mutable)) in definition.captures.iter().enumerate() {
+            let declaration = definition.capture_definitions.get(index).copied().flatten();
             let field = format!("$capture{index}");
             if mode == CallableKind::FnOnce && definition.moving {
                 let selected = source.field_path(std::slice::from_ref(&field));
@@ -989,6 +999,7 @@ impl FunctionPlan {
                 vars.insert(
                     name.clone(),
                     Binding {
+                        definition: declaration,
                         slot: (*ty != Type::Unit).then_some(selected),
                         mutable: *mutable,
                         place: Some(projection),
@@ -1041,6 +1052,7 @@ impl FunctionPlan {
                 vars.insert(
                     name.clone(),
                     Binding {
+                        definition: declaration,
                         slot,
                         mutable: *mutable && mode != CallableKind::Fn,
                         place: Some(place),
@@ -1218,6 +1230,7 @@ impl FunctionPlan {
                     let binding = self.local_binding(
                         &name,
                         Binding {
+                            definition: None,
                             slot: Some(value.clone()),
                             mutable: true,
                             place: None,

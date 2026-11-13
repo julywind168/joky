@@ -92,24 +92,37 @@ pub(super) fn execute(options: &Options) -> u8 {
 fn check(options: &source::Options) -> Result<(), Error> {
     let mut checker = joky::Checker::new();
     checker.set_prelude_enabled(options.prelude);
-    check_with_overrides(&options.path, &checker, &BTreeMap::new())
+    visit_with_overrides(
+        &options.path,
+        &checker,
+        &BTreeMap::new(),
+        |ast, validation| {
+            validation?;
+            checker.check_module(ast)
+        },
+    )
 }
 
-pub(super) fn check_with_overrides(
+pub(super) fn visit_with_overrides(
     path: &Path,
     checker: &joky::Checker,
     overrides: &BTreeMap<PathBuf, Arc<str>>,
+    mut visit: impl FnMut(&joky::parser::ast::Module, Result<(), Error>) -> Result<(), Error>,
 ) -> Result<(), Error> {
     let project = project::Project::load(path)?;
     let types = checker.type_registry();
-    let validate = |ast: &joky::parser::ast::Module, entry: bool| {
-        if entry {
+    let mut validate = |ast: &joky::parser::ast::Module, entry: bool| {
+        let validation = if entry {
             super::validate_program(ast, types).map(Some)
         } else {
             super::validate_module(ast, types)
-        }
-        .map_err(|error| error.with_sources(ast.sources()))?;
-        checker.check_module(ast)
+        };
+        visit(
+            ast,
+            validation
+                .map(|_| ())
+                .map_err(|error| error.with_sources(ast.sources())),
+        )
     };
     match project {
         Some(project) => {

@@ -243,6 +243,7 @@ impl FunctionPlan {
         let mut binding = self.local_binding(
             &name,
             Binding {
+                definition: None,
                 slot: value,
                 mutable: false,
                 place: None,

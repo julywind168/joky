@@ -263,6 +263,7 @@ impl FunctionPlan {
                 local.insert(
                     name.clone(),
                     Binding {
+                        definition: None,
                         slot,
                         mutable: false,
                         place: None,

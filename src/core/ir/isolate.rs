@@ -151,6 +151,7 @@ impl FunctionPlan {
         local.insert(
             "$isolate.value".into(),
             Binding {
+                definition: None,
                 slot: result,
                 mutable: false,
                 place: None,
@@ -159,6 +160,7 @@ impl FunctionPlan {
         local.insert(
             "$isolate.failure".into(),
             Binding {
+                definition: None,
                 slot: Some(failure),
                 mutable: false,
                 place: None,

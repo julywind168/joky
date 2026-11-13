@@ -639,6 +639,7 @@ impl FunctionPlan {
             let binding = self.local_binding(
                 &leaf.name,
                 Binding {
+                    definition: None,
                     slot,
                     mutable,
                     place: None,

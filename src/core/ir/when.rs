@@ -1046,6 +1046,7 @@ impl FunctionPlan {
             local.insert(
                 "$when.result".into(),
                 Binding {
+                    definition: None,
                     slot: Some(result),
                     mutable: false,
                     place: None,

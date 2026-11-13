@@ -1,8 +1,8 @@
-//! Full-document synchronization and static diagnostics over LSP stdio.
+//! Full-document synchronization, diagnostics and source navigation over LSP stdio.
 mod wire;
 
 use super::check;
-use joky::{Error, Span};
+use joky::{Error, SemanticIndex, SourceFile, Span};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -39,7 +39,26 @@ struct Report {
 
 enum Event {
     Input(io::Result<Option<serde_json::Result<Value>>>),
-    Checked(u64, BTreeMap<String, Report>, Vec<String>),
+    Checked(u64, Analysis),
+}
+
+#[derive(Default)]
+struct Analysis {
+    reports: BTreeMap<String, Report>,
+    messages: Vec<String>,
+    indexes: Vec<(PathBuf, SemanticIndex)>,
+}
+
+enum QueryKind {
+    Hover,
+    Definition,
+}
+
+struct Query {
+    id: Value,
+    kind: QueryKind,
+    path: PathBuf,
+    offset: usize,
 }
 
 #[derive(Default)]
@@ -55,6 +74,8 @@ struct Session {
     diagnostic_versions: bool,
     related_information: bool,
     client_revision: Option<u64>,
+    indexes: Option<Vec<(PathBuf, SemanticIndex)>>,
+    queries: Vec<Query>,
 }
 
 pub(super) fn execute() -> u8 {
@@ -73,11 +94,8 @@ pub(super) fn execute() -> u8 {
             if job.revision != current.load(Ordering::Relaxed) {
                 continue;
             }
-            let (reports, messages) = analyze(&job, &checker);
-            if events
-                .send(Event::Checked(job.revision, reports, messages))
-                .is_err()
-            {
+            let analysis = analyze(&job, &checker);
+            if events.send(Event::Checked(job.revision, analysis)).is_err() {
                 break;
             }
         }
@@ -145,9 +163,13 @@ fn serve(
             Event::Input(Ok(Some(Err(_)))) => failure(out, &Value::Null, -32700, "Parse error")?,
             Event::Input(Ok(None)) => return Ok(u8::from(!session.shutdown)),
             Event::Input(Err(error)) => return Err(error),
-            Event::Checked(revision, reports, messages) => {
+            Event::Checked(revision, analysis) => {
                 if revision == session.revision && !session.shutdown {
-                    session.publish(reports, messages, out)?;
+                    session.indexes = Some(analysis.indexes);
+                    for query in std::mem::take(&mut session.queries) {
+                        response(out, &query.id, session.lookup(&query))?;
+                    }
+                    session.publish(analysis.reports, analysis.messages, out)?;
                 }
             }
         }
@@ -192,6 +214,8 @@ impl Session {
                     json!({
                         "capabilities": {
                             "positionEncoding": "utf-16",
+                            "hoverProvider": true,
+                            "definitionProvider": true,
                             "textDocumentSync": {"openClose": true, "change": 1, "save": true}
                         },
                         "serverInfo": {"name": "Joky", "version": env!("CARGO_PKG_VERSION")}
@@ -205,13 +229,33 @@ impl Session {
             ("shutdown", Some(id)) => {
                 self.shutdown = true;
                 self.pending = false;
+                self.clear_queries(out)?;
                 response(out, id, Value::Null)?;
             }
+            ("textDocument/hover" | "textDocument/definition", Some(id)) => {
+                let kind = if method == "textDocument/hover" {
+                    QueryKind::Hover
+                } else {
+                    QueryKind::Definition
+                };
+                self.query(id, kind, params, out)?;
+            }
             (_, Some(id)) => failure(out, id, -32601, "Method not found")?,
+            ("$/cancelRequest", None) => {
+                if let Some(index) = self
+                    .queries
+                    .iter()
+                    .position(|query| query.id == params["id"])
+                {
+                    let query = self.queries.remove(index);
+                    failure(out, &query.id, -32800, "Request cancelled")?;
+                }
+            }
             (_, None) if self.initialized && !self.shutdown && self.update(method, params) => {
                 self.client_revision = params["jokySnapshotRevision"].as_u64();
                 self.revision += 1;
                 self.pending = true;
+                self.clear_queries(out)?;
                 for uri in std::mem::take(&mut self.published) {
                     self.diagnostics(out, &uri, None)?;
                 }
@@ -219,6 +263,98 @@ impl Session {
             _ => {}
         }
         Ok(None)
+    }
+
+    fn clear_queries(&mut self, out: &mut impl Write) -> io::Result<()> {
+        self.indexes = None;
+        for query in self.queries.drain(..) {
+            response(out, &query.id, Value::Null)?;
+        }
+        Ok(())
+    }
+
+    fn query(
+        &mut self,
+        id: &Value,
+        kind: QueryKind,
+        params: &Value,
+        out: &mut impl Write,
+    ) -> io::Result<()> {
+        let Some(uri) = params["textDocument"]["uri"].as_str() else {
+            return failure(out, id, -32602, "Expected a document URI");
+        };
+        let position = &params["position"];
+        let (Some(line), Some(column)) =
+            (position["line"].as_u64(), position["character"].as_u64())
+        else {
+            return failure(out, id, -32602, "Expected a document position");
+        };
+        let Some(document) = self.documents.get(uri) else {
+            return response(out, id, Value::Null);
+        };
+        let Some(offset) = offset(&document.text, line, column) else {
+            return response(out, id, Value::Null);
+        };
+        let query = Query {
+            id: id.clone(),
+            kind,
+            path: document.path.clone(),
+            offset,
+        };
+        if self.indexes.is_some() {
+            response(out, id, self.lookup(&query))
+        } else {
+            self.queries.push(query);
+            Ok(())
+        }
+    }
+
+    fn lookup(&self, query: &Query) -> Value {
+        let Ok(path) = query.path.canonicalize() else {
+            return Value::Null;
+        };
+        let found = self.indexes.iter().flatten().find_map(|(target, index)| {
+            let file = index
+                .sources()
+                .files()
+                .find(|file| file.path() == Some(path.as_path()))?;
+            let symbol = index.symbol_at(file.id(), query.offset)?;
+            Some((target, index, file, symbol))
+        });
+        let Some((target, index, file, symbol)) = found else {
+            return Value::Null;
+        };
+        match query.kind {
+            QueryKind::Hover => json!({
+                "contents": {"kind": "plaintext", "value": symbol.display},
+                "range": source_range(file, symbol.occurrence),
+            }),
+            QueryKind::Definition => {
+                let Some(definition) = symbol.definition else {
+                    return Value::Null;
+                };
+                let Some(file) = index.sources().get(definition.source_id()) else {
+                    return Value::Null;
+                };
+                let Some(path) = file.path() else {
+                    return Value::Null;
+                };
+                let uri = self
+                    .documents
+                    .iter()
+                    .find(|(_, document)| {
+                        document.path.canonicalize().as_deref().ok() == Some(path)
+                    })
+                    .map(|(uri, _)| uri.clone())
+                    .or_else(|| display_uri(path, target));
+                uri.map_or(Value::Null, |uri| {
+                    json!({
+                        "uri": uri,
+                    "range": source_range(file, definition),
+                    })
+                })
+            }
+        }
     }
 
     fn update(&mut self, method: &str, params: &Value) -> bool {
@@ -383,15 +519,14 @@ fn target(file: &Path, roots: &[PathBuf]) -> PathBuf {
     file.to_owned()
 }
 
-fn analyze(job: &Job, checker: &joky::Checker) -> (BTreeMap<String, Report>, Vec<String>) {
+fn analyze(job: &Job, checker: &joky::Checker) -> Analysis {
     let mut files = BTreeMap::new();
     let mut overrides = BTreeMap::new();
     let mut targets = BTreeMap::<_, Vec<_>>::new();
-    let mut reports = BTreeMap::new();
-    let mut messages = Vec::new();
+    let mut analysis = Analysis::default();
     for (uri, document) in &job.documents {
         let Ok(path) = document.path.canonicalize() else {
-            check_syntax(&mut reports, uri, document);
+            check_syntax(&mut analysis.reports, uri, document);
             continue;
         };
         files.insert(path.clone(), (uri.as_str(), document.version));
@@ -403,14 +538,20 @@ fn analyze(job: &Job, checker: &joky::Checker) -> (BTreeMap<String, Report>, Vec
     }
     for (path, documents) in targets {
         // Check the project root once so imported files are analyzed in their own package context.
-        if let Err(error) = check::check_with_overrides(&path, checker, &overrides) {
+        if let Err(error) =
+            check::visit_with_overrides(&path, checker, &overrides, |ast, validation| {
+                let (index, result) = checker.analyze_module(ast);
+                analysis.indexes.push((path.clone(), index));
+                validation.and(result)
+            })
+        {
             if let Some((uri, version, diagnostic)) = diagnostic(&error, &files, &path) {
-                reports.entry(uri).or_insert(Report {
+                analysis.reports.entry(uri).or_insert(Report {
                     version,
                     diagnostic,
                 });
             } else {
-                messages.push(format!(
+                analysis.messages.push(format!(
                     "{}: [{}] {}",
                     path.display(),
                     error.code(),
@@ -422,11 +563,11 @@ fn analyze(job: &Job, checker: &joky::Checker) -> (BTreeMap<String, Report>, Vec
         // Catch syntax errors there without resolving them with a different project root.
         if path.file_name().is_some_and(|name| name == "joky.toml") {
             for (uri, document) in documents {
-                check_syntax(&mut reports, uri, document);
+                check_syntax(&mut analysis.reports, uri, document);
             }
         }
     }
-    (reports, messages)
+    analysis
 }
 
 fn check_syntax(reports: &mut BTreeMap<String, Report>, uri: &str, document: &Document) {
@@ -450,28 +591,15 @@ fn diagnostic(
     files: &BTreeMap<PathBuf, (&str, i64)>,
     target: &Path,
 ) -> Option<(String, Option<i64>, Value)> {
-    let display_root = target.parent()?;
-    let root = display_root.canonicalize().ok();
     let location = |span: Span| {
         let file = error.sources().get(span.source_id())?;
         let path = file.path()?;
         let (uri, version) = match files.get(path) {
             Some((uri, version)) => ((*uri).to_owned(), Some(*version)),
-            None => {
-                let display = root
-                    .as_ref()
-                    .and_then(|root| path.strip_prefix(root).ok())
-                    .map(|relative| display_root.join(relative));
-                (
-                    Url::from_file_path(display.as_deref().unwrap_or(path))
-                        .ok()?
-                        .into(),
-                    None,
-                )
-            }
+            None => (display_uri(path, target)?, None),
         };
         span.slice(file.text())?;
-        let range = json!({"start": position(file.text(), span.start()), "end": position(file.text(), span.end())});
+        let range = source_range(file, span);
         Some((uri, version, range))
     };
     let (uri, version, range) = location(error.span()?)?;
@@ -495,6 +623,50 @@ fn diagnostic(
             "message": message, "relatedInformation": related,
         }),
     ))
+}
+
+fn display_uri(path: &Path, target: &Path) -> Option<String> {
+    let display_root = target.parent()?;
+    let root = display_root.canonicalize().ok();
+    let display = root
+        .as_ref()
+        .and_then(|root| path.strip_prefix(root).ok())
+        .map(|relative| display_root.join(relative));
+    Url::from_file_path(display.as_deref().unwrap_or(path))
+        .ok()
+        .map(Into::into)
+}
+
+fn source_range(file: &SourceFile, span: Span) -> Value {
+    json!({"start": position(file.text(), span.start()), "end": position(file.text(), span.end())})
+}
+
+fn offset(text: &str, line: u64, column: u64) -> Option<usize> {
+    let content = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut offset = text.len() - content.len();
+    let mut line = line;
+    while line > 0 {
+        let tail = text.get(offset..)?;
+        offset += tail.find(['\r', '\n'])?;
+        offset += if text[offset..].starts_with("\r\n") {
+            2
+        } else {
+            1
+        };
+        line -= 1;
+    }
+    let mut column = column;
+    for ch in text[offset..].chars() {
+        if column == 0 {
+            return Some(offset);
+        }
+        if matches!(ch, '\r' | '\n') {
+            return None;
+        }
+        column = column.checked_sub(ch.len_utf16() as u64)?;
+        offset += ch.len_utf8();
+    }
+    (column == 0).then_some(offset)
 }
 
 fn position(text: &str, offset: usize) -> Value {

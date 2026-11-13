@@ -431,6 +431,7 @@ impl FunctionPlan {
                 let binding = self.local_binding(
                     name,
                     Binding {
+                        definition: None,
                         slot: Some(dst),
                         mutable: binding_mutable,
                         place: None,

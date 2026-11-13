@@ -556,6 +556,7 @@ mod tests {
             prepared.ast(),
             &HashMap::new(),
             prepared.types(),
+            None,
         )
     }
 
@@ -734,6 +735,7 @@ mod tests {
             prepared.ast(),
             &HashMap::new(),
             prepared.types(),
+            None,
         )
         .unwrap_or_else(|e| panic!("{e}"));
         let a = &plan.functions["a"].signature.params[0];

@@ -20,7 +20,7 @@ test('LSP framing handles split headers, Unicode byte lengths and coalesced mess
   ]);
 });
 
-function harness(t, trusted = true) {
+function harness(t, trusted = true, diagnostics = true) {
   const events = new Map();
   const documents = [];
   const calls = [];
@@ -38,18 +38,24 @@ function harness(t, trusted = true) {
   const vscode = {
     Uri: { parse: uri },
     Range: class { constructor(...positions) { this.positions = positions; } },
+    Hover: class { constructor(contents, range) { Object.assign(this, { contents, range }); } },
+    MarkdownString: class { appendCodeblock(value, language) { Object.assign(this, { value, language }); } },
     Diagnostic: class { constructor(range, message) { Object.assign(this, { range, message }); } },
     Location: class { constructor(uri, range) { Object.assign(this, { uri, range }); } },
     DiagnosticRelatedInformation: class { constructor(location, message) { Object.assign(this, { location, message }); } },
     DiagnosticSeverity: { Error: 0 },
-    languages: { createDiagnosticCollection: () => ({
-      set(uri, diagnostics) { problems.set(uri.toString(), diagnostics); },
-      clear() { problems.clear(); },
-      dispose() {},
-    }) },
+    languages: {
+      registerHoverProvider(_selector, provider) { return on('hover')(provider.provideHover); },
+      registerDefinitionProvider(_selector, provider) { return on('definition')(provider.provideDefinition); },
+      createDiagnosticCollection: () => ({
+        set(uri, diagnostics) { problems.set(uri.toString(), diagnostics); },
+        clear() { problems.clear(); },
+        dispose() {},
+      }),
+    },
     workspace: {
       isTrusted: trusted, textDocuments: documents,
-      getConfiguration: () => ({ get: () => true }),
+      getConfiguration: () => ({ get: () => diagnostics }),
       onDidOpenTextDocument: on('open'), onDidChangeTextDocument: on('change'),
       onDidSaveTextDocument: on('save'), onDidCloseTextDocument: on('close'),
       onDidChangeConfiguration: on('configuration'), onDidChangeWorkspaceFolders: on('folders'),
@@ -75,6 +81,9 @@ function harness(t, trusted = true) {
       events.get('change')({ document, contentChanges: [{}] });
     },
     save(document) { events.get('save')(document); },
+    request(feature, document, token) {
+      return events.get(feature)(document, { line: 0, character: 3 }, token);
+    },
     receive(message) { child.stdout.write(frame(message)); },
   };
 }
@@ -111,6 +120,41 @@ test('the editor accepts only diagnostics for the latest synchronized snapshot',
   assert.equal(h.problems.size, 0);
   publish(4, 2);
   assert.equal(h.problems.size, 1);
+});
+
+test('navigation uses the latest synchronized snapshot with diagnostics disabled', async t => {
+  const h = harness(t, true, false);
+  const main = await h.open('main.jk');
+  const dep = await h.open('dep.jk');
+  const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) };
+  const pending = h.request('hover', main, token);
+  h.receive({ id: 1, result: { capabilities: {
+    textDocumentSync: { change: 1 }, hoverProvider: true, definitionProvider: true,
+  } } });
+  await Promise.resolve();
+  const hover = h.calls.at(-1);
+  assert.equal(hover.method, 'textDocument/hover');
+  assert.deepEqual(hover.params, { textDocument: { uri: main.uri.toString() }, position: { line: 0, character: 3 } });
+  const range = { start: { line: 0, character: 3 }, end: { line: 0, character: 7 } };
+  h.edit(dep, '\nfn example() {}');
+  assert.equal(h.calls.at(-1).method, '$/cancelRequest');
+  h.receive({ id: hover.id, result: { contents: { value: 'old: Int32' }, range } });
+  assert.equal(await pending, undefined);
+
+  const definition = h.request('definition', main, token);
+  await Promise.resolve();
+  assert.equal(h.calls.at(-1).method, 'textDocument/definition');
+  h.receive({ id: h.calls.at(-1).id, result: { uri: dep.uri.toString(), range } });
+  assert.equal((await definition).uri.toString(), dep.uri.toString());
+  const current = h.request('hover', main, token);
+  await Promise.resolve();
+  h.receive({ id: h.calls.at(-1).id, result: { contents: { value: 'name: Bool' }, range } });
+  assert.equal((await current).contents.value, 'name: Bool');
+  h.receive({ method: 'textDocument/publishDiagnostics', params: {
+    uri: dep.uri.toString(), diagnostics: [{ code: 'syntax_error', message: 'Bad token', range }],
+    jokySnapshotRevision: 3, jokySnapshotVersions: { [main.uri.toString()]: 1, [dep.uri.toString()]: 2 },
+  } });
+  assert.equal(h.problems.size, 0);
 });
 
 test('an untrusted workspace does not start the language server', async t => {

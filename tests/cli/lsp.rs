@@ -95,6 +95,157 @@ impl Drop for Client {
     }
 }
 
+fn symbol_range(source: &str, line: usize, token: &str, last: bool) -> Value {
+    let text = source
+        .lines()
+        .nth(line)
+        .unwrap()
+        .trim_start_matches('\u{feff}');
+    let byte = if last {
+        text.rfind(token)
+    } else {
+        text.find(token)
+    }
+    .unwrap();
+    let character = text[..byte].encode_utf16().count();
+    json!({
+        "start": {"line": line, "character": character},
+        "end": {"line": line, "character": character + token.encode_utf16().count()},
+    })
+}
+
+#[test]
+fn lsp_resolves_inferred_bindings_and_function_definitions_in_the_current_snapshot() {
+    let work = Workspace::new();
+    work.write("joky.toml", "[project]\nname='app'\nentry='main.jk'");
+    let main = concat!(
+        "\u{feff}import values as numbers\r\n",
+        "import helpers.{identity as convert}\r\n",
+        "fn local(input: Int32) -> Int32 {\r\n",
+        "    let count = convert(input)\r\n",
+        "    { let count = true; println(\"🙂{count}\") }\r\n",
+        "    count\r\n",
+        "}\r\n",
+        "fn main() -> Int32 { local(numbers.answer()) }",
+    );
+    let helper = "pub fn identity<T>(value: T) -> T { value }";
+    let dep = "pub fn answer() -> Int32 { 42 }";
+    work.write("main.jk", main);
+    work.write("helpers.jk", helper);
+    work.write("values.jk", dep);
+    let uri = |relative: &str| Url::from_file_path(work.path().join(relative)).unwrap();
+    let entry = uri("main.jk");
+    let helpers = uri("helpers.jk");
+    let dependency = uri("values.jk");
+    let mut client = Client::start(&work);
+    client.send(json!({"id": 1, "method": "initialize", "params": {"rootUri": uri("").as_str()}}));
+    let initialized = client.until(|message| message["id"] == 1);
+    assert_eq!(initialized["result"]["capabilities"]["hoverProvider"], true);
+    assert_eq!(
+        initialized["result"]["capabilities"]["definitionProvider"],
+        true
+    );
+    let open = |uri: &Url, text: &str| {
+        json!({"method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri.as_str(), "version": 1, "languageId": "joky", "text": text}
+        }})
+    };
+    client.send(open(&entry, main));
+    let mut id = 2;
+    let mut request = |client: &mut Client, method: &str, uri: &Url, position: &Value| {
+        id += 1;
+        client.send(json!({"id": id, "method": method, "params": {
+            "textDocument": {"uri": uri.as_str()}, "position": position,
+        }}));
+        let message = client.until(|message| message["id"] == id);
+        assert!(message.get("error").is_none(), "{message}");
+        message["result"].clone()
+    };
+    for (source, definition, destination, display) in [
+        (
+            symbol_range(main, 3, "input", false),
+            symbol_range(main, 2, "input", false),
+            &entry,
+            "input: Int32",
+        ),
+        (
+            symbol_range(main, 5, "count", false),
+            symbol_range(main, 3, "count", false),
+            &entry,
+            "count: Int32",
+        ),
+        (
+            symbol_range(main, 4, "count", true),
+            symbol_range(main, 4, "count", false),
+            &entry,
+            "count: Bool",
+        ),
+        (
+            symbol_range(main, 3, "convert", false),
+            symbol_range(helper, 0, "identity", false),
+            &helpers,
+            "fn identity(value: Int32) -> Int32",
+        ),
+        (
+            symbol_range(main, 7, "answer", false),
+            symbol_range(dep, 0, "answer", false),
+            &dependency,
+            "fn answer() -> Int32",
+        ),
+        (
+            symbol_range(main, 7, "local", false),
+            symbol_range(main, 2, "local", false),
+            &entry,
+            "fn local(input: Int32) -> Int32",
+        ),
+    ] {
+        assert_eq!(
+            request(&mut client, "textDocument/hover", &entry, &source["start"]),
+            json!({"contents": {"kind": "plaintext", "value": display}, "range": source})
+        );
+        assert_eq!(
+            request(
+                &mut client,
+                "textDocument/definition",
+                &entry,
+                &source["start"]
+            ),
+            json!({"uri": destination.as_str(), "range": definition})
+        );
+    }
+    let edited = format!("// Unsaved shift\n{dep}");
+    client.send(open(&dependency, &edited));
+    let call = symbol_range(main, 7, "answer", false);
+    assert_eq!(
+        request(
+            &mut client,
+            "textDocument/definition",
+            &entry,
+            &call["start"]
+        ),
+        json!({"uri": dependency.as_str(), "range": symbol_range(&edited, 1, "answer", false)})
+    );
+    let builtin = symbol_range(main, 4, "println", false);
+    assert_eq!(
+        request(&mut client, "textDocument/hover", &entry, &builtin["start"])["range"],
+        builtin
+    );
+    assert!(request(
+        &mut client,
+        "textDocument/definition",
+        &entry,
+        &builtin["start"]
+    )
+    .is_null());
+    assert!(request(
+        &mut client,
+        "textDocument/hover",
+        &entry,
+        &json!({"line": 1, "character": 0})
+    )
+    .is_null());
+}
+
 #[test]
 fn lsp_checks_unsaved_path_dependencies_and_discards_old_document_versions() {
     let work = Workspace::new();
@@ -132,6 +283,16 @@ fn lsp_checks_unsaved_path_dependencies_and_discards_old_document_versions() {
         }}));
     }
     client.report(&dependency, 1, 2, 0);
+    let call = symbol_range(main, 1, "answer", false);
+    client.send(
+        json!({"id": 3, "method": "textDocument/definition", "params": {
+            "textDocument": {"uri": entry.as_str()}, "position": call["start"]
+        }}),
+    );
+    assert_eq!(
+        client.until(|message| message["id"] == 3)["result"],
+        json!({"uri": dependency.as_str(), "range": symbol_range(original, 0, "answer", false)})
+    );
     let invalid = "\u{feff}// header\r\npub fn answer() -> Int32 { let text = \"🙂\" $ }";
     let change = |text: &str, version: u64, revision: u64| {
         json!({"method": "textDocument/didChange", "params": {

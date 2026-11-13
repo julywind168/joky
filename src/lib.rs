@@ -27,6 +27,7 @@ pub use core::ir::parallel::report::{
 };
 pub use core::parser;
 pub use core::prepared::Checker;
+pub use core::semantics::{SemanticIndex, Symbol};
 pub use core::types::memory_layout;
 pub use core::{
     EntryAbi, Error, ErrorCode, ErrorLabel, ErrorLabelKind, ErrorPhase, FunctionSignature,

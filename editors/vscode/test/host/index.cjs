@@ -90,12 +90,34 @@ async function run() {
   await runTask('joky.check', vscode.Uri.file(entry), manifest);
   await runTask('joky.run', vscode.Uri.file(entry), manifest);
 
+  const values = path.join(project, 'values.jk');
+  const valuesUri = vscode.Uri.file(values);
+  await fs.writeFile(values, 'pub fn answer() -> Int32 { 42 }\n');
+  const projectDocument = await vscode.workspace.openTextDocument(entry);
+  const projectEditor = await vscode.window.showTextDocument(projectDocument);
+  const navigation = 'import values\nfn main() {\n    let result = values.answer()\n    println(result)\n}\n';
+  await projectEditor.edit(edit => edit.replace(new vscode.Range(0, 0, projectDocument.lineCount, 0), navigation));
+  const hovers = await vscode.commands.executeCommand('vscode.executeHoverProvider',
+    projectDocument.uri, new vscode.Position(3, 13));
+  assert.ok(hovers.some(hover => hover.contents.some(content => content.value.includes('result: Int32'))));
+  const definitions = () => vscode.commands.executeCommand('vscode.executeDefinitionProvider',
+    projectDocument.uri, new vscode.Position(2, 24));
+  const [definition] = await definitions();
+  assert.equal(definition.uri.fsPath, values);
+  assert.equal(definition.range.start.line, 0);
+  assert.equal(definition.range.start.character, 7);
+  const valuesDocument = await vscode.workspace.openTextDocument(valuesUri);
+  const valuesEditor = await vscode.window.showTextDocument(valuesDocument);
+  await valuesEditor.edit(edit => edit.insert(new vscode.Position(0, 0), '// unsaved\n'));
+  const [updated] = await definitions();
+  assert.equal(updated.uri.fsPath, values);
+  assert.equal(updated.range.start.line, 1);
+
   const dependency = path.join(project, 'bad.jk');
   const bad = '// heading\r\npub fn fail() { let text = "🙂" $ }\r\n';
   await fs.writeFile(dependency, `\uFEFF${bad}`);
-  const projectDocument = await vscode.workspace.openTextDocument(entry);
-  const projectEditor = await vscode.window.showTextDocument(projectDocument);
-  await projectEditor.edit(edit => edit.insert(new vscode.Position(0, 0), 'import bad\n'));
+  const diagnosticsEditor = await vscode.window.showTextDocument(projectDocument);
+  await diagnosticsEditor.edit(edit => edit.insert(new vscode.Position(0, 0), 'import bad\n'));
   assert.ok(await projectDocument.save());
   const dependencyUri = vscode.Uri.file(dependency);
   const [problem] = await waitForDiagnostics(dependencyUri, 1);
@@ -123,7 +145,7 @@ async function run() {
   await vscode.window.showTextDocument(untitled);
   const unsavedEdits = await vscode.commands.executeCommand('vscode.executeFormatDocumentProvider', untitled.uri, { tabSize: 4, insertSpaces: true });
   assert.ok(unsavedEdits.length > 0, 'untitled Joky documents can be formatted');
-  console.log('Joky extension host: formatting, diagnostics, standalone tasks and project tasks passed.');
+  console.log('Joky extension host: formatting, diagnostics, navigation, standalone tasks and project tasks passed.');
   await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
   await fs.writeFile(path.join(root, 'host-result.txt'), 'passed');
 }

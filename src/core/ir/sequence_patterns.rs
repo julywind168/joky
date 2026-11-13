@@ -427,6 +427,7 @@ impl FunctionPlan {
             vars.insert(
                 name.clone(),
                 Binding {
+                    definition: None,
                     slot: Some(value),
                     mutable: binding_mutable,
                     place: None,

@@ -59,6 +59,7 @@ impl FunctionPlan {
                         local.insert(
                             name.clone(),
                             Binding {
+                                definition: None,
                                 place: None,
                                 slot: Some(Slot {
                                     index: 0,
@@ -234,6 +235,7 @@ impl FunctionPlan {
                         vars.insert(
                             name.clone(),
                             Binding {
+                                definition: None,
                                 place: None,
                                 slot: Some(dst),
                                 mutable: false,

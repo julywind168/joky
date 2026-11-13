@@ -11,7 +11,7 @@ mod expressions;
 mod format;
 pub use format::format;
 mod interpolation;
-mod lexer;
+pub(super) mod lexer;
 mod module;
 mod patterns;
 mod source_text;

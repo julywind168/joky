@@ -673,6 +673,7 @@ impl FunctionPlan {
             let binding = self.local_binding(
                 &name,
                 Binding {
+                    definition: None,
                     slot,
                     mutable: false,
                     place: None,
@@ -940,6 +941,7 @@ impl FunctionPlan {
             let binding = self.local_binding(
                 name,
                 Binding {
+                    definition: None,
                     slot: value,
                     mutable: binding_mutable,
                     place: None,
@@ -1048,6 +1050,7 @@ impl FunctionPlan {
                 let binding = self.local_binding(
                     name,
                     Binding {
+                        definition: None,
                         slot: value,
                         mutable: false,
                         place: None,

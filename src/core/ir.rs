@@ -267,11 +267,18 @@ pub(crate) enum TextSource {
     Float(Slot),
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 struct Binding {
+    definition: Option<Span>,
     slot: Option<Slot>,
     mutable: bool,
     place: Option<Slot>,
+}
+
+impl PartialEq for Binding {
+    fn eq(&self, other: &Self) -> bool {
+        self.slot == other.slot && self.mutable == other.mutable && self.place == other.place
+    }
 }
 
 pub(crate) struct ConcurrentBranch {
@@ -594,6 +601,7 @@ pub(crate) struct FunctionPlan {
     borrowed_names: locals::BorrowedLocals,
     /// Source bindings keyed by their stable IR storage slots, including shadowed names.
     diagnostic_bindings: HashMap<usize, (String, Span, Type)>,
+    semantics: Option<crate::core::semantics::Recorder>,
     local_scopes: Vec<Vec<Slot>>,
     argument_scopes: Vec<std::collections::HashSet<usize>>,
     /// Implicit conversions must have a proof after all bodies have been analyzed.
@@ -631,7 +639,16 @@ impl ModulePlan {
         imports: &HashMap<String, usize>,
         types: &TypeRegistry,
     ) -> Result<Self, Error> {
-        let plan = Self::check_with_import_layouts_and_types(module, imports, types)?;
+        Self::with_semantics(module, imports, types, None)
+    }
+
+    pub(crate) fn with_semantics(
+        module: &AstModule,
+        imports: &HashMap<String, usize>,
+        types: &TypeRegistry,
+        semantics: Option<crate::core::semantics::Recorder>,
+    ) -> Result<Self, Error> {
+        let plan = Self::check_with_import_layouts_and_types(module, imports, types, semantics)?;
         plan.validate_dyn_tables()?;
         Ok(plan)
     }
@@ -640,6 +657,7 @@ impl ModulePlan {
         module: &AstModule,
         imports: &HashMap<String, usize>,
         types: &TypeRegistry,
+        semantics: Option<crate::core::semantics::Recorder>,
     ) -> Result<Self, Error> {
         let scoped = types.compilation_scope().with_trait_environment(module);
         let _float_env = crate::runtime::float_env::Guard::enter();
@@ -923,6 +941,11 @@ impl ModulePlan {
             if let Item::ExternFn(f) = item {
                 extern_abi.validate(f, &info.signature, &nominals, types)?;
             }
+            if let Some(semantics) = &semantics {
+                semantics
+                    .borrow_mut()
+                    .declare_function(item, &info.signature);
+            }
             if functions.insert(name.clone(), info).is_some() {
                 return Err(type_error(
                     item_span(item),
@@ -966,6 +989,7 @@ impl ModulePlan {
         )));
         crate::core::source::validate_module_path(&module.logical_name)?;
         generics.borrow_mut().members = members.clone();
+        generics.borrow_mut().semantics = semantics;
         when::validate_states(module, &functions, types, &nominals, generics.clone())?;
         constants::validate_all(&members, &functions, types, &nominals, generics.clone())?;
         let mut template_bodies = HashMap::new();
@@ -1391,6 +1415,7 @@ impl FunctionPlan {
             .as_ref()
             .map(|(_, kind)| (*kind, parameter_slots));
         let lexical_function = task_parent.map_or_else(|| f.name.clone(), |(parent, _)| parent);
+        let semantics = generics.borrow().semantics.clone();
         let mut plan = Self {
             dyn_erasures: Vec::new(),
             indexed_store_slots: Default::default(),
@@ -1435,6 +1460,7 @@ impl FunctionPlan {
             graph_handles: Default::default(),
             borrowed_names: locals::borrowed_names(&f.body),
             diagnostic_bindings: HashMap::new(),
+            semantics,
             local_scopes: vec![Vec::new()],
             argument_scopes: Vec::new(),
             implicit_borrows: Vec::new(),
@@ -1735,6 +1761,7 @@ impl FunctionPlan {
             let binding = plan.local_binding(
                 &p.name,
                 Binding {
+                    definition: None,
                     slot,
                     mutable: p.mutable,
                     place: None,
@@ -2327,6 +2354,7 @@ impl FunctionPlan {
                         format!("Undefined variable `{name}`"),
                     )
                 })?;
+                self.record_local(*span, name, binding);
                 if let Some(place) = &binding.place {
                     if let Some(owner) = binding.slot.as_ref().filter(|slot| slot.ty.is_owner()) {
                         return self
@@ -2402,6 +2430,7 @@ impl FunctionPlan {
                     )));
                 }
                 let slot = self.slot(Type::Named("vm.Function".into()))?;
+                self.record_function(*span, name.rsplit('.').next().unwrap(), name, function);
                 self.emit(Op::FunctionRef(slot.clone(), name.clone()));
                 Ok(Flow::Value(Some(slot)))
             }
@@ -2459,6 +2488,7 @@ impl FunctionPlan {
                 let binding = self.local_binding(
                     name,
                     Binding {
+                        definition: None,
                         slot,
                         mutable,
                         place: None,
@@ -2480,6 +2510,7 @@ impl FunctionPlan {
                         format!("Undefined variable `{name}`"),
                     )
                 })?;
+                self.record_local(*span, name, &binding);
                 if !binding.mutable {
                     return Err(type_error(
                         span,
@@ -2685,6 +2716,7 @@ impl FunctionPlan {
                     vars.insert(
                         name.clone(),
                         Binding {
+                            definition: None,
                             slot,
                             mutable: false,
                             place: None,
@@ -2859,6 +2891,7 @@ fn slot_type(slot: &Option<Slot>) -> Type {
 /// lowering addresses the payload's frame slot. Unit payloads bind no storage.
 fn payload_binding(ty: &Type, index: usize) -> Binding {
     Binding {
+        definition: None,
         place: None,
         slot: (ty != &Type::Unit).then_some(Slot {
             index,

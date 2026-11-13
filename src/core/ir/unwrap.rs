@@ -205,6 +205,7 @@ impl FunctionPlan {
                 local.insert(
                     "$message".into(),
                     Binding {
+                        definition: None,
                         slot: message,
                         mutable: false,
                         place: None,

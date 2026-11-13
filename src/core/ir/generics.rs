@@ -31,6 +31,7 @@ pub(super) struct ClosureInstance {
 }
 
 pub(super) struct GenericContext {
+    pub semantics: Option<crate::core::semantics::Recorder>,
     /// Attribute embedded qualification failures to the user's library call.
     pub library_call_span: Option<Span>,
     /// Declaring modules keep handle-method identity independent of the caller.
@@ -59,6 +60,7 @@ pub(super) struct GenericContext {
 impl GenericContext {
     pub fn new(module: &AstModule) -> Self {
         Self {
+            semantics: None,
             library_call_span: None,
             when_modules: module
                 .items
@@ -1045,15 +1047,11 @@ impl FunctionPlan {
                     format!("Undeclared function `{callee}`"),
                 )
             })?;
-        if self
-            .generics
-            .borrow()
-            .templates
-            .contains_key(name.as_ref().unwrap())
-        {
+        let name = name.unwrap();
+        if self.generics.borrow().templates.contains_key(&name) {
             let (arguments, signature) =
                 self.generic_signature_expected(expr, vars, functions, types, expected)?;
-            let name = if matches!(
+            let instance = if matches!(
                 info.compiler_intrinsic,
                 Some(
                     CompilerIntrinsic::MemReplace
@@ -1061,10 +1059,10 @@ impl FunctionPlan {
                         | CompilerIntrinsic::ArenaAlloc
                 )
             ) {
-                name.unwrap()
+                name.clone()
             } else {
                 self.generics.borrow_mut().instantiate(
-                    name.as_ref().unwrap(),
+                    &name,
                     arguments,
                     signature.clone(),
                     self.instantiation_depth + 1,
@@ -1075,7 +1073,8 @@ impl FunctionPlan {
             info.signature = signature;
             info.frame_slots = info.parameter_slots();
             info.internal = true;
-            Ok((name, info))
+            self.record_function(*span, callee, &name, &info);
+            Ok((instance, info))
         } else {
             if !type_args.is_empty() {
                 return Err(type_error(
@@ -1087,7 +1086,8 @@ impl FunctionPlan {
                     ),
                 ));
             }
-            Ok((name.unwrap(), info.clone()))
+            self.record_function(*span, callee, &name, info);
+            Ok((name, info.clone()))
         }
     }
 }

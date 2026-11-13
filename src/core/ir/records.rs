@@ -512,7 +512,10 @@ pub(super) fn place<'a>(
     match expr {
         Expr::Ident { name, span } => vars
             .get(name)
-            .map(|binding| (name.as_str(), binding.slot.clone()))
+            .map(|binding| {
+                plan.record_local(*span, name, binding);
+                (name.as_str(), binding.slot.clone())
+            })
             .ok_or_else(|| {
                 type_error(
                     span,

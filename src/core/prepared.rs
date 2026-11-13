@@ -2,6 +2,7 @@
 use super::{
     ir::ModulePlan,
     resolver::{self, BindingRegistry},
+    semantics::{Recorder, SemanticIndex, SemanticRecorder},
 };
 use crate::{parser::ast::Module, Error, TypeRegistry};
 use std::collections::HashMap;
@@ -40,12 +41,27 @@ impl Checker {
     /// This runs the shared semantic and ownership passes without code generation.
     /// Custom host registration and CLI entry-point policy are outside this API.
     pub fn check_module(&self, module: &Module) -> Result<(), Error> {
+        self.check(module, None)
+    }
+
+    /// Collect resolved source symbols alongside the ordinary static check.
+    /// Declarations and expressions checked before a body error remain queryable.
+    pub fn analyze_module(&self, module: &Module) -> (SemanticIndex, Result<(), Error>) {
+        let recorder = SemanticRecorder::new(module);
+        let result = self.check(module, Some(recorder.clone()));
+        let index = recorder.borrow_mut().finish();
+        (index, result)
+    }
+
+    fn check(&self, module: &Module, semantics: Option<Recorder>) -> Result<(), Error> {
         let registry = crate::stdlib::module_registry();
         let prepared = PreparedModule::new(module, &self.types, registry.metadata())?;
         let imports = registry
             .import_layouts(prepared.ast(), &HashMap::new())
             .map_err(|error| error.with_sources(prepared.ast().sources()))?;
-        prepared.plan(&imports).map(|_| ())
+        ModulePlan::with_semantics(prepared.ast(), &imports, prepared.types(), semantics)
+            .map(|_| ())
+            .map_err(|error| error.with_sources(prepared.ast().sources()))
     }
 }
 

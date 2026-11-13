@@ -46,7 +46,7 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
 
   function enabled(document) {
     return document.uri.scheme === 'file' && document.languageId === 'joky' &&
-      path.extname(document.uri.fsPath) === '.jk' && diagnosticsEnabled(document.uri);
+      path.extname(document.uri.fsPath) === '.jk';
   }
 
   function currentDocuments() {
@@ -56,6 +56,8 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
   function stop() {
     const previous = session;
     session = undefined;
+    previous?.readySignal();
+    if (previous) clearRequests(previous);
     if (previous?.child) {
       if (previous.ready && previous.child.stdin.writable) {
         previous.child.stdin.write(frame({ id: 2, method: 'shutdown', params: null }));
@@ -81,10 +83,49 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
   function synchronize(state, method, params) {
     state.revision++;
     notify(state, method, { ...params, jokySnapshotRevision: state.revision });
+    clearRequests(state);
   }
 
   function range({ start, end }) {
     return new vscode.Range(start.line, start.character, end.line, end.character);
+  }
+
+  function clearRequests(state) {
+    for (const [id, complete] of state.requests) {
+      notify(state, '$/cancelRequest', { id });
+      complete();
+    }
+  }
+
+  async function request(method, capability, document, position, token) {
+    if (!enabled(document) || token.isCancellationRequested) return;
+    const version = document.version;
+    void start(document);
+    const state = session;
+    if (!state) return;
+    await state.initialized;
+    if (state !== session || !state.capabilities?.[capability] ||
+        token.isCancellationRequested || document.version !== version ||
+        !state.open.has(document.uri.toString())) return;
+    const revision = state.revision;
+    const result = await new Promise(resolve => {
+      const id = state.nextId++;
+      const complete = result => {
+        if (!state.requests.delete(id)) return;
+        cancellation.dispose();
+        resolve(result);
+      };
+      const cancellation = token.onCancellationRequested(() => {
+        notify(state, '$/cancelRequest', { id });
+        complete();
+      });
+      state.requests.set(id, complete);
+      send(state, { id, method, params: {
+        textDocument: { uri: document.uri.toString() },
+        position: { line: position.line, character: position.character },
+      } });
+    });
+    if (state === session && state.revision === revision && document.version === version) return result;
   }
 
   function publish(state, params) {
@@ -118,7 +159,8 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
 
   async function start(document) {
     if (disposed || unavailable || !vscode.workspace.isTrusted || session || !enabled(document)) return;
-    const state = { open: new Set(), ready: false, revision: 0 };
+    const state = { open: new Set(), ready: false, revision: 0, nextId: 3, requests: new Map() };
+    state.initialized = new Promise(resolve => { state.readySignal = resolve; });
     session = state;
     const fail = error => {
       if (state !== session) return;
@@ -146,9 +188,13 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
           if (message.result?.capabilities?.textDocumentSync?.change !== 1) {
             throw new Error('The selected compiler does not support Joky LSP diagnostics');
           }
+          state.capabilities = message.result.capabilities;
           state.ready = true;
           notify(state, 'initialized', {});
           currentDocuments().forEach(doc => open(state, doc));
+          state.readySignal();
+        } else if (state.requests.has(message.id)) {
+          state.requests.get(message.id)(message.result);
         } else if (message.method === 'textDocument/publishDiagnostics') {
           publish(state, message.params);
         } else if (message.method === 'window/logMessage') {
@@ -174,6 +220,23 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
 
   context.subscriptions.push(
     { dispose() { disposed = true; stop(); collection.dispose(); } },
+    vscode.languages.registerHoverProvider({ scheme: 'file', language: 'joky' }, {
+      async provideHover(document, position, token) {
+        const result = await request('textDocument/hover', 'hoverProvider', document, position, token);
+        if (!result || token.isCancellationRequested) return;
+        const contents = new vscode.MarkdownString();
+        contents.appendCodeblock(result.contents.value, 'joky');
+        return new vscode.Hover(contents, range(result.range));
+      },
+    }),
+    vscode.languages.registerDefinitionProvider({ scheme: 'file', language: 'joky' }, {
+      async provideDefinition(document, position, token) {
+        const result = await request('textDocument/definition', 'definitionProvider', document, position, token);
+        if (result && !token.isCancellationRequested) {
+          return new vscode.Location(vscode.Uri.parse(result.uri), range(result.range));
+        }
+      },
+    }),
     vscode.workspace.onDidOpenTextDocument(document => {
       if (!enabled(document)) return;
       collection.clear();

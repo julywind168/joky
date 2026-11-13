@@ -112,6 +112,10 @@ impl FunctionPlan {
                     "Non-generic function does not accept type arguments",
                 ));
             }
+            if instantiate {
+                drop(context);
+                self.record_function(span, &path, &name, &info);
+            }
             return Ok(Some((name, info)));
         };
         if explicit.len() != template.type_params.len() {
@@ -157,6 +161,7 @@ impl FunctionPlan {
         if !instantiate {
             return Ok(Some((name, info)));
         }
+        self.record_function(span, &path, &name, &info);
         let name = self.generics.borrow_mut().instantiate(
             &name,
             explicit.to_vec(),
@@ -187,11 +192,12 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
-        if let Expr::Ident { name, .. } = callee {
+        if let Expr::Ident { name, span } = callee {
             if let Some(value) = vars.get(name).and_then(|b| b.slot.as_ref()).filter(|v| {
                 super::closures::callable_signature(&v.ty).is_some()
                     && !matches!(v.ty, Type::Function(_))
             }) {
+                self.record_local(*span, name, &vars[name]);
                 return Ok(Flow::Value(Some(value.clone())));
             }
         }

@@ -44,7 +44,7 @@ Commands:
   doc              Generate offline homepage and standard-library HTML (default: target/doc)
   test             Run #test functions in isolated processes (default timeout: 30000 ms)
   check            Check syntax and semantics without running or generating code
-  lsp              Serve language diagnostics over stdin and stdout
+  lsp              Serve diagnostics and source navigation over stdin and stdout
   explain-parallel  Explain dispatch eligibility without running the program
   fmt              Format files, directories or projects without running code
   run              Execute the program with the JIT compiler (or the interpreter)
