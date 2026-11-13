@@ -1,194 +1,221 @@
-const fs = require('node:fs/promises');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 
-function diskPath(file) {
-  if (process.platform !== 'win32') return file;
-  if (file.startsWith('\\\\?\\UNC\\')) return `\\\\${file.slice(8)}`;
-  return file.startsWith('\\\\?\\') ? file.slice(4) : file;
+function frame(message) {
+  const body = Buffer.from(JSON.stringify({ jsonrpc: '2.0', ...message }));
+  return Buffer.concat([Buffer.from('Content-Length: ' + body.length + '\r\n\r\n'), body]);
 }
 
-// The compiler counts raw UTF-8 bytes. VS Code counts UTF-16 units and hides a leading BOM.
-function position(bytes, offset) {
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > bytes.length || (bytes[offset] & 0xc0) === 0x80) return;
-  const lines = bytes.toString('utf8', 0, offset).replace(/^\uFEFF/, '').split(/\r\n|\n|\r/);
-  return [lines.length - 1, lines.at(-1).length];
+function readMessages(stream, receive, fail) {
+  let buffer = Buffer.alloc(0);
+  let length;
+  stream.on('data', data => {
+    buffer = Buffer.concat([buffer, data]);
+    try {
+      while (buffer.length) {
+        if (length === undefined) {
+          const end = buffer.indexOf('\r\n\r\n');
+          if (end === -1 && buffer.length <= 8192) return;
+          const header = end < 0 || end > 8192 ? '' : buffer.toString('ascii', 0, end);
+          const match = header.match(/^Content-Length: (\d+)\r?$/im);
+          length = match && Number(match[1]);
+          if (!length || length > 16 * 1024 * 1024) throw new Error('Invalid Joky LSP message header');
+          buffer = buffer.subarray(end + 4);
+        }
+        if (buffer.length < length) return;
+        const message = JSON.parse(buffer.toString('utf8', 0, length));
+        buffer = buffer.subarray(length);
+        length = undefined;
+        receive(message);
+      }
+    } catch (error) {
+      fail(error);
+    }
+  });
 }
 
-function isSource(document) {
-  return document.uri.scheme === 'file' && (document.languageId === 'joky' || path.basename(document.uri.fsPath) === 'joky.toml');
-}
-
-function registerDiagnostics(context, vscode, toolchain, compiler, output) {
+function registerDiagnostics(context, vscode, compiler, output, launch = spawn) {
   const collection = vscode.languages.createDiagnosticCollection('joky');
-  const states = new Map();
-  const latest = new Map();
-  const pending = new Set();
-  let lastFailure;
-  let visible = new Map();
-  let sequence = 0;
+  let session;
   let disposed = false;
+  let unavailable = false;
 
-  function publish() {
-    const next = new Map();
-    for (const state of states.values()) {
-      for (const [uri, diagnostic] of state.entries) {
-        const key = uri.toString();
-        const previous = next.get(key);
-        if (!previous || previous.sequence < state.sequence) next.set(key, { uri, diagnostic, sequence: state.sequence });
-      }
-    }
-    const changes = [];
-    for (const [key, { uri }] of visible) if (!next.has(key)) changes.push([uri, undefined]);
-    for (const [key, entry] of next) {
-      if (visible.get(key)?.diagnostic !== entry.diagnostic) changes.push([entry.uri, [entry.diagnostic]]);
-    }
-    if (changes.length) collection.set(changes);
-    visible = next;
+  function diagnosticsEnabled(uri) {
+    return vscode.workspace.getConfiguration('joky', uri).get('checkOnSave', true);
   }
 
-  function invalidate(file, before = Infinity) {
-    for (const [key, state] of states) {
-      if (state.sequence <= before && (toolchain.contains(state.cwd, file) ||
-          toolchain.contains(state.canonicalRoot, file) || state.files.has(file))) {
-        state.controller.abort();
-        states.delete(key);
-      }
-    }
-    publish();
+  function enabled(document) {
+    return document.uri.scheme === 'file' && document.languageId === 'joky' &&
+      path.extname(document.uri.fsPath) === '.jk' && diagnosticsEnabled(document.uri);
   }
 
-  function reset() {
-    for (const request of pending) request.controller.abort();
-    for (const state of states.values()) state.controller.abort();
-    states.clear();
-    latest.clear();
-    lastFailure = undefined;
-    visible.clear();
+  function currentDocuments() {
+    return vscode.workspace.textDocuments.filter(enabled);
+  }
+
+  function stop() {
+    const previous = session;
+    session = undefined;
+    if (previous?.child) {
+      if (previous.ready && previous.child.stdin.writable) {
+        previous.child.stdin.write(frame({ id: 2, method: 'shutdown', params: null }));
+        const timeout = setTimeout(() => previous.child.kill(), 1000);
+        timeout.unref();
+        previous.child.once('exit', () => clearTimeout(timeout));
+      } else {
+        previous.child.stdin.destroy();
+        previous.child.kill();
+      }
+    }
     collection.clear();
   }
 
-  async function check(document) {
-    if (disposed || !isSource(document) || !vscode.workspace.isTrusted ||
-        !vscode.workspace.getConfiguration('joky', document.uri).get('checkOnSave', true)) return;
-    const file = document.uri.fsPath;
-    const version = document.version;
-    const id = ++sequence;
-    const controller = new AbortController();
-    const request = { id, controller, changed: new Set() };
-    const current = () => !controller.signal.aborted && !document.isClosed && !document.isDirty &&
-      document.version === version;
-    let key;
-    let state;
-    pending.add(request);
-    try {
-      const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-      const target = await toolchain.resolveTarget(file, folder?.uri.fsPath);
-      key = diskPath(await fs.realpath(target.target));
-      const canonicalRoot = diskPath(await fs.realpath(target.cwd));
-      if (!current() || latest.get(key) > id ||
-          [...request.changed].some(file => toolchain.contains(target.cwd, file) || toolchain.contains(canonicalRoot, file))) return;
-      latest.set(key, id);
-      states.get(key)?.controller.abort();
-      state = { cwd: target.cwd, canonicalRoot, sequence: id, controller, entries: [], files: new Set([file]) };
-      states.set(key, state);
-      publish();
-      const executable = await compiler(document.uri);
-      if (!executable || !current()) return;
-      const stdout = await toolchain.execute(executable, ['check', '--diagnostic-format', 'json', '--', target.target], {
-        cwd: target.cwd, signal: controller.signal, acceptDiagnosticFailure: true,
-      });
-      if (!current()) return;
-      const result = JSON.parse(stdout);
-      if (result?.schemaVersion !== 1 || !Array.isArray(result.diagnostics) || result.diagnostics.length > 1) {
-        throw new Error('Unsupported Joky JSON diagnostic format.');
-      }
-      const item = result.diagnostics[0];
-      if (!result.diagnostics.length) return;
-      if (typeof item?.code !== 'string' || item.severity !== 'error' || typeof item.message !== 'string' ||
-          !Array.isArray(item.labels) || !Array.isArray(item.help)) {
-        throw new Error('Invalid Joky JSON diagnostic.');
-      }
+  function send(state, message) {
+    if (state === session && state.child?.stdin.writable) state.child.stdin.write(frame(message));
+  }
 
-      const open = new Map(await Promise.all(vscode.workspace.textDocuments.filter(doc => doc.uri.scheme === 'file').map(async doc => {
-        const canonical = await fs.realpath(doc.uri.fsPath).catch(() => doc.uri.fsPath);
-        return [diskPath(canonical), doc];
-      })));
-      const buffers = new Map();
-      const displayPath = file => {
-        // Prefer the editor's spelling of a workspace path, including symlink aliases.
-        if (toolchain.contains(canonicalRoot, file)) return path.join(target.cwd, path.relative(canonicalRoot, file));
-        return file;
-      };
-      async function location(value) {
-        if (value?.source?.kind !== 'file' || typeof value.source.path !== 'string' || !path.isAbsolute(value.source.path)) return;
-        const file = diskPath(value.source.path);
-        const doc = open.get(file);
-        state.files.add(file);
-        if (doc) state.files.add(doc.uri.fsPath);
-        if (!buffers.has(file)) buffers.set(file, fs.readFile(file).catch(() => undefined));
-        const bytes = await buffers.get(file);
-        if (!bytes || (doc && (doc.isDirty || doc.getText() !== bytes.toString('utf8').replace(/^\uFEFF/, ''))) ||
-            request.changed.has(file) || request.changed.has(doc?.uri.fsPath)) return;
-        const start = position(bytes, value.startByte);
-        const end = position(bytes, value.endByte);
-        if (!start || !end || value.endByte < value.startByte) return;
-        const display = doc?.uri.fsPath || displayPath(file);
-        state.files.add(display);
-        return new vscode.Location(doc?.uri || vscode.Uri.file(display), new vscode.Range(...start, ...end));
-      }
-      const primary = await location(item.primary);
-      if (!primary) {
-        if (current()) output.appendLine(`${target.target}: [${item.code}] ${item.message}`);
-        return;
-      }
-      const message = [item.message, ...item.help].join('\n');
-      const diagnostic = new vscode.Diagnostic(primary.range, message, vscode.DiagnosticSeverity.Error);
+  function notify(state, method, params) {
+    send(state, { method, params });
+  }
+
+  function synchronize(state, method, params) {
+    state.revision++;
+    notify(state, method, { ...params, jokySnapshotRevision: state.revision });
+  }
+
+  function range({ start, end }) {
+    return new vscode.Range(start.line, start.character, end.line, end.character);
+  }
+
+  function publish(state, params) {
+    if (params.jokySnapshotRevision !== state.revision) return;
+    const documents = currentDocuments();
+    const versions = params.jokySnapshotVersions;
+    if (!versions || Object.keys(versions).length !== documents.length ||
+        documents.some(doc => versions[doc.uri.toString()] !== doc.version)) return;
+    const uri = vscode.Uri.parse(params.uri);
+    if (!diagnosticsEnabled(uri)) return;
+    const values = params.diagnostics.map(item => {
+      const diagnostic = new vscode.Diagnostic(range(item.range), item.message, vscode.DiagnosticSeverity.Error);
       diagnostic.code = item.code;
       diagnostic.source = 'Joky';
-      const related = await Promise.all(item.labels.map(async label => {
-        const place = await location(label.location);
-        if (place) return new vscode.DiagnosticRelatedInformation(place, label.message);
-      }));
-      diagnostic.relatedInformation = related.filter(Boolean);
-      if (!current() || [...state.files].some(file => request.changed.has(file))) return;
-      state.entries = [[primary.uri, diagnostic]];
-      publish();
-    } catch (error) {
-      if (current() && lastFailure !== error.message) {
-        lastFailure = error.message;
-        output.appendLine(`Check on save: ${error.message}`);
-      }
-    } finally {
-      pending.delete(request);
-      if (state && !state.entries.length && states.get(key) === state) states.delete(key);
-      // A completed success still supersedes older saves resolving the same target.
-      const oldest = pending.values().next().value?.id ?? Infinity;
-      for (const [target, newest] of latest) if (newest < oldest) latest.delete(target);
-    }
+      diagnostic.relatedInformation = (item.relatedInformation || []).map(related =>
+        new vscode.DiagnosticRelatedInformation(new vscode.Location(vscode.Uri.parse(related.location.uri),
+          range(related.location.range)), related.message));
+      return diagnostic;
+    });
+    if (state === session) collection.set(uri, values);
+  }
+
+  function open(state, document) {
+    const uri = document.uri.toString();
+    if (!enabled(document) || state.open.has(uri)) return;
+    state.open.add(uri);
+    synchronize(state, 'textDocument/didOpen', { textDocument: {
+      uri, languageId: 'joky', version: document.version, text: document.getText(),
+    } });
+  }
+
+  async function start(document) {
+    if (disposed || unavailable || !vscode.workspace.isTrusted || session || !enabled(document)) return;
+    const state = { open: new Set(), ready: false, revision: 0 };
+    session = state;
+    const fail = error => {
+      if (state !== session) return;
+      unavailable = true;
+      output.appendLine('Joky language server: ' + error.message);
+      stop();
+    };
+    try {
+      const executable = await compiler(document.uri);
+      if (state !== session) return;
+      if (!executable) { stop(); return; }
+      const child = launch(executable, ['lsp'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      state.child = child;
+      child.on('error', fail);
+      child.stdin.on('error', fail);
+      child.stderr.on('data', data => { if (state === session) output.appendLine(data.toString()); });
+      child.on('exit', code => fail(new Error('Exited with code ' + code)));
+      readMessages(child.stdout, message => {
+        if (message.id === 2 && state !== session && child.stdin.writable) {
+          child.stdin.end(frame({ method: 'exit' }));
+          return;
+        }
+        if (state !== session) return;
+        if (message.id === 1) {
+          if (message.result?.capabilities?.textDocumentSync?.change !== 1) {
+            throw new Error('The selected compiler does not support Joky LSP diagnostics');
+          }
+          state.ready = true;
+          notify(state, 'initialized', {});
+          currentDocuments().forEach(doc => open(state, doc));
+        } else if (message.method === 'textDocument/publishDiagnostics') {
+          publish(state, message.params);
+        } else if (message.method === 'window/logMessage') {
+          output.appendLine(message.params.message);
+        }
+      }, fail);
+      send(state, { id: 1, method: 'initialize', params: {
+        processId: process.pid,
+        capabilities: { textDocument: { publishDiagnostics: { relatedInformation: true, versionSupport: true } } },
+        initializationOptions: { jokySnapshotVersions: true },
+        workspaceFolders: (vscode.workspace.workspaceFolders || []).filter(folder => folder.uri.scheme === 'file')
+          .map(folder => ({ uri: folder.uri.toString(), name: folder.name })),
+      } });
+    } catch (error) { fail(error); }
+  }
+
+  function restart() {
+    stop();
+    unavailable = false;
+    const [document] = currentDocuments();
+    if (document) void start(document);
   }
 
   context.subscriptions.push(
-    { dispose() { disposed = true; reset(); collection.dispose(); } },
-    vscode.workspace.onDidSaveTextDocument(check),
+    { dispose() { disposed = true; stop(); collection.dispose(); } },
+    vscode.workspace.onDidOpenTextDocument(document => {
+      if (!enabled(document)) return;
+      collection.clear();
+      if (session?.ready) open(session, document);
+      else void start(document);
+    }),
     vscode.workspace.onDidChangeTextDocument(({ document, contentChanges }) => {
-      if (disposed || document.uri.scheme !== 'file' || !contentChanges.length) return;
-      const file = document.uri.fsPath;
-      if (!isSource(document) && ![...states.values()].some(state => state.files.has(file))) return;
-      const before = sequence;
-      const requests = [...pending];
-      for (const request of requests) request.changed.add(file);
-      invalidate(file);
-      fs.realpath(file).then(canonical => {
-        if (disposed) return;
-        canonical = diskPath(canonical);
-        for (const request of requests) request.changed.add(canonical);
-        if (canonical !== file) invalidate(canonical, before);
-      }, () => {});
+      if (!contentChanges.length || !enabled(document)) return;
+      collection.clear();
+      if (!session?.ready) { void start(document); return; }
+      const uri = document.uri.toString();
+      if (!session.open.has(uri)) { open(session, document); return; }
+      synchronize(session, 'textDocument/didChange', {
+        textDocument: { uri, version: document.version }, contentChanges: [{ text: document.getText() }],
+      });
+    }),
+    vscode.workspace.onDidSaveTextDocument(document => {
+      if (document.uri.scheme !== 'file') return;
+      if (enabled(document)) {
+        unavailable = false;
+        if (session?.ready) open(session, document);
+        else void start(document);
+      }
+      if (session?.ready && (path.extname(document.uri.fsPath) === '.jk' || path.basename(document.uri.fsPath) === 'joky.toml')) {
+        collection.clear();
+        synchronize(session, 'textDocument/didSave', { textDocument: { uri: document.uri.toString() } });
+      }
+    }),
+    vscode.workspace.onDidCloseTextDocument(document => {
+      const uri = document.uri.toString();
+      if (!session?.open.delete(uri)) return;
+      collection.clear();
+      synchronize(session, 'textDocument/didClose', { textDocument: { uri } });
     }),
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (event.affectsConfiguration('joky.checkOnSave') || event.affectsConfiguration('joky.executablePath')) reset();
+      if (event.affectsConfiguration('joky.checkOnSave') || event.affectsConfiguration('joky.executablePath')) restart();
     }),
+    vscode.workspace.onDidChangeWorkspaceFolders(restart),
+    vscode.workspace.onDidGrantWorkspaceTrust(restart),
   );
+  const [document] = currentDocuments();
+  if (document) void start(document);
 }
 
-module.exports = { registerDiagnostics };
+module.exports = { registerDiagnostics, frame, readMessages };

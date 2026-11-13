@@ -84,7 +84,7 @@
           "type": "boolean",
           "default": true,
           "scope": "resource",
-          "description": "Check saved Joky files and projects and display errors in Problems. Requires a compiler with JSON diagnostics."
+          "description": "Check Joky documents as you edit and display errors in Problems. Requires a compiler with the lsp command."
         },
         "joky.executablePath": {
           "type": "string",

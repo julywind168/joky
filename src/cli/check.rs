@@ -1,7 +1,12 @@
 //! Static checking never creates a VM or publishes build output.
 use super::{cli_argument_error, diagnostic, project, source, Command};
 use joky::Error;
-use std::ffi::OsString;
+use std::{
+    collections::BTreeMap,
+    ffi::OsString,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 enum Format {
     Text,
@@ -85,30 +90,46 @@ pub(super) fn execute(options: &Options) -> u8 {
 }
 
 fn check(options: &source::Options) -> Result<(), Error> {
-    let path = &options.path;
     let mut checker = joky::Checker::new();
     checker.set_prelude_enabled(options.prelude);
+    check_with_overrides(&options.path, &checker, &BTreeMap::new())
+}
+
+pub(super) fn check_with_overrides(
+    path: &Path,
+    checker: &joky::Checker,
+    overrides: &BTreeMap<PathBuf, Arc<str>>,
+) -> Result<(), Error> {
     let project = project::Project::load(path)?;
     let types = checker.type_registry();
-    if let Some(project) = &project {
-        if project.entry.is_none() {
-            for file in project.source_files()? {
-                let ast = project.resolve_source(types, &file, false)?;
-                super::validate_module(&ast, types).map_err(|e| e.with_sources(ast.sources()))?;
-                checker.check_module(&ast)?;
-            }
-            return Ok(());
+    let validate = |ast: &joky::parser::ast::Module, entry: bool| {
+        if entry {
+            super::validate_program(ast, types).map(Some)
+        } else {
+            super::validate_module(ast, types)
         }
+        .map_err(|error| error.with_sources(ast.sources()))?;
+        checker.check_module(ast)
+    };
+    match project {
+        Some(project) => {
+            if let Some(entry) = &project.entry {
+                return validate(
+                    &project.resolve_with_overrides(types, entry, overrides)?,
+                    true,
+                );
+            }
+            for file in project.source_files()? {
+                validate(
+                    &project.resolve_with_overrides(types, &file, overrides)?,
+                    false,
+                )?;
+            }
+            Ok(())
+        }
+        None => validate(
+            &types.resolve_file_with_overrides(path, None, overrides)?,
+            false,
+        ),
     }
-    let ast = match &project {
-        Some(project) => project.resolve(types)?,
-        None => types.resolve_file(path)?,
-    };
-    let entry = if project.is_some() {
-        super::validate_program(&ast, types).map(Some)
-    } else {
-        super::validate_module(&ast, types)
-    };
-    entry.map_err(|error| error.with_sources(ast.sources()))?;
-    checker.check_module(&ast)
 }

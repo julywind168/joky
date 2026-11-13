@@ -68,6 +68,8 @@ mod format;
 mod io;
 #[path = "cli/language.rs"]
 mod language;
+#[path = "cli/lsp.rs"]
+mod lsp;
 #[path = "cli/modules.rs"]
 mod modules;
 #[path = "cli/tasks.rs"]

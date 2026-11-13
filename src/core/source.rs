@@ -77,7 +77,7 @@ impl SourceFile {
         }
     }
 
-    pub(crate) fn from_path(path: &Path, canonical: &Path, text: String) -> Self {
+    pub(crate) fn from_path(path: &Path, canonical: &Path, text: impl Into<Arc<str>>) -> Self {
         let mut file = Self::new(path.display().to_string(), text);
         file.origin = SourceOrigin::File(canonical.to_owned());
         file

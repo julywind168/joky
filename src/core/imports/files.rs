@@ -1,7 +1,8 @@
 //! Per-compilation user module graph. Only the file provider performs I/O.
 use super::*;
 use crate::{SourceFile, SourceMap};
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 pub(crate) fn expand_with(
     module: &Module,
@@ -94,12 +95,7 @@ fn load(
 }
 
 pub(crate) fn resolve_file(path: &Path, registry: &TypeRegistry) -> Result<Module, Error> {
-    let canonical = path.canonicalize().map_err(|e| io_error(path, e))?;
-    resolve_file_with_root(
-        path,
-        canonical.parent().expect("a source file has a parent"),
-        registry,
-    )
+    resolve_entry(path, None, registry, false, &BTreeMap::new())
 }
 
 pub(crate) fn resolve_file_with_root(
@@ -107,7 +103,7 @@ pub(crate) fn resolve_file_with_root(
     root: &Path,
     registry: &TypeRegistry,
 ) -> Result<Module, Error> {
-    resolve_entry(path, root, registry, false)
+    resolve_entry(path, Some(root), registry, false, &BTreeMap::new())
 }
 
 pub(crate) fn resolve_test_file_with_root(
@@ -115,19 +111,32 @@ pub(crate) fn resolve_test_file_with_root(
     root: &Path,
     registry: &TypeRegistry,
 ) -> Result<Module, Error> {
-    resolve_entry(path, root, registry, true)
+    resolve_entry(path, Some(root), registry, true, &BTreeMap::new())
 }
 
-fn resolve_entry(
+pub(crate) fn resolve_entry(
     path: &Path,
-    root: &Path,
+    root: Option<&Path>,
     registry: &TypeRegistry,
     include_tests: bool,
+    overrides: &BTreeMap<PathBuf, Arc<str>>,
 ) -> Result<Module, Error> {
     let canonical = path.canonicalize().map_err(|e| io_error(path, e))?;
-    let entry = read_file(path, &canonical)?;
+    let read = |display: &Path, canonical: &Path| {
+        if let Some(text) = overrides.get(canonical) {
+            return Ok(SourceFile::from_path(display, canonical, text.clone()));
+        }
+        read_file(display, canonical)
+    };
+    let entry = read(path, &canonical)?;
     let path = canonical;
-    let root = root.canonicalize().map_err(|e| io_error(root, e))?;
+    let root = match root {
+        Some(root) => root.canonicalize().map_err(|e| io_error(root, e))?,
+        None => path
+            .parent()
+            .ok_or_else(|| io_error(&path, std::io::ErrorKind::InvalidInput.into()))?
+            .to_owned(),
+    };
     if !root.is_dir() {
         return Err(Error::new_with_code(
             ErrorPhase::Resolve,
@@ -166,7 +175,7 @@ fn resolve_entry(
             if file == path {
                 Ok(entry.clone())
             } else {
-                read_file(&file, &file)
+                read(&file, &file)
             }
         },
         &|_, _| Ok(()),

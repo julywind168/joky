@@ -111,6 +111,12 @@ String 还会提示在较早的移动位置显式调用 `.clone()`，但这会�
 源码位置无法映射到有效字节区间或文件路径无法表示为 UTF-8 时，相应的 `primary` 或 `location` 为 `null`。
 编辑器应依据同一版本的源码将字节偏移转换为自身坐标。
 
+### 语言服务器
+
+编辑器可通过 `joky lsp` 启动语言服务器。它通过标准输入输出收发带 `Content-Length` 的 LSP 消息，
+支持完整文档同步和带版本的诊断，位置按零起算的 UTF-16 行列表示。现有 `.jk` 文件优先读取内存快照，
+依赖文件未打开时读取磁盘。项目入口、包依赖和导入边界沿用 `joky check`。VS Code 用法见[扩展说明](../editors/vscode/README.md#实时诊断)。
+
 ## 用 Joky 写测试
 
 测试函数前加 `#test`，使用已有的 `assert(condition, message)`：

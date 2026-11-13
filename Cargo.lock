@@ -911,6 +911,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "toml",
+ "url",
  "webpki-roots",
  "zeroize",
 ]

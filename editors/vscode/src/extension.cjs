@@ -163,7 +163,7 @@ function activate(context) {
     ], provider),
     vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('joky.executablePath')) missing.clear(); }),
   );
-  registerDiagnostics(context, vscode, toolchain, compiler, output);
+  registerDiagnostics(context, vscode, compiler, output);
 }
 
 module.exports = { activate };

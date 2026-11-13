@@ -7,6 +7,7 @@ mod explain;
 mod format;
 mod help;
 mod init;
+mod lsp;
 mod progress;
 mod project;
 mod source;
@@ -28,6 +29,7 @@ Usage:
   joky doc [--std] [--open] [-o <directory>]
   joky test [--interpreter] [--no-prelude] [--filter <text>] [--list] [--nocapture] [--timeout-ms N] [<file.jk> | <project-dir> | joky.toml]
   joky check [--no-prelude] [--diagnostic-format <text|json>] [<file.jk> | <project-dir> | joky.toml]
+  joky lsp
   joky run [-q | -v] [--interpreter] [--no-prelude] [--strict-native-stack] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-- <program-args>...]
   joky build [--no-prelude] [--strict-native-stack] [--parallel] [--task-workers N] [<file.jk> | <project-dir> | joky.toml] [-o <output>]
   joky explain-parallel [--no-prelude] [<file.jk> | <project-dir> | joky.toml]
@@ -42,6 +44,7 @@ Commands:
   doc              Generate offline homepage and standard-library HTML (default: target/doc)
   test             Run #test functions in isolated processes (default timeout: 30000 ms)
   check            Check syntax and semantics without running or generating code
+  lsp              Serve language diagnostics over stdin and stdout
   explain-parallel  Explain dispatch eligibility without running the program
   fmt              Format files, directories or projects without running code
   run              Execute the program with the JIT compiler (or the interpreter)
@@ -94,6 +97,7 @@ enum Command {
     Test(testing::Options),
     Format(format::Options),
     Check(check::Options),
+    Lsp,
     Explain {
         source: PathBuf,
         prelude: bool,
@@ -170,6 +174,13 @@ impl Command {
         }
         if command == "check" {
             return check::parse(args);
+        }
+        if command == "lsp" {
+            return match (args.next(), args.next()) {
+                (None, None) => Ok(Self::Lsp),
+                (Some(flag), None) if flag == "--help" || flag == "-h" => Ok(Self::Help(help::LSP)),
+                _ => Err(cli_argument_error("Use 'joky lsp --help' for usage")),
+            };
         }
         let build = command == "build";
         if !build && command != "run" {
@@ -365,6 +376,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
         Command::Test(options) => return testing::execute(options),
         Command::Format(options) => return format::execute(options),
         Command::Check(options) => return check::execute(options),
+        Command::Lsp => return lsp::execute(),
         Command::Explain { source, prelude } => return explain::execute(source, *prelude),
         Command::Run { source: path, .. } | Command::Build { source: path, .. } => path,
     };

@@ -138,7 +138,7 @@ impl PackageSources {
         path: impl AsRef<Path>,
         registry: &TypeRegistry,
     ) -> Result<Module, Error> {
-        self.resolve(path.as_ref(), registry, false)
+        self.resolve(path.as_ref(), registry, false, &BTreeMap::new())
     }
 
     /// Resolve an entry in package zero, retaining only that file's test functions.
@@ -147,7 +147,17 @@ impl PackageSources {
         path: impl AsRef<Path>,
         registry: &TypeRegistry,
     ) -> Result<Module, Error> {
-        self.resolve(path.as_ref(), registry, true)
+        self.resolve(path.as_ref(), registry, true, &BTreeMap::new())
+    }
+
+    /// Resolve existing package sources with text overrides keyed by canonical path.
+    pub fn resolve_file_with_overrides(
+        &self,
+        path: &Path,
+        registry: &TypeRegistry,
+        overrides: &BTreeMap<PathBuf, Arc<str>>,
+    ) -> Result<Module, Error> {
+        self.resolve(path, registry, false, overrides)
     }
 
     fn module_path(&self, package: usize, path: &str) -> Result<(String, PathBuf), Error> {
@@ -219,7 +229,13 @@ impl PackageSources {
         Ok((index, path))
     }
 
-    fn resolve(&self, path: &Path, registry: &TypeRegistry, tests: bool) -> Result<Module, Error> {
+    fn resolve(
+        &self,
+        path: &Path,
+        registry: &TypeRegistry,
+        tests: bool,
+        overrides: &BTreeMap<PathBuf, Arc<str>>,
+    ) -> Result<Module, Error> {
         let path = canonical(path)?;
         if !path.starts_with(&self.packages[0].source_root) || !path.is_file() {
             return Err(invalid(
@@ -227,6 +243,9 @@ impl PackageSources {
             ));
         }
         let read = |path: &Path| {
+            if let Some(text) = overrides.get(path) {
+                return Ok(SourceFile::from_path(path, path, text.clone()));
+            }
             let text = std::fs::read_to_string(path)
                 .map_err(|error| invalid(format!("Cannot read '{}': {error}", path.display())))?;
             Ok(SourceFile::from_path(path, path, text))

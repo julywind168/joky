@@ -5,6 +5,7 @@ pub(super) fn command(name: &str) -> Option<&'static str> {
         "run" => RUN,
         "build" => BUILD,
         "check" => CHECK,
+        "lsp" => LSP,
         "test" => TEST,
         "fmt" => FORMAT,
         "doc" => DOC,
@@ -12,6 +13,12 @@ pub(super) fn command(name: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
+
+pub(super) const LSP: &str = "Serve language diagnostics using the Language Server Protocol.
+
+Usage: joky lsp
+
+JSON-RPC messages use Content-Length framing over stdin and stdout.";
 
 pub(super) const INIT: &str =
     "Create a minimal Joky application without overwriting existing files.

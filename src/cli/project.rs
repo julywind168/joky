@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Component, Path, PathBuf},
+    sync::Arc,
 };
 
 const MANIFEST: &str = "joky.toml";
@@ -258,6 +259,18 @@ impl Project {
             packages.resolve_test_file(file, types)
         } else {
             packages.resolve_file(file, types)
+        }
+    }
+
+    pub fn resolve_with_overrides(
+        &self,
+        types: &TypeRegistry,
+        file: &Path,
+        overrides: &BTreeMap<PathBuf, Arc<str>>,
+    ) -> Result<Module, Error> {
+        match &self.packages {
+            Some(packages) => packages.resolve_file_with_overrides(file, types, overrides),
+            None => types.resolve_file_with_overrides(file, Some(&self.source_root), overrides),
         }
     }
 

@@ -326,6 +326,17 @@ impl TypeRegistry {
         super::imports::resolve_file_with_root(path.as_ref(), root.as_ref(), self)
     }
 
+    /// Resolve existing files using supplied text for matching canonical paths.
+    /// An omitted root uses the entry's directory. Module containment still applies.
+    pub fn resolve_file_with_overrides(
+        &self,
+        path: &std::path::Path,
+        root: Option<&std::path::Path>,
+        overrides: &BTreeMap<std::path::PathBuf, std::sync::Arc<str>>,
+    ) -> Result<Module, Error> {
+        super::imports::resolve_file_with_overrides(path, root, self, false, overrides)
+    }
+
     /// Resolve a test root, retaining its #test functions in their private namespace.
     /// Imported modules retain production semantics and exclude their own tests.
     /// The returned resolved module can be checked or executed by either backend.

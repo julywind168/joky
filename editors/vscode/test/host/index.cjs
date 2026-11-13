@@ -108,6 +108,15 @@ async function run() {
   const dependencyEditor = await vscode.window.showTextDocument(dependencyDocument);
   await dependencyEditor.edit(edit => edit.replace(problem.range, ''));
   await waitForDiagnostics(dependencyUri, 0);
+  assert.equal(dependencyDocument.isDirty, true);
+  assert.ok((await fs.readFile(dependency, 'utf8')).includes('$'));
+  await dependencyEditor.edit(edit => edit.insert(new vscode.Position(1, 0), '$'));
+  const [unsaved] = await waitForDiagnostics(dependencyUri, 1);
+  assert.equal(unsaved.range.start.line, 1);
+  assert.equal(unsaved.range.start.character, 0);
+  assert.ok((await fs.readFile(dependency, 'utf8')).includes('$'));
+  await dependencyEditor.edit(edit => edit.replace(unsaved.range, ''));
+  await waitForDiagnostics(dependencyUri, 0);
   assert.ok(await dependencyDocument.save());
 
   const untitled = await vscode.workspace.openTextDocument({ language: 'joky', content: original });
