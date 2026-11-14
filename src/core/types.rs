@@ -360,6 +360,23 @@ impl TypeRegistry {
         )
     }
 
+    /// Resolve a tracked editor snapshot with reusable parses.
+    pub fn resolve_editor_snapshot(
+        &self,
+        path: &std::path::Path,
+        root: Option<&std::path::Path>,
+        sources: crate::EditorSources<'_>,
+        recover: bool,
+    ) -> Result<Module, Error> {
+        super::imports::resolve_file_with_overrides(
+            path,
+            root,
+            self,
+            false,
+            super::imports::FileOverrides::editor(sources, recover),
+        )
+    }
+
     /// Resolve a test root, retaining its #test functions in their private namespace.
     /// Imported modules retain production semantics and exclude their own tests.
     /// The returned resolved module can be checked or executed by either backend.

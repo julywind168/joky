@@ -88,8 +88,10 @@ pub(super) fn execute(options: &Options) -> u8 {
 fn check(options: &source::Options) -> Result<(), Error> {
     let mut checker = joky::Checker::new();
     checker.set_prelude_enabled(options.prelude);
+    let project = project::Project::load(&options.path)?;
     visit_sources(
         &options.path,
+        project.as_ref(),
         &checker,
         |project, file| match project {
             Some(project) => project.resolve_source(checker.type_registry(), file, false),
@@ -104,11 +106,11 @@ fn check(options: &source::Options) -> Result<(), Error> {
 
 pub(super) fn visit_sources(
     path: &Path,
+    project: Option<&project::Project>,
     checker: &joky::Checker,
     mut resolve: impl FnMut(Option<&project::Project>, &Path) -> Result<Module, Error>,
     mut visit: impl FnMut(&Module, Result<(), Error>) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    let project = project::Project::load(path)?;
     let types = checker.type_registry();
     let mut validate = |ast: &Module, entry: bool| {
         let validation = if entry {
@@ -126,10 +128,10 @@ pub(super) fn visit_sources(
     match project {
         Some(project) => {
             if let Some(entry) = &project.entry {
-                return validate(&resolve(Some(&project), entry)?, true);
+                return validate(&resolve(Some(project), entry)?, true);
             }
             for file in project.source_files()? {
-                validate(&resolve(Some(&project), &file)?, false)?;
+                validate(&resolve(Some(project), &file)?, false)?;
             }
             Ok(())
         }

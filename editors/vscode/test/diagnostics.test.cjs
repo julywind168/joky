@@ -55,6 +55,7 @@ function harness(t, trusted = true, diagnostics = true) {
       },
       createDiagnosticCollection: () => ({
         set(uri, diagnostics) { problems.set(uri.toString(), diagnostics); },
+        delete(uri) { problems.delete(uri.toString()); },
         clear() { problems.clear(); },
         dispose() {},
       }),
@@ -66,6 +67,10 @@ function harness(t, trusted = true, diagnostics = true) {
       onDidSaveTextDocument: on('save'), onDidCloseTextDocument: on('close'),
       onDidChangeConfiguration: on('configuration'), onDidChangeWorkspaceFolders: on('folders'),
       onDidGrantWorkspaceTrust: on('trust'),
+      createFileSystemWatcher: () => ({
+        onDidCreate: on('fileCreate'), onDidChange: on('fileChange'),
+        onDidDelete: on('fileDelete'), dispose() {},
+      }),
     },
   };
   registerDiagnostics({ subscriptions }, vscode, async () => '/compiler/joky', {
@@ -87,6 +92,7 @@ function harness(t, trusted = true, diagnostics = true) {
       events.get('change')({ document, contentChanges: [{}] });
     },
     save(document) { events.get('save')(document); },
+    fileChange(name) { events.get('fileChange')(uri('file:///' + name)); },
     request(feature, document, token) {
       return events.get(feature)(document, { line: 0, character: 3 }, token);
     },
@@ -126,6 +132,34 @@ test('the editor accepts only diagnostics for the latest synchronized snapshot',
   assert.equal(h.problems.size, 0);
   publish(4, 2);
   assert.equal(h.problems.size, 1);
+});
+
+test('scoped diagnostics survive unrelated changes until the server invalidates them', async t => {
+  const h = harness(t);
+  const main = await h.open('main.jk');
+  h.receive({ id: 1, result: { capabilities: {
+    textDocumentSync: { change: 1 }, experimental: { jokyScopedDiagnostics: true },
+  } } });
+  const other = await h.open('other.jk');
+  const uri = main.uri.toString();
+  const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
+  const publish = (revision, version, diagnostics) => h.receive({
+    method: 'textDocument/publishDiagnostics', params: {
+      uri, diagnostics, jokySnapshotRevision: revision,
+      jokySnapshotVersions: { [uri]: 1, [other.uri.toString()]: version },
+    },
+  });
+  const diagnostic = { code: 'syntax_error', message: 'Bad token', range };
+  publish(2, 1, [diagnostic]);
+  h.edit(other, 'fn main() {');
+  assert.equal(h.problems.get(uri)[0].code, 'syntax_error');
+  h.fileChange('closed.jk');
+  assert.equal(h.calls.at(-1).method, 'workspace/didChangeWatchedFiles');
+  assert.equal(h.problems.get(uri)[0].code, 'syntax_error');
+  publish(4, 2, []);
+  assert.deepEqual(h.problems.get(uri), []);
+  publish(3, 2, [diagnostic]);
+  assert.deepEqual(h.problems.get(uri), []);
 });
 
 test('navigation uses the latest synchronized snapshot with diagnostics disabled', async t => {
@@ -173,6 +207,26 @@ test('navigation uses the latest synchronized snapshot with diagnostics disabled
     jokySnapshotRevision: 3, jokySnapshotVersions: { [main.uri.toString()]: 1, [dep.uri.toString()]: 2 },
   } });
   assert.equal(h.problems.size, 0);
+});
+
+test('navigation retries once when a watched file changes while a request is pending', async t => {
+  const h = harness(t);
+  const doc = await h.open('main.jk');
+  h.receive({ id: 1, result: { capabilities: { textDocumentSync: { change: 1 }, definitionProvider: true } } });
+  const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) };
+  const pending = h.request('definition', doc, token);
+  await Promise.resolve();
+  const first = h.calls.at(-1);
+  h.fileChange('dependency.jk');
+  h.receive({ id: first.id, result: null });
+  await Promise.resolve();
+  await Promise.resolve();
+  const retry = h.calls.at(-1);
+  assert.equal(retry.method, 'textDocument/definition');
+  assert.notEqual(retry.id, first.id);
+  const range = { start: { line: 2, character: 0 }, end: { line: 2, character: 3 } };
+  h.receive({ id: retry.id, result: { uri: 'file:///dependency.jk', range } });
+  assert.deepEqual((await pending).range.positions, [2, 0, 2, 3]);
 });
 
 test('an untrusted workspace does not start the language server', async t => {

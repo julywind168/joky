@@ -1,4 +1,5 @@
 //! Per-compilation user module graph. Only the file provider performs I/O.
+use super::editor::EditorSources;
 use super::*;
 use crate::{SourceFile, SourceMap};
 use std::collections::BTreeMap;
@@ -8,6 +9,7 @@ use std::path::{Path, PathBuf};
 pub(crate) struct FileOverrides<'a> {
     text: Option<&'a BTreeMap<PathBuf, Arc<str>>>,
     recover: bool,
+    editor: Option<EditorSources<'a>>,
 }
 
 impl<'a> FileOverrides<'a> {
@@ -15,15 +17,62 @@ impl<'a> FileOverrides<'a> {
         Self {
             text: Some(text),
             recover,
+            editor: None,
         }
     }
 
-    pub(super) fn get(self, path: &Path) -> Option<&'a Arc<str>> {
-        self.text?.get(path)
+    pub(crate) fn editor(editor: EditorSources<'a>, recover: bool) -> Self {
+        Self {
+            text: Some(editor.buffers),
+            recover,
+            editor: Some(editor),
+        }
+    }
+
+    pub(super) fn observe(self, path: &Path) {
+        if let Some(observe) = self.editor.and_then(|editor| editor.observe) {
+            observe(path);
+        }
+    }
+
+    pub(super) fn read(self, display: &Path, canonical: &Path) -> std::io::Result<SourceFile> {
+        if self
+            .editor
+            .and_then(|editor| editor.cancelled)
+            .is_some_and(|cancelled| cancelled())
+        {
+            return Err(std::io::ErrorKind::Interrupted.into());
+        }
+        self.observe(canonical);
+        if let Some((_, text)) = self.completion(canonical) {
+            return Ok(SourceFile::from_path(display, canonical, text));
+        }
+        let text = match self.text.and_then(|buffers| buffers.get(canonical)) {
+            Some(text) => text.clone(),
+            None => fs_text(canonical)?,
+        };
+        Ok(match self.editor {
+            Some(editor) => editor.cache.source(canonical, text),
+            None => SourceFile::from_path(display, canonical, text),
+        })
+    }
+
+    fn completion(self, path: &Path) -> Option<(&'a Path, &'a str)> {
+        self.editor?.completion.filter(|(query, _)| *query == path)
     }
 
     pub(super) fn parse(self, file: &SourceFile) -> Result<Module, crate::parser::Diagnostic> {
-        if self.recover && file.path().is_some_and(|path| self.get(path).is_some()) {
+        let recover = self.recover
+            && file.path().is_some_and(|path| {
+                self.completion(path).is_some()
+                    || self.text.is_some_and(|buffers| buffers.contains_key(path))
+            });
+        if let Some(editor) = self.editor.filter(|_| {
+            file.path()
+                .is_some_and(|path| self.completion(path).is_none())
+        }) {
+            editor.cache.parse(file, recover)
+        } else if recover {
             crate::parser::parse_for_editor(file.text(), file.id())
         } else {
             crate::parser::parse_with_source(file.text(), file.id())
@@ -158,12 +207,12 @@ pub(crate) fn resolve_entry(
     include_tests: bool,
     overrides: FileOverrides<'_>,
 ) -> Result<Module, Error> {
+    overrides.observe(path);
     let canonical = path.canonicalize().map_err(|e| io_error(path, e))?;
     let read = |display: &Path, canonical: &Path| {
-        if let Some(text) = overrides.get(canonical) {
-            return Ok(SourceFile::from_path(display, canonical, text.clone()));
-        }
-        read_file(display, canonical)
+        overrides
+            .read(display, canonical)
+            .map_err(|e| io_error(display, e))
     };
     let entry = read(path, &canonical)?;
     let path = canonical;
@@ -200,6 +249,7 @@ pub(crate) fn resolve_entry(
         FileLoader {
             read: &|name| {
                 let file = root.join(format!("{name}.jk"));
+                overrides.observe(&file);
                 let file = file.canonicalize().map_err(|e| io_error(&file, e))?;
                 if !file.starts_with(&root) {
                     return Err(Error::new_with_code(
@@ -225,9 +275,8 @@ pub(crate) fn resolve_entry(
     registry.resolve_aliases(&expanded)
 }
 
-fn read_file(path: &Path, canonical: &Path) -> Result<SourceFile, Error> {
-    let text = std::fs::read_to_string(canonical).map_err(|e| io_error(path, e))?;
-    Ok(SourceFile::from_path(path, canonical, text))
+fn fs_text(path: &Path) -> std::io::Result<Arc<str>> {
+    std::fs::read_to_string(path).map(Into::into)
 }
 
 fn io_error(path: &Path, cause: std::io::Error) -> Error {

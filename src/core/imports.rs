@@ -11,6 +11,7 @@ use std::{
 };
 
 pub mod documentation;
+pub mod editor;
 mod files;
 pub(super) use files::{resolve_entry as resolve_file_with_overrides, FileOverrides};
 pub mod packages;

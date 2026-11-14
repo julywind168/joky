@@ -1,6 +1,6 @@
 //! Explicit package roots and scoped imports, shared by all compilation backends.
 use super::{files, FileOverrides, Module, TypeRegistry};
-use crate::{Error, ErrorCode, ErrorPhase, SourceFile, SourceMap};
+use crate::{EditorSources, Error, ErrorCode, ErrorPhase, SourceMap};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -171,10 +171,33 @@ impl PackageSources {
         self.resolve(path, registry, false, FileOverrides::new(overrides, true))
     }
 
-    fn module_path(&self, package: usize, path: &str) -> Result<(String, PathBuf), Error> {
+    /// Resolve a tracked editor snapshot with reusable parses.
+    pub fn resolve_editor_snapshot(
+        &self,
+        path: &Path,
+        registry: &TypeRegistry,
+        sources: EditorSources<'_>,
+        recover: bool,
+    ) -> Result<Module, Error> {
+        self.resolve(
+            path,
+            registry,
+            false,
+            FileOverrides::editor(sources, recover),
+        )
+    }
+
+    fn module_path(
+        &self,
+        package: usize,
+        path: &str,
+        overrides: FileOverrides<'_>,
+    ) -> Result<(String, PathBuf), Error> {
         crate::core::source::validate_module_path(path)?;
         let root = &self.packages[package].source_root;
-        let file = canonical(&root.join(format!("{path}.jk")))?;
+        let candidate = root.join(format!("{path}.jk"));
+        overrides.observe(&candidate);
+        let file = canonical(&candidate)?;
         if !file.starts_with(root)
             || !file.is_file()
             || file.extension().is_none_or(|ext| ext != "jk")
@@ -198,7 +221,12 @@ impl PackageSources {
         ))
     }
 
-    fn rewrite(&self, owner: usize, module: &mut Module) -> Result<(), Error> {
+    fn rewrite(
+        &self,
+        owner: usize,
+        module: &mut Module,
+        overrides: FileOverrides<'_>,
+    ) -> Result<(), Error> {
         for import in &mut module.imports {
             if crate::core::source::is_reserved_module_path(&import.path) {
                 continue;
@@ -216,7 +244,8 @@ impl PackageSources {
                     } else {
                         (owner, import.path.as_str())
                     };
-                self.module_path(target, path).map(|(key, _)| key)
+                self.module_path(target, path, overrides)
+                    .map(|(key, _)| key)
             })()
             .map_err(|error| error.with_span(import.span))?;
             // A canonical file path may differ after following a contained symlink.
@@ -247,6 +276,7 @@ impl PackageSources {
         tests: bool,
         overrides: FileOverrides<'_>,
     ) -> Result<Module, Error> {
+        overrides.observe(path);
         let path = canonical(path)?;
         if !path.starts_with(&self.packages[0].source_root) || !path.is_file() {
             return Err(invalid(
@@ -254,12 +284,9 @@ impl PackageSources {
             ));
         }
         let read = |path: &Path| {
-            if let Some(text) = overrides.get(path) {
-                return Ok(SourceFile::from_path(path, path, text.clone()));
-            }
-            let text = std::fs::read_to_string(path)
-                .map_err(|error| invalid(format!("Cannot read '{}': {error}", path.display())))?;
-            Ok(SourceFile::from_path(path, path, text))
+            overrides
+                .read(path, path)
+                .map_err(|error| invalid(format!("Cannot read '{}': {error}", path.display())))
         };
         let entry = read(&path)?;
         let mut sources = SourceMap::default();
@@ -267,21 +294,21 @@ impl PackageSources {
         let result = (|| {
             let mut module = overrides.parse(&entry)?;
             module.sources = Arc::new(sources.clone());
-            self.rewrite(0, &mut module)?;
+            self.rewrite(0, &mut module, overrides)?;
             let expanded = files::expand_with_tests(
                 &module,
                 registry,
                 files::FileLoader {
                     read: &|key| {
                         let (index, module) = self.key(key)?;
-                        let (_, file) = self.module_path(index, module)?;
+                        let (_, file) = self.module_path(index, module, overrides)?;
                         if file == path {
                             Ok(entry.clone())
                         } else {
                             read(&file)
                         }
                     },
-                    rewrite: &|key, module| self.rewrite(self.key(key)?.0, module),
+                    rewrite: &|key, module| self.rewrite(self.key(key)?.0, module, overrides),
                     overrides,
                 },
                 tests,

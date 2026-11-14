@@ -83,7 +83,16 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
   function synchronize(state, method, params) {
     state.revision++;
     notify(state, method, { ...params, jokySnapshotRevision: state.revision });
-    clearRequests(state);
+    if (method === 'workspace/didChangeWatchedFiles') state.watchedRevision = state.revision;
+    else clearRequests(state);
+  }
+
+  function clearDiagnosticsForChange(uri) {
+    if (session?.capabilities?.experimental?.jokyScopedDiagnostics) {
+      if (uri) collection.delete(uri);
+    } else {
+      collection.clear();
+    }
   }
 
   function range({ start, end }) {
@@ -97,7 +106,7 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
     }
   }
 
-  async function request(method, capability, document, position, token) {
+  async function request(method, capability, document, position, token, retries = 1) {
     if (!enabled(document) || token.isCancellationRequested) return;
     const version = document.version;
     void start(document);
@@ -125,7 +134,11 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
         position: { line: position.line, character: position.character },
       } });
     });
-    if (state === session && state.revision === revision && document.version === version) return result;
+    if (state !== session || document.version !== version || token.isCancellationRequested) return;
+    if (state.revision === revision) return result;
+    if (retries && state.watchedRevision === state.revision) {
+      return request(method, capability, document, position, token, retries - 1);
+    }
   }
 
   function publish(state, params) {
@@ -253,13 +266,13 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
     }, '.'),
     vscode.workspace.onDidOpenTextDocument(document => {
       if (!enabled(document)) return;
-      collection.clear();
+      clearDiagnosticsForChange(document.uri);
       if (session?.ready) open(session, document);
       else void start(document);
     }),
     vscode.workspace.onDidChangeTextDocument(({ document, contentChanges }) => {
       if (!contentChanges.length || !enabled(document)) return;
-      collection.clear();
+      clearDiagnosticsForChange(document.uri);
       if (!session?.ready) { void start(document); return; }
       const uri = document.uri.toString();
       if (!session.open.has(uri)) { open(session, document); return; }
@@ -275,14 +288,14 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
         else void start(document);
       }
       if (session?.ready && (path.extname(document.uri.fsPath) === '.jk' || path.basename(document.uri.fsPath) === 'joky.toml')) {
-        collection.clear();
+        clearDiagnosticsForChange(document.uri);
         synchronize(session, 'textDocument/didSave', { textDocument: { uri: document.uri.toString() } });
       }
     }),
     vscode.workspace.onDidCloseTextDocument(document => {
       const uri = document.uri.toString();
       if (!session?.open.delete(uri)) return;
-      collection.clear();
+      clearDiagnosticsForChange(document.uri);
       synchronize(session, 'textDocument/didClose', { textDocument: { uri } });
     }),
     vscode.workspace.onDidChangeConfiguration(event => {
@@ -291,6 +304,17 @@ function registerDiagnostics(context, vscode, compiler, output, launch = spawn) 
     vscode.workspace.onDidChangeWorkspaceFolders(restart),
     vscode.workspace.onDidGrantWorkspaceTrust(restart),
   );
+  const watcher = vscode.workspace.createFileSystemWatcher('**/{*.jk,joky.toml}');
+  context.subscriptions.push(watcher);
+  for (const [event, type] of [['onDidCreate', 1], ['onDidChange', 2], ['onDidDelete', 3]]) {
+    context.subscriptions.push(watcher[event](uri => {
+      if (!session?.ready || uri.scheme !== 'file') return;
+      // Open buffers supply their own text. Creation and deletion can change resolution.
+      if (type === 2 && session.open.has(uri.toString())) return;
+      clearDiagnosticsForChange(uri);
+      synchronize(session, 'workspace/didChangeWatchedFiles', { changes: [{ uri: uri.toString(), type }] });
+    }));
+  }
   const [document] = currentDocuments();
   if (document) void start(document);
 }

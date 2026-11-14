@@ -1,12 +1,11 @@
 //! Execute generated startup wrappers and observe real task worker identities.
 use super::*;
+use crate::cli::scratch;
 use joky::{aot::AotCompiler, runtime::parallel::ExecutionMode, FunctionSignature};
 use std::{path::Path, process::Command};
 
 #[path = "../../../../tests/support/runtime.rs"]
 mod runtime;
-#[path = "../../../../tests/support/scratch.rs"]
-mod scratch;
 
 fn link(source: &str, directory: &Path, name: &str, object: Option<&Path>) -> std::path::PathBuf {
     let c = directory.join(format!("{name}.c"));

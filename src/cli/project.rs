@@ -1,12 +1,14 @@
 //! Project manifests, explicit module roots, and relocatable native bundles.
 mod dependencies;
 use super::{build, cli_argument_error, cli_error_with_code, EntryPoint};
-use joky::{parser::ast::Module, runtime::parallel::ExecutionMode, Error, ErrorCode, TypeRegistry};
+use joky::{
+    parser::ast::Module, runtime::parallel::ExecutionMode, EditorSources, Error, ErrorCode,
+    TypeRegistry,
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Component, Path, PathBuf},
-    sync::Arc,
 };
 
 const MANIFEST: &str = "joky.toml";
@@ -100,6 +102,10 @@ pub(super) fn format_sources(input: &Path) -> Result<BTreeSet<PathBuf>, Error> {
 
 impl Project {
     pub fn load(input: &Path) -> Result<Option<Self>, Error> {
+        Self::load_tracked(input, &|_| {})
+    }
+
+    pub fn load_tracked(input: &Path, observe: &dyn Fn(&Path)) -> Result<Option<Self>, Error> {
         if !input.is_dir() && input.file_name().is_none_or(|n| n != MANIFEST) {
             return Ok(None);
         }
@@ -108,12 +114,16 @@ impl Project {
         } else {
             input.into()
         };
-        let mut project = Self::read(&manifest)?;
-        dependencies::load(&mut project)?;
+        let mut project = Self::read(&manifest, observe)?;
+        dependencies::load(&mut project, observe)?;
         Ok(Some(project))
     }
 
-    fn read(manifest: &Path) -> Result<Self, Error> {
+    fn read(manifest: &Path, observe: &dyn Fn(&Path)) -> Result<Self, Error> {
+        observe(manifest);
+        if let Ok(canonical) = manifest.canonicalize() {
+            observe(&canonical);
+        }
         let text = fs::read_to_string(manifest).map_err(|e| io(manifest, e))?;
         let mut table = text
             .parse::<toml::Table>()
@@ -188,7 +198,9 @@ impl Project {
         }
         let entry = entry
             .map(|entry| {
+                observe(&root.join(&entry));
                 let entry = contained(&root, &entry, false)?;
+                observe(&entry);
                 if !entry.is_file() || entry.extension().is_none_or(|e| e != "jk") {
                     return Err(cli_argument_error("Project entry must be a .jk file"));
                 }
@@ -262,27 +274,16 @@ impl Project {
         }
     }
 
-    pub fn resolve_with_overrides(
+    pub fn resolve_editor_snapshot(
         &self,
         types: &TypeRegistry,
         file: &Path,
-        overrides: &BTreeMap<PathBuf, Arc<str>>,
+        sources: EditorSources<'_>,
+        recover: bool,
     ) -> Result<Module, Error> {
         match &self.packages {
-            Some(packages) => packages.resolve_file_with_overrides(file, types, overrides),
-            None => types.resolve_file_with_overrides(file, Some(&self.source_root), overrides),
-        }
-    }
-
-    pub fn resolve_for_editor(
-        &self,
-        types: &TypeRegistry,
-        file: &Path,
-        overrides: &BTreeMap<PathBuf, Arc<str>>,
-    ) -> Result<Module, Error> {
-        match &self.packages {
-            Some(packages) => packages.resolve_file_for_editor(file, types, overrides),
-            None => types.resolve_file_for_editor(file, Some(&self.source_root), overrides),
+            Some(packages) => packages.resolve_editor_snapshot(file, types, sources, recover),
+            None => types.resolve_editor_snapshot(file, Some(&self.source_root), sources, recover),
         }
     }
 

@@ -40,7 +40,7 @@ pub(super) fn parse(value: Option<toml::Value>) -> Result<BTreeMap<String, Strin
     Ok(result)
 }
 
-pub(super) fn load(root: &mut Project) -> Result<(), Error> {
+pub(super) fn load(root: &mut Project, observe: &dyn Fn(&Path)) -> Result<(), Error> {
     // Existing standalone applications share module identities with runtime
     // ModuleSources (including Script contracts). Introduce a package namespace
     // only when the application actually opts into a dependency graph.
@@ -54,7 +54,7 @@ pub(super) fn load(root: &mut Project) -> Result<(), Error> {
         active: Vec<PathBuf>,
     }
     impl Graph {
-        fn visit(&mut self, project: &Project) -> Result<usize, Error> {
+        fn visit(&mut self, project: &Project, observe: &dyn Fn(&Path)) -> Result<usize, Error> {
             if self.active.contains(&project.root) {
                 let mut cycle: Vec<_> = self
                     .active
@@ -90,13 +90,13 @@ pub(super) fn load(root: &mut Project) -> Result<(), Error> {
             self.active.push(project.root.clone());
             for (alias, relative) in &project.dependencies {
                 let directory = project.root.join(relative);
-                let child = Project::read(&directory.join(MANIFEST))?;
+                let child = Project::read(&directory.join(MANIFEST), observe)?;
                 if child.entry.is_some() {
                     return Err(cli_argument_error(format!(
                         "Dependency '{alias}' must declare [package], not [project]"
                     )));
                 }
-                let target = self.visit(&child)?;
+                let target = self.visit(&child, observe)?;
                 self.packages[index]
                     .dependencies
                     .insert(alias.clone(), target);
@@ -111,7 +111,7 @@ pub(super) fn load(root: &mut Project) -> Result<(), Error> {
         names: BTreeMap::new(),
         active: Vec::new(),
     };
-    graph.visit(root)?;
+    graph.visit(root, observe)?;
     root.dependency_roots = graph
         .paths
         .keys()

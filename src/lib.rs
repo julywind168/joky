@@ -22,6 +22,7 @@ pub use backends::aot;
 pub use core::completion::{CompletionItem, CompletionKind, CompletionSite};
 pub use core::ffi;
 pub use core::imports::documentation;
+pub use core::imports::editor::{EditorParseCache, EditorSources};
 pub use core::imports::packages::{PackageSources, SourcePackage};
 pub use core::ir::parallel::report::{
     explain_parallel, ParallelDisposition, ParallelReport, ParallelSite,

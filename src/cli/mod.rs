@@ -10,6 +10,9 @@ mod init;
 mod lsp;
 mod progress;
 mod project;
+#[cfg(test)]
+#[path = "../../tests/support/scratch.rs"]
+mod scratch;
 mod source;
 mod testing;
 mod workers;
