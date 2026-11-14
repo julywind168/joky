@@ -334,7 +334,30 @@ impl TypeRegistry {
         root: Option<&std::path::Path>,
         overrides: &BTreeMap<std::path::PathBuf, std::sync::Arc<str>>,
     ) -> Result<Module, Error> {
-        super::imports::resolve_file_with_overrides(path, root, self, false, overrides)
+        super::imports::resolve_file_with_overrides(
+            path,
+            root,
+            self,
+            false,
+            super::imports::FileOverrides::new(overrides, false),
+        )
+    }
+
+    /// Resolve an editor snapshot, recovering damaged functions in overridden files.
+    /// The returned module is for analysis and may contain synthesized bodies.
+    pub fn resolve_file_for_editor(
+        &self,
+        path: &std::path::Path,
+        root: Option<&std::path::Path>,
+        overrides: &BTreeMap<std::path::PathBuf, std::sync::Arc<str>>,
+    ) -> Result<Module, Error> {
+        super::imports::resolve_file_with_overrides(
+            path,
+            root,
+            self,
+            false,
+            super::imports::FileOverrides::new(overrides, true),
+        )
     }
 
     /// Resolve a test root, retaining its #test functions in their private namespace.

@@ -12,7 +12,7 @@ use std::{
 
 pub mod documentation;
 mod files;
-pub(super) use files::resolve_entry as resolve_file_with_overrides;
+pub(super) use files::{resolve_entry as resolve_file_with_overrides, FileOverrides};
 pub mod packages;
 mod sources;
 pub(crate) use files::{

@@ -3,7 +3,7 @@ mod completion;
 mod wire;
 
 use super::check;
-use joky::{Error, SemanticIndex, SourceFile, Span};
+use joky::{Error, ErrorPhase, SemanticIndex, SourceFile, Span};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -608,13 +608,37 @@ fn analyze(job: &Job, checker: &joky::Checker) -> Analysis {
     }
     for (path, documents) in targets {
         // Check the project root once so imported files are analyzed in their own package context.
-        if let Err(error) =
-            check::visit_with_overrides(&path, checker, &overrides, |ast, validation| {
+        let types = checker.type_registry();
+        let result = check::visit_sources(
+            &path,
+            checker,
+            |project, file| match project {
+                Some(project) => project.resolve_with_overrides(types, file, &overrides),
+                None => types.resolve_file_with_overrides(file, None, &overrides),
+            },
+            |ast, validation| {
                 let (index, result) = checker.analyze_module(ast);
                 analysis.indexes.push((path.clone(), index));
                 validation.and(result)
-            })
-        {
+            },
+        );
+        if let Err(error) = result {
+            if error.phase() == ErrorPhase::Parse {
+                // The strict error is reported below, regardless of the recovery result.
+                let _ = check::visit_sources(
+                    &path,
+                    checker,
+                    |project, file| match project {
+                        Some(project) => project.resolve_for_editor(types, file, &overrides),
+                        None => types.resolve_file_for_editor(file, None, &overrides),
+                    },
+                    |ast, _| {
+                        let (index, _) = checker.analyze_module(ast);
+                        analysis.indexes.push((path.clone(), index));
+                        Ok(())
+                    },
+                );
+            }
             if let Some((uri, version, diagnostic)) = diagnostic(&error, &files, &path) {
                 analysis.reports.entry(uri).or_insert(Report {
                     version,

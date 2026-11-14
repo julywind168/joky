@@ -1,12 +1,8 @@
 //! Static checking never creates a VM or publishes build output.
 use super::{cli_argument_error, diagnostic, project, source, Command};
+use joky::parser::ast::Module;
 use joky::Error;
-use std::{
-    collections::BTreeMap,
-    ffi::OsString,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{ffi::OsString, path::Path};
 
 enum Format {
     Text,
@@ -92,10 +88,13 @@ pub(super) fn execute(options: &Options) -> u8 {
 fn check(options: &source::Options) -> Result<(), Error> {
     let mut checker = joky::Checker::new();
     checker.set_prelude_enabled(options.prelude);
-    visit_with_overrides(
+    visit_sources(
         &options.path,
         &checker,
-        &BTreeMap::new(),
+        |project, file| match project {
+            Some(project) => project.resolve_source(checker.type_registry(), file, false),
+            None => checker.type_registry().resolve_file(file),
+        },
         |ast, validation| {
             validation?;
             checker.check_module(ast)
@@ -103,15 +102,15 @@ fn check(options: &source::Options) -> Result<(), Error> {
     )
 }
 
-pub(super) fn visit_with_overrides(
+pub(super) fn visit_sources(
     path: &Path,
     checker: &joky::Checker,
-    overrides: &BTreeMap<PathBuf, Arc<str>>,
-    mut visit: impl FnMut(&joky::parser::ast::Module, Result<(), Error>) -> Result<(), Error>,
+    mut resolve: impl FnMut(Option<&project::Project>, &Path) -> Result<Module, Error>,
+    mut visit: impl FnMut(&Module, Result<(), Error>) -> Result<(), Error>,
 ) -> Result<(), Error> {
     let project = project::Project::load(path)?;
     let types = checker.type_registry();
-    let mut validate = |ast: &joky::parser::ast::Module, entry: bool| {
+    let mut validate = |ast: &Module, entry: bool| {
         let validation = if entry {
             super::validate_program(ast, types).map(Some)
         } else {
@@ -127,22 +126,13 @@ pub(super) fn visit_with_overrides(
     match project {
         Some(project) => {
             if let Some(entry) = &project.entry {
-                return validate(
-                    &project.resolve_with_overrides(types, entry, overrides)?,
-                    true,
-                );
+                return validate(&resolve(Some(&project), entry)?, true);
             }
             for file in project.source_files()? {
-                validate(
-                    &project.resolve_with_overrides(types, &file, overrides)?,
-                    false,
-                )?;
+                validate(&resolve(Some(&project), &file)?, false)?;
             }
             Ok(())
         }
-        None => validate(
-            &types.resolve_file_with_overrides(path, None, overrides)?,
-            false,
-        ),
+        None => validate(&resolve(None, path)?, false),
     }
 }

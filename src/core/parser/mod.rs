@@ -14,6 +14,7 @@ mod interpolation;
 pub(super) mod lexer;
 mod module;
 mod patterns;
+mod recovery;
 mod source_text;
 mod sql_template;
 pub use source_text::escape_diagnostic_text;
@@ -334,14 +335,26 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
 
 /// Parse one named source while preserving file identity in every diagnostic span.
 pub fn parse_with_source(source: &str, id: crate::SourceId) -> Result<Module, Diagnostic> {
-    let mut tokens = Lexer::tokenize(source).map_err(|mut error| {
+    source_parser(source, id, Lexer::tokenize(source))?.parse_module()
+}
+
+pub(crate) fn parse_for_editor(source: &str, id: crate::SourceId) -> Result<Module, Diagnostic> {
+    source_parser(source, id, Lexer::tokenize_for_editor(source))?.parse_module_for_editor()
+}
+
+fn source_parser(
+    source: &str,
+    id: crate::SourceId,
+    tokens: Result<Vec<Token>, Diagnostic>,
+) -> Result<Parser<'_>, Diagnostic> {
+    let mut tokens = tokens.map_err(|mut error| {
         error.span = error.span.with_source(id);
         error
     })?;
     for token in &mut tokens {
         token.span = token.span.with_source(id);
     }
-    Parser::new(tokens, source).parse_module()
+    Ok(Parser::new(tokens, source))
 }
 
 #[cfg(test)]

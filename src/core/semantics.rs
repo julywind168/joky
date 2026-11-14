@@ -112,7 +112,7 @@ impl SemanticRecorder {
             };
             let mut tokens = Vec::new();
             flatten_tokens(
-                Lexer::tokenize(file.text()).unwrap_or_default(),
+                Lexer::tokenize_for_editor(file.text()).unwrap_or_default(),
                 &mut tokens,
             );
             tokens

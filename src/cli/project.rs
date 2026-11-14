@@ -274,6 +274,18 @@ impl Project {
         }
     }
 
+    pub fn resolve_for_editor(
+        &self,
+        types: &TypeRegistry,
+        file: &Path,
+        overrides: &BTreeMap<PathBuf, Arc<str>>,
+    ) -> Result<Module, Error> {
+        match &self.packages {
+            Some(packages) => packages.resolve_file_for_editor(file, types, overrides),
+            None => types.resolve_file_for_editor(file, Some(&self.source_root), overrides),
+        }
+    }
+
     pub fn source_files(&self) -> Result<BTreeSet<PathBuf>, Error> {
         fn collect(directory: &Path, files: &mut BTreeSet<PathBuf>) -> Result<(), Error> {
             for entry in fs::read_dir(directory).map_err(|e| io(directory, e))? {

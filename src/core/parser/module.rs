@@ -3,6 +3,14 @@ use super::*;
 
 impl Parser<'_> {
     pub(super) fn parse_module(&mut self) -> Result<Module, Diagnostic> {
+        self.parse_module_inner(false)
+    }
+
+    pub(super) fn parse_module_for_editor(&mut self) -> Result<Module, Diagnostic> {
+        self.parse_module_inner(true)
+    }
+
+    fn parse_module_inner(&mut self, recover: bool) -> Result<Module, Diagnostic> {
         let mut module = Module {
             logical_name: "main".into(),
             intrinsic_attributes: Vec::new(),
@@ -19,7 +27,13 @@ impl Parser<'_> {
         };
         let mut declarations_started = false;
         while self.peek() != &TokenKind::Eof {
-            if self.peek() == &TokenKind::Semi {
+            if self.peek() == &TokenKind::Semi
+                || recover
+                    && matches!(
+                        self.peek(),
+                        TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket
+                    )
+            {
                 self.advance();
                 continue;
             }
@@ -104,8 +118,24 @@ impl Parser<'_> {
                         self.parse_intrinsic_attribute(attributes)?
                     };
                     self.advance();
-                    let (mut function, intrinsic) =
-                        self.parse_fn_with_intrinsic(start, intrinsic)?;
+                    let recovery_start = (recover && intrinsic.is_none()).then_some(self.pos);
+                    let (mut function, intrinsic) = match self.parse_fn_with_intrinsic(
+                        start,
+                        intrinsic,
+                        recovery_start.is_some(),
+                    ) {
+                        Ok(parsed) => parsed,
+                        Err(error) => {
+                            if let Some(from) = recovery_start
+                                .filter(|_| error.code == crate::ErrorCode::SyntaxError)
+                            {
+                                self.recover_function(from);
+                                self.type_params.clear();
+                                continue;
+                            }
+                            return Err(error);
+                        }
+                    };
                     if let Some(attribute) = intrinsic {
                         module
                             .intrinsic_attributes

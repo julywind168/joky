@@ -22,8 +22,8 @@ fn candidates(job: &Job, query: &Query, checker: &Checker) -> Option<Vec<Value>>
     let target = target(&document.path, &job.roots);
     let registry = checker.type_registry();
     let module = match Project::load(&target).ok()? {
-        Some(project) => project.resolve_with_overrides(registry, &document.path, &overrides),
-        None => registry.resolve_file_with_overrides(&path, None, &overrides),
+        Some(project) => project.resolve_for_editor(registry, &document.path, &overrides),
+        None => registry.resolve_file_for_editor(&path, None, &overrides),
     }
     .ok()?;
     let range = json!({

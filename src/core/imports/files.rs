@@ -4,19 +4,60 @@ use crate::{SourceFile, SourceMap};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct FileOverrides<'a> {
+    text: Option<&'a BTreeMap<PathBuf, Arc<str>>>,
+    recover: bool,
+}
+
+impl<'a> FileOverrides<'a> {
+    pub(crate) fn new(text: &'a BTreeMap<PathBuf, Arc<str>>, recover: bool) -> Self {
+        Self {
+            text: Some(text),
+            recover,
+        }
+    }
+
+    pub(super) fn get(self, path: &Path) -> Option<&'a Arc<str>> {
+        self.text?.get(path)
+    }
+
+    pub(super) fn parse(self, file: &SourceFile) -> Result<Module, crate::parser::Diagnostic> {
+        if self.recover && file.path().is_some_and(|path| self.get(path).is_some()) {
+            crate::parser::parse_for_editor(file.text(), file.id())
+        } else {
+            crate::parser::parse_with_source(file.text(), file.id())
+        }
+    }
+}
+
+pub(super) struct FileLoader<'a> {
+    pub(super) read: &'a dyn Fn(&str) -> Result<SourceFile, Error>,
+    pub(super) rewrite: &'a dyn Fn(&str, &mut Module) -> Result<(), Error>,
+    pub(super) overrides: FileOverrides<'a>,
+}
+
 pub(crate) fn expand_with(
     module: &Module,
     registry: &TypeRegistry,
     provider: &dyn Fn(&str) -> Result<SourceFile, Error>,
 ) -> Result<Module, Error> {
-    expand_with_tests(module, registry, provider, &|_, _| Ok(()), false)
+    expand_with_tests(
+        module,
+        registry,
+        FileLoader {
+            read: provider,
+            rewrite: &|_, _| Ok(()),
+            overrides: FileOverrides::default(),
+        },
+        false,
+    )
 }
 
 pub(super) fn expand_with_tests(
     module: &Module,
     registry: &TypeRegistry,
-    provider: &dyn Fn(&str) -> Result<SourceFile, Error>,
-    rewrite: &dyn Fn(&str, &mut Module) -> Result<(), Error>,
+    loader: FileLoader<'_>,
     include_tests: bool,
 ) -> Result<Module, Error> {
     check_expression_depth(module)?;
@@ -32,8 +73,7 @@ pub(super) fn expand_with_tests(
                 &mut graph,
                 import,
                 registry,
-                provider,
-                rewrite,
+                &loader,
                 &mut Vec::new(),
                 &mut sources,
             )?;
@@ -47,8 +87,7 @@ fn load(
     graph: &mut StandardLibrary,
     import: &Import,
     registry: &TypeRegistry,
-    provider: &dyn Fn(&str) -> Result<SourceFile, Error>,
-    rewrite: &dyn Fn(&str, &mut Module) -> Result<(), Error>,
+    loader: &FileLoader<'_>,
     stack: &mut Vec<String>,
     sources: &mut SourceMap,
 ) -> Result<(), Error> {
@@ -65,22 +104,20 @@ fn load(
         ));
     }
     crate::core::source::validate_module_path(path).map_err(|e| e.with_span(import.span))?;
-    let file = provider(path).map_err(|e| e.with_span(import.span))?;
+    let file = (loader.read)(path).map_err(|e| e.with_span(import.span))?;
     sources.insert(file.clone());
-    let mut module = crate::parser::parse_with_source(file.text(), file.id())?;
+    let mut module = loader.overrides.parse(&file)?;
     Arc::make_mut(&mut module.sources).insert(file);
     module
         .items
         .retain(|item| !matches!(item, Item::FnDef(f) if f.is_test()));
-    rewrite(path, &mut module)?;
+    (loader.rewrite)(path, &mut module)?;
     crate::core::json_derive::expand(&mut module)?;
     let standard = registry.standard.for_module(&module, registry.prelude)?;
     graph.modules.extend(standard.modules);
     stack.push(path.clone());
     for dependency in &module.imports {
-        load(
-            graph, dependency, registry, provider, rewrite, stack, sources,
-        )?;
+        load(graph, dependency, registry, loader, stack, sources)?;
     }
     graph.prepare(
         path,
@@ -95,7 +132,7 @@ fn load(
 }
 
 pub(crate) fn resolve_file(path: &Path, registry: &TypeRegistry) -> Result<Module, Error> {
-    resolve_entry(path, None, registry, false, &BTreeMap::new())
+    resolve_entry(path, None, registry, false, FileOverrides::default())
 }
 
 pub(crate) fn resolve_file_with_root(
@@ -103,7 +140,7 @@ pub(crate) fn resolve_file_with_root(
     root: &Path,
     registry: &TypeRegistry,
 ) -> Result<Module, Error> {
-    resolve_entry(path, Some(root), registry, false, &BTreeMap::new())
+    resolve_entry(path, Some(root), registry, false, FileOverrides::default())
 }
 
 pub(crate) fn resolve_test_file_with_root(
@@ -111,7 +148,7 @@ pub(crate) fn resolve_test_file_with_root(
     root: &Path,
     registry: &TypeRegistry,
 ) -> Result<Module, Error> {
-    resolve_entry(path, Some(root), registry, true, &BTreeMap::new())
+    resolve_entry(path, Some(root), registry, true, FileOverrides::default())
 }
 
 pub(crate) fn resolve_entry(
@@ -119,7 +156,7 @@ pub(crate) fn resolve_entry(
     root: Option<&Path>,
     registry: &TypeRegistry,
     include_tests: bool,
-    overrides: &BTreeMap<PathBuf, Arc<str>>,
+    overrides: FileOverrides<'_>,
 ) -> Result<Module, Error> {
     let canonical = path.canonicalize().map_err(|e| io_error(path, e))?;
     let read = |display: &Path, canonical: &Path| {
@@ -153,32 +190,36 @@ pub(crate) fn resolve_entry(
     }
     let mut sources = SourceMap::default();
     sources.insert(entry.clone());
-    let mut module = crate::parser::parse_with_source(entry.text(), entry.id())
+    let mut module = overrides
+        .parse(&entry)
         .map_err(|e| Error::from(e).with_sources(&sources))?;
     module.sources = Arc::new(sources);
     let expanded = expand_with_tests(
         &module,
         registry,
-        &|name| {
-            let file = root.join(format!("{name}.jk"));
-            let file = file.canonicalize().map_err(|e| io_error(&file, e))?;
-            if !file.starts_with(&root) {
-                return Err(Error::new_with_code(
-                    ErrorPhase::Resolve,
-                    ErrorCode::InvalidImport,
-                    format!(
-                        "Module '{name}' is outside the source root '{}'",
-                        root.display()
-                    ),
-                ));
-            }
-            if file == path {
-                Ok(entry.clone())
-            } else {
-                read(&file, &file)
-            }
+        FileLoader {
+            read: &|name| {
+                let file = root.join(format!("{name}.jk"));
+                let file = file.canonicalize().map_err(|e| io_error(&file, e))?;
+                if !file.starts_with(&root) {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::Resolve,
+                        ErrorCode::InvalidImport,
+                        format!(
+                            "Module '{name}' is outside the source root '{}'",
+                            root.display()
+                        ),
+                    ));
+                }
+                if file == path {
+                    Ok(entry.clone())
+                } else {
+                    read(&file, &file)
+                }
+            },
+            rewrite: &|_, _| Ok(()),
+            overrides,
         },
-        &|_, _| Ok(()),
         include_tests,
     )?;
     registry.resolve_aliases(&expanded)

@@ -110,7 +110,7 @@ impl Parser<'_> {
     }
 
     pub(super) fn parse_fn_def(&mut self, start: usize) -> Result<FnDef, Diagnostic> {
-        self.parse_fn_with_intrinsic(start, None)
+        self.parse_fn_with_intrinsic(start, None, false)
             .map(|(function, _)| function)
     }
 
@@ -118,6 +118,7 @@ impl Parser<'_> {
         &mut self,
         start: usize,
         mut intrinsic: Option<Box<IntrinsicAttribute>>,
+        recover_body: bool,
     ) -> Result<(FnDef, Option<Box<IntrinsicAttribute>>), Diagnostic> {
         // The `fn` token has been consumed.
         let name = self.expect_ident()?;
@@ -169,6 +170,8 @@ impl Parser<'_> {
                     span,
                 }
             }
+        } else if recover_body {
+            self.parse_body_for_editor()?
         } else {
             self.parse_block()?
         };

@@ -37,7 +37,7 @@ impl CompletionSite {
         let mut source = text.to_owned();
         // Preserve the receiver so the ordinary planner can resolve its type.
         source.replace_range(start..suffix, MARKER);
-        let tokens = Lexer::tokenize(&source).ok()?;
+        let tokens = Lexer::tokenize_for_editor(&source).ok()?;
         let mut context = Vec::new();
         completion_context(&tokens, start, &mut context)?;
         let (tokens, token) = context[0];

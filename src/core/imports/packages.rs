@@ -1,5 +1,5 @@
 //! Explicit package roots and scoped imports, shared by all compilation backends.
-use super::{files, Module, TypeRegistry};
+use super::{files, FileOverrides, Module, TypeRegistry};
 use crate::{Error, ErrorCode, ErrorPhase, SourceFile, SourceMap};
 use std::{
     collections::BTreeMap,
@@ -138,7 +138,7 @@ impl PackageSources {
         path: impl AsRef<Path>,
         registry: &TypeRegistry,
     ) -> Result<Module, Error> {
-        self.resolve(path.as_ref(), registry, false, &BTreeMap::new())
+        self.resolve(path.as_ref(), registry, false, FileOverrides::default())
     }
 
     /// Resolve an entry in package zero, retaining only that file's test functions.
@@ -147,7 +147,7 @@ impl PackageSources {
         path: impl AsRef<Path>,
         registry: &TypeRegistry,
     ) -> Result<Module, Error> {
-        self.resolve(path.as_ref(), registry, true, &BTreeMap::new())
+        self.resolve(path.as_ref(), registry, true, FileOverrides::default())
     }
 
     /// Resolve existing package sources with text overrides keyed by canonical path.
@@ -157,7 +157,18 @@ impl PackageSources {
         registry: &TypeRegistry,
         overrides: &BTreeMap<PathBuf, Arc<str>>,
     ) -> Result<Module, Error> {
-        self.resolve(path, registry, false, overrides)
+        self.resolve(path, registry, false, FileOverrides::new(overrides, false))
+    }
+
+    /// Resolve an editor snapshot, recovering damaged functions in overridden files.
+    /// The returned module is for analysis and may contain synthesized bodies.
+    pub fn resolve_file_for_editor(
+        &self,
+        path: &Path,
+        registry: &TypeRegistry,
+        overrides: &BTreeMap<PathBuf, Arc<str>>,
+    ) -> Result<Module, Error> {
+        self.resolve(path, registry, false, FileOverrides::new(overrides, true))
     }
 
     fn module_path(&self, package: usize, path: &str) -> Result<(String, PathBuf), Error> {
@@ -234,7 +245,7 @@ impl PackageSources {
         path: &Path,
         registry: &TypeRegistry,
         tests: bool,
-        overrides: &BTreeMap<PathBuf, Arc<str>>,
+        overrides: FileOverrides<'_>,
     ) -> Result<Module, Error> {
         let path = canonical(path)?;
         if !path.starts_with(&self.packages[0].source_root) || !path.is_file() {
@@ -254,22 +265,25 @@ impl PackageSources {
         let mut sources = SourceMap::default();
         sources.insert(entry.clone());
         let result = (|| {
-            let mut module = crate::parser::parse_with_source(entry.text(), entry.id())?;
+            let mut module = overrides.parse(&entry)?;
             module.sources = Arc::new(sources.clone());
             self.rewrite(0, &mut module)?;
             let expanded = files::expand_with_tests(
                 &module,
                 registry,
-                &|key| {
-                    let (index, module) = self.key(key)?;
-                    let (_, file) = self.module_path(index, module)?;
-                    if file == path {
-                        Ok(entry.clone())
-                    } else {
-                        read(&file)
-                    }
+                files::FileLoader {
+                    read: &|key| {
+                        let (index, module) = self.key(key)?;
+                        let (_, file) = self.module_path(index, module)?;
+                        if file == path {
+                            Ok(entry.clone())
+                        } else {
+                            read(&file)
+                        }
+                    },
+                    rewrite: &|key, module| self.rewrite(self.key(key)?.0, module),
+                    overrides,
                 },
-                &|key, module| self.rewrite(self.key(key)?.0, module),
                 tests,
             )?;
             registry.resolve_aliases(&expanded)

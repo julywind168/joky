@@ -724,6 +724,110 @@ fn lsp_resolves_inferred_bindings_and_function_definitions_in_the_current_snapsh
 }
 
 #[test]
+fn lsp_recovers_other_functions_from_unsaved_syntax_errors() {
+    let work = Workspace::new();
+    work.write("joky.toml", "[project]\nname='app'\nentry='main.jk'");
+    let original = concat!(
+        "\u{feff}fn helper(input: Int32) -> Int32 {\r\n",
+        "    input + 1\r\n",
+        "}\r\n",
+        "fn main() -> Int32 {\r\n",
+        "    let score = helper(41)\r\n",
+        "    println(\"🙂\"); score\r\n",
+        "}\r\n",
+    );
+    work.write("main.jk", original);
+    let entry = Url::from_file_path(work.path().join("main.jk")).unwrap();
+    let mut client = Client::start(&work);
+    client.send(json!({"id": 1, "method": "initialize", "params": {
+        "rootUri": Url::from_directory_path(work.path()).unwrap().as_str(),
+        "capabilities": {"textDocument": {"publishDiagnostics": {"versionSupport": true}}},
+        "initializationOptions": {"jokySnapshotVersions": true}
+    }}));
+    client.until(|message| message["id"] == 1);
+    client.send(json!({"method": "textDocument/didOpen", "params": {
+        "jokySnapshotRevision": 1,
+        "textDocument": {"uri": entry.as_str(), "languageId": "joky", "version": 1, "text": original}
+    }}));
+    client.report(&entry, 1, 1, 0);
+
+    let mut id = 1;
+    let mut request = |client: &mut Client, method: &str, position: &Value| {
+        id += 1;
+        client.send(json!({"id": id, "method": method, "params": {
+            "textDocument": {"uri": entry.as_str()}, "position": position
+        }}));
+        let message = client.until(|message| message["id"] == id);
+        assert!(message.get("error").is_none(), "{message}");
+        message["result"].clone()
+    };
+    for (index, (broken_body, closing, error_line, error_token)) in [
+        ("    let value =", "}", 2, "}"),
+        ("    let value = (", " ", 3, "fn"),
+        ("    let text = \"unclosed", "}", 1, "\r"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let text = original.replacen("    input + 1", broken_body, 1).replacen(
+            "}\r\n",
+            &format!("{closing}\r\n"),
+            1,
+        );
+        let version = index + 2;
+        client.send(json!({"method": "textDocument/didChange", "params": {
+            "jokySnapshotRevision": version,
+            "textDocument": {"uri": entry.as_str(), "version": version},
+            "contentChanges": [{"text": &text}]
+        }}));
+        let report = client.report(&entry, version as u64, version as u64, 1);
+        let error = &report["params"]["diagnostics"][0];
+        assert_eq!(error["code"], "syntax_error");
+        let range = if error_token == "\r" {
+            json!({"start": {"line": 1, "character": broken_body.len()},
+                "end": {"line": 2, "character": 0}})
+        } else {
+            symbol_range(&text, error_line, error_token, false)
+        };
+        assert_eq!(error["range"], range, "{error}");
+
+        let use_site = symbol_range(&text, 5, "score", false);
+        assert_eq!(
+            request(&mut client, "textDocument/hover", &use_site["start"]),
+            json!({"contents": {"kind": "plaintext", "value": "score: Int32"}, "range": use_site})
+        );
+        assert_eq!(
+            request(&mut client, "textDocument/definition", &use_site["start"]),
+            json!({"uri": entry.as_str(), "range": symbol_range(&text, 4, "score", false)})
+        );
+        assert_eq!(
+            request(
+                &mut client,
+                "textDocument/definition",
+                &symbol_range(&text, 4, "helper", false)["start"]
+            ),
+            json!({"uri": entry.as_str(), "range": symbol_range(&text, 0, "helper", false)})
+        );
+        let completion = request(&mut client, "textDocument/completion", &use_site["end"]);
+        assert!(
+            completion["items"].as_array().is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|item| item["label"] == "score" && item["textEdit"]["range"] == use_site)
+            }),
+            "{completion}"
+        );
+
+        work.write("invalid.jk", &text);
+        let output = work.cli(&["check", "--diagnostic-format", "json", "invalid.jk"]);
+        assert_eq!(output.status.code(), Some(1));
+        let diagnostics: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(diagnostics["diagnostics"][0]["code"], "syntax_error");
+        assert_eq!(diagnostics["diagnostics"][0]["message"], error["message"]);
+    }
+}
+
+#[test]
 fn lsp_checks_unsaved_path_dependencies_and_discards_old_document_versions() {
     let work = Workspace::new();
     work.write(
@@ -793,6 +897,15 @@ fn lsp_checks_unsaved_path_dependencies_and_discards_old_document_versions() {
     assert_eq!(
         error["range"],
         json!({"start": {"line": 1, "character": column}, "end": {"line": 1, "character": column + 1}})
+    );
+    client.send(
+        json!({"id": 4, "method": "textDocument/definition", "params": {
+            "textDocument": {"uri": entry.as_str()}, "position": call["start"]
+        }}),
+    );
+    assert_eq!(
+        client.until(|message| message["id"] == 4)["result"],
+        json!({"uri": dependency.as_str(), "range": symbol_range(invalid, 1, "answer", false)})
     );
     client.send(change(original, 4, 4));
     client.send(change(invalid, 3, 5));

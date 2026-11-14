@@ -116,6 +116,7 @@ pub(crate) enum TokenKind {
     /// Arithmetic or bitwise assignment.
     CompoundAssign(BinOp),
 
+    Invalid,
     // End of input.
     Eof,
 }
@@ -229,6 +230,7 @@ impl std::fmt::Display for TokenKind {
                 BinOp::Shr => ">>=",
                 _ => return f.write_str("a compound assignment"),
             },
+            Self::Invalid => return f.write_str("invalid token"),
             Self::Eof => return f.write_str("end of input"),
         };
         write!(f, "`{spelling}`")
@@ -655,6 +657,10 @@ impl<'a> Lexer<'a> {
     /// Read the next token.
     fn next_token(&mut self) -> Result<Token, Diagnostic> {
         self.skip_whitespace_and_comments()?;
+        self.read_token()
+    }
+
+    fn read_token(&mut self) -> Result<Token, Diagnostic> {
         let start = self.byte_pos;
         let line = self.line;
         let kind = match self.peek() {
@@ -883,18 +889,49 @@ impl<'a> Lexer<'a> {
 
     /// Tokenize the entire source.
     pub(crate) fn tokenize(source: &str) -> Result<Vec<Token>, Diagnostic> {
+        Self::tokenize_inner(source, false)
+    }
+
+    /// Retain a token at each lexical error so the editor parser can discard its enclosing body.
+    pub(crate) fn tokenize_for_editor(source: &str) -> Result<Vec<Token>, Diagnostic> {
+        Self::tokenize_inner(source, true)
+    }
+
+    fn tokenize_inner(source: &str, recover: bool) -> Result<Vec<Token>, Diagnostic> {
         super::source_text::check_bidi(source)?;
         let mut lexer = Lexer::new(source);
         let mut tokens = Vec::new();
         loop {
-            let tok = lexer.next_token()?;
-            let is_eof = tok.kind == TokenKind::Eof;
-            tokens.push(tok);
-            if is_eof {
-                break;
+            lexer.skip_whitespace_and_comments()?;
+            let start = lexer.byte_pos;
+            let line = lexer.line;
+            let token = match lexer.read_token() {
+                Ok(token) => token,
+                Err(_) if recover => {
+                    if lexer.byte_pos == start {
+                        lexer.advance();
+                    } else if !lexer.source[..lexer.byte_pos].ends_with(['\r', '\n']) {
+                        // Do not re-lex the remainder of a damaged literal as code.
+                        while !matches!(lexer.peek(), Some('\r' | '\n') | None) {
+                            lexer.advance();
+                        }
+                    }
+                    lexer.after_dot = false;
+                    Token {
+                        kind: TokenKind::Invalid,
+                        line,
+                        end_line: lexer.line,
+                        span: Span::new(start, lexer.byte_pos),
+                    }
+                }
+                Err(error) => return Err(error),
+            };
+            let eof = token.kind == TokenKind::Eof;
+            tokens.push(token);
+            if eof {
+                return Ok(tokens);
             }
         }
-        Ok(tokens)
     }
 }
 
