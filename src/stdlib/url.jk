@@ -24,7 +24,13 @@ import joky/string.{type StringBuilder, type Utf8Error}
 import joky/show.{type Show}
 import joky/result.{type Result, Ok, Err}
 
-pub enum DecodeError { InvalidEscape(UInt64), Utf8(Utf8Error) }
+/// Reasons percent-decoded input could not be read as UTF-8 text.
+pub enum DecodeError {
+    /// The percent escape at the given byte offset is malformed.
+    InvalidEscape(UInt64),
+    /// The decoded bytes are not valid UTF-8.
+    Utf8(Utf8Error)
+}
 impl Show for DecodeError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {

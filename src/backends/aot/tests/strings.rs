@@ -310,8 +310,8 @@ fn string_queries_link_and_run_in_aot_objects() {
             let other = "héllo"
             int32(string.byte_length(&text)) * 1000000 +
                 int32(string.find(&text, &needle).unwrap_or(999)) * 1000 +
-                (if string.starts_with(&text, &prefix) { 100 } else { 0 }) +
-                (if string.ends_with(&text, &suffix) { 10 } else { 0 }) +
+                (if text.starts_with(&prefix) { 100 } else { 0 }) +
+                (if text.ends_with(&suffix) { 10 } else { 0 }) +
                 (if text == other { 1 } else { 0 })
         }
     "#;

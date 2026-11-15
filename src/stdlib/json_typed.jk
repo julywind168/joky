@@ -41,25 +41,45 @@ import joky/float
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
 
+/// Reasons a Joky value and a JSON value could not be mapped to one another.
 pub enum MappingErrorKind {
+    /// The mapper required a JSON null.
     ExpectedNull,
+    /// The mapper required a JSON boolean.
     ExpectedBoolean,
+    /// The mapper required a JSON number.
     ExpectedNumber,
+    /// The mapper required a JSON string.
     ExpectedString,
+    /// The mapper required a JSON array.
     ExpectedArray,
+    /// The mapper required a JSON object.
     ExpectedObject,
+    /// A required field was absent.
     MissingField,
+    /// The object contains a field that was not mapped.
     UnknownField,
+    /// A mapping attempted to create the same field more than once.
     DuplicateField,
+    /// The JSON number spelling contains a decimal point or exponent where an integer was required.
     NotInteger,
+    /// The number is outside the target type's range.
     OutOfRange,
+    /// A non-finite floating-point value cannot be encoded as JSON.
     NonFinite,
+    /// A configured JSON limit exceeds its hard maximum.
     InvalidLimits,
+    /// The mapper exceeded the container nesting limit.
     DepthLimit,
+    /// The mapper exceeded the total value node limit.
     NodeLimit,
+    /// A string or key exceeded the UTF-8 byte limit.
     StringLimit,
+    /// A numeric spelling exceeded the byte limit.
     NumberLimit,
+    /// The mapper exceeded its limit on nested mapping calls.
     CallLimit,
+    /// The variant tag did not name a recognized enum case.
     UnknownVariant,
 }
 impl Show for MappingErrorKind {
@@ -90,8 +110,20 @@ impl Show for MappingErrorKind {
     }
 }
 
-pub enum PathSegment { Field(String), Index(UInt64) }
-pub struct MappingError { pub kind: MappingErrorKind, pub path: Array<PathSegment> }
+/// One step from the JSON root to the location of a mapping error.
+pub enum PathSegment {
+    /// Object key as it appears in the decoded JSON value.
+    Field(String),
+    /// Zero-based array element index.
+    Index(UInt64)
+}
+/// A failure converting between a Joky value and its JSON representation.
+pub struct MappingError {
+    /// Reason for the failure at this location.
+    pub kind: MappingErrorKind,
+    /// Path from the root to the failing value. An empty path means the root itself.
+    pub path: Array<PathSegment>
+}
 impl Show for MappingError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         self.kind.show(output)
@@ -104,7 +136,15 @@ impl Show for MappingError {
     }
 }
 
-pub enum CodecError { Syntax(DecodeError), Mapping(MappingError), Encoding(EncodeError) }
+/// Failure from one of the typed JSON codec stages.
+pub enum CodecError {
+    /// The input could not be decoded into a JSON tree.
+    Syntax(DecodeError),
+    /// Conversion between the JSON tree and the Joky type failed.
+    Mapping(MappingError),
+    /// The mapped JSON tree could not be encoded as text.
+    Encoding(EncodeError)
+}
 impl Show for CodecError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
@@ -117,6 +157,7 @@ impl Show for CodecError {
 
 impl MappingError {
     // Diagnostic JSON Pointer spelling: the root is empty, ~ and / are escaped.
+    /// Formats the path as a JSON Pointer, including escaping of path segments.
     pub fn pointer(&self) -> String {
         var output = StringBuilder.new()
         var index: UInt64 = 0
@@ -157,8 +198,14 @@ impl MappingError {
 }
 
 /// Mapping options and JSON resource limits. Unknown fields are allowed by default.
-pub struct Options { pub limits: Limits, pub reject_unknown_fields: Bool }
+pub struct Options {
+    /// Limits shared by mapping and the underlying JSON codec.
+    pub limits: Limits,
+    /// Reject object fields left over after decoding known fields.
+    pub reject_unknown_fields: Bool
+}
 impl Options {
+    /// Uses the default JSON limits and permits unknown object fields.
     pub fn default() -> Options {
         Options { limits: Limits.default(), reject_unknown_fields: false }
     }
@@ -166,11 +213,16 @@ impl Options {
 
 // Trait implementations use Context.write/read for every nested dispatch. The
 // dispatcher restores container depth on both success and error; paths are owned.
+/// Converts a borrowed Joky value to an owned JSON tree.
 pub trait ToJson {
+    /// Converts the borrowed value into an owned JSON tree using the current mapping context.
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError>
 }
+/// Consumes a JSON tree and constructs a Joky value.
 pub trait FromJson {
+    /// Consumes a JSON tree and decodes it using the current mapping context.
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError>
+    /// Reports whether the mapper accepts an omitted object field.
     fn accepts_missing() -> Bool {
         false
     }
@@ -178,8 +230,11 @@ pub trait FromJson {
 // Generic impl targets cannot partially specialize Map<String, T>. This
 // protocol keeps string keys explicit without changing compiler specialization.
 // Implementations must preserve the complete key spelling in both directions.
+/// Defines conversion between a typed map key and its JSON object name.
 pub trait ObjectKey {
+    /// Copies the key into the string used as a JSON object member name.
     fn to_key(&self) @noescape -> String
+    /// Converts an owned JSON object member name into the key type.
     fn from_key(value: String) -> Self
 }
 impl ObjectKey for String {
@@ -190,6 +245,7 @@ impl ObjectKey for String {
         value
     }
 }
+/// Carries resource limits and the current error path while mapping a typed value.
 pub struct Context {
     options: Options,
     depth: UInt64,
@@ -203,9 +259,11 @@ fn context(options: Options) -> Context {
 }
 
 impl Context {
+    /// Returns the options for the current mapping operation.
     pub fn options(&self) -> Options {
         self.options
     }
+    /// Builds an error at the current location in the value.
     pub fn error(&self, kind: MappingErrorKind) -> MappingError {
         var path = array.new::<PathSegment>()
         var index: UInt64 = 0
@@ -219,6 +277,7 @@ impl Context {
         }
         MappingError { kind: kind, path: path }
     }
+    /// Charges one scalar node against the mapping limits.
     pub fn scalar(&mut self) -> Result<Unit, MappingError> {
         if self.nodes == self.options.limits.max_nodes {
             return Err(self.error(MappingErrorKind.NodeLimit))
@@ -226,6 +285,7 @@ impl Context {
         self.nodes = self.nodes + 1
         Ok({})
     }
+    /// Checks the node count and depth for an array or object at the current location.
     pub fn container(&mut self) -> Result<Unit, MappingError> {
         self.scalar()?
         if self.depth == self.options.limits.max_depth {
@@ -234,18 +294,21 @@ impl Context {
         self.depth = self.depth + 1
         Ok({})
     }
+    /// Checks the UTF-8 byte limit for a string or object key.
     pub fn string(&self, text: &String) @noescape -> Result<Unit, MappingError> {
         if text.byte_length() > self.options.limits.max_string_bytes {
             return Err(self.error(MappingErrorKind.StringLimit))
         }
         Ok({})
     }
+    /// Checks the byte limit for the validated number spelling.
     pub fn number(&self, number: &Number) @noescape -> Result<Unit, MappingError> {
         if number.as_text().byte_length() > self.options.limits.max_number_bytes {
             return Err(self.error(MappingErrorKind.NumberLimit))
         }
         Ok({})
     }
+    /// Maps a borrowed value using the current path and limits.
     pub fn write<T: ToJson>(&mut self, value: &T) @noescape -> Result<Value, MappingError> {
         if self.calls == 256 {
             return Err(self.error(MappingErrorKind.CallLimit))
@@ -257,6 +320,7 @@ impl Context {
         self.depth = depth
         result
     }
+    /// Consumes a JSON value and maps it to the requested type using the current path and limits.
     pub fn read<T: FromJson>(&mut self, value: Value) @noescape -> Result<T, MappingError> {
         if self.calls == 256 {
             return Err(self.error(MappingErrorKind.CallLimit))
@@ -268,12 +332,14 @@ impl Context {
         self.depth = depth
         result
     }
+    /// Checks the current container limits and creates a map for a JSON object.
     pub fn object(&mut self) -> Result<Map<String, Value>, MappingError> {
         match self.container() {
             Err(error) => Err(error),
             Ok(_) => Ok(map.new::<String, Value>())
         }
     }
+    /// Extracts the object members from a JSON value or reports a type mismatch.
     pub fn read_object(&mut self, value: Value) -> Result<Map<String, Value>, MappingError> {
         self.container()?
         match value {
@@ -281,6 +347,7 @@ impl Context {
             _ => Err(self.error(MappingErrorKind.ExpectedObject))
         }
     }
+    /// Maps a value at a named object field and inserts the result.
     pub fn put_field<T: ToJson>(
         &mut self,
         fields: &mut Map<String, Value>,
@@ -310,7 +377,7 @@ impl Context {
                     Ok(mapped) => {
                         match array.borrow_ref(&self.path, array.len(&self.path) - 1) {
                             Field(name) => {
-                                map.insert(fields, name.clone(), mapped);
+                                fields.insert(name.clone(), mapped);
                             }
                             Index(_) => {}
                         }
@@ -322,6 +389,7 @@ impl Context {
         array.take_last(&mut self.path)
         result
     }
+    /// Removes a named field and decodes it using that field's error path.
     pub fn take_field<T: FromJson>(
         &mut self,
         fields: &mut Map<String, Value>,
@@ -387,6 +455,7 @@ impl Context {
         array.take_last(&mut self.path)
         error
     }
+    /// Applies the unknown-field policy to the object members left after decoding.
     pub fn finish_object(&mut self, var fields: Map<String, Value>) -> Result<Unit, MappingError> {
         if self.options.reject_unknown_fields {
             if let Some((name, _)) = map.pop(&mut fields) {
@@ -432,6 +501,7 @@ pub fn encode<T: ToJson>(value: &T) @noescape -> Result<String, CodecError> {
     encode_with_options(value, Options.default())
 }
 
+/// Maps the borrowed value to JSON and emits owned text with the supplied limits.
 pub fn encode_with_options<T: ToJson>(
     value: &T,
     options: Options
@@ -457,6 +527,7 @@ pub fn decode<T: FromJson>(text: &String) @noescape -> Result<T, CodecError> {
     decode_with_options::<T>(text, Options.default())
 }
 
+/// Parses JSON text and maps it to `T` using the supplied options.
 pub fn decode_with_options<T: FromJson>(
     text: &String,
     options: Options
@@ -474,10 +545,12 @@ pub fn decode_with_options<T: FromJson>(
     }
 }
 
+/// Validates UTF-8 and decodes bytes into `T` using default options.
 pub fn decode_bytes<T: FromJson>(bytes: &Array<UInt8>) @noescape -> Result<T, CodecError> {
     decode_bytes_with_options::<T>(bytes, Options.default())
 }
 
+/// Validates UTF-8 and decodes bytes into `T` using the supplied options.
 pub fn decode_bytes_with_options<T: FromJson>(
     bytes: &Array<UInt8>,
     options: Options
@@ -683,7 +756,7 @@ impl<K: ObjectKey + Eq + Hash, T: FromJson> FromJson for Map<K, T> {
                         array.take_last(&mut context.path)
                         return Err(error)
                     }
-                    map.insert(&mut output, key, value);
+                    output.insert(key, value);
                 }
                 Err(error) => {
                     return Err(error)

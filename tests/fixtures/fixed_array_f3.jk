@@ -143,7 +143,7 @@ fn slice_operations()->Int32 {
     slice.set(sub,0,row(40))
     element.write(slice.borrow_mut(sub,1),row(2))
     if slice.set(sub,2,row(9)) {return 0}
-    if slice.is_empty(sub) {return 0}
+    if sub.is_empty() {return 0}
     let first=match slice.get(sub,0) {Some(r)=>r,None=>row(0)}
     let second=element.read(slice.borrow(sub,1))
     let missing=match slice.get(sub,2) {None=>true,Some(_)=>false}

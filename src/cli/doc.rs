@@ -201,9 +201,7 @@ fn generate(output: &Path, home: bool) -> Result<(), Error> {
     }
     write(&marker, MARKER)?;
     write(&output.join("style.css"), include_str!("doc/style.css"))?;
-    let mut index = String::from(
-        "<p>Standard library API reference. Select a module below.</p><ul class=modules>",
-    );
+    let mut index = String::from("<ul class=modules>");
     for (name, docs) in &modules {
         let slug = name.strip_prefix("joky/").unwrap();
         directory(&output.join(slug))?;
@@ -235,21 +233,18 @@ fn page(title: &str, root: &str, body: &str, home: bool) -> String {
     format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{0} — Joky</title><link rel=\"stylesheet\" href=\"{root}style.css\"></head><body><header><nav aria-label=\"Documentation\">{home_link}<a href=\"{root}index.html\">Joky / std</a></nav><span>v{1}</span></header><main><h1>{0}</h1>{body}</main></body></html>", escape(title), env!("CARGO_PKG_VERSION"))
 }
 fn module_page(name: &str, docs: &Documentation) -> String {
-    let mut out = markdown(&docs.docs);
+    let mut out = String::new();
+    if !docs.entries.is_empty() {
+        out.push_str("<div class=\"module-page\">");
+        render_index(&docs.entries, &mut out);
+        out.push_str("<div class=\"module-content\">");
+    }
+    out.push_str(&markdown(&docs.docs));
     if docs.entries.is_empty() {
         out.push_str(
             "<p>This module has no direct public declarations; see its source imports below.</p>",
         );
     }
-    out.push_str("<nav aria-label=\"API index\"><ul>");
-    for e in &docs.entries {
-        out.push_str(&format!(
-            "<li><a href=\"#{}\">{}</a></li>",
-            anchor(e),
-            label(e)
-        ));
-    }
-    out.push_str("</ul></nav>");
     for e in &docs.entries {
         render_entry(e, &anchor(e), 2, &mut out);
     }
@@ -261,7 +256,37 @@ fn module_page(name: &str, docs: &Documentation) -> String {
         out.push_str("</code></pre></details>");
     }
     out.push_str(&format!("<footer>Generated from the embedded {} source. Internal host declarations are omitted.</footer>", escape(name)));
+    if !docs.entries.is_empty() {
+        out.push_str("</div></div>");
+    }
     out
+}
+fn render_index(entries: &[Entry], out: &mut String) {
+    out.push_str("<nav class=\"api-index\" aria-label=\"API index\">");
+    for (title, kinds) in [
+        ("Types", &["struct", "enum", "trait", "type"][..]),
+        ("Functions", &["fn"][..]),
+        ("Constants", &["const"][..]),
+        ("Implementations", &["impl"][..]),
+    ] {
+        let mut group = entries
+            .iter()
+            .filter(|e| kinds.contains(&e.kind))
+            .peekable();
+        if group.peek().is_none() {
+            continue;
+        }
+        out.push_str(&format!("<h2>{title}</h2><ul>"));
+        for entry in group {
+            out.push_str(&format!(
+                "<li><a href=\"#{}\"><code>{}</code></a></li>",
+                anchor(entry),
+                label(entry)
+            ));
+        }
+        out.push_str("</ul>");
+    }
+    out.push_str("</nav>");
 }
 fn anchor(e: &Entry) -> String {
     let plain = e
@@ -293,10 +318,32 @@ fn label(e: &Entry) -> String {
 }
 fn render_entry(e: &Entry, id: &str, level: u8, out: &mut String) {
     out.push_str(&format!("<section id=\"{id}\"><h{level}><a href=\"#{id}\">{}</a></h{level}><pre><code>{}</code></pre>{}", label(e), highlight(&e.signature), markdown(&e.docs)));
-    for c in &e.children {
-        render_entry(c, &format!("{id}-{}", anchor(c)), 3, out);
+    if !e.children.is_empty() {
+        match e.kind {
+            "struct" => render_members(&e.children, id, "Fields", out),
+            "enum" => render_members(&e.children, id, "Variants", out),
+            _ => {
+                for child in &e.children {
+                    render_entry(child, &format!("{id}-{}", anchor(child)), level + 1, out);
+                }
+            }
+        }
     }
     out.push_str("</section>");
+}
+fn render_members(members: &[Entry], parent: &str, title: &str, out: &mut String) {
+    out.push_str(&format!(
+        "<h3 id=\"{parent}-members\">{title}</h3><dl class=\"members\" aria-labelledby=\"{parent}-members\">"
+    ));
+    for member in members {
+        let id = format!("{parent}-{}", anchor(member));
+        out.push_str(&format!(
+            "<div id=\"{id}\"><dt><a href=\"#{id}\"><code>{}</code></a></dt><dd>{}</dd></div>",
+            highlight(&member.signature),
+            markdown(&member.docs)
+        ));
+    }
+    out.push_str("</dl>");
 }
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;")

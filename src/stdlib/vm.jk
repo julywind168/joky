@@ -29,12 +29,16 @@ extern fn __vm_share(owner: &vm.Owner) @suspends -> vm.Owner
 extern fn __vm_close(owner: &vm.Owner) -> Int32
 extern fn __vm_error_code() -> Int32
 extern fn __vm_print_error()
+/// A VM-managed function handle for dynamically calling loaded code.
 pub type Function = vm.Function
+/// Owns an embedded Joky virtual machine and its loaded modules.
 pub struct Vm { owner: vm.Owner }
 impl Vm {
+    /// Creates an embedded VM using the JIT backend.
     pub fn new() -> Self {
         Vm { owner: __vm_create(0) }
     }
+    /// Creates an embedded VM using the bytecode interpreter.
     pub fn interpreter() -> Self {
         Vm { owner: __vm_create(1) }
     }
@@ -42,25 +46,30 @@ impl Vm {
     pub fn share(&self) @suspends -> Self {
         Vm { owner: __vm_share(&self.owner) }
     }
+    /// Consumes and closes the VM owner, returning the host status code.
     pub fn close(self) -> Int32 {
         __vm_close(&self.owner)
     }
 }
 
+/// Consumes and closes the VM owner, returning the host status code.
 pub fn close(value: Vm) -> Int32 {
     value.close()
 }
 
+/// Returns the current embedded-VM error code.
 pub fn error_code() -> Int32 {
     __vm_error_code()
 }
 
+/// Writes the current embedded-VM error message to diagnostic output.
 pub fn print_error() {
     __vm_print_error()
 }
 
 extern fn __vm_domain_schema(owner: &vm.Owner) -> UInt64
 
+/// Returns the current state-domain schema identity for this VM.
 pub fn domain_schema(value: &Vm) -> UInt64 {
     __vm_domain_schema(&value.owner)
 }
@@ -72,6 +81,7 @@ extern fn __vm_prepare_migration(
     method: &String
 ) -> Int32
 
+/// Prepares a state-domain migration from the specified source and transform.
 pub fn prepare_migration(value: &Vm, schema: UInt64, source: &String, method: &String) -> Int32 {
     __vm_prepare_migration(&value.owner, schema, source, method)
 }
@@ -84,6 +94,7 @@ extern fn __vm_begin_migration(
     advance: &String
 ) -> Int32
 
+/// Starts an incremental state-domain migration using the named entry functions.
 pub fn begin_migration(
     value: &Vm,
     schema: UInt64,
@@ -96,108 +107,126 @@ pub fn begin_migration(
 
 extern fn __vm_step_migration(owner: &vm.Owner, budget: UInt64) -> Int32
 
+/// Advances the current migration with the supplied work budget.
 pub fn step_migration(value: &Vm, budget: UInt64) -> Int32 {
     __vm_step_migration(&value.owner, budget)
 }
 
 extern fn __vm_begin_migration_batch(owner: &vm.Owner, source: &String) -> Int32
 
+/// Begins a batch of migrations from the supplied source.
 pub fn begin_migration_batch(value: &Vm, source: &String) -> Int32 {
     __vm_begin_migration_batch(&value.owner, source)
 }
 
 extern fn __vm_stage_migration(owner: &vm.Owner, start: &String, advance: &String) -> Int32
 
+/// Stages another incremental migration in the active batch.
 pub fn stage_migration(value: &Vm, start: &String, advance: &String) -> Int32 {
     __vm_stage_migration(&value.owner, start, advance)
 }
 
 extern fn __vm_publish_migration(owner: &vm.Owner) -> Int32
 
+/// Attempts to publish the prepared migration or migration batch.
 pub fn publish_migration(value: &Vm) -> Int32 {
     __vm_publish_migration(&value.owner)
 }
 
 extern fn __vm_cancel_migration(owner: &vm.Owner) -> Int32
 
+/// Cancels the VM's pending migration.
 pub fn cancel_migration(value: &Vm) -> Int32 {
     __vm_cancel_migration(&value.owner)
 }
 
 extern fn __vm_module_count(owner: &vm.Owner) -> Int32
 
+/// Reports the number of modules currently loaded in the VM.
 pub fn module_count(value: &Vm) -> Int32 {
     __vm_module_count(&value.owner)
 }
 
 extern fn __vm_print_modules(owner: &vm.Owner) -> Int32
 
+/// Writes the VM's loaded-module diagnostics and returns the host status.
 pub fn print_modules(value: &Vm) -> Int32 {
     __vm_print_modules(&value.owner)
 }
 
 extern fn __vm_publish_domain_code(owner: &vm.Owner) -> Int32
 
+/// Publishes loaded state-domain code for the VM.
 pub fn publish_domain_code(value: &Vm) -> Int32 {
     __vm_publish_domain_code(&value.owner)
 }
 
 extern fn __vm_load_source(owner: &vm.Owner, source: &String) -> Int32
 
+/// Loads source into the embedded VM. The module function returns a host status code.
 pub fn load_source(value: &Vm, source: &String) -> Int32 {
     __vm_load_source(&value.owner, source)
 }
 
 extern fn __vm_reload_source(owner: &vm.Owner, source: &String) -> Int32
 
+/// Replaces loaded source in the embedded VM and returns the host status.
 pub fn reload_source(value: &Vm, source: &String) -> Int32 {
     __vm_reload_source(&value.owner, source)
 }
 
 extern fn __vm_register_int32_0(owner: &vm.Owner, name: &String, function: vm.Function) -> Int32
 
+/// Registers a synchronous embedded function with 0 Int32 arguments and an Int32 result.
 pub fn register_int32_0(value: &Vm, name: &String, function: vm.Function) -> Int32 {
     __vm_register_int32_0(&value.owner, name, function)
 }
 
 extern fn __vm_register_int32_1(owner: &vm.Owner, name: &String, function: vm.Function) -> Int32
 
+/// Registers a synchronous embedded function with 1 Int32 arguments and an Int32 result.
 pub fn register_int32_1(value: &Vm, name: &String, function: vm.Function) -> Int32 {
     __vm_register_int32_1(&value.owner, name, function)
 }
 
 extern fn __vm_register_int32_2(owner: &vm.Owner, name: &String, function: vm.Function) -> Int32
 
+/// Registers a synchronous embedded function with 2 Int32 arguments and an Int32 result.
 pub fn register_int32_2(value: &Vm, name: &String, function: vm.Function) -> Int32 {
     __vm_register_int32_2(&value.owner, name, function)
 }
 
 extern fn __vm_call_int32_0(owner: &vm.Owner, name: &String) -> Int32
 
+/// Calls a named embedded function with 0 Int32 arguments and a Int32 result.
 pub fn call_int32_0(value: &Vm, name: &String) -> Int32 {
     __vm_call_int32_0(&value.owner, name)
 }
 
 extern fn __vm_call_int32_1(owner: &vm.Owner, name: &String, arg0: Int32) -> Int32
 
+/// Calls a named embedded function with 1 Int32 arguments and a Int32 result.
 pub fn call_int32_1(value: &Vm, name: &String, arg0: Int32) -> Int32 {
     __vm_call_int32_1(&value.owner, name, arg0)
 }
 
 extern fn __vm_call_int32_2(owner: &vm.Owner, name: &String, arg0: Int32, arg1: Int32) -> Int32
 
+/// Calls a named embedded function with 2 Int32 arguments and a Int32 result.
 pub fn call_int32_2(value: &Vm, name: &String, arg0: Int32, arg1: Int32) -> Int32 {
     __vm_call_int32_2(&value.owner, name, arg0, arg1)
 }
 
 extern fn __vm_call_float64_0(owner: &vm.Owner, name: &String) -> Float64
 
+/// Calls a named embedded function with 0 Float64 arguments and a Float64 result.
 pub fn call_float64_0(value: &Vm, name: &String) -> Float64 {
     __vm_call_float64_0(&value.owner, name)
 }
 
 extern fn __vm_call_float64_1(owner: &vm.Owner, name: &String, arg0: Float64) -> Float64
 
+/// Calls a named embedded function with 1 Float64 arguments and a Float64 result.
 pub fn call_float64_1(value: &Vm, name: &String, arg0: Float64) -> Float64 {
     __vm_call_float64_1(&value.owner, name, arg0)
 }
@@ -209,6 +238,7 @@ extern fn __vm_call_float64_2(
     arg1: Float64
 ) -> Float64
 
+/// Calls a named embedded function with 2 Float64 arguments and a Float64 result.
 pub fn call_float64_2(value: &Vm, name: &String, arg0: Float64, arg1: Float64) -> Float64 {
     __vm_call_float64_2(&value.owner, name, arg0, arg1)
 }
@@ -232,7 +262,15 @@ extern fn __vm_call(
     packet: &mut Buffer<UInt64>,
     checked: Bool
 ) @suspends -> Int32
-pub enum CallError { Unavailable, Incompatible, Failed }
+/// Reasons a dynamically invoked VM function call failed.
+pub enum CallError {
+    /// The requested VM or function is unavailable.
+    Unavailable,
+    /// The function's signature differs from the requested call contract.
+    Incompatible,
+    /// The loaded function failed during execution.
+    Failed
+}
 impl Show for CallError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -246,6 +284,7 @@ impl Show for CallError {
 }
 
 impl Vm {
+    /// Calls a checked embedded function with the supplied input and returns its value. Fails the task on a call error.
     pub fn call<A, R>(&self, name: String, input: A) @suspends -> R {
         var packet = pack(input)
         __vm_call(&self.owner, name, schema::<A>(), schema::<R>(), &mut packet.storage, false)
@@ -254,6 +293,7 @@ impl Vm {
 }
 
 impl Vm {
+    /// Calls a checked embedded function with the supplied input and returns a structured call error on failure.
     pub fn try_call<A, R>(&self, name: String, input: A) @suspends -> Result<R, CallError> {
         var packet = pack(input)
         let status = __vm_call(
@@ -273,10 +313,15 @@ impl Vm {
     }
 }
 
+/// A diagnostic from compiling or running code in the embedded VM.
 pub struct Diagnostic {
+    /// Human-readable diagnostic message.
     pub message: String,
+    /// Whether the diagnostic provides source byte offsets.
     pub has_span: Bool,
+    /// Zero-based inclusive byte offset, valid when `has_span` is true.
     pub start: UInt64,
+    /// Zero-based exclusive byte offset, valid when `has_span` is true.
     pub end: UInt64
 }
 impl Show for Diagnostic {
@@ -291,12 +336,19 @@ impl Show for Diagnostic {
     }
 }
 
+/// Stages at which reading, compiling, or publishing a module can fail.
 pub enum LoadErrorKind {
+    /// Reading the source file failed.
     Io(fs.IoError),
+    /// The source file contained invalid UTF-8.
     Utf8(Utf8Error),
+    /// The source did not compile.
     Compile(Diagnostic),
+    /// The source was incompatible with the current VM or publication contract.
     Incompatible(Diagnostic),
+    /// Publication conflicted with the currently loaded code.
     Conflict(Diagnostic),
+    /// Loading or publishing the source failed at runtime.
     Runtime(Diagnostic)
 }
 impl Show for LoadErrorKind {
@@ -324,7 +376,13 @@ impl Show for LoadErrorKind {
     }
 }
 
-pub struct LoadError { pub path: String, pub kind: LoadErrorKind }
+/// Failure to read, compile or publish a script module.
+pub struct LoadError {
+    /// Path or source label associated with the load attempt.
+    pub path: String,
+    /// Failure category and its associated details.
+    pub kind: LoadErrorKind
+}
 impl Show for LoadError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         if !self.path.is_empty() {
@@ -427,15 +485,19 @@ fn loaded(result: Result<UInt64, LoadError>) -> Result<Unit, LoadError> {
 }
 
 impl Vm {
+    /// Compiles and loads owned source text, returning a structured error on failure.
     pub fn load_source(&self, source: String) @suspends -> Result<Unit, LoadError> {
         loaded(source_result(self, "<source>", source, 0))
     }
+    /// Compiles and publishes owned source text and returns its published generation.
     pub fn publish_source(&self, source: String) @suspends -> Result<UInt64, LoadError> {
         source_result(self, "<source>", source, 1)
     }
+    /// Reads and loads the source file at the supplied path.
     pub fn load_file(&self, path: String) @suspends -> Result<Unit, LoadError> {
         loaded(file_result(self, path, false))
     }
+    /// Reads and publishes a source file and returns its published generation.
     pub fn publish_file(&self, path: String) @suspends -> Result<UInt64, LoadError> {
         file_result(self, path, true)
     }
@@ -450,9 +512,11 @@ impl Vm {
         source_result(self, name.clone(), "{input}\n{output}", 2)?
         Ok(Entry { name: name })
     }
+    /// Loads source text under the supplied module name.
     pub fn module_source(&self, name: String, source: String) @suspends -> Result<Unit, LoadError> {
         loaded(source_result(self, name, source, 3))
     }
+    /// Loads a source file under the supplied module name.
     pub fn module_file(&self, name: String, path: String) @suspends -> Result<Unit, LoadError> {
         let source = match file_text(path) {
             Ok(source) => source,
@@ -464,17 +528,21 @@ impl Vm {
 
 // A typed entry name. Each invocation validates the selected VM's current code;
 // this descriptor neither owns a VM nor pins a code generation.
+/// A typed name for access to an embedded Script entry point.
 #derive(Clone)
 pub struct Entry<A, R> { name: String }
 impl<A, R> Entry<A, R> {
+    /// Calls a checked embedded function with the supplied input and returns its value. Fails the task on a call error.
     pub fn call(&self, engine: &Vm, input: A) @suspends -> R {
         engine.call::<A, R>(self.name.clone(), input)
     }
+    /// Calls a checked embedded function with the supplied input and returns a structured call error on failure.
     pub fn try_call(&self, engine: &Vm, input: A) @suspends -> Result<R, CallError> {
         engine.try_call::<A, R>(self.name.clone(), input)
     }
 }
 impl LoadError {
+    /// Formats the load error and its context into an owned string.
     pub fn message(&self) -> String {
         match &self.kind {
             Io(error) => error.message.clone(),
@@ -489,7 +557,21 @@ impl LoadError {
 
 /// One owning session reserves the VM's migration slot until it is dropped.
 pub struct Migration { owner: vm.MigrationOwner }
-pub enum MigrationErrorKind { Compile, Incompatible, Conflict, Runtime, Busy, Unavailable }
+/// Reasons a VM migration operation failed.
+pub enum MigrationErrorKind {
+    /// The migration source did not compile.
+    Compile,
+    /// The proposed migration was incompatible with the source or target schema.
+    Incompatible,
+    /// The migration could not publish against the current state.
+    Conflict,
+    /// Executing the migration failed at runtime.
+    Runtime,
+    /// Another migration is already active.
+    Busy,
+    /// The requested migration operation is unavailable.
+    Unavailable
+}
 impl Show for MigrationErrorKind {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -505,7 +587,13 @@ impl Show for MigrationErrorKind {
     }
 }
 
-pub struct MigrationError { pub kind: MigrationErrorKind, pub diagnostic: Diagnostic }
+/// Failure during an embedded VM migration.
+pub struct MigrationError {
+    /// Category of the migration failure.
+    pub kind: MigrationErrorKind,
+    /// Additional diagnostic information. The message may be empty.
+    pub diagnostic: Diagnostic
+}
 impl Show for MigrationError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         self.kind.show(output)
@@ -529,6 +617,7 @@ extern fn __vm_migration_command(
 extern fn __vm_migration_diagnostic(owner: &mut vm.MigrationOwner) @suspends -> String
 
 impl Vm {
+    /// Reserves the migration slot and returns an owning migration session.
     pub fn migration(&self) @suspends -> Result<Migration, MigrationError> {
         var session = Migration { owner: __vm_migration_open(&self.owner) }
         session.command(0, 0, "", "", "")?
@@ -575,9 +664,11 @@ impl Migration {
                     end: buffer.load(&packet, 2)
                 } })
     }
+    /// Reads the VM's state-domain schema through this migration session.
     pub fn schema(&mut self) @suspends -> Result<UInt64, MigrationError> {
         self.command(1, 0, "", "", "")
     }
+    /// Prepares an atomic migration using the named transformation.
     pub fn prepare(
         &mut self,
         schema: UInt64,
@@ -587,6 +678,7 @@ impl Migration {
         self.command(2, schema, source, method, "")?
         Ok({})
     }
+    /// Starts an incremental migration using the named start and advance functions.
     pub fn begin(
         &mut self,
         schema: UInt64,
@@ -597,10 +689,12 @@ impl Migration {
         self.command(3, schema, source, start, advance)?
         Ok({})
     }
+    /// Begins a migration batch from source text.
     pub fn begin_batch(&mut self, source: String) @suspends -> Result<Unit, MigrationError> {
         self.command(4, 0, source, "", "")?
         Ok({})
     }
+    /// Stages a migration step in the current batch.
     pub fn stage(
         &mut self,
         start: String,
@@ -613,10 +707,12 @@ impl Migration {
     pub fn step(&mut self, budget: UInt64) @suspends -> Result<Bool, MigrationError> {
         Ok(self.command(6, budget, "", "", "")? == 0)
     }
+    /// Consumes the session and attempts to publish its prepared changes.
     pub fn publish(var self) @suspends -> Result<Unit, MigrationError> {
         self.command(7, 0, "", "", "")?
         Ok({})
     }
+    /// Consumes the session and cancels the prepared migration.
     pub fn cancel(var self) @suspends -> Result<Unit, MigrationError> {
         self.command(8, 0, "", "", "")?
         Ok({})

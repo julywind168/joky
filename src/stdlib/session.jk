@@ -36,12 +36,17 @@ import joky/tcp.{
     type IoError
 }
 
+/// Outgoing queue capacity and the deadline for receiving a message.
 pub struct Options {
+    /// Maximum queued outgoing messages.
     pub queue_messages: UInt64,
+    /// Maximum total bytes in queued outgoing messages.
     pub queue_bytes: UInt64,
+    /// Time allowed for one complete read. Zero disables the deadline.
     pub idle_timeout: Duration
 }
 impl Options {
+    /// Uses a queue of 64 messages and 65,536 bytes, with no idle deadline.
     pub fn default() -> Self {
         Options { queue_messages: 64, queue_bytes: 65536, idle_timeout: 0ns }
     }
@@ -51,15 +56,23 @@ pub type Output = outbox.Handle
 /// A reader owns protocol state; each call returns one complete message or EOF.
 /// Cancellation terminates the session, so a partially consumed read is never retried.
 pub trait Reader {
+    /// The type of complete input message yielded by the reader.
     type Message
+    /// The protocol-specific error type returned by the reader.
     type Error
+    /// Reads one complete message, returns None for EOF, or returns a protocol error.
     fn read(
         &mut self,
         input: &mut BufferedTcpReader
     ) @suspends @noescape -> Result<Option<Self.Message>, Self.Error>
 }
-pub struct Lines { pub max_bytes: UInt64 }
+/// Reads one UTF-8 line per message.
+pub struct Lines {
+    /// Maximum line length in bytes including its terminator, from 1 to 1,048,576.
+    pub max_bytes: UInt64
+}
 impl Lines {
+    /// Uses a line limit of 4,096 bytes including its terminator.
     pub fn default() -> Self {
         Lines { max_bytes: 4096 }
     }
@@ -75,8 +88,12 @@ impl Reader for Lines {
     }
 }
 /// Four-byte big-endian payload length, compatible with TcpWriter.write_message.
-pub struct LengthPrefixed { pub max_bytes: UInt64 }
+pub struct LengthPrefixed {
+    /// Maximum payload size in bytes, from 0 to 1,048,576, excluding the length prefix.
+    pub max_bytes: UInt64
+}
 impl LengthPrefixed {
+    /// Uses a payload limit of 65,536 bytes.
     pub fn default() -> Self {
         LengthPrefixed { max_bytes: 65536 }
     }
@@ -93,12 +110,18 @@ impl Reader for LengthPrefixed {
 }
 /// One handler holds the shared service and per-connection context.
 pub trait Handler {
+    /// The type of input messages accepted by the handler.
     type Message
+    /// Handles an owned message and returns whether to continue receiving.
     fn on_message(&self, message: Self.Message) @suspends @noescape -> Bool
+    /// Performs application cleanup for a session that is about to return.
     fn on_close(&self) @suspends @noescape
 }
+/// Owns the outgoing and stop queues for one TCP session.
 pub struct Connection { outgoing: outbox.Mailbox, control: outbox.Mailbox, options: Options }
 
+/// Creates a session with a bounded outgoing queue and a separate stop queue.
+/// An outgoing queue overflow requests a disconnect.
 pub fn create(options: Options) @suspends -> Connection {
     let control = outbox.create(1, 0)
     let outgoing = outbox.create_with_policy(
@@ -110,16 +133,39 @@ pub fn create(options: Options) @suspends -> Connection {
 }
 
 impl Connection {
+    /// Returns a non-owning handle for staging outgoing messages.
     pub fn output(&self) @suspends -> Output {
         self.outgoing.handle()
     }
+    /// Returns a non-owning handle to the session's stop queue.
     pub fn stop_handle(&self) @suspends -> outbox.Handle {
         self.control.handle()
     }
 }
 /// Typed exits are returned after on_close; structural cancellation does not return.
-pub enum End { Eof, HandlerStopped, IdleTimeout, Shutdown, Stopped, OutputClosed }
-pub enum Error<E> { Read(E), Write(IoError), ReadAndWrite((E, IoError)) }
+pub enum End {
+    /// The peer reached a clean end of input.
+    Eof,
+    /// The handler asked to stop receiving messages.
+    HandlerStopped,
+    /// The deadline for a complete input message elapsed.
+    IdleTimeout,
+    /// The shared shutdown controller requested graceful shutdown.
+    Shutdown,
+    /// The connection's independent stop queue ended the session.
+    Stopped,
+    /// The outgoing queue closed and its writer finished.
+    OutputClosed
+}
+/// Read and write failures from running a TCP session.
+pub enum Error<E> {
+    /// Reading or decoding an incoming message failed.
+    Read(E),
+    /// Writing an outgoing message failed.
+    Write(IoError),
+    /// The read failed and draining outgoing messages also failed.
+    ReadAndWrite((E, IoError))
+}
 
 enum Next<M, E> { Message(M), End(End), Failed(E) }
 
@@ -195,6 +241,8 @@ fn stop<E>(queue: &mut outbox.Mailbox) @suspends -> Result<End, Error<E>> {
     Ok(End.Stopped)
 }
 
+/// Runs a session to its first exit or I/O failure, owning the connection and stream.
+/// Calls the handler's `on_close` before returning.
 pub fn run<R: Reader, H: Handler<Message = R.Message>>(
     connection: Connection,
     stream: TcpStream,
@@ -317,6 +365,8 @@ fn drain<R: Reader, H: Handler<Message = R.Message>>(
     finish(received, sent)
 }
 
+/// On shutdown, stops admitting new messages and lets the active callback finish.
+/// Seals and drains pending output before calling the handler's `on_close`.
 pub fn run_draining<R: Reader, H: Handler<Message = R.Message>>(
     connection: Connection,
     stream: TcpStream,

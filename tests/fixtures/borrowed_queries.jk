@@ -17,11 +17,11 @@ fn forwarded<T>(value: Option<&T>) -> Option<&T> { value }
 fn from_slice<T>(values: &Slice<T>) -> Option<&T> { values.get_ref(0) }
 fn check_container_queries() {
     let fixed: FixedArray<String, 2> = ["left", "right"]
-    assert(fixed.get_ref(1)! == "right" && fixed_array.get_ref(&fixed, 2).is_none(), "fixed array lookup")
+    assert(fixed.get_ref(1)! == "right" && fixed.get_ref(2).is_none(), "fixed array lookup")
     var sequence = List.from_array(["first", "removed", "last"])
     sequence.remove(1)
     sequence.reverse()
-    assert(list.get_ref(&sequence, 0)! == "last" && sequence.get_ref(2).is_none(), "logical list lookup")
+    assert(sequence.get_ref(0)! == "last" && sequence.get_ref(2).is_none(), "logical list lookup")
     var counts = Map.new::<String, Int32>()
     counts.insert("key", 41)
     let counter_key = "key"

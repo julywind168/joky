@@ -11,7 +11,7 @@ fn replace_copy() -> Int32 {
     var a = Array.with_capacity::<Int32>(3)
     if !a.replace(0, 1).is_none() { return 0 }
     a.push(10)
-    if array.replace(&mut a, 0, 20).unwrap_or(0) != 10 { return 0 }
+    if a.replace(0, 20).unwrap_or(0) != 10 { return 0 }
     a.push(30); a.push(40)
     if a.replace(0, 21).unwrap_or(0) != 20 { return 0 }
     if a.replace(1, 31).unwrap_or(0) != 30 { return 0 }

@@ -21,6 +21,7 @@ import joky/internal/buffer
 
 /// Equal keys must have equal, stable hashes. Outputs are not a persistent format.
 pub trait Hash {
+    /// Returns a hash of the borrowed value. Equal values must produce identical hashes.
     fn hash(&self) @noescape -> UInt64
 }
 

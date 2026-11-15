@@ -147,6 +147,34 @@ fn doc_cli_generates_linked_offline_reference_and_regenerates() {
     assert!(option.contains("class=\"language-joky\""));
     assert!(option.contains("class=\"syntax-constant\">21</span>"));
     assert!(option.contains("class=\"syntax-function\">println</span>"));
+    let variants = option
+        .split_once("<dl class=\"members\" aria-labelledby=\"enum-Option-members\">")
+        .unwrap()
+        .1
+        .split_once("</dl>")
+        .unwrap()
+        .0;
+    assert!(variants.contains("id=\"enum-Option-variant-None\""));
+    assert!(variants.contains("id=\"enum-Option-variant-Some\""));
+    assert!(text_without_tags(variants).contains("Some(T)"));
+    assert!(!variants.contains("<pre>"));
+    let json = fs::read_to_string(root.join("json/index.html")).unwrap();
+    assert!(json.contains("<nav class=\"api-index\" aria-label=\"API index\">"));
+    let fields = json
+        .split_once("<dl class=\"members\" aria-labelledby=\"struct-Limits-members\">")
+        .unwrap()
+        .1
+        .split_once("</dl>")
+        .unwrap()
+        .0;
+    assert!(fields.contains("id=\"struct-Limits-field-max_depth\""));
+    assert!(text_without_tags(fields).contains("pub max_depth: UInt64"));
+    assert!(fields.contains("<dd><p>Maximum container nesting"));
+    assert!(!json.contains("id=\"struct-Number-field-text\""));
+    let array = fs::read_to_string(root.join("array/index.html")).unwrap();
+    assert!(!array.contains("id=\"fn-insert\""));
+    assert!(array.contains("-method-insert\""));
+    assert!(array.contains("An index equal to the length appends."));
     let style = fs::read_to_string(root.join("style.css")).unwrap();
     assert!(style.contains(".syntax-keyword"));
     assert!(style.contains("prefers-color-scheme: dark"));

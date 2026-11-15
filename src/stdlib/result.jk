@@ -26,7 +26,12 @@ import joky/option.{type Option, Some, None}
 import joky/check
 
 /// An owned success value (`Ok`) or error (`Err`).
-pub enum Result<T, E> { Ok(T), Err(E) }
+pub enum Result<T, E> {
+    /// The operation succeeded and returned a value of type `T`.
+    Ok(T),
+    /// The operation returned a recoverable error of type `E`.
+    Err(E)
+}
 
 impl<T, E> Result<T, E> {
     /// An explicit assertion for callers that consider rejection a task failure.

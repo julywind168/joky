@@ -24,7 +24,11 @@ import joky/internal/buffer
 import joky/result.{type Result, Ok, Err}
 import joky/option.{type Option, Some, None}
 
-pub enum RandomError { Unavailable }
+/// Failure to obtain random bytes from the system source.
+pub enum RandomError {
+    /// The system could not supply random bytes.
+    Unavailable
+}
 impl Show for RandomError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -68,6 +72,7 @@ fn rotate(word: UInt64, count: UInt64) -> UInt64 {
 }
 
 impl Rng {
+    /// Creates a deterministic generator from the given seed.
     pub fn seeded(var seed: UInt64) -> Rng {
         let a = seed_word(&mut seed)
         let b = seed_word(&mut seed)
@@ -75,6 +80,7 @@ impl Rng {
         let d = seed_word(&mut seed)
         Rng { a: a, b: b, c: c, d: d }
     }
+    /// Advances the generator and returns the next 64-bit value.
     pub fn next_u64(&mut self) -> UInt64 {
         let result = rotate(self.a + self.d, 23) + self.a
         let shifted = self.b << 17

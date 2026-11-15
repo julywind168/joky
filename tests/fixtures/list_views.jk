@@ -12,5 +12,5 @@ pub fn removed<T>(list: &mut Sequence<T>, index: UInt64) -> Option<T> { list.rem
 pub fn put<T>(list: &mut Sequence<T>, value: T) { list.push_back(value) }
 pub fn export<T>(list: Sequence<T>) -> Array<T> { list.into_array() }
 pub fn import_array<T>(values: Array<T>) -> Sequence<T> { Chain.from_array(values) }
-pub fn append<T>(list: &mut Sequence<T>, other: &mut Sequence<T>) { lists.append(list, other) }
+pub fn append<T>(list: &mut Sequence<T>, other: &mut Sequence<T>) { list.append(other) }
 pub fn new<T>() -> Sequence<T> { Chain.new::<T>() }

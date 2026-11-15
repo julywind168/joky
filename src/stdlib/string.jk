@@ -36,16 +36,30 @@ fn copy_text(text: &String) @noescape -> String {
 #intrinsic("text.freeze_utf8")
 fn freeze_utf8(bytes: Array<UInt8>) -> String
 
+/// Consumes the string and transfers its UTF-8 bytes to an array.
 #intrinsic("text.into_bytes")
 /// Consumes the string and transfers ownership of its UTF-8 bytes.
 pub fn into_bytes(text: String) -> Array<UInt8>
 
+/// Borrows the string's UTF-8 bytes directly.
 #intrinsic("text.bytes")
 /// Borrows the string as UTF-8 bytes without copying.
 pub fn bytes(text: &String) -> &Slice<UInt8>
 
-pub enum Utf8ErrorCode { InvalidSequence, UnexpectedEnd }
-pub struct Utf8Error { pub code: Utf8ErrorCode, pub offset: UInt64 }
+/// Categories of UTF-8 decoding failure.
+pub enum Utf8ErrorCode {
+    /// The available bytes do not form a valid UTF-8 sequence.
+    InvalidSequence,
+    /// The input ends after a valid prefix of a multibyte sequence.
+    UnexpectedEnd
+}
+/// Locates the first invalid or incomplete UTF-8 sequence.
+pub struct Utf8Error {
+    /// Category of the decoding failure.
+    pub code: Utf8ErrorCode,
+    /// Zero-based byte offset of the start of the sequence.
+    pub offset: UInt64
+}
 
 // Reject noncanonical encodings before constructing a Rune. The offset always
 // identifies the start of the first invalid sequence, including truncated input.
@@ -138,7 +152,7 @@ pub fn substring(text: &String, start: UInt64, end: UInt64) -> Option<String> {
     Some(freeze_utf8(output))
 }
 
-pub fn next_rune(text: &String, offset: UInt64) -> Option<(Rune, UInt64)> {
+fn next_rune(text: &String, offset: UInt64) -> Option<(Rune, UInt64)> {
     let source = bytes(text)
     let length = slice.len(source)
     if offset > length {
@@ -156,8 +170,10 @@ pub fn next_rune(text: &String, offset: UInt64) -> Option<(Rune, UInt64)> {
     }
 }
 
+/// A shared UTF-8 cursor yielding Unicode scalar values.
 pub struct Runes { source: &String, offset: UInt64 }
 
+/// Creates a shared cursor over the Unicode scalars.
 pub fn runes(text: &String) -> Runes {
     Runes { source: text, offset: 0 }
 }
@@ -176,7 +192,7 @@ impl SharedIterator for Runes {
 }
 
 /// Counts Unicode scalar values, not bytes or grapheme clusters.
-pub fn rune_count(text: &String) -> UInt64 {
+fn rune_count(text: &String) -> UInt64 {
     var offset: UInt64 = 0
     var count: UInt64 = 0
     while offset < byte_length(text) {
@@ -193,6 +209,7 @@ pub fn rune_count(text: &String) -> UInt64 {
     count
 }
 
+/// Concatenates the two borrowed texts into a new owned string.
 pub fn concat(left: &String, right: &String) -> String {
     var builder = StringBuilder.from(left)
     // Array.reserve checks the combined length before allocating or copying.
@@ -210,11 +227,13 @@ fn add_join_length(current: UInt64, additional: UInt64) -> UInt64 {
 }
 
 impl Array<String> {
+    /// Copies the parts into one string, inserting the separator between adjacent parts.
     pub fn join(&self, separator: &String) -> String {
         join(self, separator)
     }
 }
 
+/// Copies the parts into one string, inserting the separator between adjacent parts.
 pub fn join(parts: &Array<String>, separator: &String) -> String {
     let length = parts.len()
     let separator_length = byte_length(separator)
@@ -287,6 +306,7 @@ pub fn split(text: &String, separator: &String) -> Array<String> {
     output
 }
 
+/// Splits text into owned lines.
 pub fn lines(text: &String) -> Array<String> {
     let source = bytes(text)
     let length = slice.len(source)
@@ -310,6 +330,7 @@ pub fn lines(text: &String) -> Array<String> {
     output
 }
 
+/// Copies the nonempty runs separated by Unicode whitespace into an array.
 pub fn split_whitespace(text: &String) -> Array<String> {
     let source = bytes(text)
     let length = slice.len(source)
@@ -364,53 +385,66 @@ fn signed_decimal(value: Int64) -> String {
 }
 
 impl Int32 {
+    /// Formats the integer in base ten into an owned string.
     pub fn to_string(self) -> String {
         signed_decimal(int64(self))
     }
 }
 impl Int64 {
+    /// Formats the integer in base ten into an owned string.
     pub fn to_string(self) -> String {
         signed_decimal(self)
     }
 }
 impl UInt32 {
+    /// Formats the integer in base ten into an owned string.
     pub fn to_string(self) -> String {
         decimal(uint64(self), false)
     }
 }
 impl UInt64 {
+    /// Formats the integer in base ten into an owned string.
     pub fn to_string(self) -> String {
         decimal(self, false)
     }
 }
 
 // The array is private: successful operations only append complete UTF-8 scalars.
+/// Owns a growable byte buffer for constructing UTF-8 text.
 pub struct StringBuilder { data: Array<UInt8> }
 
 impl StringBuilder {
+    /// Creates an empty builder with no reserved capacity.
     pub fn new() -> Self {
         StringBuilder { data: Array.new::<UInt8>() }
     }
+    /// Creates an empty builder with at least the requested byte capacity.
     pub fn with_capacity(capacity: UInt64) -> Self {
         StringBuilder { data: Array.with_capacity::<UInt8>(capacity) }
     }
+    /// Creates a builder containing a copy of the supplied text.
     pub fn from(text: &String) -> Self {
         var builder = StringBuilder.with_capacity(byte_length(text))
         builder.push_str(text)
         builder
     }
+    /// Returns the number of UTF-8 bytes.
     pub fn byte_length(&self) -> UInt64 {
         self.data.len()
     }
+    /// Returns the byte capacity of the builder's buffer.
     pub fn capacity(&self) -> UInt64 {
         self.data.capacity()
     }
+    /// Reserves room for additional bytes without changing the accumulated text.
     pub fn reserve(&mut self, additional: UInt64) {
         self.data.reserve(additional)
     }
+    /// Clears the accumulated text while retaining buffer capacity.
     pub fn clear(&mut self) {
         self.data.clear()
     }
+    /// Consumes the builder and releases its buffer.
     pub fn release(self) {
         self.data.release()
     }
@@ -418,6 +452,7 @@ impl StringBuilder {
     pub fn finish(self) -> String {
         freeze_utf8(self.data)
     }
+    /// Appends the UTF-8 encoding of one Unicode scalar.
     pub fn push(&mut self, rune: Rune) {
         let value = rune.to_u32()
         let count: UInt64 = if value <= 0x7f {
@@ -478,9 +513,11 @@ impl String {
     pub fn substring(&self, start: UInt64, end: UInt64) -> Option<String> {
         substring(self, start, end)
     }
+    /// Decodes the Unicode scalar at the byte offset and returns the next offset. Returns None at the end.
     pub fn next_rune(&self, offset: UInt64) -> Option<(Rune, UInt64)> {
         next_rune(self, offset)
     }
+    /// Creates a shared cursor over the Unicode scalars.
     pub fn runes(&self) -> Runes {
         runes(self)
     }
@@ -488,6 +525,7 @@ impl String {
     pub fn rune_count(&self) -> UInt64 {
         rune_count(self)
     }
+    /// Concatenates the two borrowed texts into a new owned string.
     pub fn concat(&self, right: &String) -> String {
         concat(self, right)
     }
@@ -495,45 +533,59 @@ impl String {
     pub fn split(&self, separator: &String) -> Array<String> {
         split(self, separator)
     }
+    /// Splits text into owned lines.
     pub fn lines(&self) -> Array<String> {
         lines(self)
     }
+    /// Copies the nonempty runs separated by Unicode whitespace into an array.
     pub fn split_whitespace(&self) -> Array<String> {
         split_whitespace(self)
     }
+    /// Creates an empty owned string.
     pub fn new() -> Self {
         new()
     }
+    /// Copies the UTF-8 bytes into a new owner.
     pub fn clone(&self) -> Self {
         clone(self)
     }
+    /// Consumes the owned string and releases its storage.
     pub fn release(self) {
         release(self)
     }
+    /// Returns the number of UTF-8 bytes.
     pub fn byte_length(&self) -> UInt64 {
         byte_length(self)
     }
+    /// Returns true if the text has no bytes.
     pub fn is_empty(&self) -> Bool {
         is_empty(self)
     }
+    /// Returns the byte offset of the first matching substring, or None.
     pub fn find(&self, needle: &String) -> Option<UInt64> {
         find(self, needle)
     }
+    /// Tests whether the text begins with the supplied prefix. An empty prefix always matches.
     pub fn starts_with(&self, prefix: &String) -> Bool {
         starts_with(self, prefix)
     }
+    /// Tests whether the text ends with the supplied suffix. An empty suffix always matches.
     pub fn ends_with(&self, suffix: &String) -> Bool {
         ends_with(self, suffix)
     }
+    /// Tests whether the supplied text occurs as a substring.
     pub fn contains(&self, needle: &String) -> Bool {
         contains(self, needle)
     }
+    /// Copies the text before and after the first separator, or returns None if it is absent.
     pub fn split_once(&self, separator: &String) -> Option<(String, String)> {
         split_once(self, separator)
     }
+    /// Copies the text after a matching prefix, or returns None if the prefix is absent.
     pub fn strip_prefix(&self, prefix: &String) -> Option<String> {
         strip_prefix(self, prefix)
     }
+    /// Copies the text before a matching suffix, or returns None if the suffix is absent.
     pub fn strip_suffix(&self, suffix: &String) -> Option<String> {
         strip_suffix(self, suffix)
     }
@@ -541,43 +593,52 @@ impl String {
     pub fn trim(&self) -> String {
         trim(self)
     }
+    /// Copies the text after removing leading Unicode whitespace.
     pub fn trim_start(&self) -> String {
         trim_start(self)
     }
+    /// Copies the text after removing trailing Unicode whitespace.
     pub fn trim_end(&self) -> String {
         trim_end(self)
     }
+    /// Compares text while ignoring only the case of ASCII letters.
     pub fn eq_ignore_ascii_case(&self, other: &String) -> Bool {
         eq_ignore_ascii_case(self, other)
     }
+    /// Returns an owned copy with ASCII letters converted to lowercase.
     pub fn to_ascii_lowercase(&self) -> String {
         to_ascii_lowercase(self)
     }
+    /// Returns an owned copy with ASCII letters converted to uppercase.
     pub fn to_ascii_uppercase(&self) -> String {
         to_ascii_uppercase(self)
     }
+    /// Replaces nonoverlapping matches from left to right. An empty pattern matches at Unicode scalar boundaries.
     pub fn replace(&self, from: &String, to: &String) -> String {
         replace(self, from, to)
     }
 }
 
-pub fn new() -> String {
+fn new() -> String {
     ""
 }
 
+/// Copies the UTF-8 bytes into a new owner.
 pub fn clone(text: &String) -> String {
     copy_text(text)
 }
 
+/// Consumes the owned string and releases its storage.
 pub fn release(text: String) {
     into_bytes(text).release()
 }
 
+/// Returns the number of UTF-8 bytes.
 pub fn byte_length(text: &String) -> UInt64 {
     slice.len(bytes(text))
 }
 
-pub fn is_empty(text: &String) -> Bool {
+fn is_empty(text: &String) -> Bool {
     byte_length(text) == 0
 }
 
@@ -592,13 +653,13 @@ fn matches_at(text: &Slice<UInt8>, other: &Slice<UInt8>, offset: UInt64) -> Bool
     true
 }
 
-pub fn starts_with(text: &String, prefix: &String) -> Bool {
+fn starts_with(text: &String, prefix: &String) -> Bool {
     let text = bytes(text)
     let prefix = bytes(prefix)
     slice.len(prefix) <= slice.len(text) && matches_at(text, prefix, 0)
 }
 
-pub fn ends_with(text: &String, suffix: &String) -> Bool {
+fn ends_with(text: &String, suffix: &String) -> Bool {
     let text = bytes(text)
     let suffix = bytes(suffix)
     let length = slice.len(text)
@@ -606,6 +667,7 @@ pub fn ends_with(text: &String, suffix: &String) -> Bool {
     count <= length && matches_at(text, suffix, length - count)
 }
 
+/// Returns the byte offset of the first matching substring, or None.
 pub fn find(text: &String, needle: &String) -> Option<UInt64> {
     let text = bytes(text)
     let needle = bytes(needle)
@@ -632,11 +694,12 @@ pub fn find(text: &String, needle: &String) -> Option<UInt64> {
     None
 }
 
+/// Tests whether the supplied text occurs as a substring.
 pub fn contains(text: &String, needle: &String) -> Bool {
     find(text, needle).is_some()
 }
 
-pub fn split_once(text: &String, separator: &String) -> Option<(String, String)> {
+fn split_once(text: &String, separator: &String) -> Option<(String, String)> {
     let offset = find(text, separator)?
     Some(
         (
@@ -646,7 +709,7 @@ pub fn split_once(text: &String, separator: &String) -> Option<(String, String)>
     )
 }
 
-pub fn strip_prefix(text: &String, prefix: &String) -> Option<String> {
+fn strip_prefix(text: &String, prefix: &String) -> Option<String> {
     if starts_with(text, prefix) {
         substring(text, byte_length(prefix), byte_length(text))
     } else {
@@ -654,7 +717,7 @@ pub fn strip_prefix(text: &String, prefix: &String) -> Option<String> {
     }
 }
 
-pub fn strip_suffix(text: &String, suffix: &String) -> Option<String> {
+fn strip_suffix(text: &String, suffix: &String) -> Option<String> {
     if ends_with(text, suffix) {
         substring(text, 0, byte_length(text) - byte_length(suffix))
     } else {
@@ -696,16 +759,16 @@ fn trim_end_offset(source: &Slice<UInt8>, start: UInt64) -> UInt64 {
     end
 }
 
-pub fn trim_start(text: &String) -> String {
+fn trim_start(text: &String) -> String {
     substring(text, trim_start_offset(bytes(text)), byte_length(text))!
 }
 
-pub fn trim_end(text: &String) -> String {
+fn trim_end(text: &String) -> String {
     substring(text, 0, trim_end_offset(bytes(text), 0))!
 }
 
 /// Copies the string with leading and trailing Unicode White_Space removed.
-pub fn trim(text: &String) -> String {
+fn trim(text: &String) -> String {
     let source = bytes(text)
     let start = trim_start_offset(source)
     substring(text, start, trim_end_offset(source, start))!
@@ -719,7 +782,7 @@ fn ascii_lower(byte: UInt8) -> UInt8 {
     }
 }
 
-pub fn eq_ignore_ascii_case(left: &String, right: &String) -> Bool {
+fn eq_ignore_ascii_case(left: &String, right: &String) -> Bool {
     let left = bytes(left)
     let right = bytes(right)
     let length = slice.len(left)
@@ -762,15 +825,15 @@ fn ascii_case(text: &String, lower: Bool) -> String {
     freeze_utf8(output)
 }
 
-pub fn to_ascii_lowercase(text: &String) -> String {
+fn to_ascii_lowercase(text: &String) -> String {
     ascii_case(text, true)
 }
 
-pub fn to_ascii_uppercase(text: &String) -> String {
+fn to_ascii_uppercase(text: &String) -> String {
     ascii_case(text, false)
 }
 
-pub fn replace(text: &String, from: &String, to: &String) -> String {
+fn replace(text: &String, from: &String, to: &String) -> String {
     let source = bytes(text)
     let pattern = bytes(from)
     let replacement = bytes(to)

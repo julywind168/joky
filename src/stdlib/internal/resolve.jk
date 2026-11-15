@@ -5,7 +5,19 @@ import joky/result.{type Result, Ok, Err}
 import joky/integer
 import joky/string
 
-pub enum ErrorKind { InvalidInput, Busy, NoAddresses, LimitExceeded, SystemFailure }
+/// Categories of hostname resolution failure.
+pub enum ErrorKind {
+    /// The host is invalid. Pass the port separately.
+    InvalidInput,
+    /// The resolver could not accept another lookup.
+    Busy,
+    /// The lookup yielded no usable addresses.
+    NoAddresses,
+    /// The lookup exceeded a resolver limit.
+    LimitExceeded,
+    /// The system resolver failed.
+    SystemFailure
+}
 impl Show for ErrorKind {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         output.push_str(
@@ -20,7 +32,13 @@ impl Show for ErrorKind {
     }
 }
 
-pub struct ResolveError { pub kind: ErrorKind, pub message: String }
+/// A lookup failure and its diagnostic.
+pub struct ResolveError {
+    /// Category for programmatic handling.
+    pub kind: ErrorKind,
+    /// Human-readable diagnostic from the resolver.
+    pub message: String
+}
 impl Show for ResolveError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         self.kind.show(output)

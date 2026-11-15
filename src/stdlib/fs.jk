@@ -30,21 +30,50 @@ import joky/show.{type Show}
 const IO_CHUNK_SIZE: UInt64 = 65536
 const PATH_LIMIT: UInt64 = 4096
 
+/// Portable categories of filesystem or stream failure.
 pub enum ErrorKind {
+    /// The host filesystem does not provide the requested operation.
     Unsupported,
+    /// The host denied access to the entry or operation.
     PermissionDenied,
+    /// The requested file or directory could not be found.
     NotFound,
+    /// An entry already exists at the target path.
     AlreadyExists,
+    /// The host rejected an argument or option.
     InvalidInput,
+    /// The required host resource is busy.
     Busy,
+    /// The file or stream is closed.
     Closed,
+    /// The operation exceeded its configured resource limit.
     LimitExceeded,
+    /// A write stopped making progress before all bytes were written.
     WriteZero,
+    /// The host reported a filesystem failure outside the other categories.
     SystemFailure
 }
-pub struct IoError { pub kind: ErrorKind, pub message: String }
-pub struct WriteError { pub written: UInt64, pub error: IoError }
-pub enum ReadTextError { Io(IoError), Utf8(Utf8Error) }
+/// A filesystem or stream operation failed.
+pub struct IoError {
+    /// Category for programmatic handling.
+    pub kind: ErrorKind,
+    /// Human-readable detail, when available.
+    pub message: String
+}
+/// A write stopped after possibly making partial progress.
+pub struct WriteError {
+    /// Number of bytes confirmed written before the failure.
+    pub written: UInt64,
+    /// Failure that stopped the write.
+    pub error: IoError
+}
+/// Failure to read bytes or decode them as UTF-8 text.
+pub enum ReadTextError {
+    /// The underlying read operation failed.
+    Io(IoError),
+    /// The bytes failed UTF-8 decoding.
+    Utf8(Utf8Error)
+}
 impl Show for ErrorKind {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -95,15 +124,23 @@ impl Show for ReadTextError {
     }
 }
 
+/// Access and creation flags for `open`. The default opens an existing file for reading.
 pub struct OpenOptions {
+    /// Open the file for reading.
     pub read: Bool,
+    /// Open the file for writing.
     pub write: Bool,
+    /// Open for writing at the end of the file.
     pub append: Bool,
+    /// Create a missing file. Requires write or append access.
     pub create: Bool,
+    /// Create a new file exclusively and fail if the path already exists.
     pub create_new: Bool,
+    /// Set an existing file's length to zero when opening it for writing.
     pub truncate: Bool
 }
 impl OpenOptions {
+    /// Selects read-only access to an existing file.
     pub fn default() -> Self {
         OpenOptions {
             read: true,
@@ -115,8 +152,26 @@ impl OpenOptions {
         }
     }
 }
-pub enum SeekFrom { Start(UInt64), Current(Int64), End(Int64) }
-pub enum FileKind { Regular, Directory, Symlink, Other }
+/// An origin and offset for moving a file cursor.
+pub enum SeekFrom {
+    /// An absolute byte offset from the start of the file.
+    Start(UInt64),
+    /// A signed byte offset relative to the current cursor.
+    Current(Int64),
+    /// A signed byte offset relative to the end of the file.
+    End(Int64)
+}
+/// Classification of a filesystem entry.
+pub enum FileKind {
+    /// A regular file.
+    Regular,
+    /// A filesystem directory.
+    Directory,
+    /// A symbolic link.
+    Symlink,
+    /// An entry of another filesystem type.
+    Other
+}
 impl Show for FileKind {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -130,7 +185,14 @@ impl Show for FileKind {
     }
 }
 
-pub struct Metadata { pub kind: FileKind, pub size: UInt64 }
+/// Filesystem entry metadata returned by `metadata`.
+pub struct Metadata {
+    /// Entry type. A symbolic link is reported as `Symlink`.
+    pub kind: FileKind,
+    /// Length in bytes reported by the filesystem.
+    pub size: UInt64
+}
+/// An owned file or stream handle with an independent lifetime.
 pub struct File { owner: fs.FileOwner }
 extern fn __io_stdin() @suspends -> fs.OutcomeOwner
 extern fn __fs_rename(from: &String, to: &String) @suspends -> fs.OutcomeOwner
@@ -184,6 +246,8 @@ fn file_path<P: IntoPath>(path: &P) @noescape -> Result<String, IoError> {
     }
 }
 
+/// Opens a path of at most 4096 bytes with the requested access and creation flags.
+/// Returns an owned file handle or an `IoError`.
 pub fn open<P: IntoPath>(path: &P, options: OpenOptions) @suspends -> Result<File, IoError> {
     let text = file_path(path)?
     var flags: UInt64 = 0
@@ -223,14 +287,17 @@ fn status(var result: fs.OutcomeOwner) @suspends -> Result<Unit, IoError> {
     check_status(&mut result)
 }
 
+/// Renames or moves an entry through the host filesystem.
 pub fn rename(from: &String, to: &String) @suspends -> Result<Unit, IoError> {
     status(__fs_rename(from, to))
 }
 
+/// Removes a file at the given path.
 pub fn remove_file(path: &String) @suspends -> Result<Unit, IoError> {
     status(__fs_remove_file(path))
 }
 
+/// Creates one directory. Its parent must already exist.
 pub fn create_dir(path: &String) @suspends -> Result<Unit, IoError> {
     status(__fs_create_dir(path))
 }
@@ -255,10 +322,12 @@ pub fn write_text_atomic<P: IntoPath>(path: &P, text: &String) @suspends -> Resu
     write_atomic(path, text.bytes())
 }
 
+/// Removes an empty directory.
 pub fn remove_dir(path: &String) @suspends -> Result<Unit, IoError> {
     status(__fs_remove_dir(path))
 }
 
+/// Reads metadata for the entry itself, including when it is a symbolic link.
 pub fn metadata(path: &String) @suspends -> Result<Metadata, IoError> {
     var result = __fs_metadata(path)
     check_status(&mut result)?
@@ -271,6 +340,7 @@ pub fn metadata(path: &String) @suspends -> Result<Metadata, IoError> {
     Ok(Metadata { kind, size: __fs_count(&mut result) })
 }
 
+/// Returns the directory's entry names as owned strings.
 pub fn read_dir(path: &String) @suspends -> Result<Array<String>, IoError> {
     var result = __fs_read_dir(path)
     check_status(&mut result)?
@@ -283,6 +353,7 @@ pub fn read_dir(path: &String) @suspends -> Result<Array<String>, IoError> {
 }
 
 // Acquire the host's exclusive stdin stream; normal file operations retain their contracts.
+/// Acquires the host's exclusive standard-input stream as a file handle.
 pub fn stdin() @suspends -> Result<File, IoError> {
     var result = __io_stdin()
     check_status(&mut result)?
@@ -291,10 +362,12 @@ pub fn stdin() @suspends -> Result<File, IoError> {
 
 impl File {
     // No content limit; task storage limits still apply.
+    /// Reads the remaining file bytes into an owned array.
     pub fn read_all(&mut self) @suspends -> Result<Array<UInt8>, IoError> {
         read_remaining(self, None)
     }
     // Read one byte beyond the content limit to distinguish exact EOF from overflow.
+    /// Reads the remaining bytes, failing if more than the supplied limit is available.
     pub fn read_all_limited(
         &mut self,
         max_bytes: UInt64
@@ -302,6 +375,7 @@ impl File {
         read_remaining(self, Some(max_bytes))
     }
     // Confirmed progress excludes any unknown effects of the failing request.
+    /// Writes all the bytes or returns an error with the number of bytes confirmed written.
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, WriteError> {
         let length = bytes.len()
         if length == 0 {
@@ -345,28 +419,34 @@ impl File {
         }
         Ok({})
     }
+    /// Reads and decodes the remaining file bytes as UTF-8 text.
     pub fn read_text(&mut self) @suspends -> Result<String, ReadTextError> {
         decode_text(self.read_all())
     }
+    /// Reads no more than the allowed UTF-8 byte count and returns the decoded text.
     pub fn read_text_limited(
         &mut self,
         max_bytes: UInt64
     ) @suspends -> Result<String, ReadTextError> {
         decode_text(self.read_all_limited(max_bytes))
     }
+    /// Writes all UTF-8 bytes of the borrowed string.
     pub fn write_text(&mut self, text: String) @suspends -> Result<Unit, WriteError> {
         self.write_all(text.into_bytes())
     }
+    /// Reads up to the requested byte count. An empty result can indicate end of file.
     pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, IoError> {
         var result = __fs_read(&mut self.owner, limit)
         check_status(&mut result)?
         Ok(__fs_bytes(&mut result))
     }
+    /// Attempts to write the supplied bytes and returns the actual byte count.
     pub fn write(&mut self, bytes: &Slice<UInt8>) @suspends -> Result<UInt64, IoError> {
         var result = __fs_write(&mut self.owner, bytes)
         check_status(&mut result)?
         Ok(__fs_count(&mut result))
     }
+    /// Moves the file cursor and reports its new absolute byte offset.
     pub fn seek(&mut self, from: SeekFrom) @suspends -> Result<UInt64, IoError> {
         let (origin, offset): (UInt64, UInt64) = match from {
             SeekFrom.Start(value) => (0, value)
@@ -377,9 +457,11 @@ impl File {
         check_status(&mut result)?
         Ok(__fs_count(&mut result))
     }
+    /// Requests that pending file data and metadata be synchronized to storage.
     pub fn sync_all(&mut self) @suspends -> Result<Unit, IoError> {
         status(__fs_sync(&mut self.owner))
     }
+    /// Consumes the owned file handle and closes it.
     pub fn close(self) @suspends -> Result<Unit, IoError> {
         var owner = self.owner
         status(__fs_close(&mut owner))

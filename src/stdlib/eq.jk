@@ -21,6 +21,7 @@ import joky/internal/text
 
 /// Equality borrows both values. Map/Set keys additionally require an equivalence relation.
 pub trait Eq {
+    /// Returns true when the two borrowed values compare equal.
     fn eq(&self, other: &Self) @noescape -> Bool
 }
 impl Eq for Int8 {

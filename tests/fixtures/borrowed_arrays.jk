@@ -57,12 +57,12 @@ fn borrowed_array_empty() -> Int32 {
     var values = array.new::<Int32>()
     let empty = array.slice(&values, 0, 0)
     let nested = slice.slice(empty, 0, 0)
-    if !slice.is_empty(nested) || !slice.get(empty, 0).is_none() { return 0 }
+    if !nested.is_empty() || !slice.get(empty, 0).is_none() { return 0 }
     let writable = array.slice_mut(&mut values, 0, 0)
     if slice.set(writable, 0, 42) { return 0 }
     array.push(&mut values, 42)
     let end = array.slice(&values, 1, 1)
-    if !slice.is_empty(end) { return 0 }
+    if !end.is_empty() { return 0 }
     array.pop(&mut values).unwrap_or(0)
 }
 

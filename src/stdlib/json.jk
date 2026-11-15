@@ -29,16 +29,35 @@ import joky/float
 import joky/internal/decimal
 import joky/internal/buffer
 
+/// An owned JSON tree. Numbers retain their original JSON spelling.
 pub enum Value {
+    /// The JSON literal `null`.
     Null,
+    /// A JSON boolean.
     Boolean(Bool),
+    /// A validated number in its original textual form.
     Number(Number),
+    /// Decoded Unicode text stored as UTF-8.
     Text(String),
+    /// Array elements in input order.
     Array(array.Array<Value>),
+    /// Members keyed by their decoded names. Iteration order is unspecified.
     Object(map.Map<String, Value>),
 }
 
-pub enum NumberErrorKind { InvalidSyntax, NotInteger, OutOfRange, NonFinite, NumberLimit }
+/// Validation and conversion errors for JSON numbers.
+pub enum NumberErrorKind {
+    /// The text does not match JSON number syntax.
+    InvalidSyntax,
+    /// An integer conversion encountered a decimal point or exponent.
+    NotInteger,
+    /// The number falls outside the target numeric type's range.
+    OutOfRange,
+    /// A floating-point input is NaN or infinite.
+    NonFinite,
+    /// The original numeric spelling exceeds the byte limit.
+    NumberLimit
+}
 impl Show for NumberErrorKind {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         output.push_str(
@@ -53,20 +72,35 @@ impl Show for NumberErrorKind {
     }
 }
 
+/// Reasons a JSON value could not be decoded.
 pub enum DecodeErrorKind {
+    /// Input ended before the current value or container was complete.
     UnexpectedEof,
+    /// A token is invalid at this position.
     UnexpectedToken,
+    /// A string contains an invalid escape.
     InvalidEscape,
+    /// A Unicode escape is malformed or contains an unpaired surrogate.
     InvalidUnicode,
+    /// The byte input contains an invalid or incomplete UTF-8 sequence.
     InvalidUtf8,
+    /// A number does not match JSON number syntax.
     InvalidNumber,
+    /// An object repeats a key after string escapes are decoded.
     DuplicateKey,
+    /// Non-whitespace bytes follow the complete value.
     TrailingData,
+    /// The entire input exceeds `Limits.max_input_bytes`.
     InputLimit,
+    /// A nested container would exceed `Limits.max_depth`.
     DepthLimit,
+    /// Another value would exceed `Limits.max_nodes`.
     NodeLimit,
+    /// The decoded string or object key exceeds `Limits.max_string_bytes`.
     StringLimit,
+    /// A number's original spelling exceeds `Limits.max_number_bytes`.
     NumberLimit,
+    /// At least one of the supplied limits exceeds its hard maximum.
     InvalidLimits,
 }
 impl Show for DecodeErrorKind {
@@ -92,7 +126,21 @@ impl Show for DecodeErrorKind {
     }
 }
 
-pub enum EncodeError { InvalidLimits, OutputLimit, DepthLimit, NodeLimit, StringLimit, NumberLimit }
+/// Reasons an owned JSON value could not be encoded within the supplied limits.
+pub enum EncodeError {
+    /// A supplied limit exceeds its hard maximum.
+    InvalidLimits,
+    /// The encoded output would exceed the output byte limit.
+    OutputLimit,
+    /// The value exceeds the allowed container nesting.
+    DepthLimit,
+    /// The value contains too many nodes.
+    NodeLimit,
+    /// A string or object name exceeds the UTF-8 byte limit.
+    StringLimit,
+    /// A number's original spelling exceeds the byte limit.
+    NumberLimit
+}
 impl Show for EncodeError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         output.push_str(
@@ -108,7 +156,13 @@ impl Show for EncodeError {
     }
 }
 
-pub struct NumberError { pub kind: NumberErrorKind, pub offset: UInt64 }
+/// Failure to parse or convert a JSON number.
+pub struct NumberError {
+    /// Reason for the failure.
+    pub kind: NumberErrorKind,
+    /// Zero-based byte offset in the number text. At EOF it equals the text length.
+    pub offset: UInt64
+}
 impl Show for NumberError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         self.kind.show(output)
@@ -117,6 +171,7 @@ impl Show for NumberError {
     }
 }
 
+/// An owned, validated JSON number spelling, including its exponent and precision.
 pub struct Number { text: String }
 
 fn error(kind: NumberErrorKind, offset: UInt64) -> NumberError {
@@ -224,16 +279,20 @@ fn magnitude(text: &String, start: UInt64, limit: UInt64) -> Result<UInt64, Numb
 }
 
 impl Number {
+    /// Validates a JSON number spelling and owns a copy of it on success.
     pub fn from_text(input: &String) -> Result<Number, NumberError> {
         validate(input)?
         Ok(Number { text: input.clone() })
     }
+    /// Constructs the decimal spelling of a signed integer.
     pub fn from_i64(value: Int64) -> Number {
         Number { text: value.to_string() }
     }
+    /// Constructs the decimal spelling of an unsigned integer.
     pub fn from_u64(value: UInt64) -> Number {
         Number { text: value.to_string() }
     }
+    /// Constructs a round-trip JSON number spelling. A non-finite value is rejected.
     pub fn from_f64(value: Float64) -> Result<Number, NumberError> {
         if !value.is_finite() {
             return Err(error(NumberErrorKind.NonFinite, 0))
@@ -244,9 +303,11 @@ impl Number {
         validate(&text)?
         Ok(Number { text })
     }
+    /// Borrows the original validated JSON spelling.
     pub fn as_text(&self) -> &String {
         &self.text
     }
+    /// Converts integer syntax to Int64, checking the range.
     pub fn to_i64(&self) -> Result<Int64, NumberError> {
         integer_end(&self.text)?
         let negative = byte_at(self.text.bytes(), 0) == 45
@@ -271,6 +332,7 @@ impl Number {
             Ok(int64(value))
         }
     }
+    /// Converts unsigned integer syntax to UInt64, checking the range.
     pub fn to_u64(&self) -> Result<UInt64, NumberError> {
         integer_end(&self.text)?
         if byte_at(self.text.bytes(), 0) == 45 {
@@ -278,6 +340,7 @@ impl Number {
         }
         magnitude(&self.text, 0, 18446744073709551615)
     }
+    /// Parses the spelling as Float32 with rounding. Overflow returns an error.
     pub fn to_f32(&self) -> Result<Float32, NumberError> {
         let value = decimal.read_decimal32(&self.text)
         if !value.is_finite() {
@@ -285,6 +348,7 @@ impl Number {
         }
         Ok(value)
     }
+    /// Parses the spelling as Float64 with rounding. Overflow returns an error.
     pub fn to_f64(&self) -> Result<Float64, NumberError> {
         let value = decimal.read_decimal64(&self.text)
         if !value.is_finite() {
@@ -294,18 +358,27 @@ impl Number {
     }
 }
 
+/// Resource limits for the JSON codec. The default values are also the hard maxima.
 pub struct Limits {
+    /// Total UTF-8 input bytes including whitespace, up to 1,048,576. Used when decoding.
     pub max_input_bytes: UInt64,
+    /// Total encoded bytes including escapes and punctuation, up to 1,048,576. Used when encoding.
     pub max_output_bytes: UInt64,
+    /// Maximum container nesting, up to 128. A scalar root has depth zero.
     pub max_depth: UInt64,
+    /// Number of values including containers, up to 65,536. Object keys add no nodes.
     pub max_nodes: UInt64,
+    /// UTF-8 bytes per decoded string or object key before encoding escapes, up to 262,144.
     pub max_string_bytes: UInt64,
+    /// Bytes per complete numeric spelling, up to 1,024.
     pub max_number_bytes: UInt64,
 }
 impl Limits {
+    /// Checks every configured limit against the codec's hard maxima.
     pub fn is_valid(&self) -> Bool {
         valid_limits(*self)
     }
+    /// Returns the hard maxima as the default decoding and encoding limits.
     pub fn default() -> Limits {
         Limits {
             max_input_bytes: 1048576,
@@ -324,7 +397,13 @@ fn valid_limits(limits: Limits) -> Bool {
         limits.max_string_bytes <= 262144 && limits.max_number_bytes <= 1024
 }
 
-pub struct DecodeError { pub kind: DecodeErrorKind, pub offset: UInt64 }
+/// Failure to decode a complete JSON value.
+pub struct DecodeError {
+    /// Syntax, encoding or resource-limit failure.
+    pub kind: DecodeErrorKind,
+    /// Zero-based byte offset in the original input. At EOF it equals the input length.
+    pub offset: UInt64
+}
 impl Show for DecodeError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         self.kind.show(output)
@@ -808,10 +887,13 @@ fn decode_validated_bytes(
     }
 }
 
+/// Validates UTF-8 and decodes one complete JSON value using the default limits.
 pub fn decode_bytes(input: &array.Array<UInt8>) @noescape -> Result<Value, DecodeError> {
     decode_bytes_with_limits(input, Limits.default())
 }
 
+/// Decodes borrowed bytes into an owned JSON tree using the supplied limits.
+/// Checks input size and UTF-8 before parsing.
 pub fn decode_bytes_with_limits(
     input: &array.Array<UInt8>,
     limits: Limits

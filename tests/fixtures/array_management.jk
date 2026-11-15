@@ -14,12 +14,12 @@ fn manage_copy() -> Int32 {
     if values.swap(0, 0) { return 0 }
     values.clear(); values.truncate(18446744073709551615)
     values.push(18446744073709551615); values.push(20); values.push(42)
-    if !array.swap(&mut values, 0, 2) || values.get(2).unwrap_or(0) != 18446744073709551615 { return 0 }
+    if !values.swap(0, 2) || values.get(2).unwrap_or(0) != 18446744073709551615 { return 0 }
     if !values.swap(1, 1) || values.get(1).unwrap_or(0) != 20 { return 0 }
     if values.swap(0, 3) || values.swap(3, 0) || values.swap(18446744073709551615, 18446744073709551615) { return 0 }
     values.truncate(3); shorten(&mut values, 4); values.truncate(18446744073709551615)
     if values.len() != 3 || values.capacity() != 8 { return 0 }
-    array.truncate(&mut values, 1)
+    values.truncate(1)
     let result = int32(values.get(0).unwrap_or(0))
     empty(&mut values)
     if !values.is_empty() || values.capacity() != 8 { return 0 }
@@ -33,7 +33,7 @@ fn manage_append() -> Int32 {
     if !values.is_empty() || values.capacity() != 4 || other.capacity() != 3 { return 0 }
 
     other.push("first")
-    array.append(&mut values, &mut other)
+    values.append(&mut other)
     if !other.is_empty() || other.capacity() != 3 { return 0 }
     other.push("second")
     other.push("third")
@@ -56,7 +56,7 @@ fn manage_extend() -> Int32 {
     values.extend(&source[1..3])
     if values.len() != 3 || values.capacity() < 3 || values[0] != 10 { return 0 }
     if values[1] != 20 || values[2] != 22 || source[1] != 20 || source[2] != 22 { return 0 }
-    array.extend(&mut values, &source[3..])
+    values.extend(&source[3..])
     if values.len() != 4 || values[3] != 99 || source.len() != 4 { return 0 }
     let fixed: FixedArray<Int32, 2> = [17, 19]
     values.extend(&fixed[..])

@@ -96,15 +96,14 @@ fn array_queries<T>() -> Int32 {
     if !values.any(query_match) || values.all(|value| { !query_match(value) }) { return 4 }
     if values.position(query_match).unwrap_or(99) != 1 || values.find(query_match)! != "hit" { return 5 }
     if values.first()! != "skip" || values.last()! != "trap" { return 6 }
-    if array.any(&values, |value| { value.is_empty() }) || !array.all(&values, |value| { !value.is_empty() }) { return 7 }
-    if array.find(&values, |value| { value.is_empty() }).is_some() || array.position(&values, |value| { value.is_empty() }).is_some() { return 8 }
+    if values.any(|value| { value.is_empty() }) || !values.all(|value| { !value.is_empty() }) { return 7 }
+    if values.find(|value| { value.is_empty() }).is_some() || values.position(|value| { value.is_empty() }).is_some() { return 8 }
     let needle = "hit"
     let found = values.find(|value| { value == &needle })
-    let module_found = array.find(&values, |value| { value == &needle })
     needle.release()
-    if found! != "hit" || module_found! != "hit" { return 9 }
+    if found! != "hit" { return 9 }
     let single = [42]
-    if *array.first(&single)! != 42 || *array.last(&single)! != 42 { return 10 }
+    if *single.first()! != 42 || *single.last()! != 42 { return 10 }
     if single.position(|value| { *value == 42 }).unwrap_or(99) != 0 { return 11 }
     42
 }
@@ -115,7 +114,7 @@ fn array_retain<T>() -> Int32 {
     words.retain(|word| { word != &excluded })
     excluded.release()
     if words.len() != 2 || words[0] != "a" || words[1] != "b" { return 1 }
-    array.retain(&mut words, |word| { !word.is_empty() })
+    words.retain(|word| { !word.is_empty() })
     if words.len() != 2 || words.capacity() != capacity { return 2 }
     words.retain(|word| { false })
     if !words.is_empty() || words.capacity() != capacity { return 3 }
@@ -142,7 +141,7 @@ fn array_dedup<T>() -> Int32 {
     let capacity = words.capacity()
     words.dedup()
     if words.len() != 3 || words[0] != "a" || words[1] != "b" || words[2] != "a" { return 1 }
-    array.dedup(&mut words)
+    words.dedup()
     if words.len() != 3 || words.capacity() != capacity { return 2 }
     words.truncate(1)
     words.dedup()

@@ -33,7 +33,7 @@ fn boundaries<Tag>() -> Int32 {
     ensure(set.is_empty() && set.len() == 0 && set.capacity() == 0, "Set empty")
     ensure(!set.contains(42) && !set.remove(42) && set.pop().is_none(), "Set empty operations")
     ensure(set.is_subset(&set) && set.is_disjoint(&set), "Set empty self relations")
-    ensure(sets.insert(&mut set, 42) && !set.insert(42) && set.len() == 1, "Set duplicate")
+    ensure(set.insert(42) && !set.insert(42) && set.len() == 1, "Set duplicate")
     ensure(set.is_subset(&set) && !set.is_disjoint(&set), "Set self relations")
     let view = sets.elements(&set)
     ensure(slice.get(view, 0).unwrap_or(0) == 42, "Set Copy view")

@@ -63,6 +63,8 @@ CSS、脚本和标准库内部链接均为相对路径，离线阅读不依赖�
 `joky/internal/*` 模块仅供受信任标准库导入，不能由用户源码直接访问。
 `joky/internal/*`、宿主 extern 声明、下划线开头的内部名称和测试函数不展示。
 签名保留泛型、借用、效果标注、关联类型约束与常量值，去掉函数体和编译器 `#intrinsic` 元数据。
+模块目录按类型、函数、常量和实现分组。struct 的公开字段和 enum 的成员集中显示在对应类型下，
+每行可链接到单独的字段或成员，签名与说明并列展示。
 导入列表仅展示源码 import，不把它们误认为自动重导出的 API。
 
 当前文档文本支持一个小型 Markdown 子集：段落、一级至三级标题、`-` 列表、行内反引号和
@@ -71,7 +73,7 @@ API 签名、导入列表，以及标为 `joky` / `jk` 或未标语言的代码�
 采用与 VS Code 插件对应的分类，支持浅色、深色主题，无需浏览器脚本或联网。
 其他语言和词法不完整的片段按纯文本展示。暂不支持 Markdown 链接、
 表格、完整符号交叉引用、用户项目文档生成或自动执行文档示例。
-标准库各模块已有简介，API 的详细说明会逐步补齐；当前语言规则仍以本参考为准。
+标准库模块页列出公开声明及其说明。trait 的实现成员可复用 trait 声明中的契约。
 
 ## 类型与函数
 
@@ -581,8 +583,8 @@ fn run() -> Int32 {
 ## 可变 List
 
 显式导入 `joky/list.{type List}` 使用 `List<T>`；未加入默认 prelude。
-容器是非 Copy 拥有者，作用域退出自动清理，也可消费式 release。方法和模块函数共用
-[list.jk](../src/stdlib/list.jk) 的算法；构造方法写 `List.new::<T>()`、`List.with_capacity::<T>(n)`。
+容器是非 Copy 拥有者，作用域退出自动清理，也可调用 `release()` 提前释放。构造方法写
+`List.new::<T>()`、`List.with_capacity::<T>(n)`。实现见 [list.jk](../src/stdlib/list.jk)。
 
 T 沿用 Array 的存储资格：Copy 数据、普通共享引用及含共享引用的 Copy 聚合，
 以及 String、拥有记录和递归无引用的拥有型聚合、嵌套容器。不需要 Eq / Hash 协议。
@@ -592,7 +594,7 @@ T 沿用 Array 的存储资格：Copy 数据、普通共享引用及含共享引
 位置不能作为稳定节点身份。内部三个数组保存紧凑载荷、反向索引及双向连接，字段与槽号均私有。
 搬迁载荷不改变逻辑顺序，不提供公开节点句柄、稳定地址或连续逻辑切片。
 
-| 方法（模块函数增加首个 List 参数） | 行为 |
+| 方法 | 行为 |
 | --- | --- |
 | `new()` / `with_capacity(n)` | 空表；预留至少 n 个活动元素的容量 |
 | `len()` / `capacity()` / `is_empty()` | 活动长度、三组数组容量的最小值、是否为空 |
@@ -609,7 +611,7 @@ T 沿用 Array 的存储资格：Copy 数据、普通共享引用及含共享引
 | `reverse()` | 翻转连接及首尾；不重排、复制或析构元素 |
 | `reserve(additional)` | 检查 len + additional，使三组容量满足目标；空闲槽计入可复用空间 |
 | `clear()` / `release()` | clear 清理全部元素及连接、保留容量；release 消费整个容器 |
-| `List.from_array(values)` / `lists.from_array(values)` | 消费 Array<T>，保持数组顺序 |
+| `List.from_array(values)` | 消费 Array<T>，保持数组顺序 |
 | `extend(values)` | 消费 Array<T>，按输入顺序追加至尾部 |
 | `into_array()` | 消费 List，按链的逻辑顺序移出为 Array<T> |
 | `append(&mut other)` | 按 other 的链顺序移入尾部；正常返回后 other 为空且保留容量 |
@@ -625,7 +627,7 @@ append 的节点转移次数对源元素数量线性；扩容还可能搬迁目�
 复杂度不包含分配器、运行时资源清理成本。
 同步只读遍历用 `for word in &words`。从头节点沿链接每步访问一个元素，完整遍历为 O(n)，
 游标状态为 O(1)。循环提前退出后，只要元素引用和游标都已结束使用，就能继续修改原表。
-需要显式推进或组合时，`words.iter_shared()` 和 `list.iter_shared(&words)` 都可接入
+需要显式推进或组合时，`words.iter_shared()` 可接入
 [共享遍历组合器](#共享遍历组合器)。共享迭代状态沿用该协议的挂起限制。
 消费式遍历可以反复 pop_front 或使用 into_array。
 删除复用空闲槽，存储可能反映历史峰值，不提供 shrink 或槽位压缩。
@@ -709,34 +711,33 @@ fn example() -> Int32 {
 }
 ```
 
-模块函数与方法复用同一算法。模块函数使用完整 `<K, V>` 参数（可由普通实参推导）；
-构造方法写 `Map.new::<K, V>()` 或 `Map.with_capacity::<K, V>(n)`，其他实例方法自动借用接收者。
+构造方法写 `Map.new::<K, V>()` 或 `Map.with_capacity::<K, V>(n)`，实例方法按签名自动借用接收者。
 
-| 模块函数（省略共同类型参数） | 方法与行为 |
+| 方法 | 行为 |
 | --- | --- |
-| `new() -> Map<K, V>` | `Map.new::<K, V>()`；长度/容量为零 |
-| `with_capacity(n: UInt64) -> Map<K, V>` | 至少容纳 n 项 |
-| `len(&Map) -> UInt64` / `is_empty(&Map) -> Bool` | entry 数与是否为空 |
-| `capacity(&Map) -> UInt64` | 桶负载和全部载荷容量共同允许的 entry 数 |
-| `contains_key(&Map, key: &K) -> Bool` | 是否存在 |
-| `get(&Map, key: &K) -> Option<V>` | 仅 Copy V；未命中 None，拥有型 V 拒绝复制读取 |
-| `get_ref(&Map, key: &K) -> Option<&V>` | 借用 value；未命中返回 None |
-| `insert(&mut Map, key: K, value: V) -> Option<V>` | 新增 None；替换保留原 key，返回 Some(old)，旧值归调用方 |
-| `remove(&mut Map, key: &K) -> Option<V>` | 命中移出 value；未命中 None；内部顺序可改变 |
-| `borrow(&Map, key: &K) -> &Element<V>` | Copy V 的只读元素视图；用 `element.read` 读取 |
-| `borrow_mut(&mut Map, key: &K) -> &mut Element<V>` | Copy V 的独占元素视图；用 `element.read/write` 读写 |
-| `borrow_ref(&Map, key: &K) -> &V` | 无引用 Copy 或拥有型 V 的共享引用，可读取字段或访问嵌套容器 |
-| `borrow_mut_ref(&mut Map, key: &K) -> &mut V` | 无引用 Copy 或拥有型 V 的独占引用；Copy 用 `*p = next`，拥有者可用 `mem.replace` 返回旧值 |
-| `iter(&Map) -> &Iter<K, V>` / `iter_mut(&mut Map) -> &mut Iter<K, V>` | 成对借用游标；for 每轮绑定 Entry 视图，键始终只读 |
-| `keys(&Map) -> &Slice<K>` | 全部 key 的只读切片，不提供 keys_mut |
-| `values(&Map) -> &Slice<V>` / `values_mut(&mut Map) -> &mut Slice<V>` | 全部 value 的只读/独占切片 |
-| `pop(&mut Map) -> Option<(K, V)>` | 移出任意一项；空表 None，不调用 Hash/Eq |
-| `into_entries(Map) -> Array<(K, V)>` | 消费 Map，逐项移出，导出顺序未指定 |
-| `from_entries(Array<(K, V)>) -> Map<K, V>` | `Map.from_entries(entries)`；消费输入并构造 Map |
-| `extend(&mut Map, Array<(K, V)>)` | 消费输入并合并，重复 key 保留原 key、最后 value 生效 |
-| `reserve(&mut Map, additional: UInt64)` | 保证 len + additional 的 entry 空间 |
-| `clear(&mut Map)` | 清理内容，保留容量 |
-| `release(Map)` | 消费拥有者，回收存储及任务预算 |
+| `Map.new::<K, V>()` | 长度和容量为零 |
+| `Map.with_capacity::<K, V>(n)` | 至少容纳 n 项 |
+| `len() -> UInt64` / `is_empty() -> Bool` | entry 数与是否为空 |
+| `capacity() -> UInt64` | 桶负载和全部载荷容量共同允许的 entry 数 |
+| `contains_key(key: &K) -> Bool` | 是否存在 |
+| `get(key: &K) -> Option<V>` | 仅 Copy V；未命中 None，拥有型 V 拒绝复制读取 |
+| `get_ref(key: &K) -> Option<&V>` | 借用 value；未命中返回 None |
+| `insert(key: K, value: V) -> Option<V>` | 新增 None；替换保留原 key，返回 Some(old)，旧值归调用方 |
+| `remove(key: &K) -> Option<V>` | 命中移出 value；未命中 None；内部顺序可改变 |
+| `borrow(key: &K) -> &Element<V>` | Copy V 的只读元素视图；用 `element.read` 读取 |
+| `borrow_mut(key: &K) -> &mut Element<V>` | Copy V 的独占元素视图；用 `element.read/write` 读写 |
+| `borrow_ref(key: &K) -> &V` | 无引用 Copy 或拥有型 V 的共享引用，可读取字段或访问嵌套容器 |
+| `borrow_mut_ref(key: &K) -> &mut V` | 无引用 Copy 或拥有型 V 的独占引用；Copy 用 `*p = next`，拥有者可用 `mem.replace` 返回旧值 |
+| `iter() -> &Iter<K, V>` / `iter_mut() -> &mut Iter<K, V>` | 成对借用游标；for 每轮绑定 Entry 视图，键始终只读 |
+| `keys() -> &Slice<K>` | 全部 key 的只读切片，不提供 keys_mut |
+| `values() -> &Slice<V>` / `values_mut() -> &mut Slice<V>` | 全部 value 的只读/独占切片 |
+| `pop() -> Option<(K, V)>` | 移出任意一项；空表 None，不调用 Hash/Eq |
+| `into_entries() -> Array<(K, V)>` | 消费 Map，逐项移出，导出顺序未指定 |
+| `Map.from_entries(entries)` | 消费输入并构造 Map |
+| `extend(Array<(K, V)>)` | 消费输入并合并，重复 key 保留原 key、最后 value 生效 |
+| `reserve(additional: UInt64)` | 保证 len + additional 的 entry 空间 |
+| `clear()` | 清理内容，保留容量 |
+| `release()` | 消费拥有者，回收存储及任务预算 |
 
 insert 消费 key；重复时保留驻留旧 key，清理新 key，并返回旧 value。remove 清理被移除 key；
 pop/into_entries 移交 key 和 value，clear/release 清理两者。
@@ -936,7 +937,7 @@ let item = &mut values[0]
 
 ## 容器查询接口约定
 
-日常调用优先使用方法；已有模块函数继续保留，采用相同算法与借用契约。
+日常容器操作使用方法。仍公开的独立模块函数可在 `joky doc --std` 中查阅。
 `len()` / `is_empty()` 在 Array、Slice、Map、List、Set 上均可使用。
 
 | 容器 | 复制读取 / 存在性 | 元素借用 | 消费取出 |
@@ -956,8 +957,7 @@ Slice 还提供 `set`、`slice` / `slice_mut` 方法；与同名模块函数具�
 
 Array、Slice、List、FixedArray 的 `get_ref(index)` 和 Map 的 `get_ref(&key)` 命中返回 `Some(&value)`，
 未命中返回 None；不复制、移动或克隆元素。拥有 String、拥有记录和嵌套容器均适用。
-模块函数使用同名入口，首个参数为容器的共享引用。Map key 仅在查询期间借用，
-结果依赖 Map 的存储；临时 key 可自动借用，查询后可立即释放命名 key。
+Map key 仅在查询期间借用，结果依赖 Map 的存储。临时 key 可自动借用，查询后可立即释放命名 key。
 
 共享拥有者引用可放进局部 Option、Result、记录或元组，也可通过泛型 helper 传递，
 包括 Copy 约束；Copy 只允许复制，不授予保存借用的权限。每个引用继续保留来源：活动结果阻止容器的修改、释放、移动与替换，
@@ -978,7 +978,6 @@ Copy 元素需要独立值时使用 get；需要转移所有权时使用 remove 
 长度、容量和索引为 UInt64；方法调用和下标访问均不需要 unsafe 指针操作。
 数组不加入 prelude，关闭默认 prelude 后也可单独导入使用。
 构造函数写 `Array.new::<T>()` / `Array.with_capacity::<T>(n)`，实例支持 `values.push(x)`、`values.get(i)` 等方法。
-原有 `array.new::<T>()` / `array.push(&mut values, x)` 等模块函数保持兼容，两种调用风格可混用。
 `Array.new` 等泛型调用可从明确的绑定类型、函数返回类型和已知形参类型推导结果中的参数；
 例如 `let values: Array<Int32> = Array.new()`。不从后续 push 等写入反推；其他方法仍可从接收者推导 T。
 数组字面值的上下文定型见上节。
@@ -1000,45 +999,44 @@ fn answer() -> Int32 {
 }
 ```
 
-以下列出兼容的模块函数签名。除构造使用 `Array.new::<T>()` / `Array.with_capacity::<T>(n)` 外，
-其余同名方法把首个数组参数作为接收者；`&self` / `&mut self` 自动借用，`release(self)` 消费拥有者。
+实例方法按 `&self` / `&mut self` 自动借用接收者，`values.release()` 消费拥有者。
 
-| 函数 | 行为 |
+| 方法或模块函数 | 行为 |
 | --- | --- |
-| `new::<T>() -> Array<T>` | 新建长度和容量均为 0 的数组 |
-| `with_capacity::<T>(UInt64) -> Array<T>` | 指定容量，长度仍为 0 |
-| `release(Array<T>)` | 消费无活动借用的拥有者，立即释放当前载荷和控制块并退还任务预算 |
-| `len(&Array<T>) -> UInt64` | 已初始化元素数 |
-| `capacity(&Array<T>) -> UInt64` | 当前容量 |
-| `is_empty(&Array<T>) -> Bool` | 是否没有元素 |
-| `get(&Array<T>, UInt64) -> Option<T>` | 复制元素，越界返回 None |
-| `first(&Array<T>) -> Option<&T>` / `last(&Array<T>) -> Option<&T>` | 借用首项 / 末项；空数组为 None，无需 Copy |
-| `any(&Array<T>, predicate) -> Bool` | 按顺序查询，首次 true 即返回 true；空数组为 false |
-| `all(&Array<T>, predicate) -> Bool` | 按顺序查询，首次 false 即返回 false；空数组为 true |
-| `find(&Array<T>, predicate) -> Option<&T>` | 借用第一个满足谓词的元素；未命中为 None |
-| `position(&Array<T>, predicate) -> Option<UInt64>` | 第一个满足谓词的元素下标；未命中为 None |
-| `set(&mut Array<T>, UInt64, T) -> Bool` | 替换已有元素，越界返回 false 且不修改数组 |
-| `push(&mut Array<T>, T)` | 必要时扩容，追加元素 |
-| `append(&mut Array<T>, &mut Array<T>)` | 按原顺序将源元素移入目标尾部，源数组清空并保留容量 |
-| `extend<T: Copy>(&mut Array<T>, &Slice<T>)` | 按原顺序复制切片元素到数组尾部，源切片仍可读取 |
+| `Array.new::<T>() -> Array<T>` | 新建长度和容量均为 0 的数组 |
+| `Array.with_capacity::<T>(UInt64) -> Array<T>` | 指定容量，长度仍为 0 |
+| `release()` | 消费无活动借用的拥有者，立即释放当前载荷和控制块并退还任务预算 |
+| `len() -> UInt64` | 已初始化元素数 |
+| `capacity() -> UInt64` | 当前容量 |
+| `is_empty() -> Bool` | 是否没有元素 |
+| `get(UInt64) -> Option<T>` | 复制元素，越界返回 None |
+| `first() -> Option<&T>` / `last() -> Option<&T>` | 借用首项 / 末项；空数组为 None，无需 Copy |
+| `any(predicate) -> Bool` | 按顺序查询，首次 true 即返回 true；空数组为 false |
+| `all(predicate) -> Bool` | 按顺序查询，首次 false 即返回 false；空数组为 true |
+| `find(predicate) -> Option<&T>` | 借用第一个满足谓词的元素；未命中为 None |
+| `position(predicate) -> Option<UInt64>` | 第一个满足谓词的元素下标；未命中为 None |
+| `set(UInt64, T) -> Bool` | 替换已有元素，越界返回 false 且不修改数组 |
+| `push(T)` | 必要时扩容，追加元素 |
+| `append()` | 按原顺序将源元素移入目标尾部，源数组清空并保留容量 |
+| `extend<T: Copy>(&Slice<T>)` | 按原顺序复制切片元素到数组尾部，源切片仍可读取 |
 | `array.extend_bytes(&mut Array<UInt8>, &Slice<UInt8>, start: UInt64, end: UInt64)` | 批量追加半开区间 [start, end) 的字节，必要时扩容；只提供模块函数 |
-| `pop(&mut Array<T>) -> Option<T>` | 移出末元素；空数组返回 None，不缩小容量 |
-| `into_iter(Array<T>) -> IntoIter<T>` / `values.into_iter()` | 消费数组，按原下标正序逐项移出 T；无需 Copy |
-| `iter(&Array<T>) -> &Iter<T>` / `values.iter()` | 按正序借用为 &T，数组保留所有权 |
-| `iter_mut(&mut Array<T>) -> &mut Iter<T>` / `values.iter_mut()` | 按正序独占借用为 &mut T，数组保留所有权 |
-| `replace(&mut Array<T>, UInt64, T) -> Option<T>` | 替换有效下标并返回 Some(old)，长度、容量及其他元素不变；越界返回 None 并消费/清理 next |
-| `swap_remove(&mut Array<T>, UInt64) -> Option<T>` | 移出指定元素，以末元素补位；成功时长度减少、容量不变且不保序；越界返回 None，不修改数组 |
-| `remove(&mut Array<T>, UInt64) -> Option<T>` | 移出指定元素并保留其他元素顺序；越界返回 None，不修改数组；容量不变 |
-| `insert(&mut Array<T>, UInt64, T) -> Bool` | 在 index <= len 处插入并保序，必要时扩容；index > len 返回 false，不修改数组 |
-| `reserve(&mut Array<T>, UInt64)` | 参数是额外元素数；保证容量至少为 len + additional，长度不变 |
-| `truncate(&mut Array<T>, UInt64)` | 保留指定长度的前缀，逆序析构尾部；长度不增加，容量不变 |
-| `clear(&mut Array<T>)` | 清空所有元素，保留容量 |
-| `retain(&mut Array<T>, predicate)` | 原地保留谓词为 true 的元素，保持原顺序和容量，销毁被删除的元素，返回 Unit |
-| `dedup(&mut Array<T>)` | T 实现 Eq 时，删除相邻重复项，保留每组第一项；保序、容量不变，返回 Unit |
+| `pop() -> Option<T>` | 移出末元素；空数组返回 None，不缩小容量 |
+| `into_iter() -> IntoIter<T>` | 消费数组，按原下标正序逐项移出 T；无需 Copy |
+| `iter() -> &Iter<T>` | 按正序借用为 &T，数组保留所有权 |
+| `iter_mut() -> &mut Iter<T>` | 按正序独占借用为 &mut T，数组保留所有权 |
+| `replace(UInt64, T) -> Option<T>` | 替换有效下标并返回 Some(old)，长度、容量及其他元素不变；越界返回 None 并消费/清理 next |
+| `swap_remove(UInt64) -> Option<T>` | 移出指定元素，以末元素补位；成功时长度减少、容量不变且不保序；越界返回 None，不修改数组 |
+| `remove(UInt64) -> Option<T>` | 移出指定元素并保留其他元素顺序；越界返回 None，不修改数组；容量不变 |
+| `insert(UInt64, T) -> Bool` | 在 index <= len 处插入并保序，必要时扩容；index > len 返回 false，不修改数组 |
+| `reserve(UInt64)` | 参数是额外元素数；保证容量至少为 len + additional，长度不变 |
+| `truncate(UInt64)` | 保留指定长度的前缀，逆序析构尾部；长度不增加，容量不变 |
+| `clear()` | 清空所有元素，保留容量 |
+| `retain(predicate)` | 原地保留谓词为 true 的元素，保持原顺序和容量，销毁被删除的元素，返回 Unit |
+| `dedup()` | T 实现 Eq 时，删除相邻重复项，保留每组第一项；保序、容量不变，返回 Unit |
 | `Array<String>.join(&separator) -> String` | 借用数组与分隔符拼接成独立字符串，等价于 `string.join(&parts, &separator)` |
-| `swap(&mut Array<T>, UInt64, UInt64) -> Bool` | 交换两个有效位置，长度/容量不变；任一索引越界返回 false，不修改数组 |
-| `sort(&mut Array<T>)` | T 实现 Ord 时，按自然顺序稳定升序排列 |
-| `sort_by(&mut Array<T>, compare)` | 按同步比较器的顺序稳定排列，比较器借用两个元素 |
+| `swap(UInt64, UInt64) -> Bool` | 交换两个有效位置，长度/容量不变；任一索引越界返回 false，不修改数组 |
+| `sort()` | T 实现 Ord 时，按自然顺序稳定升序排列 |
+| `sort_by(compare)` | 按同步比较器的顺序稳定排列，比较器借用两个元素 |
 
 `dst.append(&mut src)` 支持 String 等拥有元素。两个参数都要求独占借用。目标先按需扩容，
 然后一次转移源数组的已初始化元素。源数组为空时两边的长度和容量保持原值。
@@ -1104,12 +1102,11 @@ find 的谓词捕获值不成为返回引用的来源，查询结束后可释放
   pop 不缩容量；拥有者离开作用域或被覆盖时自动释放，移动转移清理责任；切片头部仍由根任务兜底回收。
   容量溢出、地址范围溢出和分配失败终止任务并报告运行时错误；get/set 越界是正常返回值。
 
-replace 支持模块函数和 `values.replace(index, next)` 方法，Copy、拥有型及共享引用元素均沿用 Array 存储规则。
+`values.replace(index, next)` 支持 Copy、拥有型及共享引用元素，沿用 Array 存储规则。
 有效替换将旧值交给调用者，不析构 old 或 next，不增长或新建元素缓冲区；拥有参数清理快照仍可能需要临时内存，耗尽时终止并完整清理。
 越界时原数组不变，拥有型 next 恰好清理一次。
 
-swap_remove 同时支持 Copy 与拥有型元素，可写 `values.swap_remove(index)` 或
-`array.swap_remove(&mut values, index)`；索引按调用实参顺序求值一次。
+`values.swap_remove(index)` 支持 Copy 与拥有型元素，索引按调用实参顺序求值一次。
 索引有效时返回原位置的完整元素并转移其清理责任，末元素移动到该位置，不释放元素；
 删除末元素时无需补位。空数组、index >= len（包括 UInt64.MAX）返回 None，不改变元素、
 长度或容量。复杂度相对于数组长度为 O(1)，存储交换工作与元素大小成正比。
@@ -1132,7 +1129,7 @@ index > len 时返回 false，不扩容、不修改数组，传入的拥有值�
 不可恢复分配失败及解释器内部取消沿用任务清理路径，所有已构造资源恰好清理一次。
 示例见 [array_management.jk](../examples/array_management.jk) 的 `ordered_removal`，依次输出 21、22、20、false。
 
-truncate / clear / swap 支持 Copy 与拥有型元素，提供同名方法和模块函数。
+`truncate`、`clear` 和 `swap` 方法支持 Copy 与拥有型元素。
 `truncate(length)` 只在 length < len 时删除尾部；length >= len（包括 UInt64.MAX）
 不修改数组。删除按索引逆序释放拥有值 并清理子拥有者，容量及外层数组存储保留。
 `clear()` 等价于 truncate(0)，清空后可继续 push/insert 并复用容量。
@@ -1541,16 +1538,16 @@ impl<T, const N: UInt64> Tag<T, N> {
 整个数组及元素可共享／独占借用，支持解引用写入和 `joky/mem` 的 replace/swap。
 拥有元素可经借用读取、解构移出，或用 replace 取出并补入新值；不会隐式 clone。
 
-从 `joky/fixed_array` 导入以下函数；除构造函数外，也可通过数组的固有方法调用：
+用 `joky/fixed_array` 的模块函数构造固定长度数组，再通过数组方法读取或借用。
 
 | 函数 | 行为 |
 | --- | --- |
 | `repeat::<T, N>(value)` | 要求 T: Copy，value 只求值一次，复制为 N 个元素 |
 | `from_fn::<T, N>(init)` | 接受 `FnMut(UInt64) -> T`，按 0 到 N−1 顺序调用，支持函数指针、Fn 和 FnMut 闭包 |
-| `len(&array)` / `is_empty(&array)` | 返回 UInt64 长度 / Bool；方法为 `array.len()` / `array.is_empty()` |
-| `get_ref(&array, index)` | 返回 `Option<&T>`，越界返回 None |
-| `get(&array, index)` | 要求 T: Copy，返回元素副本 `Option<T>`，越界返回 None |
-| `set(&mut array, index, value)` | 替换并清理旧元素，成功返回 true，越界返回 false 并清理传入值；value 在检查前按普通实参求值 |
+| `values.len()` / `values.is_empty()` | 返回 UInt64 长度 / Bool |
+| `values.get_ref(index)` | 返回 `Option<&T>`，越界返回 None |
+| `values.get(index)` | 要求 T: Copy，返回元素副本 `Option<T>`，越界返回 None |
+| `values.set(index, value)` | 替换并清理旧元素，成功返回 true，越界返回 false 并清理传入值；value 在检查前按普通实参求值 |
 | `borrow_ref(&array, index)` / `borrow_mut_ref(&mut array, index)` | 返回 `&T` / `&mut T`；越界产生受检运行时错误 |
 | `slice(&array, start, end)` / `slice_mut(&mut array, start, end)` | 返回 `&Slice<T>` / `&mut Slice<T>`；检查 `start <= end <= N`，允许空区间 |
 
@@ -3125,7 +3122,7 @@ fn example() -> Int32 {
 关闭 prelude 时显式导入 `joky/clone.{type Clone}`。整数、浮点、Bool、Rune、Unit 和 String 已实现 Clone，
 `Array<T>` 在 T: Clone 时支持 `.clone()`，也可显式调用 `array.clone(&values)`。
 Array 逐元素复制，副本与原值独立，长度相同，不承诺保留原容量；失败时清理已复制元素。
-`Array<T>.contains(&value)`／`array.contains(&values, &value)` 要求 T: Eq，按元素顺序
+`values.contains(&value)` 要求 T: Eq，按元素顺序
 借用比较，不消费数组或查询值，空数组返回 false。
 
 `#derive(Clone)` 支持命名字段 struct 和 enum，生成受检 Clone 实现：记录逐字段复制，
@@ -4085,7 +4082,7 @@ fn numbered_scores() -> Int32 {
 
 ### 共享遍历组合器
 
-Array 的 `values.iter_shared()` / `array.iter_shared(&values)` 返回
+Array 的 `values.iter_shared()` 返回
 `array.SharedIter<T>`，保留原数组的共享借用，元素为 `&T`。
 这是用于组合的同步值状态，与现有 `iter()` 的 advance/current 游标并存。
 
@@ -4262,7 +4259,7 @@ Map 的按值循环仍需显式 `table.into_entries()`，得到拥有的 `(K, V)
 ### Array 消费式迭代
 
 `joky/array.IntoIter<T>` 是不可复制的拥有型迭代器，字段私有，实现
-`Iterator<Item = T>`。`array.into_iter(values)` 与 `values.into_iter()` 使用同一实现。
+`Iterator<Item = T>`。也可直接调用 `values.into_iter()`。
 即使元素是 Copy 或数组为空，转换也消费原数组；转换后不能再次使用原绑定。
 存在活动元素/切片借用时不能转换，迭代器本身也不能重复移动。
 
@@ -4289,7 +4286,7 @@ fn sum_values() -> Int32 {
 ### Array 借用式迭代
 
 `values.iter()` 返回 `&joky/iter.Iter<T>`，`values.iter_mut()` 返回 `&mut Iter<T>`；
-模块函数 `array.iter(&values)` / `array.iter_mut(&mut values)` 等价。
+
 它们按下标正序借用原数组，分别给出 `&T` / `&mut T`，不消费数组或移出元素。
 支持与 borrow_ref 相同的无引用元素，包括普通 Copy 数据、String、拥有记录和嵌套数组；
 含引用的元素仍不支持直接引用遍历。
@@ -4377,8 +4374,8 @@ Map 的键始终只读，values_mut 只允许修改值；活动游标/元素借�
 
 ### Map 成对借用遍历
 
-`table.iter()` 返回 `&map.Iter<K, V>`，`table.iter_mut()` 返回 `&mut map.Iter<K, V>`；
-同名模块函数接收 `&Map` / `&mut Map`。使用单一名称的 for 每轮分别绑定 `&map.Entry<K, V>` / `&mut map.Entry<K, V>`，
+`table.iter()` 返回 `&map.Iter<K, V>`，`table.iter_mut()` 返回 `&mut map.Iter<K, V>`。
+使用单一名称的 for 每轮分别绑定 `&map.Entry<K, V>` / `&mut map.Entry<K, V>`，
 顺序未指定，元素不复制、不移出 Map。K/V 均须满足直接元素引用的无引用存储资格。
 
 ```joky
@@ -6834,33 +6831,33 @@ fn sample() -> UInt64 {
 
 | 方法 / 模块函数 | 返回值与行为 |
 | --- | --- |
-| `String.new()` / `string.new()` | 拥有空串 |
+| `String.new()` | 拥有空串 |
 | `text.clone()` / `string.clone(&text)` | 独立复制，不消费输入 |
 | `text.release()` / `string.release(text)` | 消费并提前清理 |
 | `text.byte_length()` / `string.byte_length(&text)` | UInt64，UTF-8 字节长度 |
-| `text.is_empty()` / `string.is_empty(&text)` | Bool |
+| `text.is_empty()` | Bool |
 | `text == other` / `text != other` | Bool，通过 Eq 按字节内容比较，自动借用两侧，不移动 String |
-| `text.eq_ignore_ascii_case(&other)` / `string.eq_ignore_ascii_case(&text, &other)` | Bool，仅忽略 ASCII 字母大小写，非 ASCII 字节必须相同；不分配转换后的文本 |
-| `text.to_ascii_lowercase()` / `string.to_ascii_lowercase(&text)` | 独立 String，仅将 ASCII A–Z 转成 a–z，其他字节保持原样 |
-| `text.to_ascii_uppercase()` / `string.to_ascii_uppercase(&text)` | 独立 String，仅将 ASCII a–z 转成 A–Z，其他字节保持原样 |
-| `text.replace(&from, &to)` / `string.replace(&text, &from, &to)` | 独立 String，按从左到右的不重叠匹配替换全部命中；新插入文本不再参与匹配 |
+| `text.eq_ignore_ascii_case(&other)` | Bool，仅忽略 ASCII 字母大小写，非 ASCII 字节必须相同；不分配转换后的文本 |
+| `text.to_ascii_lowercase()` | 独立 String，仅将 ASCII A–Z 转成 a–z，其他字节保持原样 |
+| `text.to_ascii_uppercase()` | 独立 String，仅将 ASCII a–z 转成 A–Z，其他字节保持原样 |
+| `text.replace(&from, &to)` | 独立 String，按从左到右的不重叠匹配替换全部命中；新插入文本不再参与匹配 |
 | `text.find(&needle)` / `string.find(&text, &needle)` | Option<UInt64>，首次命中的字节偏移；未命中 None，空 needle 为 Some(0) |
-| `text.starts_with(&prefix)` / `string.starts_with(&text, &prefix)` | Bool，空前缀为 true |
-| `text.ends_with(&suffix)` / `string.ends_with(&text, &suffix)` | Bool，空后缀为 true |
+| `text.starts_with(&prefix)` | Bool，空前缀为 true |
+| `text.ends_with(&suffix)` | Bool，空后缀为 true |
 | `text.contains(&needle)` / `string.contains(&text, &needle)` | Bool，按 UTF-8 内容查找；空 needle 为 true |
-| `text.split_once(&separator)` / `string.split_once(&text, &separator)` | Option<(String, String)>，在首次命中处切分，不含分隔符；未找到为 None，空分隔符得到 `Some(("", 原文本副本))` |
-| `text.strip_prefix(&prefix)` / `string.strip_prefix(&text, &prefix)` | Option<String>，去除一次匹配前缀；未匹配为 None，空前缀返回原文本副本 |
-| `text.strip_suffix(&suffix)` / `string.strip_suffix(&text, &suffix)` | Option<String>，去除一次匹配后缀；未匹配为 None，空后缀返回原文本副本 |
-| `text.trim()` / `string.trim(&text)` | String，去除两端 Unicode White_Space 字符，保留中间空白；不去除零宽空格或 BOM |
-| `text.trim_start()` / `string.trim_start(&text)` | String，仅去除开头的 Unicode 空白 |
-| `text.trim_end()` / `string.trim_end(&text)` | String，仅去除结尾的 Unicode 空白 |
+| `text.split_once(&separator)` | Option<(String, String)>，在首次命中处切分，不含分隔符；未找到为 None，空分隔符得到 `Some(("", 原文本副本))` |
+| `text.strip_prefix(&prefix)` | Option<String>，去除一次匹配前缀；未匹配为 None，空前缀返回原文本副本 |
+| `text.strip_suffix(&suffix)` | Option<String>，去除一次匹配后缀；未匹配为 None，空后缀返回原文本副本 |
+| `text.trim()` | String，去除两端 Unicode White_Space 字符，保留中间空白；不去除零宽空格或 BOM |
+| `text.trim_start()` | String，仅去除开头的 Unicode 空白 |
+| `text.trim_end()` | String，仅去除结尾的 Unicode 空白 |
 | `String.from_utf8(data)` / `string.from_utf8(data)` | Result<String, Utf8Error>，成功验证后转移 Array<UInt8>，失败也消费并清理输入 |
 | `text.bytes()` / `string.bytes(&text)` | 只读 &Slice<UInt8>，依赖整个输入 String；不分配或复制载荷 |
 | `text.into_bytes()` / `string.into_bytes(text)` | 消费式 Array<UInt8>，转移原存储及容量 |
 | `text.substring(start, end)` / `string.substring(&text, start, end)` | Option<String>，复制半开字节范围；逆序、越界或非 UTF-8 边界为 None |
 | `text.runes()` / `string.runes(&text)` | Runes，借用原文本的惰性 Rune 迭代器，实现 SharedIterator；不分配或复制文本 |
-| `text.rune_count()` / `string.rune_count(&text)` | UInt64，Unicode 标量数量 |
-| `text.next_rune(offset)` / `string.next_rune(&text, offset)` | Option<(Rune, UInt64)>，标量和下一字节偏移；末尾 None，非法偏移为带源码位置的终止性 RuntimeError |
+| `text.rune_count()` | UInt64，Unicode 标量数量 |
+| `text.next_rune(offset)` | Option<(Rune, UInt64)>，标量和下一字节偏移；末尾 None，非法偏移为带源码位置的终止性 RuntimeError |
 | `left.concat(&right)` / `string.concat(&left, &right)` | 独立 String，不消费两侧输入，组合长度沿 Array.reserve 受检 |
 | `string.join(&parts, &separator)` | String，借用 Array<String> 与分隔符，返回独立拼接结果；总长度受检 |
 | `text.split(&separator)` / `string.split(&text, &separator)` | Array<String>，复制各项；空分隔符按 Rune 边界切分，不添加首尾空项 |
@@ -7066,7 +7063,7 @@ Array<UInt8>；公开操作成功后内容始终是合法 UTF-8。构造器可�
 | `builder.finish()` | 消费构造器，将原缓冲区转移为不可变 String，不复制载荷或重新编码，保留多余容量 |
 | `builder.release()` | 消费并提前释放；作用域结束或失败也自动清理 |
 
-所有方法均在构造器类型上提供；已有 `string.new/clone/release` 等模块函数仍用于 String。
+所有方法均在构造器类型上提供；String 用 `String.new()` 构造。
 StringBuilder 不公开字节字段、可写切片或原始指针，不能写入任意字节制造非法 UTF-8。
 长度、容量和增长受检，扩容时同时计费旧、新存储的峰值；分配失败终止并清理部分构造。
 finish 仅转移文本存储，不承诺所有辅助工作永远零分配。

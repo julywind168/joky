@@ -13,8 +13,8 @@
 //!             int32(index) * 2
 //!         }
 //!     )
-//!     assert_eq(fixed_array.len(values), uint64(4))
-//!     assert_eq(fixed_array.get(values, 3).unwrap(), 6)
+//!     assert_eq(values.len(), uint64(4))
+//!     assert_eq(values.get(3).unwrap(), 6)
 //! }
 //! ```
 
@@ -22,6 +22,7 @@ import joky/internal/fixed_array
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
 
+/// An owning array whose length is fixed at compile time.
 pub type FixedArray<T, const N: UInt64> = fixed_array.FixedArray<T, N>
 
 /// Constructs `N` copies of a `Copy` value.
@@ -46,16 +47,16 @@ pub fn from_fn<T, const N: UInt64, F: FnMut(UInt64) -> T>(var init: F) -> FixedA
     fixed_array.finish(token)
 }
 
-pub fn len<T, const N: UInt64>(values: &FixedArray<T, N>) -> UInt64 {
+fn len<T, const N: UInt64>(values: &FixedArray<T, N>) -> UInt64 {
     N
 }
 
-pub fn is_empty<T, const N: UInt64>(values: &FixedArray<T, N>) -> Bool {
+fn is_empty<T, const N: UInt64>(values: &FixedArray<T, N>) -> Bool {
     N == 0
 }
 
 /// Copies an element, or returns `None` for an out-of-bounds index.
-pub fn get<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> Option<T> {
+fn get<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> Option<T> {
     if index < N {
         Some(fixed_array.load(values, index))
     } else {
@@ -63,7 +64,7 @@ pub fn get<T: Copy, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -
     }
 }
 
-pub fn get_ref<T, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> Option<&T> {
+fn get_ref<T, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> Option<&T> {
     if index < N {
         Some(fixed_array.borrow_ref(values, index))
     } else {
@@ -71,7 +72,7 @@ pub fn get_ref<T, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> 
     }
 }
 
-pub fn set<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, value: T) -> Bool {
+fn set<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, value: T) -> Bool {
     if index < N {
         fixed_array.store(values, index, value)
         true
@@ -81,41 +82,52 @@ pub fn set<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64, val
 }
 
 impl<T, const N: UInt64> FixedArray<T, N> {
+    /// Borrows the element at the index, or returns None for an invalid index.
     pub fn get_ref(&self, index: UInt64) -> Option<&T> {
         get_ref(self, index)
     }
+    /// Borrows an element directly. An out-of-bounds index fails at runtime.
     pub fn borrow_ref(&self, index: UInt64) -> &T {
         borrow_ref(self, index)
     }
+    /// Borrows an element exclusively. An out-of-bounds index fails at runtime.
     pub fn borrow_mut_ref(&mut self, index: UInt64) -> &mut T {
         borrow_mut_ref(self, index)
     }
+    /// Borrows a half-open subrange. Invalid bounds fail at runtime.
     pub fn slice(&self, start: UInt64, end: UInt64) -> &Slice<T> {
         slice(self, start, end)
     }
+    /// Exclusively borrows a half-open subrange. Invalid bounds fail at runtime.
     pub fn slice_mut(&mut self, start: UInt64, end: UInt64) -> &mut Slice<T> {
         slice_mut(self, start, end)
     }
 
+    /// Returns the compile-time number of elements.
     pub fn len(&self) -> UInt64 {
         len(self)
     }
+    /// Returns true if the compile-time length is zero.
     pub fn is_empty(&self) -> Bool {
         is_empty(self)
     }
+    /// Replaces the indexed element and drops the old value. Returns false and drops the supplied value if the index is out of bounds.
     pub fn set(&mut self, index: UInt64, value: T) -> Bool {
         set(self, index, value)
     }
 }
 
+/// Borrows an element directly. An out-of-bounds index fails at runtime.
 pub fn borrow_ref<T, const N: UInt64>(values: &FixedArray<T, N>, index: UInt64) -> &T {
     fixed_array.borrow_ref(values, index)
 }
 
+/// Borrows an element exclusively. An out-of-bounds index fails at runtime.
 pub fn borrow_mut_ref<T, const N: UInt64>(values: &mut FixedArray<T, N>, index: UInt64) -> &mut T {
     fixed_array.borrow_mut_ref(values, index)
 }
 
+/// Borrows a half-open subrange. Invalid bounds fail at runtime.
 pub fn slice<T, const N: UInt64>(
     values: &FixedArray<T, N>,
     start: UInt64,
@@ -124,6 +136,7 @@ pub fn slice<T, const N: UInt64>(
     fixed_array.slice(values, start, end)
 }
 
+/// Exclusively borrows a half-open subrange. Invalid bounds fail at runtime.
 pub fn slice_mut<T, const N: UInt64>(
     values: &mut FixedArray<T, N>,
     start: UInt64,

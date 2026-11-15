@@ -34,15 +34,29 @@ import joky/time.{type Duration}
 import joky/string
 import joky/json/typed.{type ToJson, type FromJson}
 
-pub struct Header { pub name: String, pub value: String }
+/// One HTTP header line.
+pub struct Header {
+    /// Field name. Lookups compare names without regard to ASCII case.
+    pub name: String,
+    /// Field value.
+    pub value: String
+}
+/// A header expected to have at most one value occurred more than once.
 pub struct DuplicateHeader {}
 impl Show for DuplicateHeader {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         output.push_str("duplicate HTTP header")
     }
 }
-pub struct RequestLog { pub request_id: uuid.Uuid, pub logger: log.Logger }
+/// A logger that attaches the request ID to each emitted event.
+pub struct RequestLog {
+    /// Server-generated ID of the associated request.
+    pub request_id: uuid.Uuid,
+    /// Logger that controls the severity threshold and emits the event.
+    pub logger: log.Logger
+}
 impl RequestLog {
+    /// Submits a structured event with this request's correlation ID and returns the emission outcome.
     pub fn emit(
         &self,
         level: log.Level,
@@ -55,32 +69,46 @@ impl RequestLog {
         fields.push(log.field("request_id", self.request_id))
         self.logger.emit(level, event, fields)
     }
+    /// Attempts to emit a debug event with this request's correlation ID.
     pub fn debug(&self, event: String, fields: Array<log.Field>) {
         self.emit(log.Level.Debug, event, fields);
     }
+    /// Attempts to emit an informational event with this request's correlation ID.
     pub fn info(&self, event: String, fields: Array<log.Field>) {
         self.emit(log.Level.Info, event, fields);
     }
+    /// Attempts to emit a warning event with this request's correlation ID.
     pub fn warn(&self, event: String, fields: Array<log.Field>) {
         self.emit(log.Level.Warn, event, fields);
     }
+    /// Attempts to emit an error event with this request's correlation ID.
     pub fn error(&self, event: String, fields: Array<log.Field>) {
         self.emit(log.Level.Error, event, fields);
     }
 }
+/// A parsed request and its application context.
 pub struct Request<C> {
+    /// Application context produced for this request. Plain handlers receive `Unit`.
     pub ctx: C,
+    /// Logger bound to this request.
     pub log: RequestLog,
+    /// Server-generated correlation ID also sent in the response's `X-Request-Id` header.
     pub request_id: uuid.Uuid,
+    /// HTTP method received from the client.
     pub method: Method,
+    /// Raw request target, including any query string and percent escapes.
     pub target: String,
+    /// Parsed header lines, including repeated names.
     pub headers: Array<Header>,
+    /// Request payload bytes, empty when no body was sent.
     pub body: Array<UInt8>
 }
 impl<C> Request<C> {
+    /// Decodes the body as typed JSON using the default codec options.
     pub fn json<T: FromJson>(&self) @noescape -> Result<T, typed.CodecError> {
         typed.decode_bytes::<T>(&self.body)
     }
+    /// Borrows the first matching header value using an ASCII case-insensitive name.
     pub fn header(&self, name: &String) @noescape(name) -> Option<&String> {
         for field in &self.headers {
             if field.name.eq_ignore_ascii_case(name) {
@@ -89,6 +117,7 @@ impl<C> Request<C> {
         }
         None
     }
+    /// Borrows the matching value if it occurs once. Repeated names return `DuplicateHeader`.
     pub fn header_unique(
         &self,
         name: &String
@@ -104,6 +133,7 @@ impl<C> Request<C> {
         }
         result.Ok(found)
     }
+    /// Copies all matching header values in request order.
     pub fn header_all(&self, name: &String) @noescape -> Array<String> {
         var values = Array.new::<String>()
         for field in &self.headers {
@@ -114,10 +144,12 @@ impl<C> Request<C> {
         values
     }
 
+    /// Copies the raw path before the query string, preserving percent escapes.
     pub fn path(&self) -> String {
         let end = self.target.find("?").unwrap_or(self.target.byte_length())
         self.target.substring(0, end)!
     }
+    /// Decodes query parameters. A target without a query returns an empty array.
     pub fn query_pairs(&self) -> Result<Array<(String, String)>, url.DecodeError> {
         match self.target.find("?") {
             Some(offset) => url.parse_query(
@@ -127,37 +159,67 @@ impl<C> Request<C> {
         }
     }
 }
+/// A validated numeric final HTTP status code.
 pub struct FinalCode { value: UInt16 }
+/// Final HTTP status selected by a server handler.
 pub enum Status {
+    /// HTTP 200 OK.
     Ok,
+    /// HTTP 201 Created.
     Created,
+    /// HTTP 202 Accepted.
     Accepted,
+    /// HTTP 204 No Content.
     NoContent,
+    /// HTTP 301 Moved Permanently.
     MovedPermanently,
+    /// HTTP 302 Found.
     Found,
+    /// HTTP 303 See Other.
     SeeOther,
+    /// HTTP 304 Not Modified.
     NotModified,
+    /// HTTP 307 Temporary Redirect.
     TemporaryRedirect,
+    /// HTTP 308 Permanent Redirect.
     PermanentRedirect,
+    /// HTTP 400 Bad Request.
     BadRequest,
+    /// HTTP 401 Unauthorized.
     Unauthorized,
+    /// HTTP 403 Forbidden.
     Forbidden,
+    /// HTTP 404 Not Found.
     NotFound,
+    /// HTTP 405 Method Not Allowed.
     MethodNotAllowed,
+    /// HTTP 408 Request Timeout.
     RequestTimeout,
+    /// HTTP 409 Conflict.
     Conflict,
+    /// HTTP 413 Content Too Large.
     ContentTooLarge,
+    /// HTTP 415 Unsupported Media Type.
     UnsupportedMediaType,
+    /// HTTP 422 Unprocessable Content.
     UnprocessableContent,
+    /// HTTP 429 Too Many Requests.
     TooManyRequests,
+    /// HTTP 500 Internal Server Error.
     InternalServerError,
+    /// HTTP 501 Not Implemented.
     NotImplemented,
+    /// HTTP 502 Bad Gateway.
     BadGateway,
+    /// HTTP 503 Service Unavailable.
     ServiceUnavailable,
+    /// HTTP 504 Gateway Timeout.
     GatewayTimeout,
+    /// A validated final status code without a dedicated named variant.
     Other(FinalCode)
 }
 impl Status {
+    /// Converts a numeric final HTTP status into a status value, rejecting invalid final codes.
     pub fn from_code(code: UInt16) -> Option<Status> {
         if code < 200 || code > 599 {
             return None
@@ -228,9 +290,21 @@ fn status_line(status: Status) -> (Int32, String) {
     }
 }
 
+/// A validated custom value for the Content-Type header.
 pub struct MediaType { value: String }
-pub enum ContentType { Text, Json, Bytes, Custom(MediaType) }
+/// Media type the server writes with a response.
+pub enum ContentType {
+    /// Uses text/plain with UTF-8 encoding.
+    Text,
+    /// Uses application/json.
+    Json,
+    /// Uses application/octet-stream.
+    Bytes,
+    /// Uses the validated media type carried by the variant.
+    Custom(MediaType)
+}
 impl ContentType {
+    /// Validates and owns an ASCII media type with optional parameters.
     pub fn custom(value: String) -> Option<ContentType> {
         if valid_media_type(&value) {
             Some(Custom(MediaType { value }))
@@ -239,27 +313,36 @@ impl ContentType {
         }
     }
 }
+/// An HTTP response returned by a handler.
 pub struct Response {
+    /// Final HTTP status to send.
     pub status: Status,
+    /// Media type used for the generated `Content-Type` header.
     pub content_type: ContentType,
+    /// Additional headers. The server generates its own framing headers.
     pub headers: Array<Header>,
+    /// Payload bytes, limited to 1 MiB. A HEAD response omits these bytes on the wire.
     pub body: Array<UInt8>
 }
 impl Response {
+    /// Consumes the response, appends a header, and returns the updated response.
     pub fn with_header(var self, name: String, value: String) -> Self {
         self.headers.push(Header { name, value })
         self
     }
 }
 
+/// Builds a plain-text response, taking ownership of the UTF-8 text.
 pub fn text(status: Status, body: String) -> Response {
     Response { status, content_type: ContentType.Text, headers: [], body: body.into_bytes() }
 }
 
+/// Builds a response with an empty body and no additional headers.
 pub fn empty(status: Status) -> Response {
     Response { status, content_type: ContentType.Text, headers: [], body: [] }
 }
 
+/// Encodes the borrowed value as JSON for the response body using default codec options.
 pub fn json<T: ToJson>(status: Status, value: &T) @noescape -> Result<Response, typed.CodecError> {
     let body = typed.encode(value)?
     result.Ok(
@@ -267,14 +350,21 @@ pub fn json<T: ToJson>(status: Status, value: &T) @noescape -> Result<Response, 
     )
 }
 
+/// Connection limits, deadlines and logging for an HTTP server.
 pub struct Options {
+    /// Logger used for server and request events.
     pub logger: log.Logger,
+    /// Maximum number of active connections. Must be positive. Excess connections are closed.
     pub max_connections: UInt64,
+    /// Nonzero deadline for reading a complete request. TLS handshakes get a separate deadline of the same length.
     pub read_timeout: Duration,
+    /// Nonzero deadline for writing the response, including the TLS close notification.
     pub write_timeout: Duration,
+    /// Time to let admitted requests finish after shutdown begins.
     pub grace: Duration
 }
 impl Options {
+    /// Uses 128 connections, ten-second read and write deadlines, and a five-second shutdown grace period.
     pub fn default() -> Self {
         Options {
             logger: log.Logger.new(log.Level.Debug),
@@ -285,7 +375,15 @@ impl Options {
         }
     }
 }
-pub enum ServeError { InvalidOptions, AcceptFailed, Deadline }
+/// Reasons a server could not run or finish graceful shutdown.
+pub enum ServeError {
+    /// The server received invalid limits or deadlines.
+    InvalidOptions,
+    /// The listener failed while accepting a connection.
+    AcceptFailed,
+    /// The shutdown grace period elapsed with work still in flight.
+    Deadline
+}
 impl Show for ServeError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         output.push_str(
@@ -376,8 +474,24 @@ fn valid_media_type(value: &String) -> Bool {
     true
 }
 
+/// HTTP methods supported by the server and client.
 #derive(Eq)
-pub enum Method { Get, Head, Post, Put, Patch, Delete, Options }
+pub enum Method {
+    /// The HTTP GET method token.
+    Get,
+    /// The HTTP HEAD method token.
+    Head,
+    /// The HTTP POST method token.
+    Post,
+    /// The HTTP PUT method token.
+    Put,
+    /// The HTTP PATCH method token.
+    Patch,
+    /// The HTTP DELETE method token.
+    Delete,
+    /// The HTTP OPTIONS method token.
+    Options
+}
 impl Show for Method {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         output.push_str(method_name(*self))
@@ -765,12 +879,22 @@ fn handshake_timeout(timeout: Duration) @suspends -> Option<Wire> {
 }
 
 // Each admitted connection owns its service handle until the handler and write finish.
+/// A suspending request handler used by the HTTP server.
 pub trait Service {
+    /// Returns a service instance suitable for use by another connection task.
     fn share(&self) @suspends -> Self
+    /// Consumes a request and produces its response.
     fn handle(&self, request: Request<Unit>) @suspends -> Response
 }
+/// A suspending callback that consumes a request and produces a response.
 pub type Handler<C> = fn(Request<C>) @suspends -> Response
-pub enum RouteError { InvalidPath, DuplicateRoute }
+/// Reasons a method and path could not be registered in a router.
+pub enum RouteError {
+    /// The route path failed validation.
+    InvalidPath,
+    /// A handler is already registered for this method and path.
+    DuplicateRoute
+}
 impl Show for RouteError {
     fn show(&self, output: &mut string.StringBuilder) @noescape {
         output.push_str(
@@ -782,9 +906,13 @@ impl Show for RouteError {
     }
 }
 // share runs on the accept loop. for_request runs on the matched request task.
+/// Produces context for individual incoming requests.
 pub trait ContextSource {
+    /// The application context carried by each request.
     type Context
+    /// Returns a context source that can be given to another connection task.
     fn share(&self) @suspends @noescape -> Self
+    /// Builds the context for a request before its handler is called.
     fn for_request(&self) @suspends @noescape -> Self.Context
 }
 impl ContextSource for Unit {
@@ -796,23 +924,30 @@ impl ContextSource for Unit {
         {}
     }
 }
+/// Supplies application state and the corresponding HTTP request context type.
 pub trait Application {
+    /// The type of context expected by the application's handlers.
     type RequestContext
 }
+/// A suspending callback that also receives a write handle to application state.
 pub type StateHandler<A, C> = fn(domain.WriteHandle<A>, Request<C>) @suspends -> Response
 struct Route<H> { method: Method, path: String, handler: H }
 struct RouteTable<H> { entries: Array<Route<H>> }
+/// A router that creates request context before calling the selected handler.
 pub struct ContextRouter<S, C> { source: S, table: RouteTable<Handler<C>> }
+/// A router that passes a state-domain capability to the selected handler.
 pub struct StateRouter<A, S, C> {
     app: domain.WriteHandle<A>,
     source: S,
     table: RouteTable<StateHandler<A, C>>
 }
 
+/// Creates a router that builds context for each request using the supplied source.
 pub fn with_context<S: ContextSource>(source: S) -> ContextRouter<S, S.Context> {
     ContextRouter { source, table: RouteTable { entries: [] } }
 }
 
+/// Creates a router that gives handlers a write handle to application state.
 pub fn with_state<A: Application, S: ContextSource<Context = A.RequestContext>>(
     app: domain.WriteHandle<A>,
     source: S
@@ -837,11 +972,14 @@ fn valid_route_path(path: &String) -> Bool {
     true
 }
 
+/// An HTTP router for handlers without application context.
 pub struct Router { inner: ContextRouter<Unit, Unit> }
 impl Router {
+    /// Creates an empty router with unit request context.
     pub fn new() -> Self {
         Router { inner: with_context({}) }
     }
+    /// Registers a handler for an HTTP method and path. Returns an error for invalid or duplicate paths.
     pub fn add(
         &mut self,
         method: Method,
@@ -850,24 +988,31 @@ impl Router {
     ) -> Result<Unit, RouteError> {
         self.inner.add(method, path, handler)
     }
+    /// Registers a handler for GET requests to this path.
     pub fn get(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
         self.inner.get(path, handler)
     }
+    /// Registers a handler for HEAD requests to this path.
     pub fn head(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
         self.inner.head(path, handler)
     }
+    /// Registers a handler for POST requests to this path.
     pub fn post(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
         self.inner.post(path, handler)
     }
+    /// Registers a handler for PUT requests to this path.
     pub fn put(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
         self.inner.put(path, handler)
     }
+    /// Registers a handler for PATCH requests to this path.
     pub fn patch(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
         self.inner.patch(path, handler)
     }
+    /// Registers a handler for DELETE requests to this path.
     pub fn delete(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
         self.inner.delete(path, handler)
     }
+    /// Registers a handler for OPTIONS requests to this path.
     pub fn options(&mut self, path: String, handler: Handler<Unit>) -> Result<Unit, RouteError> {
         self.inner.options(path, handler)
     }
@@ -943,6 +1088,7 @@ impl<H: Copy> RouteTable<H> {
     }
 }
 impl<S, C> ContextRouter<S, C> {
+    /// Registers a handler for an HTTP method and path. Returns an error for invalid or duplicate paths.
     pub fn add(
         &mut self,
         method: Method,
@@ -951,29 +1097,37 @@ impl<S, C> ContextRouter<S, C> {
     ) -> Result<Unit, RouteError> {
         self.table.add(method, path, handler)
     }
+    /// Registers a handler for GET requests to this path.
     pub fn get(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
         self.add(Method.Get, path, handler)
     }
+    /// Registers a handler for HEAD requests to this path.
     pub fn head(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
         self.add(Method.Head, path, handler)
     }
+    /// Registers a handler for POST requests to this path.
     pub fn post(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
         self.add(Method.Post, path, handler)
     }
+    /// Registers a handler for PUT requests to this path.
     pub fn put(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
         self.add(Method.Put, path, handler)
     }
+    /// Registers a handler for PATCH requests to this path.
     pub fn patch(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
         self.add(Method.Patch, path, handler)
     }
+    /// Registers a handler for DELETE requests to this path.
     pub fn delete(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
         self.add(Method.Delete, path, handler)
     }
+    /// Registers a handler for OPTIONS requests to this path.
     pub fn options(&mut self, path: String, handler: Handler<C>) -> Result<Unit, RouteError> {
         self.add(Method.Options, path, handler)
     }
 }
 impl<A, S, C> StateRouter<A, S, C> {
+    /// Registers a handler for an HTTP method and path. Returns an error for invalid or duplicate paths.
     pub fn add(
         &mut self,
         method: Method,
@@ -982,21 +1136,27 @@ impl<A, S, C> StateRouter<A, S, C> {
     ) -> Result<Unit, RouteError> {
         self.table.add(method, path, handler)
     }
+    /// Registers a handler for GET requests to this path.
     pub fn get(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> {
         self.add(Method.Get, path, handler)
     }
+    /// Registers a handler for HEAD requests to this path.
     pub fn head(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> {
         self.add(Method.Head, path, handler)
     }
+    /// Registers a handler for POST requests to this path.
     pub fn post(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> {
         self.add(Method.Post, path, handler)
     }
+    /// Registers a handler for PUT requests to this path.
     pub fn put(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> {
         self.add(Method.Put, path, handler)
     }
+    /// Registers a handler for PATCH requests to this path.
     pub fn patch(&mut self, path: String, handler: StateHandler<A, C>) -> Result<Unit, RouteError> {
         self.add(Method.Patch, path, handler)
     }
+    /// Registers a handler for DELETE requests to this path.
     pub fn delete(
         &mut self,
         path: String,
@@ -1004,6 +1164,7 @@ impl<A, S, C> StateRouter<A, S, C> {
     ) -> Result<Unit, RouteError> {
         self.add(Method.Delete, path, handler)
     }
+    /// Registers a handler for OPTIONS requests to this path.
     pub fn options(
         &mut self,
         path: String,
@@ -1223,6 +1384,8 @@ fn run<S: Service>(
     }
 }
 
+/// Serves plain HTTP with a function handler until shutdown or a server error.
+/// The server owns the listener and drains admitted requests within the configured grace period.
 pub fn serve(
     listener: TcpListener,
     stop: &shutdown.Controller,
@@ -1232,6 +1395,7 @@ pub fn serve(
     serve_with(listener, stop, options, FunctionService { callback: handler })
 }
 
+/// Serves HTTPS with a function handler, taking ownership of the listener and TLS configuration.
 pub fn serve_tls(
     listener: TcpListener,
     config: tls.ServerConfig,
@@ -1242,6 +1406,7 @@ pub fn serve_tls(
     serve_tls_with(listener, config, stop, options, FunctionService { callback: handler })
 }
 
+/// Serves plain HTTP with a service that owns its application state.
 pub fn serve_with<S: Service>(
     listener: TcpListener,
     stop: &shutdown.Controller,
@@ -1251,6 +1416,7 @@ pub fn serve_with<S: Service>(
     run(None, listener, stop, options, service)
 }
 
+/// Serves HTTPS with a custom service and an owned TLS configuration.
 pub fn serve_tls_with<S: Service>(
     listener: TcpListener,
     config: tls.ServerConfig,
@@ -1262,15 +1428,25 @@ pub fn serve_tls_with<S: Service>(
 }
 
 // One origin per client. Each call opens a fresh connection and sends once.
+/// Failures that can occur during one HTTP client exchange.
 pub enum ClientError {
+    /// The client could not construct the request from its inputs.
     InvalidRequest,
+    /// Name resolution or establishing the TCP connection failed.
     Connect(tcp.EndpointError),
+    /// The client could not negotiate TLS with the peer.
     Handshake(tls.TlsError),
+    /// The connection and handshake deadline elapsed.
     ConnectTimeout,
+    /// The HTTP request and response deadline elapsed.
     ExchangeTimeout,
+    /// I/O failed while exchanging HTTP data.
     Transport,
+    /// The peer's response failed HTTP validation.
     InvalidResponse,
+    /// A response exceeded a configured size limit.
     SizeLimit,
+    /// The response used unsupported message framing.
     UnsupportedFraming
 }
 impl Show for ClientError {
@@ -1295,13 +1471,25 @@ impl Show for ClientError {
     }
 }
 
-pub struct ClientResponse { pub status: UInt16, pub headers: Array<Header>, pub body: Array<UInt8> }
+/// An owned HTTP response received by the client.
+pub struct ClientResponse {
+    /// Numeric final HTTP status, including statuses outside the server's named variants.
+    pub status: UInt16,
+    /// Parsed response headers.
+    pub headers: Array<Header>,
+    /// Received payload bytes. HEAD requests return an empty array.
+    pub body: Array<UInt8>
+}
+/// An HTTP client for one origin. Each request opens a fresh connection.
 pub struct Client {
     host: String,
     port: UInt16,
     config: Option<tls.ClientConfig>,
+    /// Nonzero deadline for resolution, TCP connection and any TLS handshake combined.
     pub connect_timeout: Duration,
+    /// Nonzero deadline for sending the request and receiving the complete response.
     pub exchange_timeout: Duration,
+    /// Maximum response payload size in bytes, up to 1 MiB.
     pub max_body: UInt64
 }
 
@@ -1326,9 +1514,11 @@ fn make_client(
 }
 
 impl Client {
+    /// Builds a plain HTTP client for a host and port.
     pub fn http(host: String, port: UInt16) -> Result<Self, ClientError> {
         make_client(host, port, None)
     }
+    /// Builds an HTTPS client for a host and port using the supplied TLS configuration.
     pub fn https(
         host: String,
         port: UInt16,
@@ -1349,9 +1539,11 @@ impl Client {
             }
         }
     }
+    /// Opens a connection and issues a GET request for the supplied target.
     pub fn get(&self, target: String) @suspends -> Result<ClientResponse, ClientError> {
         self.request(Method.Get, target, [], [])
     }
+    /// Sends a POST with the supplied JSON text as its body.
     pub fn post_json(
         &self,
         target: String,
@@ -1364,6 +1556,7 @@ impl Client {
             json.into_bytes()
         )
     }
+    /// Sends one request on a fresh connection and reads the complete bounded response.
     pub fn request(
         &self,
         method: Method,

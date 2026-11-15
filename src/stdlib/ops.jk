@@ -22,6 +22,7 @@
 
 /// Homogeneous, consuming addition. Operator dispatch is static.
 pub trait Add {
+    /// Consumes both operands and returns their sum.
     fn add(self, other: Self) -> Self
 }
 impl Add for Int8 {

@@ -48,7 +48,7 @@ fn main() @suspends {
     floats.sort_by(nan_last)
     assert(floats[0] == -1.0 && floats[1] == 1.0 && floats[2].is_nan(), "explicit NaN order")
     var words = ["é", "z", "a\0", "", "a", "中", "a"]
-    array.sort(&mut words)
+    words.sort()
     assert(words[0] == "" && words[1] == "a" && words[2] == "a" && words[3] == "a\0" &&
         words[4] == "z" && words[5] == "é" && words[6] == "中", "UTF-8 byte order")
 
@@ -75,5 +75,5 @@ fn main() @suspends {
 
 fn descending(rows: &mut Array<Row>) {
     let direction = -1
-    array.sort_by(rows, |a, b| { direction * Ord.cmp(a, b) })
+    rows.sort_by(|a, b| { direction * Ord.cmp(a, b) })
 }

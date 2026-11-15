@@ -27,45 +27,59 @@ fn scaled(value: UInt64, scale: UInt64) -> Option<Duration> {
 }
 
 impl Duration {
+    /// Constructs a duration from nanoseconds.
     pub fn from_nanos(value: UInt64) -> Duration {
         Duration { nanos: value }
     }
+    /// Constructs a duration from microseconds. Returns None if converting to nanoseconds overflows.
     pub fn from_micros(value: UInt64) -> Option<Duration> {
         scaled(value, 1000)
     }
+    /// Constructs a duration from milliseconds. Returns None if converting to nanoseconds overflows.
     pub fn from_millis(value: UInt64) -> Option<Duration> {
         scaled(value, 1000000)
     }
+    /// Constructs a duration from seconds. Returns None if converting to nanoseconds overflows.
     pub fn from_secs(value: UInt64) -> Option<Duration> {
         scaled(value, 1000000000)
     }
+    /// Constructs a duration from minutes. Returns None if converting to nanoseconds overflows.
     pub fn from_mins(value: UInt64) -> Option<Duration> {
         scaled(value, 60000000000)
     }
+    /// Constructs a duration from hours. Returns None if converting to nanoseconds overflows.
     pub fn from_hours(value: UInt64) -> Option<Duration> {
         scaled(value, 3600000000000)
     }
+    /// Returns the duration as whole nanoseconds, discarding any remainder.
     pub fn as_nanos(self) -> UInt64 {
         self.nanos
     }
+    /// Returns the duration as whole microseconds, discarding any remainder.
     pub fn as_micros(self) -> UInt64 {
         self.nanos / 1000
     }
+    /// Returns the duration as whole milliseconds, discarding any remainder.
     pub fn as_millis(self) -> UInt64 {
         self.nanos / 1000000
     }
+    /// Returns the duration as whole seconds, discarding any remainder.
     pub fn as_secs(self) -> UInt64 {
         self.nanos / 1000000000
     }
+    /// Returns the duration as whole minutes, discarding any remainder.
     pub fn as_mins(self) -> UInt64 {
         self.nanos / 60000000000
     }
+    /// Returns the duration as whole hours, discarding any remainder.
     pub fn as_hours(self) -> UInt64 {
         self.nanos / 3600000000000
     }
+    /// Returns true for a zero-length duration.
     pub fn is_zero(self) -> Bool {
         self.nanos == 0
     }
+    /// Returns -1, 0, or 1 according to the ordering of the two durations.
     pub fn compare(self, other: Duration) -> Int32 {
         if self.nanos < other.nanos {
             -1
@@ -75,6 +89,7 @@ impl Duration {
             0
         }
     }
+    /// Adds durations, returning None if the nanosecond count would overflow.
     pub fn checked_add(self, other: Duration) -> Option<Duration> {
         if other.nanos > 18446744073709551615 - self.nanos {
             None
@@ -82,6 +97,7 @@ impl Duration {
             Some(Duration { nanos: self.nanos + other.nanos })
         }
     }
+    /// Subtracts a duration, returning None if the result would be negative.
     pub fn checked_sub(self, other: Duration) -> Option<Duration> {
         if self.nanos < other.nanos {
             None
@@ -89,6 +105,7 @@ impl Duration {
             Some(Duration { nanos: self.nanos - other.nanos })
         }
     }
+    /// Formats the duration as an owned string with a time unit.
     pub fn to_text(self) -> String {
         var output = StringBuilder.new()
         self.show(&mut output)
@@ -143,10 +160,12 @@ impl Add for Duration {
 /// A monotonic clock reading for elapsed time and deadlines, not calendar time.
 pub struct Instant { clock_id: UInt64, ticks: UInt64 }
 impl Instant {
+    /// Reads the process's monotonic clock.
     pub fn now() -> Instant {
         let clock = __joky_time_clock()
         Instant { clock_id: clock, ticks: __joky_time_ticks(clock) }
     }
+    /// Advances the instant, returning None if its tick count would overflow.
     pub fn checked_add(self, duration: Duration) -> Option<Instant> {
         if duration.nanos > 18446744073709551615 - self.ticks {
             None
@@ -154,6 +173,7 @@ impl Instant {
             Some(Instant { clock_id: self.clock_id, ticks: self.ticks + duration.nanos })
         }
     }
+    /// Moves the instant backward, returning None if its tick count would underflow.
     pub fn checked_sub(self, duration: Duration) -> Option<Instant> {
         if duration.nanos > self.ticks {
             None
@@ -161,6 +181,7 @@ impl Instant {
             Some(Instant { clock_id: self.clock_id, ticks: self.ticks - duration.nanos })
         }
     }
+    /// Returns elapsed time from the earlier instant, or None for a different clock or a reversed interval.
     pub fn duration_since(self, earlier: Instant) -> Option<Duration> {
         if self.clock_id != earlier.clock_id || self.ticks < earlier.ticks {
             None
@@ -168,9 +189,11 @@ impl Instant {
             Some(Duration.from_nanos(self.ticks - earlier.ticks))
         }
     }
+    /// Returns the elapsed time from this instant to the current monotonic time when comparable.
     pub fn elapsed(self) -> Option<Duration> {
         Instant.now().duration_since(self)
     }
+    /// Returns the ordering of two readings from the same clock, or None for different clocks.
     pub fn compare(self, other: Instant) -> Option<Int32> {
         if self.clock_id != other.clock_id {
             None
@@ -203,6 +226,7 @@ fn require_valid(value: Timestamp) {
 }
 
 impl Timestamp {
+    /// Constructs UTC time from floor seconds and a nanosecond fraction since the Unix epoch. Rejects invalid fractions and out-of-range dates.
     pub fn from_unix_parts(seconds: Int64, nanos: UInt32) -> Option<Timestamp> {
         let value = Timestamp { seconds: seconds, nanos: nanos }
         if valid(value) {
@@ -211,41 +235,51 @@ impl Timestamp {
             None
         }
     }
+    /// Constructs a UTC timestamp from signed Unix seconds, or returns None outside the supported calendar range.
     pub fn from_unix_secs(value: Int64) -> Option<Timestamp> {
         Timestamp.from_unix_parts(value, 0)
     }
+    /// Constructs a UTC timestamp from signed Unix milliseconds, or returns None outside the supported calendar range.
     pub fn from_unix_millis(value: Int64) -> Option<Timestamp> {
         from_units(value, 1000)
     }
+    /// Constructs a UTC timestamp from signed Unix microseconds, or returns None outside the supported calendar range.
     pub fn from_unix_micros(value: Int64) -> Option<Timestamp> {
         from_units(value, 1000000)
     }
+    /// Constructs a UTC timestamp from signed Unix nanoseconds, or returns None outside the supported calendar range.
     pub fn from_unix_nanos(value: Int64) -> Option<Timestamp> {
         from_units(value, 1000000000)
     }
     // One atomic wall-clock reading, rounded down to microseconds.
+    /// Reads the current UTC wall-clock time.
     pub fn now() -> Timestamp {
         match Timestamp.from_unix_micros(__joky_time_unix_micros()) {
             Some(value) => value
             None => panic("Wall clock exceeds the timestamp range")
         }
     }
+    /// Returns whole Unix seconds rounded down toward negative infinity.
     pub fn as_unix_secs(self) -> Int64 {
         require_valid(self)
         self.seconds
     }
+    /// Returns the nanosecond fraction after the most recent whole second.
     pub fn subsec_nanos(self) -> UInt32 {
         require_valid(self)
         self.nanos
     }
+    /// Returns the signed number of whole Unix milliseconds.
     pub fn as_unix_millis(self) -> Int64 {
         require_valid(self)
         self.seconds * 1000 + int64(self.nanos / 1000000)
     }
+    /// Returns the signed number of whole Unix microseconds.
     pub fn as_unix_micros(self) -> Int64 {
         require_valid(self)
         self.seconds * 1000000 + int64(self.nanos / 1000)
     }
+    /// Returns signed Unix nanoseconds, or None if the count cannot fit in Int64.
     pub fn as_unix_nanos(self) -> Option<Int64> {
         if !valid(self) {
             return None
@@ -265,6 +299,7 @@ impl Timestamp {
             }
         }
     }
+    /// Returns -1, 0, or 1 according to chronological ordering.
     pub fn compare(self, other: Timestamp) -> Int32 {
         require_valid(self)
         require_valid(other)
@@ -280,6 +315,7 @@ impl Timestamp {
             0
         }
     }
+    /// Adds a duration, returning None outside the supported UTC calendar range.
     pub fn checked_add(self, duration: Duration) -> Option<Timestamp> {
         if !valid(self) {
             return None
@@ -290,6 +326,7 @@ impl Timestamp {
             uint32(nanos % 1000000000)
         )
     }
+    /// Subtracts a duration, returning None outside the supported UTC calendar range.
     pub fn checked_sub(self, duration: Duration) -> Option<Timestamp> {
         if !valid(self) {
             return None
@@ -302,6 +339,7 @@ impl Timestamp {
             Timestamp.from_unix_parts(seconds, uint32(nanos))
         }
     }
+    /// Returns the time since an earlier timestamp, or None for a reversed or unrepresentable interval.
     pub fn duration_since(self, earlier: Timestamp) -> Option<Duration> {
         if !valid(self) || !valid(earlier) || self.compare(earlier) < 0 {
             return None
@@ -317,6 +355,7 @@ impl Timestamp {
             None => None
         }
     }
+    /// Formats the timestamp as owned UTC text.
     pub fn to_text(self) -> String {
         var output = StringBuilder.new()
         self.show(&mut output)
@@ -535,6 +574,7 @@ fn parse_timestamp(text: &String) -> Option<Timestamp> {
 }
 
 // Only trusted library modules can import this clock-coordinate bridge.
+/// Waits for the monotonic clock to reach the deadline.
 pub fn sleep_until(deadline: Instant) @suspends {
     __joky_public_task_sleep_until(deadline.clock_id, deadline.ticks)
 }

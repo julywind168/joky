@@ -38,42 +38,55 @@ pub struct Map<K, V> {
     deleted: UInt64
 }
 impl<K, V> Map<K, V> {
+    /// Creates an empty map with no reserved entries.
     pub fn new() -> Self {
         new::<K, V>()
     }
+    /// Creates an empty map with room for the requested number of entries.
     pub fn with_capacity(n: UInt64) -> Self {
         with_capacity::<K, V>(n)
     }
+    /// Returns the number of stored key-value pairs.
     pub fn len(&self) -> UInt64 {
         len(self)
     }
+    /// Returns true if the map contains no entries.
     pub fn is_empty(&self) -> Bool {
         is_empty(self)
     }
+    /// Returns the number of entries the map can currently hold without growing.
     pub fn capacity(&self) -> UInt64 {
         capacity(self)
     }
+    /// Ensures capacity for the requested number of additional entries.
     pub fn reserve(&mut self, additional: UInt64) {
         reserve(self, additional)
     }
+    /// Drops all entries while retaining storage capacity.
     pub fn clear(&mut self) {
         clear(self)
     }
+    /// Consumes the map and releases its storage.
     pub fn release(self) {
         release(self)
     }
+    /// Borrows a cursor over the map's key-value entries.
     pub fn iter(&self) -> &Iter<K, V> {
         iter(self)
     }
+    /// Exclusively borrows a cursor that permits editing entry values.
     pub fn iter_mut(&mut self) -> &mut Iter<K, V> {
         iter_mut(self)
     }
+    /// Borrows the keys in the map's current storage order.
     pub fn keys(&self) -> &Slice<K> {
         keys(self)
     }
+    /// Borrows the values in the same storage order as the keys.
     pub fn values(&self) -> &Slice<V> {
         values(self)
     }
+    /// Exclusively borrows the values in the same storage order as the keys.
     pub fn values_mut(&mut self) -> &mut Slice<V> {
         values_mut(self)
     }
@@ -87,9 +100,11 @@ impl<K, V> Map<K, V> {
     }
 }
 impl<K: Eq + Hash, V> Map<K, V> {
+    /// Consumes an array of pairs to build a map.
     pub fn from_entries(entries: Array<(K, V)>) -> Self {
         from_entries(entries)
     }
+    /// Moves entries from the array into the map, replacing values for equal keys.
     pub fn extend(&mut self, entries: Array<(K, V)>) {
         extend(self, entries)
     }
@@ -97,6 +112,7 @@ impl<K: Eq + Hash, V> Map<K, V> {
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         insert(self, key, value)
     }
+    /// Tests whether the map has a key equal to the borrowed key.
     pub fn contains_key(&self, key: &K) @noescape(key) -> Bool {
         contains_key(self, key)
     }
@@ -104,6 +120,7 @@ impl<K: Eq + Hash, V> Map<K, V> {
     pub fn remove(&mut self, key: &K) @noescape(key) -> Option<V> {
         remove(self, key)
     }
+    /// Borrows the matching value. Fails at runtime if the key is absent.
     pub fn borrow_ref(&self, key: &K) @noescape(key) -> &V {
         borrow_ref(self, key)
     }
@@ -111,11 +128,13 @@ impl<K: Eq + Hash, V> Map<K, V> {
     pub fn get_ref(&self, key: &K) @noescape(key) -> Option<&V> {
         get_ref(self, key)
     }
+    /// Exclusively borrows the matching value. Fails at runtime if the key is absent.
     pub fn borrow_mut_ref(&mut self, key: &K) @noescape(key) -> &mut V {
         borrow_mut_ref(self, key)
     }
 }
 
+/// Creates an empty map with no reserved entries.
 pub fn new<K, V>() -> Map<K, V> {
     types.require_reference_free::<K>()
     Map {
@@ -128,30 +147,36 @@ pub fn new<K, V>() -> Map<K, V> {
     }
 }
 
-pub fn with_capacity<K, V>(n: UInt64) -> Map<K, V> {
+fn with_capacity<K, V>(n: UInt64) -> Map<K, V> {
     var table = new::<K, V>()
     reserve(&mut table, n)
     table
 }
 
+/// Returns the number of stored key-value pairs.
 pub fn len<K, V>(table: &Map<K, V>) -> UInt64 {
     table.values.len()
 }
 
+/// Returns true if the map contains no entries.
 pub fn is_empty<K, V>(table: &Map<K, V>) -> Bool {
     len(table) == 0
 }
 
+/// Consumes the map and releases its storage.
 pub fn release<K, V>(table: Map<K, V>) {}
 
+/// Borrows the keys in the map's current storage order.
 pub fn keys<K, V>(table: &Map<K, V>) -> &Slice<K> {
     &table.keys[..len(table)]
 }
 
+/// Borrows the values in the same storage order as the keys.
 pub fn values<K, V>(table: &Map<K, V>) -> &Slice<V> {
     &table.values[..]
 }
 
+/// Exclusively borrows the values in the same storage order as the keys.
 pub fn values_mut<K, V>(table: &mut Map<K, V>) -> &mut Slice<V> {
     &mut table.values[..]
 }
@@ -172,7 +197,7 @@ pub fn pop<K, V>(table: &mut Map<K, V>) -> Option<(K, V)> {
 }
 
 /// Consumes the map and transfers its entries into an array in unspecified order.
-pub fn into_entries<K, V>(var table: Map<K, V>) -> Array<(K, V)> {
+fn into_entries<K, V>(var table: Map<K, V>) -> Array<(K, V)> {
     var entries = Array.with_capacity::<(K, V)>(len(&table))
     while let Some(entry) = pop(&mut table) {
         entries.push(entry)
@@ -180,12 +205,14 @@ pub fn into_entries<K, V>(var table: Map<K, V>) -> Array<(K, V)> {
     entries
 }
 
+/// Consumes an array of pairs to build a map.
 pub fn from_entries<K: Eq + Hash, V>(entries: Array<(K, V)>) -> Map<K, V> {
     var table = new::<K, V>()
     extend(&mut table, entries)
     table
 }
 
+/// Moves entries from the array into the map, replacing values for equal keys.
 pub fn extend<K: Eq + Hash, V>(table: &mut Map<K, V>, entries: Array<(K, V)>) {
     reserve(table, entries.len())
     for (key, value) in entries {
@@ -206,7 +233,7 @@ fn load_limit(count: UInt64) -> UInt64 {
     count - count / 4
 }
 
-pub fn capacity<K, V>(table: &Map<K, V>) -> UInt64 {
+fn capacity<K, V>(table: &Map<K, V>) -> UInt64 {
     let index = minimum(table.hashes.capacity(), table.positions.capacity())
     let payload = minimum(table.keys.capacity(), table.values.capacity())
     let load = load_limit(table.buckets.len())
@@ -259,7 +286,7 @@ fn rehash<K, V>(table: &mut Map<K, V>, count: UInt64, required: UInt64) {
     table.deleted = 0
 }
 
-pub fn reserve<K, V>(table: &mut Map<K, V>, additional: UInt64) {
+fn reserve<K, V>(table: &mut Map<K, V>, additional: UInt64) {
     let length = len(table)
     if additional > 18446744073709551615 - length {
         panic("Map capacity exceeds the supported limit")
@@ -329,11 +356,13 @@ fn require_entry<K: Eq + Hash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> 
     }
 }
 
+/// Borrows an element handle for the matching value. Fails at runtime if the key is absent.
 pub fn borrow<K: Eq + Hash, V: Copy>(table: &Map<K, V>, key: &K) @noescape(key) -> &Element<V> {
     let i = require_entry(table, key)
     table.values.borrow(i)
 }
 
+/// Exclusively borrows an element handle for the matching value. Fails at runtime if the key is absent.
 pub fn borrow_mut<K: Eq + Hash, V: Copy>(
     table: &mut Map<K, V>,
     key: &K
@@ -342,6 +371,7 @@ pub fn borrow_mut<K: Eq + Hash, V: Copy>(
     table.values.borrow_mut(i)
 }
 
+/// Tests whether the map has a key equal to the borrowed key.
 pub fn contains_key<K: Eq + Hash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Bool {
     !find(table, key, Hash.hash(key)).is_none()
 }
@@ -362,11 +392,13 @@ pub fn remove<K: Eq + Hash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) ->
     }
 }
 
+/// Borrows the matching value. Fails at runtime if the key is absent.
 pub fn borrow_ref<K: Eq + Hash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> &V {
     let i = require_entry(table, key)
     table.values.borrow_ref(i)
 }
 
+/// Exclusively borrows the matching value. Fails at runtime if the key is absent.
 pub fn borrow_mut_ref<K: Eq + Hash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) -> &mut V {
     let i = require_entry(table, key)
     table.values.borrow_mut_ref(i)
@@ -394,7 +426,7 @@ fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) @noescape -> UIn
 }
 
 /// Inserts a key and value, returning the old value when an equal key was present.
-pub fn insert<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K, value: V) -> Option<V> {
+fn insert<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K, value: V) -> Option<V> {
     types.require_reference_free::<K>()
     // All user protocol calls finish before storage or metadata is modified.
     let cached_hash = Hash.hash(&key)
@@ -432,6 +464,7 @@ fn remove_entry<K, V>(table: &mut Map<K, V>, i: UInt64) -> Option<V> {
     value
 }
 
+/// Drops all entries while retaining storage capacity.
 pub fn clear<K, V>(table: &mut Map<K, V>) {
     table.values.clear()
     table.keys.clear()
@@ -446,9 +479,11 @@ pub fn clear<K, V>(table: &mut Map<K, V>) {
 }
 
 impl<K: Eq + Hash, V: Copy> Map<K, V> {
+    /// Borrows an element handle for the matching value. Fails at runtime if the key is absent.
     pub fn borrow(&self, key: &K) @noescape(key) -> &Element<V> {
         borrow(self, key)
     }
+    /// Exclusively borrows an element handle for the matching value. Fails at runtime if the key is absent.
     pub fn borrow_mut(&mut self, key: &K) @noescape(key) -> &mut Element<V> {
         borrow_mut(self, key)
     }
@@ -458,43 +493,51 @@ impl<K: Eq + Hash, V: Copy> Map<K, V> {
     }
 }
 
+/// A borrowed cursor over a map's key and value pairs.
 pub type Iter<K, V> = iteration.Entries<K, V>
+/// A borrowed entry exposing a map key and its corresponding value.
 pub type Entry<K, V> = iteration.Entry<K, V>
 
-pub fn iter<K, V>(table: &Map<K, V>) -> &Iter<K, V> {
+fn iter<K, V>(table: &Map<K, V>) -> &Iter<K, V> {
     buffer.pair_iter::<K, V, Map<K, V>>(table)
 }
 
-pub fn iter_mut<K, V>(table: &mut Map<K, V>) -> &mut Iter<K, V> {
+fn iter_mut<K, V>(table: &mut Map<K, V>) -> &mut Iter<K, V> {
     buffer.pair_iter_mut::<K, V, Map<K, V>>(table)
 }
 
+/// Moves a borrowed map cursor to its next entry.
 pub fn advance<K, V>(cursor: &Iter<K, V>) -> Bool {
     iteration.entries_advance(cursor)
 }
 
+/// Borrows the entry at the cursor's current position.
 pub fn current<K, V>(cursor: &Iter<K, V>) -> &Entry<K, V> {
     iteration.entries_current(cursor)
 }
 
+/// Borrows the entry at the exclusive cursor's current position.
 pub fn current_mut<K, V>(cursor: &mut Iter<K, V>) -> &mut Entry<K, V> {
     iteration.entries_current_mut(cursor)
 }
 
+/// Borrows the key of the current entry.
 pub fn entry_key<K, V>(entry: &Entry<K, V>) -> &K {
     buffer.entry_key(entry)
 }
 
+/// Borrows the value of the current entry.
 pub fn entry_value<K, V>(entry: &Entry<K, V>) -> &V {
     buffer.entry_value(entry)
 }
 
+/// Exclusively borrows the value of the current entry.
 pub fn entry_value_mut<K, V>(entry: &mut Entry<K, V>) -> &mut V {
     buffer.entry_value_mut(entry)
 }
 
 /// Borrows the value for a key, or returns `None` when the key is absent.
-pub fn get_ref<K: Eq + Hash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Option<&V> {
+fn get_ref<K: Eq + Hash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Option<&V> {
     match find(table, key, Hash.hash(key)) {
         Some(i) => table.values.get_ref(i),
         None => None

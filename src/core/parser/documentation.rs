@@ -23,16 +23,35 @@ pub struct Documentation {
 
 /// Parse public documentation with the same visibility rules as compilation.
 pub fn extract(source: &str) -> Result<Documentation, Diagnostic> {
+    extract_with_trait_docs(source, |_, _| None)
+}
+
+pub(crate) fn extract_with_trait_docs<'a>(
+    source: &str,
+    trait_docs: impl Fn(&[Import], &str) -> Option<&'a [Entry]>,
+) -> Result<Documentation, Diagnostic> {
     let module = super::parse(source)?;
     let tokens = Lexer::tokenize(source)?;
     let comments = comments(source, &tokens);
     let item = |name: &str, kind, span: Span, body: Option<usize>| {
         let span = with_prefix(&tokens, span);
+        let mut docs = attached(source, &comments, span.start());
+        // Trusted standard-library declarations may place comments between
+        // the compiler binding attribute and the public signature.
+        if docs.is_empty() && source[span.start()..].starts_with("#intrinsic") {
+            if let Some(token) = tokens.iter().find(|t| {
+                t.span.start() >= span.start()
+                    && t.span.end() <= span.end()
+                    && matches!(t.kind, TokenKind::Pub | TokenKind::Fn)
+            }) {
+                docs = attached(source, &comments, token.span.start());
+            }
+        }
         Entry {
             name: name.into(),
             kind,
             signature: signature(source, &tokens, span, body),
-            docs: attached(source, &comments, span.start()),
+            docs,
             children: vec![],
         }
     };
@@ -136,6 +155,24 @@ pub fn extract(source: &str) -> Result<Documentation, Diagnostic> {
                 associated_span(&tokens, a.span, Some(a.target_span.end())),
                 None,
             ));
+        }
+        if let Some(name) = &i.trait_name {
+            let contract = entries
+                .iter()
+                .find(|entry| entry.kind == "trait" && entry.name == *name)
+                .map(|entry| entry.children.as_slice())
+                .or_else(|| trait_docs(&module.imports, name));
+            if let Some(contract) = contract {
+                for child in &mut e.children {
+                    if child.docs.is_empty() {
+                        if let Some(requirement) = contract.iter().find(|requirement| {
+                            requirement.kind == child.kind && requirement.name == child.name
+                        }) {
+                            child.docs.clone_from(&requirement.docs);
+                        }
+                    }
+                }
+            }
         }
         if !e.children.is_empty() {
             // A type may spread one impl signature across multiple source blocks.

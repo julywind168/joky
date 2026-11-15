@@ -24,13 +24,21 @@ import joky/time
 import joky/uuid.{type Uuid}
 import joky/result.{type Result, Ok, Err}
 extern fn __joky_try_write_stderr(text: &String) -> Int32
+/// Reasons a structured event could not be encoded or written.
 pub enum LogError {
+    /// The event name failed validation.
     InvalidEvent,
+    /// The event contains more fields than the logger allows.
     TooManyFields,
+    /// A field name failed validation.
     InvalidField,
+    /// More than one field has the same name.
     DuplicateField,
+    /// A log field value exceeds its permitted size.
     ValueTooLong,
+    /// Encoding the structured event as JSON failed.
     Encoding(json.EncodeError),
+    /// Writing the structured event failed.
     WriteFailed
 }
 
@@ -49,7 +57,17 @@ impl Show for LogError {
         )
     }
 }
-pub enum Level { Debug, Info, Warn, Error }
+/// Severity of a structured log event.
+pub enum Level {
+    /// Diagnostic detail intended for debugging.
+    Debug,
+    /// Normal operational information.
+    Info,
+    /// A condition that merits attention.
+    Warn,
+    /// A failed operation or error condition.
+    Error
+}
 impl Show for Level {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -63,7 +81,13 @@ impl Show for Level {
     }
 }
 
-pub enum Emission { Written, Filtered }
+/// Whether a log event was written or filtered by severity.
+pub enum Emission {
+    /// The event was encoded and written.
+    Written,
+    /// The event's severity was below the configured threshold.
+    Filtered
+}
 impl Show for Emission {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -75,7 +99,11 @@ impl Show for Emission {
     }
 }
 
-pub struct Logger { pub minimum: Level }
+/// A structured logger with a severity threshold.
+pub struct Logger {
+    /// Lowest severity eligible for emission.
+    pub minimum: Level
+}
 
 fn rank(level: Level) -> UInt8 {
     match level {
@@ -87,12 +115,15 @@ fn rank(level: Level) -> UInt8 {
 }
 
 impl Logger {
+    /// Creates a logger with the supplied minimum severity.
     pub fn new(minimum: Level) -> Logger {
         Logger { minimum }
     }
+    /// Checks whether a severity meets the logger's threshold.
     pub fn enabled(&self, level: Level) -> Bool {
         rank(level) >= rank(self.minimum)
     }
+    /// Attempts to write one structured event and reports whether it was emitted or filtered.
     pub fn emit(
         &self,
         level: Level,
@@ -105,42 +136,54 @@ impl Logger {
         emit(level, event, fields)?
         Ok(Written)
     }
+    /// Attempts to emit a structured event at debug severity.
     pub fn debug(&self, event: String, fields: Array<Field>) {
         self.emit(Level.Debug, event, fields);
     }
+    /// Attempts to emit a structured event at informational severity.
     pub fn info(&self, event: String, fields: Array<Field>) {
         self.emit(Level.Info, event, fields);
     }
+    /// Attempts to emit a structured event at warning severity.
     pub fn warn(&self, event: String, fields: Array<Field>) {
         self.emit(Level.Warn, event, fields);
     }
+    /// Attempts to emit a structured event at error severity.
     pub fn error(&self, event: String, fields: Array<Field>) {
         self.emit(Level.Error, event, fields);
     }
 }
+/// A named value added to a structured log event.
 pub struct Field { name: String, value: json.Value }
 
+/// Creates a text-valued field payload.
 pub fn text(name: String, value: String) -> Field {
     Field { name, value: json.Value.Text(value) }
 }
 
+/// Creates an unsigned integer field payload.
 pub fn uint(name: String, value: UInt64) -> Field {
     Field { name, value: json.Value.Number(json.Number.from_u64(value)) }
 }
 
+/// Creates a signed integer field payload.
 pub fn integer(name: String, value: Int64) -> Field {
     Field { name, value: json.Value.Number(json.Number.from_i64(value)) }
 }
 
+/// Creates a Boolean field payload.
 pub fn boolean(name: String, value: Bool) -> Field {
     Field { name, value: json.Value.Boolean(value) }
 }
 
 // Conversion preserves JSON scalar types; callers choose duration units explicitly.
+/// Converts an application value into a structured log field value.
 pub trait ToField {
+    /// Consumes the value and converts it to the JSON representation of a log field.
     fn to_field(self, name: String) -> Field
 }
 
+/// Builds a named field using the value's ToField conversion.
 pub fn field<T: ToField>(name: String, value: T) -> Field {
     value.to_field(name)
 }
@@ -216,6 +259,7 @@ fn add(record: &mut Map<String, json.Value>, field: Field) -> Result<Unit, LogEr
     Ok({})
 }
 
+/// Attempts to write one structured event and reports whether it was emitted or filtered.
 pub fn emit(level: Level, event: String, fields: Array<Field>) -> Result<Unit, LogError> {
     if event.is_empty() || event.byte_length() > 128 {
         return Err(InvalidEvent)
@@ -251,18 +295,22 @@ pub fn emit(level: Level, event: String, fields: Array<Field>) -> Result<Unit, L
     }
 }
 
+/// Attempts to emit a structured event at debug severity.
 pub fn debug(event: String, fields: Array<Field>) {
     emit(Level.Debug, event, fields);
 }
 
+/// Attempts to emit a structured event at informational severity.
 pub fn info(event: String, fields: Array<Field>) {
     emit(Level.Info, event, fields);
 }
 
+/// Attempts to emit a structured event at warning severity.
 pub fn warn(event: String, fields: Array<Field>) {
     emit(Level.Warn, event, fields);
 }
 
+/// Attempts to emit a structured event at error severity.
 pub fn error(event: String, fields: Array<Field>) {
     emit(Level.Error, event, fields);
 }

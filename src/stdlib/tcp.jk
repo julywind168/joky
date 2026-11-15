@@ -28,21 +28,27 @@ import joky/internal/buffer
 
 extern fn __joky_task_yield_now() @suspends
 
+/// A TCP endpoint with an IP address and a port.
 pub struct Address { high: UInt64, low: UInt64, endpoint: UInt64 }
 impl Address {
+    /// Builds an IPv4 endpoint from the unsigned address bits and port.
     pub fn ipv4(ip: UInt32, port: UInt16) -> Self {
         Address { high: 0, low: uint64(ip), endpoint: 4 | (uint64(port) << 8) }
     }
     // Network-order upper/lower halves, e.g. ::1 is (0, 1).
+    /// Builds an IPv6 endpoint from the high and low address words and port.
     pub fn ipv6(high: UInt64, low: UInt64, port: UInt16) -> Self {
         Address { high: high, low: low, endpoint: 6 | (uint64(port) << 8) }
     }
+    /// Returns the port of the endpoint.
     pub fn port(self) -> UInt16 {
         uint16((self.endpoint >> 8) & 65535)
     }
+    /// Returns the IPv6 scope identifier.
     pub fn scope_id(self) -> UInt32 {
         uint32(self.endpoint >> 32)
     }
+    /// Sets the scope identifier of an IPv6 endpoint.
     pub fn with_scope(self, index: UInt32) -> Self {
         Address {
             high: self.high,
@@ -50,29 +56,45 @@ impl Address {
             endpoint: (self.endpoint & 0xffffff) | (uint64(index) << 32)
         }
     }
+    /// Returns true if the endpoint uses IPv6.
     pub fn is_ipv6(self) -> Bool {
         (self.endpoint & 255) == 6
     }
+    /// Returns the high word of the stored IP address.
     pub fn high(self) -> UInt64 {
         self.high
     }
+    /// Returns the low word of the stored IP address.
     pub fn low(self) -> UInt64 {
         self.low
     }
 }
 
+/// Portable categories of TCP I/O failure.
 pub enum ErrorKind {
+    /// The remote endpoint refused the connection.
     ConnectionRefused,
+    /// The connection was reset.
     ConnectionReset,
+    /// The connection was aborted.
     ConnectionAborted,
+    /// The socket is not connected.
     NotConnected,
+    /// The local address is already in use.
     AddrInUse,
+    /// The requested local address is unavailable.
     AddrNotAvailable,
+    /// The stream can no longer accept writes.
     BrokenPipe,
+    /// The host denied permission for the socket operation.
     PermissionDenied,
+    /// The socket operation received an invalid input.
     InvalidInput,
+    /// The socket operation timed out.
     TimedOut,
+    /// A write made no progress before the supplied bytes were exhausted.
     WriteZero,
+    /// Another socket I/O error occurred.
     Other
 }
 impl Show for ErrorKind {
@@ -96,6 +118,7 @@ impl Show for ErrorKind {
     }
 }
 
+/// A TCP I/O failure with a portable category.
 pub struct IoError { code: UInt64 }
 impl Show for IoError {
     fn show(&self, output: &mut StringBuilder) @noescape {
@@ -110,6 +133,7 @@ impl Show for IoError {
 }
 
 impl IoError {
+    /// Returns the portable category of the I/O failure.
     pub fn kind(self) -> ErrorKind {
         let code = self.code & 0xffffffff
         if code == 1 {
@@ -147,11 +171,20 @@ impl IoError {
         }
         ErrorKind.Other
     }
+    /// Returns the underlying operating-system error code.
     pub fn os_code(self) -> UInt32 {
         uint32(self.code >> 32)
     }
 }
-pub enum Shutdown { Read, Write, Both }
+/// Selects which direction of a TCP stream to close.
+pub enum Shutdown {
+    /// Closes the receiving direction.
+    Read,
+    /// Closes the sending direction.
+    Write,
+    /// Closes both directions of the connection.
+    Both
+}
 impl Show for Shutdown {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -164,13 +197,23 @@ impl Show for Shutdown {
     }
 }
 
+/// Owns a connected TCP stream.
 pub struct TcpStream { owner: tcp.StreamOwner }
+/// Owns a bound TCP listening socket.
 pub struct TcpListener { owner: tcp.ListenerOwner }
+/// Owns the read half of a split TCP stream.
 pub struct TcpReader { owner: tcp.ReaderOwner }
+/// Owns the write half of a split TCP stream.
 pub struct TcpWriter { owner: tcp.WriterOwner }
 
 // Host endpoints resolve once and try candidates in system order.
-pub enum EndpointError { Resolve(resolve.ResolveError), Io(IoError) }
+/// Failure to resolve an address or open a TCP endpoint.
+pub enum EndpointError {
+    /// Name resolution failed before the socket operation.
+    Resolve(resolve.ResolveError),
+    /// The underlying socket operation failed.
+    Io(IoError)
+}
 impl Show for EndpointError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
@@ -184,6 +227,7 @@ fn resolved_address(high: UInt64, low: UInt64, endpoint: UInt64) -> Address {
     Address { high, low, endpoint }
 }
 
+/// Resolves a host and port and tries to open a TCP listener.
 pub fn listen(host: &String, port: UInt16) @suspends -> Result<TcpListener, EndpointError> {
     let addresses = match resolve.lookup(host, port, resolved_address) {
         Ok(addresses) => addresses,
@@ -199,6 +243,7 @@ pub fn listen(host: &String, port: UInt16) @suspends -> Result<TcpListener, Endp
     Err(EndpointError.Io(last))
 }
 
+/// Resolves a host and port and tries to connect a TCP stream.
 pub fn connect(host: &String, port: UInt16) @suspends -> Result<TcpStream, EndpointError> {
     let addresses = match resolve.lookup(host, port, resolved_address) {
         Ok(addresses) => addresses,
@@ -214,11 +259,17 @@ pub fn connect(host: &String, port: UInt16) @suspends -> Result<TcpStream, Endpo
     Err(EndpointError.Io(last))
 }
 
+/// Failure to read or decode a bounded TCP message.
 pub enum ReadError {
+    /// The requested byte limit is invalid for this read.
     InvalidLimit,
+    /// The underlying socket operation failed.
     Io(IoError),
+    /// The stream ended before the read was complete, after this many bytes.
     UnexpectedEof(UInt64),
+    /// The input exceeded the allowed message or record size.
     LimitExceeded,
+    /// The received line contained invalid UTF-8.
     InvalidUtf8(Utf8Error)
 }
 impl Show for ReadError {
@@ -403,25 +454,32 @@ impl ReceiveBuffer {
         self.offset = self.offset + length
     }
 }
+/// An owned TCP stream with a receive buffer for framed reads.
 pub struct BufferedTcp { stream: TcpStream, buffer: ReceiveBuffer }
+/// The read half of a split stream with its buffered bytes.
 pub struct BufferedTcpReader { stream: TcpReader, buffer: ReceiveBuffer }
 impl BufferedTcp {
     // Allocate lazily; capacity bounds each refill, independently of read limits.
+    /// Wraps the supplied input with a receive buffer of default capacity.
     pub fn new(stream: TcpStream) -> Self {
         BufferedTcp { stream: stream, buffer: ReceiveBuffer.new(16384) }
     }
+    /// Wraps the supplied input with the requested receive-buffer capacity.
     pub fn with_capacity(stream: TcpStream, capacity: UInt64) -> Result<Self, ReadError> {
         if capacity == 0 || capacity > 1048576 {
             return Err(ReadError.InvalidLimit)
         }
         Ok(BufferedTcp { stream: stream, buffer: ReceiveBuffer.new(capacity) })
     }
+    /// Returns the capacity of the receive buffer in bytes.
     pub fn capacity(&self) -> UInt64 {
         self.buffer.capacity
     }
+    /// Returns the number of unread bytes already buffered.
     pub fn buffered_len(&self) -> UInt64 {
         self.buffer.buffered_len()
     }
+    /// Reports whether end of stream has been observed.
     pub fn is_eof(&self) -> Bool {
         self.buffer.is_eof()
     }
@@ -449,6 +507,7 @@ impl BufferedTcp {
             }
         }
     }
+    /// Reads up to the requested byte count using any buffered input first.
     pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, ReadError> {
         let progress = ReadProgress.new(ReadMode.Partial, limit)?
         Ok(
@@ -458,6 +517,7 @@ impl BufferedTcp {
             }
         )
     }
+    /// Reads exactly the requested number of bytes or reports an incomplete read.
     pub fn read_exact(
         &mut self,
         length: UInt64
@@ -465,6 +525,7 @@ impl BufferedTcp {
         let progress = ReadProgress.new(ReadMode.Exact, length)?
         self.read_frame(progress)
     }
+    /// Reads a byte-delimited record bounded by the supplied byte limit.
     pub fn read_until(
         &mut self,
         delimiter: UInt8,
@@ -473,6 +534,7 @@ impl BufferedTcp {
         let progress = ReadProgress.new(ReadMode.Until(delimiter), limit)?
         self.read_frame(progress)
     }
+    /// Reads a UTF-8 line with a byte limit including its terminator.
     pub fn read_line(&mut self, limit: UInt64) @suspends -> Result<Option<String>, ReadError> {
         let Some(bytes) = self.read_until(10, limit)? else {
             return Ok(None)
@@ -480,6 +542,7 @@ impl BufferedTcp {
         Ok(Some(decode_line(bytes)?))
     }
     // Truncation counts all consumed bytes in the message, including its header.
+    /// Reads one message with a four-byte big-endian payload length.
     pub fn read_message(
         &mut self,
         limit: UInt64
@@ -502,14 +565,17 @@ impl BufferedTcp {
         }
     }
     // Move the existing allocation, cursor and terminal state without refilling.
+    /// Consumes the wrapper and transfers buffered data to the returned read half.
     pub fn split(self) @suspends -> (BufferedTcpReader, TcpWriter) {
         let (stream, buffer) = buffered_parts(self)
         let (reader, writer) = stream.split()
         (BufferedTcpReader { stream: reader, buffer: buffer }, writer)
     }
+    /// Writes the entire owned byte array or returns an I/O error.
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, IoError> {
         self.stream.write_all(bytes)
     }
+    /// Writes a four-byte big-endian length followed by the owned payload.
     pub fn write_message(
         &mut self,
         bytes: Array<UInt8>,
@@ -522,6 +588,7 @@ impl BufferedTcp {
         self.stream.write_all(message_header(length))?
         self.stream.write_all(bytes)
     }
+    /// Consumes this socket owner and closes its handle.
     pub fn close(self) @suspends -> Result<Unit, IoError> {
         self.stream.close()
     }
@@ -534,21 +601,26 @@ fn buffered_parts(buffered: BufferedTcp) -> (TcpStream, ReceiveBuffer) {
 
 impl BufferedTcpReader {
     // Allocate lazily; capacity bounds each refill, independently of read limits.
+    /// Wraps the supplied input with a receive buffer of default capacity.
     pub fn new(stream: TcpReader) -> Self {
         BufferedTcpReader { stream: stream, buffer: ReceiveBuffer.new(16384) }
     }
+    /// Wraps the supplied input with the requested receive-buffer capacity.
     pub fn with_capacity(stream: TcpReader, capacity: UInt64) -> Result<Self, ReadError> {
         if capacity == 0 || capacity > 1048576 {
             return Err(ReadError.InvalidLimit)
         }
         Ok(BufferedTcpReader { stream: stream, buffer: ReceiveBuffer.new(capacity) })
     }
+    /// Returns the capacity of the receive buffer in bytes.
     pub fn capacity(&self) -> UInt64 {
         self.buffer.capacity
     }
+    /// Returns the number of unread bytes already buffered.
     pub fn buffered_len(&self) -> UInt64 {
         self.buffer.buffered_len()
     }
+    /// Reports whether end of stream has been observed.
     pub fn is_eof(&self) -> Bool {
         self.buffer.is_eof()
     }
@@ -576,6 +648,7 @@ impl BufferedTcpReader {
             }
         }
     }
+    /// Reads up to the requested byte count using any buffered input first.
     pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, ReadError> {
         let progress = ReadProgress.new(ReadMode.Partial, limit)?
         Ok(
@@ -585,6 +658,7 @@ impl BufferedTcpReader {
             }
         )
     }
+    /// Reads exactly the requested number of bytes or reports an incomplete read.
     pub fn read_exact(
         &mut self,
         length: UInt64
@@ -592,6 +666,7 @@ impl BufferedTcpReader {
         let progress = ReadProgress.new(ReadMode.Exact, length)?
         self.read_frame(progress)
     }
+    /// Reads a byte-delimited record bounded by the supplied byte limit.
     pub fn read_until(
         &mut self,
         delimiter: UInt8,
@@ -600,6 +675,7 @@ impl BufferedTcpReader {
         let progress = ReadProgress.new(ReadMode.Until(delimiter), limit)?
         self.read_frame(progress)
     }
+    /// Reads a UTF-8 line with a byte limit including its terminator.
     pub fn read_line(&mut self, limit: UInt64) @suspends -> Result<Option<String>, ReadError> {
         let Some(bytes) = self.read_until(10, limit)? else {
             return Ok(None)
@@ -607,6 +683,7 @@ impl BufferedTcpReader {
         Ok(Some(decode_line(bytes)?))
     }
     // Truncation counts all consumed bytes in the message, including its header.
+    /// Reads one message with a four-byte big-endian payload length.
     pub fn read_message(
         &mut self,
         limit: UInt64
@@ -628,16 +705,20 @@ impl BufferedTcpReader {
             Err(error) => Err(error)
         }
     }
+    /// Returns the local endpoint of the socket.
     pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> {
         self.stream.local_addr()
     }
+    /// Returns the remote endpoint of the connection.
     pub fn peer_addr(&mut self) @suspends -> Result<Address, IoError> {
         self.stream.peer_addr()
     }
     // Keep received bytes available; EOF is observed once that cache is exhausted.
+    /// Shuts down the stream direction controlled by this handle.
     pub fn shutdown(&mut self) @suspends -> Result<Unit, IoError> {
         self.stream.shutdown()
     }
+    /// Consumes this socket owner and closes its handle.
     pub fn close(self) @suspends -> Result<Unit, IoError> {
         self.stream.close()
     }
@@ -769,12 +850,14 @@ fn status(code: UInt64) -> Result<Unit, IoError> {
 
 impl TcpStream {
     // Consume one connection into independent, non-Copy direction owners.
+    /// Consumes the connection and returns separate read and write owners.
     pub fn split(self) @suspends -> (TcpReader, TcpWriter) {
         var owner = self.owner
         let reader = __tcp_split_reader(&mut owner)
         let writer = __tcp_split_writer(&mut owner)
         (TcpReader { owner: reader }, TcpWriter { owner: writer })
     }
+    /// Opens a TCP connection to the supplied numeric endpoint.
     pub fn connect(address: Address) @suspends -> Result<Self, IoError> {
         var error: UInt64 = 0
         let owner = __tcp_connect(address.high, address.low, address.endpoint, &mut error)
@@ -785,6 +868,7 @@ impl TcpStream {
         }
     }
     // A positive limit and an empty success means EOF. Limits are at most 1 MiB.
+    /// Reads up to the requested byte count from the stream.
     pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, IoError> {
         var error: UInt64 = 0
         let bytes = __tcp_read(&mut self.owner, limit, &mut error)
@@ -795,6 +879,7 @@ impl TcpStream {
         }
     }
     // Snapshots the borrowed byte range; success may report only a prefix.
+    /// Attempts to write the supplied bytes and returns the actual count written.
     pub fn write(&mut self, bytes: &Slice<UInt8>) @suspends -> Result<UInt64, IoError> {
         var error: UInt64 = 0
         let count = __tcp_write(&mut self.owner, bytes, &mut error)
@@ -806,6 +891,7 @@ impl TcpStream {
     }
     // The pending request borrows this owned input and advances a bounded cursor.
     // Cancellation/error may leave a transmitted prefix; do not retry it blindly.
+    /// Writes the entire owned byte array or returns an I/O error.
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, IoError> {
         if bytes.is_empty() {
             return Ok({})
@@ -814,12 +900,15 @@ impl TcpStream {
         __tcp_write_all(&mut self.owner, bytes, &mut error)
         status(error)
     }
+    /// Returns the local endpoint of the socket.
     pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> {
         stream_addr(&mut self.owner, 0)
     }
+    /// Returns the remote endpoint of the connection.
     pub fn peer_addr(&mut self) @suspends -> Result<Address, IoError> {
         stream_addr(&mut self.owner, 1)
     }
+    /// Shuts down the read side, write side, or both, as requested.
     pub fn shutdown(&mut self, how: Shutdown) @suspends -> Result<Unit, IoError> {
         let mode: UInt64 = match how {
             Read => 0,
@@ -828,6 +917,7 @@ impl TcpStream {
         }
         status(__tcp_shutdown(&mut self.owner, mode))
     }
+    /// Consumes this socket owner and closes its handle.
     pub fn close(self) @suspends -> Result<Unit, IoError> {
         var owner = self.owner
         status(__tcp_close_stream(&mut owner))
@@ -848,6 +938,7 @@ fn stream_addr(stream: &mut tcp.StreamOwner, peer: UInt64) @suspends -> Result<A
 
 impl TcpReader {
     // A positive bounded read returns an empty success at EOF.
+    /// Reads up to the requested byte count from the read half.
     pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, IoError> {
         var error: UInt64 = 0
         let bytes = __tcp_read_half(&mut self.owner, limit, &mut error)
@@ -857,21 +948,26 @@ impl TcpReader {
             Err(IoError { code: error })
         }
     }
+    /// Returns the local endpoint of the socket.
     pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> {
         reader_addr(&mut self.owner, 0)
     }
+    /// Returns the remote endpoint of the connection.
     pub fn peer_addr(&mut self) @suspends -> Result<Address, IoError> {
         reader_addr(&mut self.owner, 1)
     }
+    /// Shuts down the stream direction controlled by this handle.
     pub fn shutdown(&mut self) @suspends -> Result<Unit, IoError> {
         status(__tcp_shutdown_reader(&mut self.owner))
     }
+    /// Consumes this socket owner and closes its handle.
     pub fn close(self) @suspends -> Result<Unit, IoError> {
         var owner = self.owner
         status(__tcp_close_reader(&mut owner))
     }
 }
 impl TcpWriter {
+    /// Attempts to write the supplied bytes and returns the actual count written.
     pub fn write(&mut self, bytes: &Slice<UInt8>) @suspends -> Result<UInt64, IoError> {
         var error: UInt64 = 0
         let count = __tcp_write_half(&mut self.owner, bytes, &mut error)
@@ -883,12 +979,14 @@ impl TcpWriter {
     }
     // The pending request borrows this owned input and advances a bounded cursor.
     // Cancellation/error may leave a transmitted prefix; do not retry it blindly.
+    /// Writes the entire owned byte array or returns an I/O error.
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, IoError> {
         var error: UInt64 = 0
         __tcp_write_all_half(&mut self.owner, bytes, &mut error)
         status(error)
     }
 
+    /// Writes a four-byte big-endian length followed by the owned payload.
     pub fn write_message(
         &mut self,
         bytes: Array<UInt8>,
@@ -901,15 +999,19 @@ impl TcpWriter {
         self.write_all(message_header(length))?
         self.write_all(bytes)
     }
+    /// Returns the local endpoint of the socket.
     pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> {
         writer_addr(&mut self.owner, 0)
     }
+    /// Returns the remote endpoint of the connection.
     pub fn peer_addr(&mut self) @suspends -> Result<Address, IoError> {
         writer_addr(&mut self.owner, 1)
     }
+    /// Shuts down the stream direction controlled by this handle.
     pub fn shutdown(&mut self) @suspends -> Result<Unit, IoError> {
         status(__tcp_shutdown_writer(&mut self.owner))
     }
+    /// Consumes this socket owner and closes its handle.
     pub fn close(self) @suspends -> Result<Unit, IoError> {
         var owner = self.owner
         status(__tcp_close_writer(&mut owner))
@@ -941,6 +1043,7 @@ fn writer_addr(writer: &mut tcp.WriterOwner, peer: UInt64) @suspends -> Result<A
 }
 
 impl TcpListener {
+    /// Binds a TCP listener to a numeric endpoint.
     pub fn bind(address: Address) @suspends -> Result<Self, IoError> {
         var error: UInt64 = 0
         let owner = __tcp_bind(address.high, address.low, address.endpoint, &mut error)
@@ -950,6 +1053,7 @@ impl TcpListener {
             Err(IoError { code: error })
         }
     }
+    /// Waits for the next completed connection on this listener.
     pub fn accept(&mut self) @suspends -> Result<TcpStream, IoError> {
         var error: UInt64 = 0
         let owner = __tcp_accept(&mut self.owner, &mut error)
@@ -959,6 +1063,7 @@ impl TcpListener {
             Err(IoError { code: error })
         }
     }
+    /// Waits for a connection subject to the supplied deadline.
     pub fn accept_until(
         &mut self,
         stop: &shutdown.Controller
@@ -979,6 +1084,7 @@ impl TcpListener {
             }
         }
     }
+    /// Returns the local endpoint of the socket.
     pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> {
         var high: UInt64 = 0
         var low: UInt64 = 0
@@ -990,6 +1096,7 @@ impl TcpListener {
             Err(IoError { code: error })
         }
     }
+    /// Consumes this socket owner and closes its handle.
     pub fn close(self) @suspends -> Result<Unit, IoError> {
         var owner = self.owner
         status(__tcp_close_listener(&mut owner))

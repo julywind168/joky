@@ -63,6 +63,7 @@ pub fn collect<I: IntoIterator>(input: I) -> array.Array<I.IntoIter.Item> {
     output
 }
 
+/// Consumes the source and counts its remaining items.
 pub fn count<I: IntoIterator>(input: I) -> UInt64 {
     var source = IntoIterator.into_iter(input)
     var total: UInt64 = 0
@@ -72,6 +73,7 @@ pub fn count<I: IntoIterator>(input: I) -> UInt64 {
     total
 }
 
+/// Consumes items in order, passing the accumulator and each item to the combining function.
 pub fn fold<I: IntoIterator, A, F: FnMut(A, I.IntoIter.Item) -> A>(
     input: I,
     var initial: A,
@@ -85,8 +87,10 @@ pub fn fold<I: IntoIterator, A, F: FnMut(A, I.IntoIter.Item) -> A>(
 }
 
 // Adapters own their inputs and stop permanently after the first None.
+/// An owning adapter that yields at most the requested number of items.
 pub struct Take<I> { source: I, remaining: UInt64 }
 
+/// Produces a lazy adapter that stops after the requested number of items.
 pub fn take<I: IntoIterator>(input: I, count: UInt64) -> Take<I.IntoIter> {
     Take { source: IntoIterator.into_iter(input), remaining: count }
 }
@@ -108,6 +112,7 @@ impl<I: Iterator> Iterator for Take<I> {
     }
 }
 
+/// An owning adapter that discards an initial number of items.
 pub struct Skip<I> { source: I, remaining: UInt64, done: Bool }
 
 /// Lazily discards the first `count` items, releasing owned items as it skips them.
@@ -134,6 +139,7 @@ impl<I: Iterator> Iterator for Skip<I> {
     }
 }
 
+/// An owning adapter that pairs each item with its zero-based index.
 pub struct Enumerate<I> { source: I, next_index: option.Option<UInt64>, done: Bool }
 
 /// Lazily pairs each item with its zero-based UInt64 index.
@@ -164,6 +170,7 @@ impl<I: Iterator> Iterator for Enumerate<I> {
     }
 }
 
+/// An owning adapter that drains the first iterator before the second.
 pub struct Chain<I, J> { left: I, right: J, left_done: Bool, done: Bool }
 
 /// Lazily yields every item from `left` followed by every item from `right`.
@@ -202,8 +209,10 @@ impl<I: Iterator, J: Iterator<Item = I.Item>> Iterator for Chain<I, J> {
     }
 }
 
+/// An owning adapter that pairs items until either iterator ends.
 pub struct Zip<I, J> { left: I, right: J, done: Bool }
 
+/// Produces pairs of corresponding items and ends when either source ends.
 pub fn zip<I: IntoIterator, J: IntoIterator>(left: I, right: J) -> Zip<I.IntoIter, J.IntoIter> {
     Zip { left: IntoIterator.into_iter(left), right: IntoIterator.into_iter(right), done: false }
 }
@@ -226,8 +235,10 @@ impl<I: Iterator, J: Iterator> Iterator for Zip<I, J> {
     }
 }
 
+/// An owning adapter that transforms each yielded item.
 pub struct Map<I, T, F> { source: I, transform: F, done: Bool }
 
+/// Applies a transformation lazily to each yielded item.
 pub fn map<I: IntoIterator, T, F: FnMut(I.IntoIter.Item) -> T>(
     input: I,
     transform: F
@@ -251,8 +262,10 @@ impl<I: Iterator, T, F: FnMut(I.Item) -> T> Iterator for Map<I, T, F> {
     }
 }
 
+/// An owning adapter that keeps items satisfying a predicate.
 pub struct Filter<I, F> { source: I, predicate: F, done: Bool }
 
+/// Yields only items for which the predicate returns true.
 pub fn filter<I: IntoIterator, F: FnMut(&I.IntoIter.Item) -> Bool>(
     input: I,
     predicate: F
@@ -278,21 +291,27 @@ impl<I: Iterator, F: FnMut(&I.Item) -> Bool> Iterator for Filter<I, F> {
     }
 }
 
+/// A borrowed cursor over the key and value pairs of a map.
 pub type Entries<K, V> = buffer.PairIter<(K, V)>
+/// A borrowed key and value pair at the current map position.
 pub type Entry<K, V> = buffer.Entry<(K, V)>
 
+/// Advances the borrowed map cursor to its next entry.
 pub fn entries_advance<K, V>(cursor: &Entries<K, V>) -> Bool {
     buffer.pair_advance(cursor)
 }
 
+/// Borrows the current map entry.
 pub fn entries_current<K, V>(cursor: &Entries<K, V>) -> &Entry<K, V> {
     buffer.pair_current(cursor)
 }
 
+/// Exclusively borrows the current map entry.
 pub fn entries_current_mut<K, V>(cursor: &mut Entries<K, V>) -> &mut Entry<K, V> {
     buffer.pair_current_mut(cursor)
 }
 
+/// Counts remaining items in the supplied shared cursor.
 pub fn count_shared<I: Copy + SharedIterator>(var input: I) -> UInt64 {
     var total: UInt64 = 0
     while true {
@@ -319,6 +338,7 @@ pub fn collect_shared<I: Copy + SharedIterator>(var input: I) -> array.Array<I.I
     }
 }
 
+/// Folds the shared cursor's items into the supplied accumulator in order.
 pub fn fold_shared<I: Copy + SharedIterator, A, F: FnMut(A, I.Item) @noescape -> A>(
     var input: I,
     var initial: A,
@@ -335,8 +355,10 @@ pub fn fold_shared<I: Copy + SharedIterator, A, F: FnMut(A, I.Item) @noescape ->
     }
 }
 
+/// A shared adapter that yields at most the requested number of items.
 pub struct SharedTake<I: Copy> { source: I, remaining: UInt64 }
 
+/// Returns a shared adapter that yields at most the requested number of items.
 pub fn take_shared<I: Copy + SharedIterator>(input: I, count: UInt64) -> SharedTake<I> {
     SharedTake { source: input, remaining: count }
 }
@@ -358,6 +380,7 @@ impl<I: Copy + SharedIterator> SharedIterator for SharedTake<I> {
     }
 }
 
+/// A shared adapter that skips the initial items.
 pub struct SharedSkip<I: Copy> { source: I, remaining: UInt64, done: Bool }
 
 /// Lazily steps past the first `count` items of a shared iterator.
@@ -386,6 +409,7 @@ impl<I: Copy + SharedIterator> SharedIterator for SharedSkip<I> {
     }
 }
 
+/// A shared adapter that attaches a zero-based index to each item.
 pub struct SharedEnumerate<I: Copy> { source: I, next_index: option.Option<UInt64>, done: Bool }
 
 /// Lazily pairs each shared item with its zero-based UInt64 index.
@@ -412,6 +436,7 @@ impl<I: Copy + SharedIterator> SharedIterator for SharedEnumerate<I> {
     }
 }
 
+/// A shared adapter that visits two sources in order.
 pub struct SharedChain<I: Copy, J: Copy> { left: I, right: J, left_done: Bool, done: Bool }
 
 /// Yields shared items from `left` before stepping `right`.
@@ -446,8 +471,10 @@ impl<I: Copy + SharedIterator, J: Copy + SharedIterator<Item = I.Item>> SharedIt
     }
 }
 
+/// A shared adapter that pairs items from two sources.
 pub struct SharedZip<I: Copy, J: Copy> { left: I, right: J, done: Bool }
 
+/// Returns a shared adapter pairing items until either cursor ends.
 pub fn zip_shared<I: Copy + SharedIterator, J: Copy + SharedIterator>(
     left: I,
     right: J
@@ -474,12 +501,14 @@ impl<I: Copy + SharedIterator, J: Copy + SharedIterator> SharedIterator for Shar
     }
 }
 
+/// A shared adapter that yields items selected by a predicate.
 pub struct SharedFilter<I: Copy, T> {
     source: I
     predicate: fn(&T) @noescape -> Bool
     done: Bool
 }
 
+/// Returns a shared adapter that yields only items selected by the predicate.
 pub fn filter_shared<I: Copy + SharedIterator<Item = &T>, T>(
     input: I,
     predicate: fn(&T) @noescape -> Bool
@@ -508,6 +537,7 @@ impl<I: Copy + SharedIterator<Item = &T>, T> SharedIterator for SharedFilter<I, 
     }
 }
 
+/// A shared cursor over an indexed borrowed source.
 pub struct SharedView<S> { source: &S, index: UInt64, done: Bool }
 impl<S: SharedSource> SharedIterator for SharedView<S> {
     type Item = &S.Item
@@ -525,8 +555,10 @@ impl<S: SharedSource> SharedIterator for SharedView<S> {
     }
 }
 
+/// A shared iterator together with its adapter state.
 pub struct SharedPipeline<I: Copy, T> { source: I }
 
+/// Wraps a shared cursor for chaining iterator operations.
 pub fn shared<S: SharedSource>(source: &S) -> SharedPipeline<SharedView<S>, &S.Item> {
     SharedPipeline { source: SharedView { source, index: 0, done: false } }
 }
@@ -539,6 +571,7 @@ impl<I: Copy + SharedIterator<Item = T>, T> SharedIterator for SharedPipeline<I,
     }
 }
 impl<I: Copy + SharedIterator<Item = T>, T> SharedPipeline<I, T> {
+    /// Consumes the source and counts its remaining items.
     pub fn count(self) -> UInt64 {
         count_shared(self.source)
     }
@@ -546,6 +579,7 @@ impl<I: Copy + SharedIterator<Item = T>, T> SharedPipeline<I, T> {
     pub fn collect(self) -> array.Array<T> {
         collect_shared(self.source)
     }
+    /// Consumes items in order, passing the accumulator and each item to the combining function.
     pub fn fold<A, F: FnMut(A, T) @noescape -> A>(
         self,
         var initial: A,
@@ -562,6 +596,7 @@ impl<I: Copy + SharedIterator<Item = T>, T> SharedPipeline<I, T> {
             initial = (&mut combine)(initial, value)
         }
     }
+    /// Produces a lazy adapter that stops after the requested number of items.
     pub fn take(self, count: UInt64) -> SharedPipeline<SharedTake<I>, T> {
         SharedPipeline { source: take_shared(self.source, count) }
     }
@@ -588,6 +623,7 @@ impl<I: Copy + SharedIterator<Item = T>, T> SharedPipeline<I, T> {
         types.require_reference_free::<U>()
         SharedPipeline { source: SharedMap { source: self.source, transform, done: false } }
     }
+    /// Produces pairs of corresponding items and ends when either source ends.
     pub fn zip<J: Copy + SharedIterator<Item = U>, U>(
         self,
         other: SharedPipeline<J, U>
@@ -597,6 +633,7 @@ impl<I: Copy + SharedIterator<Item = T>, T> SharedPipeline<I, T> {
 }
 
 impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
+    /// Yields only items for which the predicate returns true.
     pub fn filter<F: Copy + Fn(T) @noescape -> Bool>(
         self,
         predicate: F
@@ -605,6 +642,7 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy> SharedPipeline<I, T> {
     }
 }
 
+/// A shared selection plan with a predicate and its source.
 pub struct SharedSelect<I: Copy, T: Copy, F: Copy> { source: I, predicate: F, done: Bool }
 impl<I: Copy + SharedIterator<Item = T>, T: Copy, F: Copy + Fn(T) @noescape -> Bool> SharedIterator for SharedSelect<
     I,
@@ -631,6 +669,7 @@ impl<I: Copy + SharedIterator<Item = T>, T: Copy, F: Copy + Fn(T) @noescape -> B
     }
 }
 
+/// A shared adapter that applies a transformation to each item.
 pub struct SharedMap<I: Copy, T, U, F: Copy> { source: I, transform: F, done: Bool }
 impl<I: Copy + SharedIterator<Item = T>, T, U, F: Copy + Fn(T) @noescape -> U> SharedIterator for SharedMap<
     I,
@@ -658,10 +697,14 @@ impl<I: Copy + SharedIterator<Item = T>, T, U, F: Copy + Fn(T) @noescape -> U> S
 
 // Cursor loans move separately from Copy adapter state. Explicit parts and for
 // use the same checked advance/current protocol; no optional exclusive item exists.
+/// Chooses which elements an exclusive cursor yields while retaining the updated plan.
 pub trait ExclusivePlan {
+    /// The underlying element type selected by the plan.
     type Item
+    /// Returns the successor plan and whether it selected a current element.
     fn step(self, cursor: &Iter<Self.Item>) @noescape(cursor) -> (Self, Bool)
 }
+/// An exclusive iteration plan that visits every element.
 pub struct ExclusiveAll<T> {}
 impl<T> ExclusivePlan for ExclusiveAll<T> {
     type Item = T
@@ -669,8 +712,10 @@ impl<T> ExclusivePlan for ExclusiveAll<T> {
         (self, advance(cursor))
     }
 }
+/// An exclusive cursor with a plan for selecting elements.
 pub struct ExclusivePipeline<P: Copy, T> { cursor: &mut Iter<T>, plan: P }
 
+/// Creates a pipeline over elements of the exclusively borrowed source.
 pub fn exclusive<S: ExclusiveSource>(
     source: &mut S
 ) -> ExclusivePipeline<ExclusiveAll<S.Item>, S.Item> {
@@ -678,6 +723,7 @@ pub fn exclusive<S: ExclusiveSource>(
 }
 
 impl<P: Copy + ExclusivePlan<Item = T>, T> ExclusivePipeline<P, T> {
+    /// Produces a lazy adapter that stops after the requested number of items.
     pub fn take(self, count: UInt64) -> ExclusivePipeline<ExclusiveTake<P>, T> {
         let ExclusivePipeline { cursor, plan } = self
         ExclusivePipeline { cursor, plan: ExclusiveTake { source: plan, remaining: count } }
@@ -698,18 +744,21 @@ impl<P: Copy + ExclusivePlan<Item = T>, T> ExclusivePipeline<P, T> {
         let ExclusivePipeline { cursor, plan } = self
         ExclusivePipeline { cursor, plan: ExclusiveFilter { source: plan, predicate, done: false } }
     }
+    /// Consumes the pipeline and returns its cursor and selection plan.
     pub fn into_parts(self) -> (&mut Iter<T>, P) {
         let ExclusivePipeline { cursor, plan } = self
         (cursor, plan)
     }
 }
 
+/// Separates an exclusive pipeline into its cursor and selection plan.
 pub fn exclusive_parts<P: Copy + ExclusivePlan<Item = T>, T>(
     input: ExclusivePipeline<P, T>
 ) -> (&mut Iter<T>, P) {
     input.into_parts()
 }
 
+/// Advances the cursor as directed by its selection plan and returns the successor plan.
 pub fn advance_exclusive<P: Copy + ExclusivePlan>(
     plan: &mut P,
     cursor: &Iter<P.Item>
@@ -728,6 +777,7 @@ pub fn step_exclusive<P: Copy + ExclusivePlan>(
     ExclusivePlan.step(plan, cursor)
 }
 
+/// An exclusive plan limiting the number of yielded elements.
 pub struct ExclusiveTake<P: Copy> { source: P, remaining: UInt64 }
 impl<P: Copy + ExclusivePlan> ExclusivePlan for ExclusiveTake<P> {
     type Item = P.Item
@@ -745,6 +795,7 @@ impl<P: Copy + ExclusivePlan> ExclusivePlan for ExclusiveTake<P> {
         (self, advanced)
     }
 }
+/// An exclusive plan skipping the initial elements.
 pub struct ExclusiveSkip<P: Copy> { source: P, remaining: UInt64, done: Bool }
 impl<P: Copy + ExclusivePlan> ExclusivePlan for ExclusiveSkip<P> {
     type Item = P.Item
@@ -767,6 +818,7 @@ impl<P: Copy + ExclusivePlan> ExclusivePlan for ExclusiveSkip<P> {
         (self, advanced)
     }
 }
+/// An exclusive plan selecting elements with a shared predicate.
 pub struct ExclusiveFilter<P: Copy, T, F: Copy> {
     source: P,
     predicate: F,

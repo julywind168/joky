@@ -22,10 +22,15 @@ import joky/slice.{type Slice}
 import joky/string
 import joky/result.{type Result, Ok, Err}
 
+/// Reasons input cannot be decoded under the selected Base64 policy.
 pub enum DecodeError {
+    /// The input length is incompatible with this encoding policy.
     InvalidLength,
+    /// A byte outside the selected alphabet occurred at the given offset.
     InvalidByte(UInt64),
+    /// The padding is invalid at the indicated byte offset.
     InvalidPadding(UInt64),
+    /// Unused bits were nonzero at the given byte offset.
     NonCanonical(UInt64)
 }
 impl Show for DecodeError {
@@ -48,20 +53,25 @@ impl Show for DecodeError {
     }
 }
 
+/// A Base64 alphabet and padding policy.
 pub struct Encoding { url: Bool, padding: Bool }
 
+/// Selects the standard Base64 alphabet and requires canonical padding.
 pub fn standard() -> Encoding {
     Encoding { url: false, padding: true }
 }
 
+/// Selects the standard Base64 alphabet without padding.
 pub fn standard_no_pad() -> Encoding {
     Encoding { url: false, padding: false }
 }
 
+/// Selects the URL-safe Base64 alphabet and requires canonical padding.
 pub fn url_safe() -> Encoding {
     Encoding { url: true, padding: true }
 }
 
+/// Selects the URL-safe Base64 alphabet without padding.
 pub fn url_safe_no_pad() -> Encoding {
     Encoding { url: true, padding: false }
 }

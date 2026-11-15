@@ -18,6 +18,6 @@ pub fn keys<K, V>(table: &Dictionary<K, V>) -> &Slice<K> { table.keys() }
 pub fn values<K, V>(table: &Dictionary<K, V>) -> &Slice<V> { table.values() }
 pub fn values_mut<K, V>(table: &mut Dictionary<K, V>) -> &mut Slice<V> { table.values_mut() }
 pub fn pop<K, V>(table: &mut Dictionary<K, V>) -> Option<(K, V)> { map.pop(table) }
-pub fn export<K, V>(table: Dictionary<K, V>) -> Array<(K, V)> { map.into_entries(table) }
+pub fn export<K, V>(table: Dictionary<K, V>) -> Array<(K, V)> { table.into_entries() }
 pub fn from_entries<K: Copy + Equality + Hashing, V>(entries: Array<(K, V)>) -> Dictionary<K, V> { map.from_entries(entries) }
 pub fn extend<K: Copy + Equality + Hashing, V>(table: &mut Dictionary<K, V>, entries: Array<(K, V)>) { map.extend(table, entries) }

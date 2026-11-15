@@ -17,7 +17,9 @@
 import joky/internal/text
 // Explicit independent copies; implementations retain no input borrow.
 
+/// Allows a value to be duplicated from a shared borrow.
 pub trait Clone {
+    /// Produces an independently owned duplicate of the borrowed value.
     fn clone(&self) @noescape -> Self
 }
 impl Clone for Int8 {

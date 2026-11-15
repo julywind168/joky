@@ -31,6 +31,8 @@ fn address(high: UInt64, low: UInt64, endpoint: UInt64) -> tcp.Address {
     address
 }
 
+/// Resolves a host name or numeric address for the given TCP port.
+/// Returns an owned address list. Cancelling the call can leave an OS lookup running.
 pub fn lookup(
     host: &String,
     port: UInt16

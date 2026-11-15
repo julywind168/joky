@@ -70,7 +70,7 @@ fn slice_empty() -> Int32 {
     values.push(resource(11))
     let empty = values.slice_mut(1, 1)
     let child = slice.slice_mut(empty, 0, 0)
-    if !slice.is_empty(child) { return 0 }
+    if !child.is_empty() { return 0 }
     values.pop();
     42
 }

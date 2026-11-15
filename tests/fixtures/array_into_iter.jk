@@ -35,7 +35,7 @@ fn retained() -> Int32 {
     record(10 + first.id)
     first.id + first.data.get(0).unwrap_or(0)
 }
-fn unstarted() { let iterator = array.into_iter(values()) }
+fn unstarted() { let iterator = values().into_iter() }
 fn count<I: Iterator>(iterator: I) -> Int32 {
     var n = 0
     for _ in iterator { n += 1 }

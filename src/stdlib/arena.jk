@@ -15,12 +15,15 @@
 //! ```
 
 // Explicit, synchronous regions. Their capabilities cannot enter stored values.
+/// Owns a region for explicitly scoped allocations and releases them together.
 pub type Arena = arena.Arena
 
 impl Arena {
+    /// Creates an empty allocation region.
     pub fn new() -> Self {
         new()
     }
+    /// Moves a value into the arena and returns a mutable borrow of it.
     pub fn alloc<T: Copy>(&self, value: T) -> &mut T {
         allocate(self, value)
     }

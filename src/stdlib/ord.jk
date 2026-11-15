@@ -20,6 +20,7 @@ import joky/internal/buffer
 
 /// The sign of cmp defines a total order; zero denotes equivalent keys.
 pub trait Ord {
+    /// Returns a negative value, zero, or a positive value according to the ordering.
     fn cmp(&self, other: &Self) @noescape -> Int32
 }
 

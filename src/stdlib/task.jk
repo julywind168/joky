@@ -35,6 +35,7 @@ pub fn yield_now() @suspends {
 }
 
 // A timeout is distinct from the operation's own result or runtime failure.
+/// Indicates the timeout branch won the race against an operation.
 pub struct Timeout {}
 impl Show for Timeout {
     fn show(&self, output: &mut StringBuilder) @noescape {
@@ -42,6 +43,7 @@ impl Show for Timeout {
     }
 }
 
+/// Suspends the current task until the given monotonic time.
 pub fn sleep_until(deadline: Instant) @suspends {
     clock.sleep_until(deadline)
 }
@@ -68,7 +70,23 @@ pub fn timeout<T, F: FnOnce() @suspends -> T>(
 }
 
 // Fixed-size failure categories: constructing an isolated failure needs no heap storage.
-pub enum Failure { Runtime, ResourceLimit, Host, Io, InvalidState, InvalidArgument, Other }
+/// Recoverable description of a task failure caught by isolation.
+pub enum Failure {
+    /// The child task failed with a runtime error.
+    Runtime,
+    /// The task exceeded a resource budget.
+    ResourceLimit,
+    /// A host operation failed.
+    Host,
+    /// An input or output operation failed.
+    Io,
+    /// An operation was attempted in an invalid state.
+    InvalidState,
+    /// An operation received an invalid argument.
+    InvalidArgument,
+    /// The failure has no more specific supported category.
+    Other
+}
 impl Show for Failure {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(

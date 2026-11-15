@@ -17,12 +17,15 @@
 // A borrow-only view of one initialized element, never an owning value.
 import joky/internal/buffer
 
+/// A borrowed handle to a single position in contiguous storage.
 pub type Element<T> = buffer.Element<T>
 
+/// Copies the value at the borrowed element position.
 pub fn read<T: Copy>(value: &Element<T>) -> T {
     buffer.element_load(value)
 }
 
+/// Stores a Copy value at the exclusively borrowed element position.
 pub fn write<T: Copy>(value: &mut Element<T>, next: T) {
     buffer.element_store(value, next)
 }

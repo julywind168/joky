@@ -2,13 +2,19 @@
 import joky/internal/buffer
 import joky/option.{type Option, Some, None}
 
+/// A stateful iterator that hands out its items by value.
 pub trait Iterator {
+    /// The type yielded by value on each successful step.
     type Item
+    /// Advances the iterator and returns its next item, or None at the end.
     fn next(&mut self) @noescape -> Option<Self.Item>
 }
 
+/// Converts a value into an iterator that yields items by value.
 pub trait IntoIterator {
+    /// The iterator used when consuming this source.
     type IntoIter: Iterator
+    /// Consumes the source and creates an iterator over its elements.
     fn into_iter(self) -> Self.IntoIter
 }
 
@@ -19,19 +25,24 @@ impl<I: Iterator> IntoIterator for I {
     }
 }
 
+/// Consumes a source and returns its owning iterator.
 pub fn into_iter<I: IntoIterator>(value: I) -> I.IntoIter {
     IntoIterator.into_iter(value)
 }
 
 // This entry fixes protocol selection even in the presence of inherent next methods.
+/// Advances an owning iterator and returns the next item, or None at the end.
 pub fn next<I: Iterator>(iterator: &mut I) @noescape -> Option<I.Item> {
     Iterator.next(iterator)
 }
 
 // A strict order and its immediate successor; None marks the greatest value.
 // Implementations must advance monotonically without wrapping.
+/// Defines ordering and the next representable value for integer ranges.
 pub trait Step {
+    /// Returns true if the first range value precedes the second.
     fn less(self, other: Self) -> Bool
+    /// Returns the next range value, or None at the type's upper bound.
     fn successor(self) -> Option<Self>
 }
 
@@ -132,13 +143,16 @@ impl Step for UInt64 {
     }
 }
 
+/// A range cursor that walks consecutive values.
 pub struct Range<T: Copy> { current: T, end: T, inclusive: Bool, done: Bool }
 
 // Ascending, bounded ranges. Reversed bounds produce an empty iterator.
+/// Iterates consecutive values from start up to, but excluding, end.
 pub fn range<T: Copy + Step>(start: T, end: T) -> Range<T> {
     Range { current: start, end: end, inclusive: false, done: false }
 }
 
+/// Iterates consecutive values from start through end, including both bounds.
 pub fn range_inclusive<T: Copy + Step>(start: T, end: T) -> Range<T> {
     Range { current: start, end: end, inclusive: true, done: false }
 }
@@ -174,49 +188,65 @@ impl<T: Copy + Step> Iterator for Range<T> {
 
 // Borrowed cursors use separate advance/current operations, so exclusive
 // references never enter Option or another aggregate.
+/// A cursor over contiguous borrowed element storage.
 pub type Iter<T> = buffer.Iter<T>
 
+/// Borrows a cursor over the elements of a slice in index order.
 pub fn slice_iter<T>(values: &buffer.Slice<T>) -> &Iter<T> {
     buffer.slice_iter(values)
 }
 
+/// Exclusively borrows a cursor over the elements of a slice in index order.
 pub fn slice_iter_mut<T>(values: &mut buffer.Slice<T>) -> &mut Iter<T> {
     buffer.slice_iter_mut(values)
 }
 
+/// Advances the borrowed cursor and reports whether it reached another element.
 pub fn advance<T>(iterator: &Iter<T>) -> Bool {
     buffer.iter_advance(iterator)
 }
 
 // Borrowed iteration may expose a dyn view whose owner remains in the container.
 #intrinsic("iteration.dyn_borrow")
+/// Borrows the current element of an advanced cursor.
 pub fn current<T>(iterator: &Iter<T>) -> &T {
     buffer.iter_current(iterator)
 }
 
 #intrinsic("iteration.dyn_borrow")
+/// Exclusively borrows the current element of an advanced cursor.
 pub fn current_mut<T>(iterator: &mut Iter<T>) -> &mut T {
     buffer.iter_current_mut(iterator)
 }
 
 // Shared traversal threads state by value: no exclusive borrow of reference fields.
 // A step returns the successor state first, followed by an optional element.
+/// A cursor that returns its successor and an optional item by value.
 pub trait SharedIterator {
+    /// The type returned by a shared iterator step.
     type Item
+    /// Returns the successor cursor and its next item, or None after exhaustion.
     fn step(self) -> (Self, Option<Self.Item>)
 }
 
+/// Returns the successor of a shared cursor and its next item if available.
 pub fn step_shared<I: Copy + SharedIterator>(input: I) -> (I, Option<I.Item>) {
     SharedIterator.step(input)
 }
 
 // A source query keeps the shared pipeline independent of concrete containers.
+/// Provides indexed shared access for a borrowed iteration plan.
 pub trait SharedSource {
+    /// The value type accessible through a shared element borrow.
     type Item
+    /// Borrows the element at the index or returns None if it is out of bounds.
     fn get_shared(&self, index: UInt64) -> Option<&Self.Item>
 }
 
+/// Provides an exclusive cursor over its elements.
 pub trait ExclusiveSource {
+    /// The value type accessible through the exclusive cursor.
     type Item
+    /// Exclusively borrows a cursor over the source's elements.
     fn exclusive_cursor(&mut self) -> &mut Iter<Self.Item>
 }

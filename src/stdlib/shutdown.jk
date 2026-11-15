@@ -35,7 +35,15 @@ extern fn __shutdown_subscribe(
     error: &mut UInt64
 ) @suspends -> shutdown.SignalsOwner
 
-pub enum Reason { Requested, Interrupt, Terminate }
+/// The event that requested shutdown.
+pub enum Reason {
+    /// Application code explicitly requested shutdown.
+    Requested,
+    /// An interrupt signal requested shutdown.
+    Interrupt,
+    /// A termination signal requested shutdown.
+    Terminate
+}
 impl Show for Reason {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -48,7 +56,15 @@ impl Show for Reason {
     }
 }
 
-pub enum SignalError { Unsupported, Busy, Unavailable }
+/// Reasons process signal handling could not be installed.
+pub enum SignalError {
+    /// The host does not offer the requested signal handling.
+    Unsupported,
+    /// Another registration already owns the process signal hooks.
+    Busy,
+    /// The host could not install the signal registration.
+    Unavailable
+}
 impl Show for SignalError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -61,11 +77,15 @@ impl Show for SignalError {
     }
 }
 
+/// An owned shared shutdown notification that can wake waiting tasks.
 pub struct Controller { storage: shutdown.ControllerOwner }
+/// A registration for process signals that can request shutdown.
 pub struct Signals { storage: shutdown.SignalsOwner }
 // Keep the subscription in the startup scope; shared controllers do not own it.
+/// Keeps the signal registration and associated shutdown controller together.
 pub struct SignalScope { controller: Controller, signals: Signals }
 impl SignalScope {
+    /// Borrows the shutdown controller associated with this scope.
     pub fn controller(&self) -> &Controller {
         &self.controller
     }
@@ -92,6 +112,7 @@ fn reason(code: UInt64) -> Reason {
 }
 
 impl Controller {
+    /// Creates another owner of the same shutdown notification.
     pub fn share(&self) @suspends -> Controller {
         Controller { storage: __shutdown_share(&self.storage) }
     }
@@ -103,6 +124,7 @@ impl Controller {
     pub fn requested(&self) @suspends -> Bool {
         __shutdown_reason(&self.storage) != 0
     }
+    /// Returns the reason if shutdown has already been requested.
     pub fn reason(&self) @suspends -> Option<Reason> {
         let code = __shutdown_reason(&self.storage)
         if code == 0 {
@@ -116,6 +138,7 @@ impl Controller {
         reason(__shutdown_wait(&self.storage))
     }
     // Keep the returned owner alive for the full service lifetime.
+    /// Registers this controller to handle Unix interruption and termination signals.
     pub fn subscribe_unix(&self) @suspends -> Result<Signals, SignalError> {
         var error: UInt64 = 0
         let signals = Signals { storage: __shutdown_subscribe(&self.storage, &mut error) }

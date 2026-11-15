@@ -32,10 +32,21 @@ extern fn __domain_admission_try(handle: admission.Token) @suspends -> admission
 extern fn __domain_admission_acquire(handle: admission.Token) @suspends -> admission.PermitOwner
 extern fn __domain_admission_status(permit: &admission.PermitOwner) @suspends -> Int32
 
+/// Owns a concurrency limit and its waiting queue.
 pub struct Pool { storage: admission.PoolOwner }
+/// A non-owning endpoint for requesting a permit from a pool.
 pub struct Handle { token: admission.Token }
+/// A slot in the pool, returned when the permit is released or dropped.
 pub struct Permit { storage: admission.PermitOwner }
-pub enum AcquireError { Full, Closed, WaitLimit }
+/// Reasons a permit request could not be admitted.
+pub enum AcquireError {
+    /// The pool has no available permit.
+    Full,
+    /// The pool has closed.
+    Closed,
+    /// The queue already contains its maximum number of waiters.
+    WaitLimit
+}
 impl Show for AcquireError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -55,9 +66,11 @@ pub fn create(capacity: UInt64, max_waiters: UInt64) @suspends -> Pool {
 }
 
 impl Pool {
+    /// Gets a non-owning handle for acquiring permits from this pool.
     pub fn handle(&self) @suspends -> Handle {
         Handle { token: __domain_admission_handle(&self.storage) }
     }
+    /// Closes the pool and wakes waiting acquirers.
     pub fn close(&self) @suspends {
         __domain_admission_close(&self.storage)
     }

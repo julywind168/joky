@@ -9,7 +9,7 @@ extern fn record_int(value: Int32)
 
 fn copy_views<Tag>() -> Int32 {
     var m = Map.new::<Int32, Int32>()
-    { let assertion_condition = slice.is_empty(m.keys()) && slice.is_empty(m.values()) && slice.is_empty(m.values_mut()); let assertion_message = "Empty views"; assert(assertion_condition, &assertion_message) }
+    { let assertion_condition = m.keys().is_empty() && m.values().is_empty() && m.values_mut().is_empty(); let assertion_message = "Empty views"; assert(assertion_condition, &assertion_message) }
     m.insert(1, 10); m.insert(2, 20); m.insert(3, 30); m.remove(2)
     let keys = map.keys(&m)
     let values = map.values(&m)
@@ -41,7 +41,7 @@ fn consuming<Tag>() -> Int32 {
     }
     { let assertion_condition = m.pop().is_none(); let assertion_message = "Drained pop"; assert(assertion_condition, &assertion_message) }
     m.insert(4, 2)
-    var entries = map.into_entries(m)
+    var entries = m.into_entries()
     { let assertion_condition = entries.len() == 1; let assertion_message = "Singleton export"; assert(assertion_condition, &assertion_message) }
     let (key, value) = entries.take_last()
     { let assertion_condition = key == 4; let assertion_message = "Exported key"; assert(assertion_condition, &assertion_message) }

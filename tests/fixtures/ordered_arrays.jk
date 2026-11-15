@@ -10,7 +10,7 @@ fn resource(id: Int32) -> Resource {
 }
 fn ordered_copy() -> Int32 {
     var values = Array.new::<Int64>()
-    if !array.insert(&mut values, 0, 20) { return 0 }
+    if !values.insert(0, 20) { return 0 }
     if !insert_at(&mut values, 0, 10) { return 0 }
     if !values.insert(1, 15) || !values.insert(3, 30) { return 0 }
     if values.get(0).unwrap_or(0) != 10 || values.get(1).unwrap_or(0) != 15 { return 0 }

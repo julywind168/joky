@@ -47,7 +47,29 @@ extern fn __pg_status(owner: &postgres.Owner) @suspends -> UInt64
 extern fn __pg_count(owner: &postgres.Owner) @suspends -> UInt64
 extern fn __pg_data(owner: &postgres.Owner) @suspends -> Array<UInt8>
 
-pub enum Kind { Boolean, Integer, Text, Bytes, Timestamp, Uuid, Jsonb, Float, TextArray, IntArray }
+/// Logical PostgreSQL types supported in parameters and result columns.
+pub enum Kind {
+    /// PostgreSQL boolean.
+    Boolean,
+    /// A supported signed integer column or parameter.
+    Integer,
+    /// A text column or parameter.
+    Text,
+    /// PostgreSQL bytea.
+    Bytes,
+    /// PostgreSQL timestamptz.
+    Timestamp,
+    /// A PostgreSQL UUID value.
+    Uuid,
+    /// PostgreSQL JSONB.
+    Jsonb,
+    /// A floating-point column or parameter.
+    Float,
+    /// A one-dimensional text array.
+    TextArray,
+    /// A one-dimensional signed integer array.
+    IntArray
+}
 impl Show for Kind {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -67,36 +89,54 @@ impl Show for Kind {
     }
 }
 
+/// An owned SQL parameter or decoded column value.
 pub enum Value {
+    /// SQL NULL together with the expected PostgreSQL type.
     Null(Kind),
+    /// A Boolean value.
     BoolValue(Bool),
+    /// A signed 64-bit integer value.
     IntValue(Int64),
+    /// Owned text.
     TextValue(String),
+    /// Owned binary data.
     BytesValue(Array<UInt8>),
+    /// A UTC timestamp.
     TimestampValue(time.Timestamp),
+    /// A 128-bit UUID.
     UuidValue(uuid.Uuid),
+    /// Owned JSON text for a JSONB value.
     JsonValue(String),
+    /// A Float64 value.
     FloatValue(Float64),
+    /// Owned strings or SQL NULL elements in array order.
     TextArrayValue(Array<Option<String>>),
+    /// Signed integers or SQL NULL elements in array order.
     IntArrayValue(Array<Option<Int64>>)
 }
 
 // Queries own snapshots of their parameters; execution consumes the query.
+/// Owns SQL text and a snapshot of its parameters. Executing it consumes the query.
 pub struct Query { text: String, parameters: Array<Value> }
 impl Query {
+    /// Creates a query that owns the supplied SQL text and parameters.
     pub fn new(text: String, parameters: Array<Value>) -> Self {
         Query { text, parameters }
     }
+    /// Borrows the query's SQL text.
     pub fn sql(&self) -> &String {
         &self.text
     }
+    /// Borrows the query's parameters in binding order.
     pub fn params(&self) -> &Array<Value> {
         &self.parameters
     }
 }
 // Identifier is intentionally not constructible from arbitrary SQL fragments.
+/// An escaped SQL identifier produced by the identifier constructor.
 pub struct Identifier { quoted: String }
 
+/// Quotes a nonempty SQL identifier as a single identifier.
 pub fn ident(name: &String) @noescape -> Result<Identifier, DbError> {
     if name.is_empty() {
         return Err(InvalidRequest)
@@ -117,7 +157,9 @@ pub fn ident(name: &String) @noescape -> Result<Identifier, DbError> {
 }
 
 // This separate protocol also accepts pre-encoded JSON and typed NULL values.
+/// Converts a value into an owned parameter for SQL binding.
 pub trait BindParam {
+    /// Consumes the input and produces the SQL value to bind.
     fn to_param(&self) @noescape -> Value
 }
 impl<T: ToSql> BindParam for T {
@@ -167,10 +209,21 @@ fn __sql_parameter<T: BindParam>(value: &T, output: &mut SqlBuilder) @noescape {
     output.text.push_str(placeholder)
 }
 
-pub struct Json<T> { pub value: T }
-pub enum TxOutcome<T> { Commit(T), Rollback(T) }
+/// A PostgreSQL JSONB column decoded into a Joky type.
+pub struct Json<T> {
+    /// The owned value produced by the typed JSON decoder.
+    pub value: T
+}
+/// A callback's choice to commit or roll back, together with the result to return.
+pub enum TxOutcome<T> {
+    /// Commits the transaction and returns the supplied application result.
+    Commit(T),
+    /// Rolls back the transaction and returns the supplied application result.
+    Rollback(T)
+}
 
 // JSON encoding is fallible. These helpers retain codec details and own the text.
+/// Encodes a JSON tree for binding as a JSONB parameter.
 pub fn param_json(value: &json.Value) @noescape -> Result<Value, DbError> {
     match json.encode(value) {
         Ok(text) => Ok(JsonValue(text)),
@@ -178,6 +231,7 @@ pub fn param_json(value: &json.Value) @noescape -> Result<Value, DbError> {
     }
 }
 
+/// Encodes a typed Joky value for binding as JSONB.
 pub fn param_json_as<T: typed.ToJson>(value: &T) @noescape -> Result<Value, DbError> {
     match typed.encode(value) {
         Ok(text) => Ok(JsonValue(text)),
@@ -185,6 +239,7 @@ pub fn param_json_as<T: typed.ToJson>(value: &T) @noescape -> Result<Value, DbEr
     }
 }
 
+/// Binds None as SQL NULL and encodes a present value as JSONB.
 pub fn param_json_optional<T: typed.ToJson>(value: &Option<T>) @noescape -> Result<Value, DbError> {
     match value {
         Some(value) => param_json_as(value),
@@ -193,11 +248,15 @@ pub fn param_json_optional<T: typed.ToJson>(value: &Option<T>) @noescape -> Resu
 }
 
 // Parameters own their data; kind also describes an absent optional value.
+/// Converts a value into the corresponding PostgreSQL parameter representation.
 pub trait ToSql {
+    /// Returns the PostgreSQL parameter kind for this Joky type.
     fn kind() -> Kind
+    /// Consumes the input and converts it to an owned SQL parameter.
     fn to_sql(&self) @noescape -> Value
 }
 
+/// Converts the supplied value to an owned SQL parameter.
 pub fn param<T: ToSql>(value: &T) @noescape -> Value {
     ToSql.to_sql(value)
 }
@@ -348,13 +407,21 @@ impl<T: ToSql> ToSql for Option<T> {
     }
 }
 
+/// Reasons a query result could not be read with the requested shape.
 pub enum ReadFailure {
+    /// A result column uses an unsupported PostgreSQL type.
     UnsupportedType,
+    /// The result exceeded a configured resource limit.
     ResultLimit,
+    /// The query required one row but returned none.
     NoRows,
+    /// The query returned more than one row where at most one was allowed.
     MultipleRows,
+    /// The result has this column count where a different count was required.
     ColumnCount(UInt64),
+    /// A column value is outside the supported representation.
     ValueRange,
+    /// The PostgreSQL array shape cannot be represented by the decoder.
     ArrayShape
 }
 impl Show for ReadFailure {
@@ -373,27 +440,48 @@ impl Show for ReadFailure {
     }
 }
 
+/// Reasons a result column could not be selected or converted.
 pub enum ColumnError {
+    /// The specified zero-based column index is outside the row.
     OutOfBounds(UInt64),
+    /// The column at the given index has an unexpected type.
     TypeMismatch(UInt64),
+    /// The specified column is NULL where a value was required.
     UnexpectedNull(UInt64),
+    /// No column has the requested name.
     MissingColumn,
+    /// More than one column has the requested name.
     AmbiguousColumn,
+    /// An unexpected NULL array element, with the column and element indices.
     NullElement((UInt64, UInt64))
 }
+/// Failures from connecting, executing, or decoding PostgreSQL operations.
 pub enum DbError {
+    /// The connection or query request failed validation.
     InvalidRequest,
+    /// The requested database resource is unavailable.
     Unavailable,
+    /// The transaction no longer owns an active database transaction.
     TransactionClosed,
+    /// The operation exceeded a configured resource limit.
     LimitExceeded,
+    /// The connection failed before a definitive outcome was available.
     OutcomeUnknown,
+    /// PostgreSQL rejected the request. The payload carries its SQLSTATE when available.
     Database(String),
+    /// The query result failed decoding or shape validation.
     ResultRead(ReadFailure),
+    /// Establishing the initial connection failed.
     Connect(String),
+    /// The pool could not provide a usable connection.
     AcquireFailed,
+    /// The pool acquisition deadline elapsed.
     AcquireTimeout,
+    /// A column could not be decoded as requested.
     Column(ColumnError),
+    /// The timestamp cannot be represented at PostgreSQL microsecond precision.
     TimestampPrecision,
+    /// Typed JSON processing failed while binding or reading a JSONB value.
     JsonCodec(typed.CodecError)
 }
 impl Show for ColumnError {
@@ -450,26 +538,35 @@ impl Show for DbError {
         }
     }
 }
+/// Owns access to a bounded set of physical PostgreSQL connections.
 pub struct Pool { owner: postgres.Owner }
+/// Owns exclusive use of one pooled connection until resolved or dropped.
 pub struct Transaction { owner: postgres.Owner }
+/// Owns a decoded result row and its column metadata.
 pub struct Row { names: Array<String>, cells: Array<Value> }
 impl Row {
+    /// Returns the number of columns in the row.
     pub fn len(&self) -> UInt64 {
         self.cells.len()
     }
+    /// Borrows the column names in result order.
     pub fn column_names(&self) -> &Array<String> {
         &self.names
     }
+    /// Borrows the decoded column values in result order.
     pub fn values(&self) -> &Array<Value> {
         &self.cells
     }
+    /// Borrows a column value by its zero-based ordinal.
     pub fn borrow_ref(&self, i: UInt64) -> &Value {
         self.cells.borrow_ref(i)
     }
+    /// Borrows the column value at the given ordinal, or returns None if it is out of bounds.
     pub fn get_ref(&self, i: UInt64) -> Option<&Value> {
         self.cells.get_ref(i)
     }
 
+    /// Finds the zero-based index of the named column.
     pub fn column_index(&self, name: &String) -> Result<UInt64, ColumnError> {
         var found: Option<UInt64> = None
         for i in 0 .. self.names.len() {
@@ -482,6 +579,7 @@ impl Row {
         }
         found.ok_or(MissingColumn)
     }
+    /// Decodes a column as the requested type.
     pub fn get<T: FromSql>(&self, name: &String) @noescape -> Result<T, DbError> {
         let i = match self.column_index(name) {
             Ok(i) => i,
@@ -489,21 +587,27 @@ impl Row {
         }
         FromSql.from_sql::<T>(self, i)
     }
+    /// Decodes a nullable column, mapping SQL NULL to None.
     pub fn get_opt<T: FromSql>(&self, name: &String) @noescape -> Result<Option<T>, DbError> {
         self.get::<Option<T>>(name)
     }
+    /// Reads a Boolean column.
     pub fn get_bool(&self, name: &String) -> Result<Option<Bool>, ColumnError> {
         get_bool(self, self.column_index(name)?)
     }
+    /// Reads a signed 64-bit integer column.
     pub fn get_int64(&self, name: &String) -> Result<Option<Int64>, ColumnError> {
         get_i64(self, self.column_index(name)?)
     }
+    /// Reads a non-null signed 64-bit integer column or returns a column error.
     pub fn require_int64(&self, name: &String) -> Result<Int64, DbError> {
         self.get::<Int64>(name)
     }
+    /// Reads a text column.
     pub fn get_text(&self, name: &String) @noescape(name) -> Result<Option<&String>, ColumnError> {
         get_text(self, self.column_index(name)?)
     }
+    /// Reads a binary-data column.
     pub fn get_bytes(
         &self,
         name: &String
@@ -513,10 +617,14 @@ impl Row {
 }
 
 // Decoded values own their data and can outlive the source row.
+/// Decodes a column of a borrowed row into a Joky value.
 pub trait FromSql {
+    /// Decodes the column at the specified zero-based ordinal.
     fn from_sql(row: &Row, i: UInt64) @noescape -> Result<Self, DbError>
 }
+/// Decodes a complete borrowed result row into a Joky value.
 pub trait FromRow {
+    /// Decodes the borrowed row into the requested type.
     fn from_row(row: &Row) @noescape -> Result<Self, DbError>
 }
 
@@ -696,6 +804,7 @@ impl<T: FromSql> FromSql for Option<T> {
     }
 }
 
+/// Reads a Boolean column.
 pub fn get_bool(row: &Row, i: UInt64) -> Result<Option<Bool>, ColumnError> {
     match column(row, i)? {
         BoolValue(v) => Ok(Some(v)),
@@ -704,6 +813,7 @@ pub fn get_bool(row: &Row, i: UInt64) -> Result<Option<Bool>, ColumnError> {
     }
 }
 
+/// Reads a signed integer column.
 pub fn get_i64(row: &Row, i: UInt64) -> Result<Option<Int64>, ColumnError> {
     match column(row, i)? {
         IntValue(v) => Ok(Some(v)),
@@ -712,6 +822,7 @@ pub fn get_i64(row: &Row, i: UInt64) -> Result<Option<Int64>, ColumnError> {
     }
 }
 
+/// Reads a text column.
 pub fn get_text(row: &Row, i: UInt64) -> Result<Option<&String>, ColumnError> {
     match column(row, i)? {
         TextValue(v) => Ok(Some(v)),
@@ -720,6 +831,7 @@ pub fn get_text(row: &Row, i: UInt64) -> Result<Option<&String>, ColumnError> {
     }
 }
 
+/// Reads a binary-data column.
 pub fn get_bytes(row: &Row, i: UInt64) -> Result<Option<&Array<UInt8>>, ColumnError> {
     match column(row, i)? {
         BytesValue(v) => Ok(Some(v)),
@@ -749,13 +861,22 @@ fn check_status(owner: &postgres.Owner) @suspends -> Result<Unit, DbError> {
     }
 }
 
-pub struct Options { pub max_connections: UInt64, pub acquire_timeout: time.Duration }
+/// Connection pool settings. Defaults to four connections and a five-second timeout.
+pub struct Options {
+    /// Maximum number of physical connections in the pool, from 1 to 32.
+    pub max_connections: UInt64,
+    /// Nonzero deadline for the initial connection and for acquiring a pooled connection.
+    pub acquire_timeout: time.Duration
+}
 impl Options {
+    /// Allows four connections and waits up to five seconds to acquire one.
     pub fn default() -> Options {
         Options { max_connections: 4, acquire_timeout: 5s }
     }
 }
 
+/// Opens an owned pool for the supplied PostgreSQL URL.
+/// Invalid settings return `InvalidRequest`. Initial connection failures return `Connect`.
 pub fn open(url: &String, options: Options) @suspends -> Result<Pool, DbError> {
     let owner = __pg_connect(url, options.max_connections, options.acquire_timeout.as_nanos())
     check_status(&owner)?
@@ -1050,6 +1171,7 @@ fn scalar_value<T: FromSql>(row: Row) -> Result<T, DbError> {
 }
 
 impl Pool {
+    /// Runs a callback with an exclusive transaction and commits or rolls back according to its result.
     pub fn transaction<
         T,
         F: FnOnce(&mut Transaction) @suspends @noescape -> Result<TxOutcome<T>, DbError>
@@ -1072,28 +1194,36 @@ impl Pool {
             }
         }
     }
+    /// Returns another owner of the same connection pool.
     pub fn share(&self) @suspends -> Self {
         Pool { owner: __pg_share(&self.owner) }
     }
+    /// Consumes the query, executes it, and reports the number of affected rows.
     pub fn execute(&self, query: Query) @suspends -> Result<UInt64, DbError> {
         exec(&self.owner, query)
     }
+    /// Consumes the query and returns the decoded result rows.
     pub fn query(&self, query: Query) @suspends -> Result<Array<Row>, DbError> {
         fetch(&self.owner, query)
     }
+    /// Returns at most one row and rejects additional rows.
     pub fn query_optional(&self, query: Query) @suspends -> Result<Option<Row>, DbError> {
         optional_row(&self.owner, query)
     }
+    /// Requires exactly one row.
     pub fn query_one(&self, query: Query) @suspends -> Result<Row, DbError> {
         required_row(self.query_optional(query)?)
     }
+    /// Requires exactly one row and one column, then decodes that column.
     pub fn query_scalar<T: FromSql>(&self, query: Query) @suspends -> Result<T, DbError> {
         scalar_value::<T>(self.query_one(query)?)
     }
+    /// Requires exactly one row and converts it to the requested row type.
     pub fn query_one_as<T: FromRow>(&self, query: Query) @suspends -> Result<T, DbError> {
         let row = self.query_one(query)?
         FromRow.from_row::<T>(&row)
     }
+    /// Borrows one pooled connection for an owned transaction.
     pub fn begin(&self) @suspends -> Result<Transaction, DbError> {
         let owner = __pg_begin(&self.owner)
         check_status(&owner)?
@@ -1101,29 +1231,37 @@ impl Pool {
     }
 }
 impl Transaction {
+    /// Consumes the query, executes it, and reports the number of affected rows.
     pub fn execute(&mut self, query: Query) @suspends -> Result<UInt64, DbError> {
         exec(&self.owner, query)
     }
+    /// Consumes the query and returns the decoded result rows.
     pub fn query(&mut self, query: Query) @suspends -> Result<Array<Row>, DbError> {
         fetch(&self.owner, query)
     }
+    /// Returns at most one row and rejects additional rows.
     pub fn query_optional(&mut self, query: Query) @suspends -> Result<Option<Row>, DbError> {
         optional_row(&self.owner, query)
     }
+    /// Requires exactly one row.
     pub fn query_one(&mut self, query: Query) @suspends -> Result<Row, DbError> {
         required_row(self.query_optional(query)?)
     }
+    /// Requires exactly one row and one column, then decodes that column.
     pub fn query_scalar<T: FromSql>(&mut self, query: Query) @suspends -> Result<T, DbError> {
         scalar_value::<T>(self.query_one(query)?)
     }
+    /// Requires exactly one row and converts it to the requested row type.
     pub fn query_one_as<T: FromRow>(&mut self, query: Query) @suspends -> Result<T, DbError> {
         let row = self.query_one(query)?
         FromRow.from_row::<T>(&row)
     }
+    /// Consumes the transaction and waits for PostgreSQL to commit it.
     pub fn commit(self) @suspends -> Result<Unit, DbError> {
         let result = __pg_finish(&self.owner, 1)
         check_status(&result)
     }
+    /// Consumes the transaction and waits for PostgreSQL to roll it back.
     pub fn rollback(self) @suspends -> Result<Unit, DbError> {
         let result = __pg_finish(&self.owner, 0)
         check_status(&result)

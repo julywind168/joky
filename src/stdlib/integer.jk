@@ -19,7 +19,13 @@ import joky/result
 import joky/internal/text
 import joky/internal/buffer
 
-pub enum ParseIntError { InvalidSyntax(UInt64), OutOfRange(UInt64) }
+/// Reasons decimal text could not be parsed into the requested integer type.
+pub enum ParseIntError {
+    /// The decimal syntax is invalid at the indicated byte offset.
+    InvalidSyntax(UInt64),
+    /// The digit at the given byte offset would exceed the target type's range.
+    OutOfRange(UInt64)
+}
 
 // Return the checked value's bit pattern so Int64.MIN never needs a positive Int64.
 fn parse_decimal(
@@ -79,53 +85,67 @@ fn parse_decimal(
 // in the source type's own context.
 
 impl Int8 {
+    /// The least representable value of this integer type.
     pub const MIN: Int8 = -128
+    /// The greatest representable value of this integer type.
     pub const MAX: Int8 = 127
 
+    /// Parses decimal text and checks that the result fits the requested integer type.
     pub fn parse(input: &String) -> result.Result<Int8, ParseIntError> {
         result.Ok(int8(parse_decimal(input, uint64(Int8.MAX), true)?))
     }
 
+    /// Returns the sum, or None if it overflows this integer type.
     pub fn checked_add(self, other: Self) -> Option<Self> {
         (int64(self) + int64(other)).to_i8()
     }
+    /// Returns the difference, or None if it overflows this integer type.
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         (int64(self) - int64(other)).to_i8()
     }
+    /// Returns the product, or None if it overflows this integer type.
     pub fn checked_mul(self, other: Self) -> Option<Self> {
         (int64(self) * int64(other)).to_i8()
     }
 
+    /// Converts to Int8, returning None if the value is out of range.
     pub fn to_i8(self) -> Option<Int8> {
         Some(int8(self))
     }
+    /// Converts to Int16, returning None if the value is out of range.
     pub fn to_i16(self) -> Option<Int16> {
         Some(int16(self))
     }
+    /// Converts to Int32, returning None if the value is out of range.
     pub fn to_i32(self) -> Option<Int32> {
         Some(int32(self))
     }
+    /// Converts to Int64, returning None if the value is out of range.
     pub fn to_i64(self) -> Option<Int64> {
         Some(int64(self))
     }
+    /// Converts to UInt8, returning None if the value is out of range.
     pub fn to_u8(self) -> Option<UInt8> {
         if self < 0 {
             return None
         };
         Some(uint8(self))
     }
+    /// Converts to UInt16, returning None if the value is out of range.
     pub fn to_u16(self) -> Option<UInt16> {
         if self < 0 {
             return None
         };
         Some(uint16(self))
     }
+    /// Returns the Unicode scalar value as an unsigned integer.
     pub fn to_u32(self) -> Option<UInt32> {
         if self < 0 {
             return None
         };
         Some(uint32(self))
     }
+    /// Converts to UInt64, returning None if the value is out of range.
     pub fn to_u64(self) -> Option<UInt64> {
         if self < 0 {
             return None
@@ -135,23 +155,30 @@ impl Int8 {
 }
 
 impl Int16 {
+    /// The least representable value of this integer type.
     pub const MIN: Int16 = -32768
+    /// The greatest representable value of this integer type.
     pub const MAX: Int16 = 32767
 
+    /// Parses decimal text and checks that the result fits the requested integer type.
     pub fn parse(input: &String) -> result.Result<Int16, ParseIntError> {
         result.Ok(int16(parse_decimal(input, uint64(Int16.MAX), true)?))
     }
 
+    /// Returns the sum, or None if it overflows this integer type.
     pub fn checked_add(self, other: Self) -> Option<Self> {
         (int64(self) + int64(other)).to_i16()
     }
+    /// Returns the difference, or None if it overflows this integer type.
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         (int64(self) - int64(other)).to_i16()
     }
+    /// Returns the product, or None if it overflows this integer type.
     pub fn checked_mul(self, other: Self) -> Option<Self> {
         (int64(self) * int64(other)).to_i16()
     }
 
+    /// Converts to Int8, returning None if the value is out of range.
     pub fn to_i8(self) -> Option<Int8> {
         if self < -128 {
             return None
@@ -161,15 +188,19 @@ impl Int16 {
         };
         Some(int8(self))
     }
+    /// Converts to Int16, returning None if the value is out of range.
     pub fn to_i16(self) -> Option<Int16> {
         Some(int16(self))
     }
+    /// Converts to Int32, returning None if the value is out of range.
     pub fn to_i32(self) -> Option<Int32> {
         Some(int32(self))
     }
+    /// Converts to Int64, returning None if the value is out of range.
     pub fn to_i64(self) -> Option<Int64> {
         Some(int64(self))
     }
+    /// Converts to UInt8, returning None if the value is out of range.
     pub fn to_u8(self) -> Option<UInt8> {
         if self < 0 {
             return None
@@ -179,18 +210,21 @@ impl Int16 {
         };
         Some(uint8(self))
     }
+    /// Converts to UInt16, returning None if the value is out of range.
     pub fn to_u16(self) -> Option<UInt16> {
         if self < 0 {
             return None
         };
         Some(uint16(self))
     }
+    /// Returns the Unicode scalar value as an unsigned integer.
     pub fn to_u32(self) -> Option<UInt32> {
         if self < 0 {
             return None
         };
         Some(uint32(self))
     }
+    /// Converts to UInt64, returning None if the value is out of range.
     pub fn to_u64(self) -> Option<UInt64> {
         if self < 0 {
             return None
@@ -200,23 +234,30 @@ impl Int16 {
 }
 
 impl Int32 {
+    /// The least representable value of this integer type.
     pub const MIN: Int32 = -2147483648
+    /// The greatest representable value of this integer type.
     pub const MAX: Int32 = 2147483647
 
+    /// Parses decimal text and checks that the result fits the requested integer type.
     pub fn parse(input: &String) -> result.Result<Int32, ParseIntError> {
         result.Ok(int32(parse_decimal(input, uint64(Int32.MAX), true)?))
     }
 
+    /// Returns the sum, or None if it overflows this integer type.
     pub fn checked_add(self, other: Self) -> Option<Self> {
         (int64(self) + int64(other)).to_i32()
     }
+    /// Returns the difference, or None if it overflows this integer type.
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         (int64(self) - int64(other)).to_i32()
     }
+    /// Returns the product, or None if it overflows this integer type.
     pub fn checked_mul(self, other: Self) -> Option<Self> {
         (int64(self) * int64(other)).to_i32()
     }
 
+    /// Converts to Int8, returning None if the value is out of range.
     pub fn to_i8(self) -> Option<Int8> {
         if self < -128 {
             return None
@@ -226,6 +267,7 @@ impl Int32 {
         };
         Some(int8(self))
     }
+    /// Converts to Int16, returning None if the value is out of range.
     pub fn to_i16(self) -> Option<Int16> {
         if self < -32768 {
             return None
@@ -235,12 +277,15 @@ impl Int32 {
         };
         Some(int16(self))
     }
+    /// Converts to Int32, returning None if the value is out of range.
     pub fn to_i32(self) -> Option<Int32> {
         Some(int32(self))
     }
+    /// Converts to Int64, returning None if the value is out of range.
     pub fn to_i64(self) -> Option<Int64> {
         Some(int64(self))
     }
+    /// Converts to UInt8, returning None if the value is out of range.
     pub fn to_u8(self) -> Option<UInt8> {
         if self < 0 {
             return None
@@ -250,6 +295,7 @@ impl Int32 {
         };
         Some(uint8(self))
     }
+    /// Converts to UInt16, returning None if the value is out of range.
     pub fn to_u16(self) -> Option<UInt16> {
         if self < 0 {
             return None
@@ -259,12 +305,14 @@ impl Int32 {
         };
         Some(uint16(self))
     }
+    /// Returns the Unicode scalar value as an unsigned integer.
     pub fn to_u32(self) -> Option<UInt32> {
         if self < 0 {
             return None
         };
         Some(uint32(self))
     }
+    /// Converts to UInt64, returning None if the value is out of range.
     pub fn to_u64(self) -> Option<UInt64> {
         if self < 0 {
             return None
@@ -274,25 +322,31 @@ impl Int32 {
 }
 
 impl Int64 {
+    /// The least representable value of this integer type.
     pub const MIN: Int64 = -9223372036854775808
+    /// The greatest representable value of this integer type.
     pub const MAX: Int64 = 9223372036854775807
 
+    /// Parses decimal text and checks that the result fits the requested integer type.
     pub fn parse(input: &String) -> result.Result<Int64, ParseIntError> {
         result.Ok(int64(parse_decimal(input, uint64(Int64.MAX), true)?))
     }
 
+    /// Returns the sum, or None if it overflows this integer type.
     pub fn checked_add(self, other: Self) -> Option<Self> {
         if (other > 0 && self > Self.MAX - other) || (other < 0 && self < Self.MIN - other) {
             return None
         }
         Some(self + other)
     }
+    /// Returns the difference, or None if it overflows this integer type.
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         if (other > 0 && self < Self.MIN + other) || (other < 0 && self > Self.MAX + other) {
             return None
         }
         Some(self - other)
     }
+    /// Returns the product, or None if it overflows this integer type.
     pub fn checked_mul(self, other: Self) -> Option<Self> {
         // MIN / -1 wraps, so handle that divisor before checking the product by division.
         if other == -1 {
@@ -308,6 +362,7 @@ impl Int64 {
         Some(product)
     }
 
+    /// Converts to Int8, returning None if the value is out of range.
     pub fn to_i8(self) -> Option<Int8> {
         if self < -128 {
             return None
@@ -317,6 +372,7 @@ impl Int64 {
         };
         Some(int8(self))
     }
+    /// Converts to Int16, returning None if the value is out of range.
     pub fn to_i16(self) -> Option<Int16> {
         if self < -32768 {
             return None
@@ -326,6 +382,7 @@ impl Int64 {
         };
         Some(int16(self))
     }
+    /// Converts to Int32, returning None if the value is out of range.
     pub fn to_i32(self) -> Option<Int32> {
         if self < -2147483648 {
             return None
@@ -335,9 +392,11 @@ impl Int64 {
         };
         Some(int32(self))
     }
+    /// Converts to Int64, returning None if the value is out of range.
     pub fn to_i64(self) -> Option<Int64> {
         Some(int64(self))
     }
+    /// Converts to UInt8, returning None if the value is out of range.
     pub fn to_u8(self) -> Option<UInt8> {
         if self < 0 {
             return None
@@ -347,6 +406,7 @@ impl Int64 {
         };
         Some(uint8(self))
     }
+    /// Converts to UInt16, returning None if the value is out of range.
     pub fn to_u16(self) -> Option<UInt16> {
         if self < 0 {
             return None
@@ -356,6 +416,7 @@ impl Int64 {
         };
         Some(uint16(self))
     }
+    /// Returns the Unicode scalar value as an unsigned integer.
     pub fn to_u32(self) -> Option<UInt32> {
         if self < 0 {
             return None
@@ -365,6 +426,7 @@ impl Int64 {
         };
         Some(uint32(self))
     }
+    /// Converts to UInt64, returning None if the value is out of range.
     pub fn to_u64(self) -> Option<UInt64> {
         if self < 0 {
             return None
@@ -374,184 +436,232 @@ impl Int64 {
 }
 
 impl UInt8 {
+    /// The least representable value of this integer type.
     pub const MIN: UInt8 = 0
+    /// The greatest representable value of this integer type.
     pub const MAX: UInt8 = 255
 
+    /// Parses decimal text and checks that the result fits the requested integer type.
     pub fn parse(input: &String) -> result.Result<UInt8, ParseIntError> {
         result.Ok(uint8(parse_decimal(input, uint64(UInt8.MAX), false)?))
     }
 
+    /// Returns the sum, or None if it overflows this integer type.
     pub fn checked_add(self, other: Self) -> Option<Self> {
         (int64(self) + int64(other)).to_u8()
     }
+    /// Returns the difference, or None if it overflows this integer type.
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         (int64(self) - int64(other)).to_u8()
     }
+    /// Returns the product, or None if it overflows this integer type.
     pub fn checked_mul(self, other: Self) -> Option<Self> {
         (uint64(self) * uint64(other)).to_u8()
     }
 
+    /// Converts to Int8, returning None if the value is out of range.
     pub fn to_i8(self) -> Option<Int8> {
         if self > 127 {
             return None
         };
         Some(int8(self))
     }
+    /// Converts to Int16, returning None if the value is out of range.
     pub fn to_i16(self) -> Option<Int16> {
         Some(int16(self))
     }
+    /// Converts to Int32, returning None if the value is out of range.
     pub fn to_i32(self) -> Option<Int32> {
         Some(int32(self))
     }
+    /// Converts to Int64, returning None if the value is out of range.
     pub fn to_i64(self) -> Option<Int64> {
         Some(int64(self))
     }
+    /// Converts to UInt8, returning None if the value is out of range.
     pub fn to_u8(self) -> Option<UInt8> {
         Some(uint8(self))
     }
+    /// Converts to UInt16, returning None if the value is out of range.
     pub fn to_u16(self) -> Option<UInt16> {
         Some(uint16(self))
     }
+    /// Returns the Unicode scalar value as an unsigned integer.
     pub fn to_u32(self) -> Option<UInt32> {
         Some(uint32(self))
     }
+    /// Converts to UInt64, returning None if the value is out of range.
     pub fn to_u64(self) -> Option<UInt64> {
         Some(uint64(self))
     }
 }
 
 impl UInt16 {
+    /// The least representable value of this integer type.
     pub const MIN: UInt16 = 0
+    /// The greatest representable value of this integer type.
     pub const MAX: UInt16 = 65535
 
+    /// Parses decimal text and checks that the result fits the requested integer type.
     pub fn parse(input: &String) -> result.Result<UInt16, ParseIntError> {
         result.Ok(uint16(parse_decimal(input, uint64(UInt16.MAX), false)?))
     }
 
+    /// Returns the sum, or None if it overflows this integer type.
     pub fn checked_add(self, other: Self) -> Option<Self> {
         (int64(self) + int64(other)).to_u16()
     }
+    /// Returns the difference, or None if it overflows this integer type.
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         (int64(self) - int64(other)).to_u16()
     }
+    /// Returns the product, or None if it overflows this integer type.
     pub fn checked_mul(self, other: Self) -> Option<Self> {
         (uint64(self) * uint64(other)).to_u16()
     }
 
+    /// Converts to Int8, returning None if the value is out of range.
     pub fn to_i8(self) -> Option<Int8> {
         if self > 127 {
             return None
         };
         Some(int8(self))
     }
+    /// Converts to Int16, returning None if the value is out of range.
     pub fn to_i16(self) -> Option<Int16> {
         if self > 32767 {
             return None
         };
         Some(int16(self))
     }
+    /// Converts to Int32, returning None if the value is out of range.
     pub fn to_i32(self) -> Option<Int32> {
         Some(int32(self))
     }
+    /// Converts to Int64, returning None if the value is out of range.
     pub fn to_i64(self) -> Option<Int64> {
         Some(int64(self))
     }
+    /// Converts to UInt8, returning None if the value is out of range.
     pub fn to_u8(self) -> Option<UInt8> {
         if self > 255 {
             return None
         };
         Some(uint8(self))
     }
+    /// Converts to UInt16, returning None if the value is out of range.
     pub fn to_u16(self) -> Option<UInt16> {
         Some(uint16(self))
     }
+    /// Returns the Unicode scalar value as an unsigned integer.
     pub fn to_u32(self) -> Option<UInt32> {
         Some(uint32(self))
     }
+    /// Converts to UInt64, returning None if the value is out of range.
     pub fn to_u64(self) -> Option<UInt64> {
         Some(uint64(self))
     }
 }
 
 impl UInt32 {
+    /// The least representable value of this integer type.
     pub const MIN: UInt32 = 0
+    /// The greatest representable value of this integer type.
     pub const MAX: UInt32 = 4294967295
 
+    /// Parses decimal text and checks that the result fits the requested integer type.
     pub fn parse(input: &String) -> result.Result<UInt32, ParseIntError> {
         result.Ok(uint32(parse_decimal(input, uint64(UInt32.MAX), false)?))
     }
 
+    /// Returns the sum, or None if it overflows this integer type.
     pub fn checked_add(self, other: Self) -> Option<Self> {
         (int64(self) + int64(other)).to_u32()
     }
+    /// Returns the difference, or None if it overflows this integer type.
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         (int64(self) - int64(other)).to_u32()
     }
+    /// Returns the product, or None if it overflows this integer type.
     pub fn checked_mul(self, other: Self) -> Option<Self> {
         (uint64(self) * uint64(other)).to_u32()
     }
 
+    /// Converts to Int8, returning None if the value is out of range.
     pub fn to_i8(self) -> Option<Int8> {
         if self > 127 {
             return None
         };
         Some(int8(self))
     }
+    /// Converts to Int16, returning None if the value is out of range.
     pub fn to_i16(self) -> Option<Int16> {
         if self > 32767 {
             return None
         };
         Some(int16(self))
     }
+    /// Converts to Int32, returning None if the value is out of range.
     pub fn to_i32(self) -> Option<Int32> {
         if self > 2147483647 {
             return None
         };
         Some(int32(self))
     }
+    /// Converts to Int64, returning None if the value is out of range.
     pub fn to_i64(self) -> Option<Int64> {
         Some(int64(self))
     }
+    /// Converts to UInt8, returning None if the value is out of range.
     pub fn to_u8(self) -> Option<UInt8> {
         if self > 255 {
             return None
         };
         Some(uint8(self))
     }
+    /// Converts to UInt16, returning None if the value is out of range.
     pub fn to_u16(self) -> Option<UInt16> {
         if self > 65535 {
             return None
         };
         Some(uint16(self))
     }
+    /// Returns the Unicode scalar value as an unsigned integer.
     pub fn to_u32(self) -> Option<UInt32> {
         Some(uint32(self))
     }
+    /// Converts to UInt64, returning None if the value is out of range.
     pub fn to_u64(self) -> Option<UInt64> {
         Some(uint64(self))
     }
 }
 
 impl UInt64 {
+    /// The least representable value of this integer type.
     pub const MIN: UInt64 = 0
+    /// The greatest representable value of this integer type.
     pub const MAX: UInt64 = 18446744073709551615
 
+    /// Parses decimal text and checks that the result fits the requested integer type.
     pub fn parse(input: &String) -> result.Result<UInt64, ParseIntError> {
         result.Ok(uint64(parse_decimal(input, uint64(UInt64.MAX), false)?))
     }
 
+    /// Returns the sum, or None if it overflows this integer type.
     pub fn checked_add(self, other: Self) -> Option<Self> {
         if self > Self.MAX - other {
             return None
         }
         Some(self + other)
     }
+    /// Returns the difference, or None if it overflows this integer type.
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         if self < other {
             return None
         }
         Some(self - other)
     }
+    /// Returns the product, or None if it overflows this integer type.
     pub fn checked_mul(self, other: Self) -> Option<Self> {
         if other != 0 && self > Self.MAX / other {
             return None
@@ -559,48 +669,56 @@ impl UInt64 {
         Some(self * other)
     }
 
+    /// Converts to Int8, returning None if the value is out of range.
     pub fn to_i8(self) -> Option<Int8> {
         if self > 127 {
             return None
         };
         Some(int8(self))
     }
+    /// Converts to Int16, returning None if the value is out of range.
     pub fn to_i16(self) -> Option<Int16> {
         if self > 32767 {
             return None
         };
         Some(int16(self))
     }
+    /// Converts to Int32, returning None if the value is out of range.
     pub fn to_i32(self) -> Option<Int32> {
         if self > 2147483647 {
             return None
         };
         Some(int32(self))
     }
+    /// Converts to Int64, returning None if the value is out of range.
     pub fn to_i64(self) -> Option<Int64> {
         if self > 9223372036854775807 {
             return None
         };
         Some(int64(self))
     }
+    /// Converts to UInt8, returning None if the value is out of range.
     pub fn to_u8(self) -> Option<UInt8> {
         if self > 255 {
             return None
         };
         Some(uint8(self))
     }
+    /// Converts to UInt16, returning None if the value is out of range.
     pub fn to_u16(self) -> Option<UInt16> {
         if self > 65535 {
             return None
         };
         Some(uint16(self))
     }
+    /// Returns the Unicode scalar value as an unsigned integer.
     pub fn to_u32(self) -> Option<UInt32> {
         if self > 4294967295 {
             return None
         };
         Some(uint32(self))
     }
+    /// Converts to UInt64, returning None if the value is out of range.
     pub fn to_u64(self) -> Option<UInt64> {
         Some(uint64(self))
     }
@@ -611,6 +729,7 @@ impl UInt64 {
 fn rune_from_valid_u32(value: UInt32) -> Rune
 
 impl Rune {
+    /// Converts a Unicode scalar value to a Rune, rejecting surrogate values and values above U+10FFFF.
     pub fn from_u32(value: UInt32) -> Option<Rune> {
         if value > 0x10ffff {
             return None
@@ -620,6 +739,7 @@ impl Rune {
         }
         Some(rune_from_valid_u32(value))
     }
+    /// Returns the Unicode scalar value as an unsigned integer.
     pub fn to_u32(self) -> UInt32 {
         uint32(self)
     }

@@ -24,13 +24,13 @@ fn slice_sum(values: &Slice<Int32>) @suspends -> Int32 {
 
 fn text_size(text: &String) @suspends -> Int32 {
     let copied = string.clone(text)
-    let runes = string.rune_count(text)
+    let runes = text.rune_count()
     var count = 0
     for byte in slice.iter(string.bytes(text)) {
         task.yield_now()
         count += 1
     }
-    if runes != string.rune_count(&copied) || uint64(count) != string.byte_length(&copied) { return -1 }
+    if runes != copied.rune_count() || uint64(count) != string.byte_length(&copied) { return -1 }
     count
 }
 

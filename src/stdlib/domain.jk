@@ -90,17 +90,29 @@ fn finish_current_value<A, R>(name: String, input: A) @suspends -> Result<R, Dom
 
 // In-place access rejects before entry; candidate operations may also reject
 // resource exhaustion after calculation without publishing state.
+/// Reasons a state-domain operation could not complete.
 pub enum DomainAccessError {
+    /// The requested resource has already closed.
     Closed,
+    /// The state domain failed and can no longer serve this operation.
     DomainFailed,
+    /// The requested capability does not permit this operation.
     InvalidAccess,
+    /// The target domain is incompatible with the requested operation.
     Incompatible,
+    /// A domain resource budget was exceeded.
     ResourceLimit,
+    /// The mailbox with this identity could not accept the staged message.
     OutboxFull(UInt64),
+    /// The mailbox with this identity closed before publication.
     OutboxClosed(UInt64),
+    /// The domain entry with the given identity was unavailable.
     Missing(UInt64),
+    /// The same domain was included more than once in an incompatible access set.
     Aliased(UInt64),
+    /// The operation exceeded its conflict retry limit.
     RetryLimit,
+    /// The directory with this identity could not accept another entry.
     DirectoryFull(UInt64)
 }
 impl Show for DomainAccessError {
@@ -137,18 +149,29 @@ impl Show for DomainAccessError {
 }
 
 // Candidate operations distinguish business rejection from access/commit failure.
-pub enum Outcome<T, E> { Committed(T), Rejected(E), Failed(DomainAccessError) }
+/// Outcome of a conditional write or state-domain operation.
+pub enum Outcome<T, E> {
+    /// The operation committed and returned its successful value.
+    Committed(T),
+    /// The operation returned a business error and its state changes were discarded.
+    Rejected(E),
+    /// Domain access or conditional publication failed.
+    Failed(DomainAccessError)
+}
 impl<T, E> Outcome<T, E> {
+    /// Returns true if the operation committed successfully.
     pub fn is_committed(&self) -> Bool {
         self is Committed(_)
     }
     // Explicitly discard either failure and consume the successful payload.
+    /// Consumes the outcome and extracts the committed value, or returns None on either failure.
     pub fn committed(self) -> Option<T> {
         match self {
             Committed(value) => Some(value),
             _ => None
         }
     }
+    /// Consumes the outcome and extracts its committed value, failing the task on rejection or access failure.
     pub fn unwrap(self) -> T {
         match self {
             Committed(value) => value,
@@ -156,6 +179,7 @@ impl<T, E> Outcome<T, E> {
             Failed(_) => check.panic("Called Outcome.unwrap on Failed")
         }
     }
+    /// Converts either kind of failure with the corresponding callback while preserving a committed value.
     pub fn into_result<F, R: FnOnce(E) -> F, A: FnOnce(DomainAccessError) -> F>(
         self,
         rejected: R,
@@ -247,11 +271,13 @@ fn pack<A: Copy>(value: A) -> UInt64
 #intrinsic("domain.unpack")
 fn unpack<R: Copy>(bits: UInt64) -> R
 
+/// Runs a read-only operation on the current state domain and returns its result.
 #intrinsic("domain.read")
 pub fn read<S, R>(operation: fn(&S) -> R) @suspends -> Result<R, DomainAccessError> {
     finish_current_value::<Unit, R>("", {})
 }
 
+/// Runs a read-only operation with an input value on the current state domain.
 #intrinsic("domain.query")
 pub fn query<S, A, R>(
     operation: fn(&S, A) -> R,
@@ -260,6 +286,7 @@ pub fn query<S, A, R>(
     finish_current_value::<A, R>("", input)
 }
 
+/// Runs an exclusive operation with an input value on the current state domain.
 #intrinsic("domain.write")
 pub fn write<S, A, R>(
     operation: fn(&mut S, A) -> R,
@@ -331,11 +358,27 @@ extern fn __domain_snapshot_check(snapshot: &domain.SnapshotOwner) @suspends -> 
 #intrinsic("domain.module")
 fn module() -> domain.Module
 
+/// Owns a state domain and keeps it available while the owner is live.
 pub struct Owner<S> { value: domain.StateOwner }
+/// A non-owning capability for reading a state domain.
 pub struct ReadHandle<S> { token: domain.Handle }
+/// A non-owning capability for reading and writing a state domain.
 pub struct WriteHandle<S> { token: domain.Handle }
+/// Owns a projection of a domain value and the revision used to validate it.
 pub struct Snapshot<S, R> { storage: domain.SnapshotOwner }
-pub enum SnapshotStatus { Current, Conflict, Closed, DomainFailed, InvalidAccess }
+/// Result of checking the revision and availability behind a snapshot.
+pub enum SnapshotStatus {
+    /// All captured revisions still match their live domains.
+    Current,
+    /// The expected revision or identity changed before the operation could complete.
+    Conflict,
+    /// The requested resource has already closed.
+    Closed,
+    /// The state domain failed and can no longer serve this operation.
+    DomainFailed,
+    /// The requested capability does not permit this operation.
+    InvalidAccess
+}
 impl Show for SnapshotStatus {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -351,9 +394,11 @@ impl Show for SnapshotStatus {
 }
 
 impl<S, R> Snapshot<S, R> {
+    /// Returns the owned projection captured by the snapshot.
     pub fn value(&self) @suspends -> R {
         snapshot_value::<R>(&self.storage)
     }
+    /// Checks whether the captured revisions still match the live domains.
     pub fn check(&self) @suspends -> SnapshotStatus {
         let status = __domain_snapshot_check(&self.storage)
         if status == 0 {
@@ -372,6 +417,7 @@ impl<S, R> Snapshot<S, R> {
     }
 }
 
+/// Captures a projection and revision of the domain addressed by the read handle.
 #intrinsic("domain.snapshot_from")
 pub fn snapshot_from<S, R>(
     handle: ReadHandle<S>,
@@ -380,7 +426,21 @@ pub fn snapshot_from<S, R>(
     Snapshot::<S, R> { storage: __domain_snapshot(module(), handle.token, "") }
 }
 
-pub enum RequestError { Failed, Cancelled, Closed, ResourceLimit, InvalidAccess, DomainFailed }
+/// Reasons a queued domain request could not complete.
+pub enum RequestError {
+    /// The requested operation failed while running.
+    Failed,
+    /// The pending operation was cancelled.
+    Cancelled,
+    /// The requested resource has already closed.
+    Closed,
+    /// A domain resource budget was exceeded.
+    ResourceLimit,
+    /// The requested capability does not permit this operation.
+    InvalidAccess,
+    /// The state domain failed and can no longer serve this operation.
+    DomainFailed
+}
 impl Show for RequestError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -397,23 +457,28 @@ impl Show for RequestError {
 }
 
 impl<S> Owner<S> {
+    /// Returns a non-owning write capability to this state domain.
     pub fn handle(&self) @suspends -> WriteHandle<S> {
         WriteHandle::<S> { token: __domain_handle(&self.value) }
     }
+    /// Returns a non-owning read capability to this state domain.
     pub fn read_handle(&self) @suspends -> ReadHandle<S> {
         self.handle().read_only()
     }
+    /// Consumes the owner and closes its resource.
     pub fn close(self) @suspends {
         var value = self.value
         __domain_close(&mut value)
     }
 }
 impl<S> WriteHandle<S> {
+    /// Returns a capability limited to shared access.
     pub fn read_only(self) -> ReadHandle<S> {
         ReadHandle::<S> { token: readonly(self.token) }
     }
 }
 
+/// Runs the constructor with the supplied input and returns an owner for the new domain.
 #intrinsic("domain.create")
 pub fn create<S, A>(constructor: fn(A) -> S, input: A) @suspends -> Owner<S> {
     finish_create::<S, A>(module(), "", input)
@@ -431,6 +496,7 @@ fn finish_create<S, A>(module: domain.Module, name: String, input: A) @suspends 
     Owner::<S> { value: __domain_create_values(module, name, &packet.storage) }
 }
 
+/// Runs a read-only operation on the domain addressed by the handle.
 #intrinsic("domain.read_from")
 pub fn read_from<S, R>(
     handle: ReadHandle<S>,
@@ -439,6 +505,7 @@ pub fn read_from<S, R>(
     finish_value::<Unit, R>(module(), handle.token, handle.token, 1, "", {})
 }
 
+/// Runs a read-only operation with an input value on the addressed domain.
 #intrinsic("domain.query_from")
 pub fn query_from<S, A, R>(
     handle: ReadHandle<S>,
@@ -448,6 +515,7 @@ pub fn query_from<S, A, R>(
     finish_value::<A, R>(module(), handle.token, handle.token, 1, "", input)
 }
 
+/// Runs an exclusive operation with an input value on the addressed domain.
 #intrinsic("domain.write_to")
 pub fn write_to<S, A, R>(
     handle: WriteHandle<S>,
@@ -523,6 +591,7 @@ fn finish_request_value<A, R>(
     Err(RequestError.DomainFailed)
 }
 
+/// Submits a write request with the supplied input and waits for its result.
 #intrinsic("domain.request")
 pub fn request<S, A, R>(
     handle: WriteHandle<S>,
@@ -532,6 +601,7 @@ pub fn request<S, A, R>(
     finish_request_value::<A, R>(module(), handle.token, "", input)
 }
 
+/// Submits a read-only request with the supplied input and waits for its result.
 #intrinsic("domain.request_read")
 pub fn request_read<S, A, R>(
     handle: ReadHandle<S>,
@@ -565,7 +635,9 @@ extern fn __domain_commit_failed_outbox(receipt: &domain.CommitOwner) @suspends 
 extern fn __domain_commit_revision(receipt: &domain.CommitOwner) @suspends -> UInt64
 extern fn __domain_commit_identity(receipt: &domain.CommitOwner) @suspends -> UInt64
 extern fn __domain_commit_cancel(receipt: &domain.CommitOwner) @suspends
+/// A proposed change prepared from a snapshot for conditional publication.
 pub struct Candidate<S> { storage: domain.CandidateOwner }
+/// Tracks the outcome of a submitted conditional commit.
 pub struct CommitReceipt { storage: domain.CommitOwner }
 // Deadlines use the creating executor's monotonic clock, not wall time.
 extern fn __domain_deadline_after(nanoseconds: UInt64) @suspends -> domain.DeadlineOwner
@@ -574,21 +646,33 @@ extern fn __domain_commit_before(
     candidate: &mut domain.CandidateOwner,
     deadline: &domain.DeadlineOwner
 ) @suspends -> domain.CommitOwner
+/// A deadline for publishing a conditional commit.
 pub struct CommitDeadline { storage: domain.DeadlineOwner }
 
+/// Creates a conditional-commit deadline measured from the current monotonic time.
 pub fn deadline_after(duration: Duration) @suspends -> CommitDeadline {
     CommitDeadline { storage: __domain_deadline_after(duration.as_nanos()) }
 }
 
+/// Reasons a conditional publication failed.
 pub enum CommitError {
+    /// The expected revision or identity changed before the operation could complete.
     Conflict,
+    /// The requested resource has already closed.
     Closed,
+    /// The state domain failed and can no longer serve this operation.
     DomainFailed,
+    /// The requested capability does not permit this operation.
     InvalidAccess,
+    /// The pending operation was cancelled.
     Cancelled,
+    /// A domain resource budget was exceeded.
     ResourceLimit,
+    /// The deadline elapsed before publication.
     Expired,
+    /// A mailbox lacked capacity for the staged messages.
     OutboxFull,
+    /// A mailbox closed before the staged messages could be published.
     OutboxClosed
 }
 impl Show for CommitError {
@@ -609,7 +693,15 @@ impl Show for CommitError {
     }
 }
 
-pub enum RevisionError { Pending, Failed(CommitError), InvalidAccess }
+/// Reasons a publication revision is not available.
+pub enum RevisionError {
+    /// The commit is still pending and has no published revision.
+    Pending,
+    /// The commit completed with this error instead of a revision.
+    Failed(CommitError),
+    /// The requested capability does not permit this operation.
+    InvalidAccess
+}
 impl Show for RevisionError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
@@ -681,6 +773,7 @@ fn finish_candidate_values<B, R, S, A>(
     }
 }
 
+/// Uses a snapshot and constructor to prepare a proposed replacement for publication.
 #intrinsic("domain.candidate_from")
 pub fn candidate_from<B, R, S, A>(
     snapshot: Snapshot<B, R>,
@@ -691,11 +784,13 @@ pub fn candidate_from<B, R, S, A>(
     finish_candidate_values::<B, R, S, A>(module(), snapshot, target.token, "", input)
 }
 
+/// Submits a candidate for conditional publication to the specified domain.
 pub fn commit_to<S>(handle: WriteHandle<S>, candidate: Candidate<S>) @suspends -> CommitReceipt {
     var storage = candidate.storage
     CommitReceipt { storage: __domain_commit(handle.token, &mut storage) }
 }
 
+/// Submits a candidate for conditional publication before the deadline.
 pub fn commit_before<S>(
     handle: WriteHandle<S>,
     candidate: Candidate<S>,
@@ -706,6 +801,7 @@ pub fn commit_before<S>(
 }
 
 impl CommitReceipt {
+    /// Waits for publication and returns the committed revision or a commit error.
     pub fn wait(&mut self) @suspends -> Result<UInt64, CommitError> {
         let status = __domain_commit_wait(&mut self.storage)
         if status == 0 {
@@ -713,6 +809,7 @@ impl CommitReceipt {
         }
         Err(commit_error(status))
     }
+    /// Returns the mailbox identity if an outgoing message prevented publication.
     pub fn failed_outbox(&self) @suspends -> Option<UInt64> {
         let identity = __domain_commit_failed_outbox(&self.storage)
         if identity == 0 {
@@ -721,9 +818,11 @@ impl CommitReceipt {
             Some(identity)
         }
     }
+    /// Returns the identity of this commit receipt.
     pub fn identity(&self) @suspends -> UInt64 {
         __domain_commit_identity(&self.storage)
     }
+    /// Requests cancellation of the pending operation.
     pub fn cancel(&self) @suspends {
         __domain_commit_cancel(&self.storage)
     }
@@ -738,6 +837,7 @@ extern fn __domain_pair(
     input: UInt64
 ) @suspends -> (Int32, UInt64)
 
+/// Runs a read-only operation over two domains under coordinated access.
 #intrinsic("domain.read_pair")
 pub fn read_pair<S, T, R>(
     first: ReadHandle<S>,
@@ -747,6 +847,7 @@ pub fn read_pair<S, T, R>(
     finish_value::<Unit, R>(module(), first.token, second.token, 2, "", {})
 }
 
+/// Runs a read-only operation with input over two coordinated domains.
 #intrinsic("domain.query_pair")
 pub fn query_pair<S, T, A, R>(
     first: ReadHandle<S>,
@@ -757,6 +858,7 @@ pub fn query_pair<S, T, A, R>(
     finish_value::<A, R>(module(), first.token, second.token, 2, "", input)
 }
 
+/// Runs an operation with mutable access to the first domain and shared access to the second.
 #intrinsic("domain.update_pair")
 pub fn update_pair<S, T, A, R>(
     first: ReadHandle<S>,
@@ -767,6 +869,7 @@ pub fn update_pair<S, T, A, R>(
     finish_value::<A, R>(module(), first.token, second.token, 2, "", input)
 }
 
+/// Runs an operation with exclusive access to both domains.
 #intrinsic("domain.write_pair")
 pub fn write_pair<S, T, A, R>(
     first: WriteHandle<S>,
@@ -791,6 +894,7 @@ extern fn __domain_snapshot_pair_values(
     name: String
 ) @suspends -> domain.SnapshotOwner
 
+/// Captures a projection and validation revisions for two domains.
 #intrinsic("domain.snapshot_pair")
 pub fn snapshot_pair<S, T, R>(
     first: ReadHandle<S>,
@@ -827,7 +931,9 @@ extern fn __domain_commit_pair_before(
     deadline: &domain.DeadlineOwner
 ) @suspends -> domain.CommitOwner
 extern fn __domain_commit_second_revision(receipt: &domain.CommitOwner) @suspends -> UInt64
+/// A pair of proposed changes prepared for atomic publication.
 pub struct CandidatePair<S, T> { storage: domain.CandidatePairOwner }
+/// Tracks the outcome of a conditional commit to two domains.
 pub struct PairCommitReceipt { storage: domain.CommitOwner }
 
 #intrinsic("domain.finish_candidate_pair")
@@ -865,6 +971,7 @@ fn finish_candidate_pair_values<S, T, A>(
     }
 }
 
+/// Builds proposed state replacements for two domains using their snapshot.
 #intrinsic("domain.candidate_pair_from")
 pub fn candidate_pair_from<S, T, A>(
     first: Candidate<S>,
@@ -875,6 +982,7 @@ pub fn candidate_pair_from<S, T, A>(
     finish_candidate_pair_values::<S, T, A>(module(), first, target.token, "", input)
 }
 
+/// Submits a pair of candidates for atomic conditional publication.
 pub fn commit_pair_to<S, T>(
     first: WriteHandle<S>,
     second: WriteHandle<T>,
@@ -884,6 +992,7 @@ pub fn commit_pair_to<S, T>(
     PairCommitReceipt { storage: __domain_commit_pair(first.token, second.token, &mut storage) }
 }
 
+/// Submits a pair for atomic conditional publication subject to a deadline.
 pub fn commit_pair_before<S, T>(
     first: WriteHandle<S>,
     second: WriteHandle<T>,
@@ -902,6 +1011,7 @@ pub fn commit_pair_before<S, T>(
 }
 
 impl PairCommitReceipt {
+    /// Waits for atomic publication and returns both committed revisions or a commit error.
     pub fn wait(&mut self) @suspends -> Result<(UInt64, UInt64), CommitError> {
         let status = __domain_commit_wait(&mut self.storage)
         if status == 0 {
@@ -914,6 +1024,7 @@ impl PairCommitReceipt {
         }
         Err(commit_error(status))
     }
+    /// Returns the mailbox identity if an outgoing message prevented publication.
     pub fn failed_outbox(&self) @suspends -> Option<UInt64> {
         let identity = __domain_commit_failed_outbox(&self.storage)
         if identity == 0 {
@@ -922,9 +1033,11 @@ impl PairCommitReceipt {
             Some(identity)
         }
     }
+    /// Returns the identity of this commit receipt.
     pub fn identity(&self) @suspends -> UInt64 {
         __domain_commit_identity(&self.storage)
     }
+    /// Requests cancellation of the pending operation.
     pub fn cancel(&self) @suspends {
         __domain_commit_cancel(&self.storage)
     }
@@ -980,21 +1093,28 @@ extern fn __domain_set_revision_checked(
     receipt: &domain.CommitOwner,
     handle: domain.Handle
 ) @suspends -> (Int32, UInt64)
+/// A set of domain capabilities used to capture a coordinated snapshot.
 pub struct AccessSet { storage: domain.AccessSetOwner }
+/// An owned snapshot of a set of domain revisions.
 pub struct SnapshotSet { storage: domain.SnapshotSetOwner }
+/// Proposed changes to a set of domains for atomic publication.
 pub struct CandidateSet { storage: domain.CandidateSetOwner }
+/// Tracks the outcome of a conditional commit to a set of domains.
 pub struct SetCommitReceipt { storage: domain.CommitOwner }
 
+/// Creates an empty domain access set.
 pub fn access_set() @suspends -> AccessSet {
     AccessSet { storage: __domain_access_set() }
 }
 
 impl AccessSet {
+    /// Adds a domain capability to the access set.
     pub fn include<S>(&mut self, handle: ReadHandle<S>) @suspends {
         include_handle(self, handle.token)
     }
 }
 
+/// Consumes the access set and captures the current states and revisions together.
 pub fn snapshot_set(set: AccessSet) @suspends -> SnapshotSet {
     var storage = set.storage
     SnapshotSet { storage: __domain_snapshot_set(&mut storage) }
@@ -1025,6 +1145,7 @@ fn finish_snapshot_read<A, R>(
     unpack_value::<R>(&packet)
 }
 
+/// Runs a read-only projection against the captured state for the handle.
 #intrinsic("domain.read_snapshot")
 pub fn read_snapshot<S, R>(
     snapshot: &SnapshotSet,
@@ -1034,6 +1155,7 @@ pub fn read_snapshot<S, R>(
     finish_snapshot_read::<Unit, R>(module(), &snapshot.storage, handle.token, "", {})
 }
 
+/// Runs a projection with input against a state in the captured snapshot.
 #intrinsic("domain.read_snapshot")
 pub fn query_snapshot<S, A, R>(
     snapshot: &SnapshotSet,
@@ -1045,6 +1167,7 @@ pub fn query_snapshot<S, A, R>(
 }
 
 impl SnapshotSet {
+    /// Checks whether the captured revisions still match the live domains.
     pub fn check(&self) @suspends -> SnapshotStatus {
         let status = __domain_set_check(&self.storage)
         if status == 0 {
@@ -1103,6 +1226,7 @@ fn finish_set_candidate_values<A>(
     }
 }
 
+/// Consumes the snapshot set and prepares a proposed replacement for one member.
 #intrinsic("domain.candidate_set_from")
 pub fn candidate_set_from<S, A>(
     snapshot: SnapshotSet,
@@ -1128,6 +1252,7 @@ fn finish_set_add_values<A>(
     }
 }
 
+/// Adds a proposed replacement for another member to the candidate set.
 #intrinsic("domain.candidate_set_add")
 pub fn candidate_set_add<S, A>(
     set: CandidateSet,
@@ -1168,6 +1293,7 @@ fn finish_edit_snapshot<A>(
     }
 }
 
+/// Consumes a snapshot set and applies an in-place editor to the captured state for one member.
 #intrinsic("domain.edit_snapshot")
 pub fn edit_snapshot<S, A>(
     snapshot: SnapshotSet,
@@ -1193,6 +1319,7 @@ fn finish_edit_candidate<A>(
     }
 }
 
+/// Applies an in-place editor to the specified member of the candidate set.
 #intrinsic("domain.edit_candidate")
 pub fn edit_candidate<S, A>(
     set: CandidateSet,
@@ -1203,11 +1330,13 @@ pub fn edit_candidate<S, A>(
     finish_edit_candidate::<A>(module(), set, handle.token, "", input)
 }
 
+/// Submits a set of candidate changes for atomic conditional publication.
 pub fn commit_set(set: CandidateSet) @suspends -> SetCommitReceipt {
     var storage = set.storage
     SetCommitReceipt { storage: __domain_commit_set(&mut storage) }
 }
 
+/// Submits a candidate set for atomic conditional publication subject to a deadline.
 pub fn commit_set_before(
     set: CandidateSet,
     deadline: &CommitDeadline
@@ -1217,6 +1346,7 @@ pub fn commit_set_before(
 }
 
 impl SetCommitReceipt {
+    /// Waits for the candidate set to commit or fail.
     pub fn wait(&mut self) @suspends -> Result<Unit, CommitError> {
         let status = __domain_commit_wait(&mut self.storage)
         if status == 0 {
@@ -1224,12 +1354,14 @@ impl SetCommitReceipt {
         }
         Err(commit_error(status))
     }
+    /// Returns the published revision for the specified domain or the reason it is unavailable.
     pub fn revision<S>(
         &self,
         handle: ReadHandle<S>
     ) @suspends -> Result<Option<UInt64>, RevisionError> {
         set_revision(self, handle.token)
     }
+    /// Returns the mailbox identity if an outgoing message prevented publication.
     pub fn failed_outbox(&self) @suspends -> Option<UInt64> {
         let identity = __domain_commit_failed_outbox(&self.storage)
         if identity == 0 {
@@ -1238,9 +1370,11 @@ impl SetCommitReceipt {
             Some(identity)
         }
     }
+    /// Returns the identity of this commit receipt.
     pub fn identity(&self) @suspends -> UInt64 {
         __domain_commit_identity(&self.storage)
     }
+    /// Requests cancellation of the pending operation.
     pub fn cancel(&self) @suspends {
         __domain_commit_cancel(&self.storage)
     }
@@ -1280,18 +1414,21 @@ extern fn __outbox_attach_set(
     batch: &mut outbox.BatchOwner
 ) @suspends
 impl<S> Candidate<S> {
+    /// Moves a staged outgoing batch into the candidate for publication with its state changes.
     pub fn with_outbox(var self, var batch: Batch) @suspends -> Candidate<S> {
         __outbox_attach(&mut self.storage, &mut batch)
         self
     }
 }
 impl<S, T> CandidatePair<S, T> {
+    /// Moves a staged outgoing batch into the candidate for publication with its state changes.
     pub fn with_outbox(var self, var batch: Batch) @suspends -> CandidatePair<S, T> {
         __outbox_attach_pair(&mut self.storage, &mut batch)
         self
     }
 }
 impl CandidateSet {
+    /// Moves a staged outgoing batch into the candidate for publication with its state changes.
     pub fn with_outbox(var self, var batch: Batch) @suspends -> CandidateSet {
         __outbox_attach_set(&mut self.storage, &mut batch)
         self
@@ -1332,10 +1469,26 @@ extern fn __directory_lookup(
 ) @suspends -> domain.Handle
 extern fn __directory_found(target: domain.Handle) @suspends -> Bool
 
+/// Owns a bounded mapping from keys to state-domain capabilities.
 pub struct Directory { storage: domain.DirectoryOwner }
 // A flat, non-owning capability suitable for AOT/Script entry contracts.
+/// A flat, non-owning capability suitable for AOT and Script entry contracts.
 pub struct DirectoryHandle { identity: UInt64 }
-pub enum DirectoryError { Closed, Full, Occupied, InvalidTarget, Conflict, ResourceLimit }
+/// Reasons a directory operation could not complete.
+pub enum DirectoryError {
+    /// The requested resource has already closed.
+    Closed,
+    /// The directory has reached its capacity.
+    Full,
+    /// The directory already contains an entry for the key.
+    Occupied,
+    /// The target capability could not be stored in the directory.
+    InvalidTarget,
+    /// The expected revision or identity changed before the operation could complete.
+    Conflict,
+    /// A domain resource budget was exceeded.
+    ResourceLimit
+}
 impl Show for DirectoryError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -1351,14 +1504,17 @@ impl Show for DirectoryError {
     }
 }
 
+/// Creates an owned directory with room for the specified number of entries.
 pub fn directory(capacity: UInt64) @suspends -> Directory {
     Directory { storage: __directory_create(capacity) }
 }
 
 impl Directory {
+    /// Returns a non-owning capability to this directory.
     pub fn handle(&self) @suspends -> DirectoryHandle {
         DirectoryHandle { identity: __directory_handle(&self.storage) }
     }
+    /// Consumes the owner and closes its resource.
     pub fn close(self) @suspends {
         __directory_close(self.handle().identity)
     }
@@ -1389,6 +1545,7 @@ fn directory_status(status: Int32) -> Result<Unit, DirectoryError> {
 impl DirectoryHandle {
     // Consumes the owner on every outcome; a failed insertion closes its state.
     // Successful insertion transfers close responsibility to the directory.
+    /// Transfers ownership of a state domain to a vacant numeric key. A failed insertion drops the owner.
     pub fn insert_owned<S>(
         self,
         key: UInt64,
@@ -1397,6 +1554,7 @@ impl DirectoryHandle {
         var value = target.value
         directory_status(__directory_insert_owned(self.identity, key, &mut value))
     }
+    /// Registers a write capability at a vacant numeric key.
     pub fn insert<S>(
         self,
         key: UInt64,
@@ -1404,6 +1562,7 @@ impl DirectoryHandle {
     ) @suspends -> Result<Unit, DirectoryError> {
         directory_status(__directory_insert(self.identity, key, target.token))
     }
+    /// Registers a read capability at a vacant numeric key.
     pub fn insert_read<S>(
         self,
         key: UInt64,
@@ -1411,6 +1570,7 @@ impl DirectoryHandle {
     ) @suspends -> Result<Unit, DirectoryError> {
         directory_status(__directory_insert(self.identity, key, target.token))
     }
+    /// Replaces an existing entry with a write capability if its identity matches the expected one.
     pub fn replace<S, T>(
         self,
         key: UInt64,
@@ -1419,6 +1579,7 @@ impl DirectoryHandle {
     ) @suspends -> Result<Unit, DirectoryError> {
         directory_status(__directory_replace(self.identity, key, expected.token, target.token))
     }
+    /// Replaces an existing entry with a read capability if its identity matches the expected one.
     pub fn replace_read<S, T>(
         self,
         key: UInt64,
@@ -1428,6 +1589,7 @@ impl DirectoryHandle {
         directory_status(__directory_replace(self.identity, key, expected.token, target.token))
     }
     // Comparing identity prevents stale connection cleanup from deleting a new route.
+    /// Removes the entry if the numeric key still addresses the expected domain.
     pub fn remove<S>(self, key: UInt64, expected: ReadHandle<S>) @suspends -> Bool {
         __directory_remove(self.identity, key, expected.token)
     }
@@ -1441,10 +1603,12 @@ fn lookup_type<S>() -> String
 #intrinsic("domain.lookup_witness")
 fn lookup_witness<S>(state: &S) {}
 
+/// Looks up a numeric key and returns a read capability of the requested state type.
 pub fn lookup<S>(directory: DirectoryHandle, key: UInt64) @suspends -> Option<ReadHandle<S>> {
     finish_lookup::<S>(module(), directory.identity, key, lookup_type::<S>())
 }
 
+/// Looks up a numeric key and returns a write capability of the requested state type when available.
 pub fn lookup_write<S>(
     directory: DirectoryHandle,
     key: UInt64
@@ -1496,16 +1660,27 @@ extern fn __timer_start(
     input: UInt64,
     periodic: Bool
 ) @suspends -> Int32
+/// Owns a timer that can schedule operations on a state domain.
 pub struct Timer { storage: domain.TimerOwner }
+/// A non-owning capability for controlling a domain timer.
 pub struct TimerHandle { identity: UInt64 }
+/// State of a domain timer or the outcome of its most recent scheduled work.
 pub enum TimerStatus {
+    /// The timer has no scheduled operation.
     Idle,
+    /// The timer has an outstanding scheduled operation.
     Active,
+    /// The scheduled one-shot operation completed.
     Completed,
+    /// The pending operation was cancelled.
     Cancelled,
+    /// The requested resource has already closed.
     Closed,
+    /// The requested capability does not permit this operation.
     InvalidAccess,
+    /// A domain resource budget was exceeded.
     ResourceLimit,
+    /// The scheduled operation failed.
     Failed
 }
 impl Show for TimerStatus {
@@ -1525,7 +1700,19 @@ impl Show for TimerStatus {
     }
 }
 
-pub enum TimerError { Closed, Busy, InvalidDelay, InvalidAccess, ResourceLimit }
+/// Reasons a timer operation could not be started.
+pub enum TimerError {
+    /// The requested resource has already closed.
+    Closed,
+    /// This timer already has a scheduled operation.
+    Busy,
+    /// The supplied delay or period is invalid.
+    InvalidDelay,
+    /// The requested capability does not permit this operation.
+    InvalidAccess,
+    /// A domain resource budget was exceeded.
+    ResourceLimit
+}
 impl Show for TimerError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -1540,10 +1727,12 @@ impl Show for TimerError {
     }
 }
 
+/// Creates an idle domain timer.
 pub fn timer() @suspends -> Timer {
     Timer { storage: __timer_create() }
 }
 
+/// Queries the status of a domain's named periodic method.
 pub fn periodic_status<S>(target: ReadHandle<S>, method: String) @suspends -> TimerStatus {
     timer_status(__domain_periodic_status(target.token, method))
 }
@@ -1574,17 +1763,21 @@ fn timer_status(status: Int32) -> TimerStatus {
 }
 
 impl Timer {
+    /// Returns a non-owning capability to this timer.
     pub fn handle(&self) @suspends -> TimerHandle {
         TimerHandle { identity: __timer_handle(&self.storage) }
     }
+    /// Consumes the owner and closes its resource.
     pub fn close(self) @suspends {
         __timer_close(self.handle().identity)
     }
 }
 impl TimerHandle {
+    /// Requests cancellation of the pending operation.
     pub fn cancel(self) @suspends {
         __timer_cancel(self.identity)
     }
+    /// Returns the current state of the timer addressed by this handle.
     pub fn status(self) @suspends -> TimerStatus {
         timer_status(__timer_status(self.identity))
     }
@@ -1675,6 +1868,7 @@ fn finish_timer_value<A>(
     Err(TimerError.ResourceLimit)
 }
 
+/// Schedules one operation with input after the duration has elapsed.
 #intrinsic("domain.after")
 pub fn after<S, A>(
     timer: TimerHandle,
@@ -1686,6 +1880,7 @@ pub fn after<S, A>(
     finish_timer_value::<A>(module(), timer.identity, target.token, duration, "", input, false)
 }
 
+/// Schedules a recurring operation with input at the specified interval.
 #intrinsic("domain.every")
 pub fn every<S, A>(
     timer: TimerHandle,
@@ -1791,6 +1986,7 @@ extern fn __directory_remove_named(
     expected: domain.Handle
 ) @suspends -> Bool
 
+/// Looks up a text key and returns a read capability of the requested state type.
 pub fn lookup_named<S>(
     directory: DirectoryHandle,
     key: &String
@@ -1809,6 +2005,7 @@ pub fn lookup_named<S>(
     }
 }
 
+/// Looks up a text key and returns a write capability of the requested state type when available.
 pub fn lookup_named_write<S>(
     directory: DirectoryHandle,
     key: &String
@@ -1828,6 +2025,7 @@ pub fn lookup_named_write<S>(
 }
 
 impl DirectoryHandle {
+    /// Registers a write capability at a vacant text key.
     pub fn insert_named<S>(
         self,
         key: &String,
@@ -1835,6 +2033,7 @@ impl DirectoryHandle {
     ) @suspends -> Result<Unit, DirectoryError> {
         directory_status(__directory_insert_named(self.identity, key, target.token))
     }
+    /// Transfers ownership of a state domain to a vacant text key. A failed insertion drops the owner.
     pub fn insert_owned_named<S>(
         self,
         key: &String,
@@ -1843,6 +2042,7 @@ impl DirectoryHandle {
         var value = target.value
         directory_status(__directory_insert_owned_named(self.identity, key, &mut value))
     }
+    /// Removes the entry if the text key still addresses the expected domain.
     pub fn remove_named<S>(self, key: &String, expected: ReadHandle<S>) @suspends -> Bool {
         __directory_remove_named(self.identity, key, expected.token)
     }
@@ -1855,6 +2055,7 @@ extern fn __directory_remove_named_if(
     predicate: String
 ) @suspends -> UInt64
 
+/// Removes the named entry if its current state satisfies the supplied predicate.
 #intrinsic("domain.remove_named_if")
 pub fn remove_named_if<S>(
     directory: DirectoryHandle,

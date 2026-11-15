@@ -28,8 +28,15 @@ import joky/hash.{type Hash}
 import joky/show.{type Show}
 
 // Logical network-order halves, independent of native integer endianness.
+/// A 128-bit UUID value with formatting and parsing support.
 pub struct Uuid { high: UInt64, low: UInt64 }
-pub enum ParseError { InvalidLength, InvalidByte(UInt64) }
+/// Reasons text could not be parsed as a UUID.
+pub enum ParseError {
+    /// The text has an invalid UUID length.
+    InvalidLength,
+    /// The byte at the indicated offset is invalid in the UUID text.
+    InvalidByte(UInt64)
+}
 impl Show for ParseError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
@@ -42,7 +49,13 @@ impl Show for ParseError {
     }
 }
 
-pub enum V7Error { InvalidTimestamp, Random(RandomError) }
+/// Reasons a version 7 UUID could not be constructed.
+pub enum V7Error {
+    /// The timestamp cannot fit in the unsigned 48-bit Unix millisecond field.
+    InvalidTimestamp,
+    /// The system could not supply UUID randomness.
+    Random(RandomError)
+}
 impl Show for V7Error {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
@@ -71,6 +84,7 @@ fn digit(value: UInt8) -> UInt8 {
 
 impl Uuid {
     // Unsigned network-byte ordering, also the canonical text ordering.
+    /// Compares UUIDs in unsigned byte order.
     pub fn compare(self, other: Uuid) -> Int32 {
         if self.high < other.high {
             -1
@@ -84,6 +98,7 @@ impl Uuid {
             0
         }
     }
+    /// Returns the embedded Unix millisecond timestamp for a version 7 UUID.
     pub fn v7_unix_millis(self) -> Option<Int64> {
         if (self.high >> 12) & 15 != 7 || self.low >> 62 != 2 {
             None
@@ -91,6 +106,7 @@ impl Uuid {
             Some(int64(self.high >> 16))
         }
     }
+    /// Builds a UUID from 16 bytes in network order.
     pub fn from_bytes(bytes: &FixedArray<UInt8, 16>) -> Uuid {
         var high: UInt64 = 0
         var low: UInt64 = 0
@@ -100,6 +116,7 @@ impl Uuid {
         }
         Uuid { high: high, low: low }
     }
+    /// Copies a UUID from a byte slice. A length other than 16 returns `InvalidLength`.
     pub fn from_slice(bytes: &Slice<UInt8>) -> Result<Uuid, ParseError> {
         if slice.len(bytes) != 16 {
             return Err(ParseError.InvalidLength)
@@ -112,6 +129,7 @@ impl Uuid {
         }
         Ok(Uuid { high: high, low: low })
     }
+    /// Returns the UUID's 16 bytes in network order.
     pub fn to_bytes(self) -> FixedArray<UInt8, 16> {
         var bytes = fixed_array.repeat::<UInt8, 16>(0)
         for i in uint64(0) .. 16 {
@@ -124,6 +142,7 @@ impl Uuid {
         }
         bytes
     }
+    /// Parses textual UUID digits and separators into a UUID.
     pub fn parse(text: &String) -> Result<Uuid, ParseError> {
         let bytes = text.bytes()
         if slice.len(bytes) != 36 {
@@ -153,6 +172,7 @@ impl Uuid {
         }
         Ok(Uuid { high: high, low: low })
     }
+    /// Formats the UUID in lowercase hyphenated form.
     pub fn to_text(self) -> String {
         var output = Array.with_capacity::<UInt8>(36)
         for i in uint64(0) .. 16 {
@@ -173,6 +193,7 @@ impl Uuid {
 }
 
 // RFC 9562 section 5.4: retain 122 random bits and set version 4 / variant 10.
+/// Creates a version 4 UUID using the system random source.
 pub fn v4() -> Result<Uuid, RandomError> {
     match random.secure_bytes(16) {
         Err(error) => Err(error)
@@ -187,10 +208,12 @@ pub fn v4() -> Result<Uuid, RandomError> {
 }
 
 // RFC 9562 section 5.7: no shared state or within-millisecond counter.
+/// Creates a version 7 UUID using the current Unix time and system randomness.
 pub fn v7() -> Result<Uuid, V7Error> {
     v7_at(Timestamp.now())
 }
 
+/// Creates a version 7 UUID using the supplied timestamp and system randomness.
 pub fn v7_at(timestamp: Timestamp) -> Result<Uuid, V7Error> {
     let millis = timestamp.as_unix_millis()
     if millis < 0 || millis > 281474976710655 {

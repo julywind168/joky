@@ -5,6 +5,12 @@
 
 ## Unreleased
 
+- 精简 `joky/array`、`joky/list`、`joky/map`、`joky/set`、`joky/slice`、
+  `joky/fixed_array` 和 `joky/string` 中与方法重复的模块导出。升级时将
+  `array.insert(&mut values, i, x)` 等调用改为 `values.insert(i, x)`，
+  将 `string.new()` 等构造调用改为 `String.new()`。如需把移除的入口用作回调，可声明调用该方法的具名函数。
+- 标准库参考为公开类型、函数、成员和常量提供说明，trait 实现复用声明处的契约。
+  模块页按声明种类导航，并集中展示 struct 字段与 enum 成员。
 - VS Code 支持 trait 方法补全，以及结构体字段和方法调用的悬停与定义跳转。
 - VS Code 可按接收者类型补全可见的结构体字段和固有方法，并显示字段类型和方法签名。
 - VS Code 支持补全当前位置可见的名称，以及模块别名后的公开函数，并显示类型或签名。

@@ -24,7 +24,9 @@ import joky/result.{type Result, Ok, Err}
 
 /// Display writes into caller-owned storage without consuming its input.
 pub trait Show {
+    /// Appends the borrowed value's display form to a string builder.
     fn show(&self, output: &mut StringBuilder) @noescape
+    /// Formats the borrowed value into a new owned string.
     fn to_text(&self) @noescape -> String {
         var output = StringBuilder.new()
         self.show(&mut output)
@@ -32,10 +34,12 @@ pub trait Show {
     }
 }
 
+/// Appends the borrowed value's display form to a string builder.
 pub fn append<T: Show>(value: &T, output: &mut StringBuilder) @noescape {
     value.show(output)
 }
 
+/// Formats the borrowed value into a new owned string.
 pub fn to_text<T: Show>(value: &T) @noescape -> String {
     Show.to_text(value)
 }

@@ -66,7 +66,19 @@ pub fn flush_stderr() {
     eprint("")
 }
 
-pub enum ReadError { Io(fs.IoError), Utf8(Utf8Error), InvalidLimit, LimitExceeded, Closed }
+/// Reasons a standard input read could not return its requested data.
+pub enum ReadError {
+    /// The underlying stream read failed.
+    Io(fs.IoError),
+    /// The input could not be decoded as UTF-8.
+    Utf8(Utf8Error),
+    /// The supplied byte limit is outside the supported range.
+    InvalidLimit,
+    /// The available data exceeds the requested byte limit.
+    LimitExceeded,
+    /// The standard input stream has closed.
+    Closed
+}
 impl Show for ReadError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
@@ -79,6 +91,7 @@ impl Show for ReadError {
     }
 }
 
+/// Owns the exclusive standard input stream.
 pub struct Stdin {
     file: fs.File,
     buffer: Array<UInt8>,
@@ -87,6 +100,7 @@ pub struct Stdin {
     failed: Bool,
 }
 
+/// Acquires the host's exclusive standard-input reader.
 pub fn stdin() @suspends -> Result<Stdin, fs.IoError> {
     Ok(
         Stdin {
@@ -179,6 +193,7 @@ impl Stdin {
     }
     // LF/CRLF are removed; EOF after a nonempty final fragment returns that fragment.
     // The byte limit includes line endings. An I/O, limit or UTF-8 error poisons the reader.
+    /// Reads the next bounded UTF-8 line, returning None at end of input.
     pub fn read_line(&mut self, limit: UInt64) @suspends -> Result<Option<String>, ReadError> {
         var bytes = match self.collect(true, limit)? {
             Some(bytes) => bytes
@@ -195,6 +210,7 @@ impl Stdin {
         }
         Ok(Some(self.decode(bytes)?))
     }
+    /// Reads standard input into an owned byte array subject to a byte limit.
     pub fn read_bytes_limited(
         &mut self,
         limit: UInt64
@@ -206,10 +222,12 @@ impl Stdin {
             }
         )
     }
+    /// Reads bounded standard input and decodes it as UTF-8.
     pub fn read_text_limited(&mut self, limit: UInt64) @suspends -> Result<String, ReadError> {
         let bytes = self.read_bytes_limited(limit)?
         self.decode(bytes)
     }
+    /// Consumes the reader and releases exclusive access to standard input.
     pub fn close(self) @suspends -> Result<Unit, fs.IoError> {
         self.file.close()
     }

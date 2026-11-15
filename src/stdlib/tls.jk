@@ -51,14 +51,23 @@ extern fn __tls_write(session: &mut tls.SessionOwner, bytes: Array<UInt8>) @susp
 extern fn __tls_handshaking(session: &mut tls.SessionOwner) @suspends -> UInt64
 extern fn __tls_notify(session: &mut tls.SessionOwner) @suspends -> UInt64
 
+/// Failures from TLS configuration, handshake, or I/O.
 pub enum TlsError {
+    /// The TLS configuration failed validation.
     InvalidConfig,
+    /// The supplied server identity is invalid.
     InvalidName,
+    /// Certificate validation failed.
     Certificate,
+    /// The peer's TLS messages or state violated the protocol.
     Protocol,
+    /// A TLS record or operation exceeded a configured limit.
     Limit,
+    /// The underlying TCP operation failed.
     Io(IoError),
+    /// The peer closed the transport before a complete TLS shutdown or read.
     UnexpectedEof,
+    /// The TLS stream can no longer be used after a failed operation.
     Unusable
 }
 impl Show for TlsError {
@@ -76,8 +85,11 @@ impl Show for TlsError {
     }
 }
 
+/// TLS client settings including trust roots and verification configuration.
 pub struct ClientConfig { storage: tls.ClientOwner }
+/// TLS server settings including its certificate and private key.
 pub struct ServerConfig { storage: tls.ServerOwner }
+/// Owns an established TLS connection and its protocol state.
 pub struct TlsStream { socket: TcpStream, session: tls.SessionOwner, usable: Bool }
 const RECORD: UInt64 = 16384
 const MAX_IO: UInt64 = 1048576
@@ -103,12 +115,15 @@ fn client_config(bundled: UInt64, pem: Array<UInt8>) @suspends -> Result<ClientC
 }
 
 impl ClientConfig {
+    /// Creates client settings using the bundled public trust roots.
     pub fn web_roots() @suspends -> Result<Self, TlsError> {
         client_config(1, [])
     }
+    /// Creates client settings that trust the supplied PEM certificates.
     pub fn from_ca_pem(pem: Array<UInt8>) @suspends -> Result<Self, TlsError> {
         client_config(0, pem)
     }
+    /// Takes ownership of a TCP stream and negotiates TLS with server identity verification.
     pub fn connect(
         &self,
         socket: TcpStream,
@@ -123,9 +138,11 @@ impl ClientConfig {
     }
 }
 impl ServerConfig {
+    /// Returns another owner of the same server configuration.
     pub fn share(&self) @suspends -> Self {
         ServerConfig { storage: __tls_server_share(&self.storage) }
     }
+    /// Creates server settings from a PEM certificate chain and private key.
     pub fn from_pem(chain: Array<UInt8>, key: Array<UInt8>) @suspends -> Result<Self, TlsError> {
         var error: UInt64 = 0
         let config = ServerConfig { storage: __tls_server_config(chain, key, &mut error) }
@@ -135,6 +152,7 @@ impl ServerConfig {
             Err(failure(error))
         }
     }
+    /// Takes ownership of an accepted TCP stream and negotiates TLS as the server.
     pub fn accept(&self, socket: TcpStream) @suspends -> Result<TlsStream, TlsError> {
         var error: UInt64 = 0
         let session = __tls_server(&self.storage, &mut error)
@@ -212,6 +230,7 @@ impl TlsStream {
             self.receive_records()?
         }
     }
+    /// Reads up to the requested count of decrypted bytes.
     pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, TlsError> {
         if !self.usable {
             return Err(Unusable)
@@ -260,12 +279,14 @@ impl TlsStream {
         self.usable = true
         Ok(Some(result))
     }
+    /// Reads exactly the requested number of decrypted bytes or returns an error.
     pub fn read_exact(
         &mut self,
         length: UInt64
     ) @suspends -> Result<Option<Array<UInt8>>, TlsError> {
         self.frame(length, 256)
     }
+    /// Reads decrypted bytes through the requested delimiter within the supplied limit.
     pub fn read_until(
         &mut self,
         delimiter: UInt8,
@@ -273,6 +294,7 @@ impl TlsStream {
     ) @suspends -> Result<Option<Array<UInt8>>, TlsError> {
         self.frame(limit, uint64(delimiter))
     }
+    /// Writes the entire owned byte array as TLS application data.
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, TlsError> {
         if !self.usable {
             return Err(Unusable)
@@ -301,6 +323,7 @@ impl TlsStream {
         self.usable = true
         Ok({})
     }
+    /// Consumes the TLS stream and closes the connection.
     pub fn close(var self) @suspends -> Result<Unit, TlsError> {
         if !self.usable {
             return Err(Unusable)

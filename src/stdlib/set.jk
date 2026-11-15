@@ -25,41 +25,53 @@ import joky/hash.{type Hash}
 /// An unordered set owning its unique elements.
 pub struct Set<T> { items: Map<T, Unit> }
 impl<T> Set<T> {
+    /// Creates an empty set with no reserved entries.
     pub fn new() -> Self {
         new::<T>()
     }
+    /// Creates an empty set with room for the requested number of values.
     pub fn with_capacity(capacity: UInt64) -> Self {
         with_capacity::<T>(capacity)
     }
+    /// Returns the number of stored values.
     pub fn len(&self) -> UInt64 {
         len(self)
     }
+    /// Returns the number of values the set can hold before growing.
     pub fn capacity(&self) -> UInt64 {
         capacity(self)
     }
+    /// Returns true if there are no stored values.
     pub fn is_empty(&self) -> Bool {
         is_empty(self)
     }
+    /// Ensures capacity for the requested number of additional values.
     pub fn reserve(&mut self, additional: UInt64) {
         reserve(self, additional)
     }
+    /// Drops all values while retaining capacity.
     pub fn clear(&mut self) {
         clear(self)
     }
+    /// Consumes the set and releases its storage.
     pub fn release(self) {
         release(self)
     }
+    /// Borrows the values in the set's current storage order.
     pub fn elements(&self) -> &Slice<T> {
         elements(self)
     }
+    /// Moves one stored value out of the set, or returns None if the set is empty.
     pub fn pop(&mut self) -> Option<T> {
         pop(self)
     }
+    /// Consumes the set and moves its values into an array in storage order.
     pub fn into_array(self) -> Array<T> {
         into_array(self)
     }
 }
 impl<T: Eq + Hash> Set<T> {
+    /// Tests whether an equal value is present.
     pub fn contains(&self, value: &T) @noescape(value) -> Bool {
         contains(self, value)
     }
@@ -71,15 +83,19 @@ impl<T: Eq + Hash> Set<T> {
     pub fn remove(&mut self, value: &T) @noescape(value) -> Bool {
         remove(self, value)
     }
+    /// Builds a set from an owned array, retaining only one representative per equality class.
     pub fn from_array(values: Array<T>) -> Self {
         from_array(values)
     }
+    /// Moves values from an array into the set, dropping duplicates.
     pub fn extend(&mut self, values: Array<T>) {
         extend(self, values)
     }
+    /// Returns true if every value in this set occurs in the other set.
     pub fn is_subset(&self, other: &Self) -> Bool {
         is_subset(self, other)
     }
+    /// Returns true if the sets share no equal values.
     pub fn is_disjoint(&self, other: &Self) -> Bool {
         is_disjoint(self, other)
     }
@@ -101,40 +117,49 @@ impl<T: Eq + Hash> Set<T> {
     }
 }
 
+/// Creates an empty set with no reserved entries.
 pub fn new<T>() -> Set<T> {
     Set { items: Map.new::<T, Unit>() }
 }
 
-pub fn with_capacity<T>(capacity: UInt64) -> Set<T> {
+fn with_capacity<T>(capacity: UInt64) -> Set<T> {
     Set { items: Map.with_capacity::<T, Unit>(capacity) }
 }
 
+/// Returns the number of stored values.
 pub fn len<T>(set: &Set<T>) -> UInt64 {
     set.items.len()
 }
 
+/// Returns the number of values the set can hold before growing.
 pub fn capacity<T>(set: &Set<T>) -> UInt64 {
     set.items.capacity()
 }
 
+/// Returns true if there are no stored values.
 pub fn is_empty<T>(set: &Set<T>) -> Bool {
     set.items.is_empty()
 }
 
+/// Ensures capacity for the requested number of additional values.
 pub fn reserve<T>(set: &mut Set<T>, additional: UInt64) {
     set.items.reserve(additional)
 }
 
+/// Drops all values while retaining capacity.
 pub fn clear<T>(set: &mut Set<T>) {
     set.items.clear()
 }
 
+/// Consumes the set and releases its storage.
 pub fn release<T>(set: Set<T>) {}
 
+/// Borrows the values in the set's current storage order.
 pub fn elements<T>(set: &Set<T>) -> &Slice<T> {
     set.items.keys()
 }
 
+/// Moves one stored value out of the set, or returns None if the set is empty.
 pub fn pop<T>(set: &mut Set<T>) -> Option<T> {
     match set.items.pop() {
         None => None,
@@ -142,12 +167,13 @@ pub fn pop<T>(set: &mut Set<T>) -> Option<T> {
     }
 }
 
+/// Tests whether an equal value is present.
 pub fn contains<T: Eq + Hash>(set: &Set<T>, value: &T) @noescape(value) -> Bool {
     set.items.contains_key(value)
 }
 
 /// Returns true if the value was newly inserted; drops an equal incoming duplicate.
-pub fn insert<T: Eq + Hash>(set: &mut Set<T>, value: T) -> Bool {
+fn insert<T: Eq + Hash>(set: &mut Set<T>, value: T) -> Bool {
     set.items.insert(value, {}).is_none()
 }
 
@@ -156,13 +182,13 @@ pub fn remove<T: Eq + Hash>(set: &mut Set<T>, value: &T) @noescape(value) -> Boo
     set.items.remove(value).is_some()
 }
 
-pub fn from_array<T: Eq + Hash>(values: Array<T>) -> Set<T> {
+fn from_array<T: Eq + Hash>(values: Array<T>) -> Set<T> {
     var set = new::<T>()
     extend(&mut set, values)
     set
 }
 
-pub fn extend<T: Eq + Hash>(set: &mut Set<T>, values: Array<T>) {
+fn extend<T: Eq + Hash>(set: &mut Set<T>, values: Array<T>) {
     reserve(set, values.len())
     // Visit the input in order, retaining its first equal instance.
     for value in values {
@@ -170,6 +196,7 @@ pub fn extend<T: Eq + Hash>(set: &mut Set<T>, values: Array<T>) {
     }
 }
 
+/// Consumes the set and moves its values into an array in storage order.
 pub fn into_array<T>(set: Set<T>) -> Array<T> {
     var entries = set.items.into_entries()
     var values = Array.with_capacity::<T>(entries.len())
@@ -180,7 +207,7 @@ pub fn into_array<T>(set: Set<T>) -> Array<T> {
     values
 }
 
-pub fn is_subset<T: Eq + Hash>(set: &Set<T>, other: &Set<T>) -> Bool {
+fn is_subset<T: Eq + Hash>(set: &Set<T>, other: &Set<T>) -> Bool {
     if len(set) > len(other) {
         return false
     }
@@ -195,7 +222,7 @@ pub fn is_subset<T: Eq + Hash>(set: &Set<T>, other: &Set<T>) -> Bool {
     true
 }
 
-pub fn is_disjoint<T: Eq + Hash>(set: &Set<T>, other: &Set<T>) -> Bool {
+fn is_disjoint<T: Eq + Hash>(set: &Set<T>, other: &Set<T>) -> Bool {
     // Iterating the smaller input saves queries; neither borrow can escape.
     if len(set) > len(other) {
         return is_disjoint(other, set)
@@ -212,7 +239,7 @@ pub fn is_disjoint<T: Eq + Hash>(set: &Set<T>, other: &Set<T>) -> Bool {
 }
 
 /// Consumes both sets and returns their unique elements without cloning.
-pub fn union<T: Eq + Hash>(var set: Set<T>, var other: Set<T>) -> Set<T> {
+fn union<T: Eq + Hash>(var set: Set<T>, var other: Set<T>) -> Set<T> {
     reserve(&mut set, len(&other))
     while !is_empty(&other) {
         match pop(&mut other) {
@@ -243,17 +270,17 @@ fn filter<T: Eq + Hash>(var set: Set<T>, other: &Set<T>, present: Bool) -> Set<T
 }
 
 /// Consumes this set and retains elements also present in the borrowed set.
-pub fn intersection<T: Eq + Hash>(set: Set<T>, other: &Set<T>) -> Set<T> {
+fn intersection<T: Eq + Hash>(set: Set<T>, other: &Set<T>) -> Set<T> {
     filter(set, other, true)
 }
 
 /// Consumes this set and retains elements absent from the borrowed set.
-pub fn difference<T: Eq + Hash>(set: Set<T>, other: &Set<T>) -> Set<T> {
+fn difference<T: Eq + Hash>(set: Set<T>, other: &Set<T>) -> Set<T> {
     filter(set, other, false)
 }
 
 /// Consumes both sets and retains elements present in exactly one.
-pub fn symmetric_difference<T: Eq + Hash>(var set: Set<T>, var other: Set<T>) -> Set<T> {
+fn symmetric_difference<T: Eq + Hash>(var set: Set<T>, var other: Set<T>) -> Set<T> {
     reserve(&mut set, len(&other))
     while !is_empty(&other) {
         match pop(&mut other) {

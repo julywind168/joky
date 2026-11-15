@@ -39,6 +39,7 @@ extern fn __outbox_stage(
 ) @suspends -> Int32
 extern fn __outbox_receive_bytes(queue: &mut outbox.QueueOwner) @suspends -> (Bool, Array<UInt8>)
 
+/// Owns a bounded outgoing queue and receives staged messages.
 pub struct Mailbox { storage: outbox.QueueOwner }
 /// An executor-local, non-owning identity; safe to copy through Script contracts.
 pub struct Handle { identity: UInt64 }
@@ -51,6 +52,7 @@ impl Handle {
     pub fn send(&self, bytes: &Array<UInt8>) {
         __emit(self.identity, bytes)
     }
+    /// Closes the referenced outgoing queue.
     pub fn close(&self) @suspends {
         __outbox_close(self.identity)
     }
@@ -59,8 +61,15 @@ impl Handle {
         __outbox_seal(self.identity)
     }
 }
+/// Owns staged outgoing messages before they are committed.
 pub type Batch = outbox.BatchOwner
-pub enum StageError { Full, Closed }
+/// Reasons a message could not be staged or published.
+pub enum StageError {
+    /// The target queue lacks room for the staged message.
+    Full,
+    /// The target queue is closed.
+    Closed
+}
 impl Show for StageError {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(
@@ -73,12 +82,19 @@ impl Show for StageError {
 }
 
 /// Disconnect closes the independent Reject control mailbox after commit.
-pub enum Overflow { Reject, Disconnect(Handle) }
+pub enum Overflow {
+    /// Rejects the attempted send when its target queue is full.
+    Reject,
+    /// Requests a disconnect through the supplied control handle on overflow.
+    Disconnect(Handle)
+}
 
+/// Creates a mailbox with message and byte limits and the default overflow policy.
 pub fn create(messages: UInt64, bytes: UInt64) @suspends -> Mailbox {
     Mailbox { storage: __outbox_create(messages, bytes) }
 }
 
+/// Creates a bounded mailbox with an explicit overflow policy.
 pub fn create_with_policy(
     messages: UInt64,
     bytes: UInt64,
@@ -93,9 +109,11 @@ pub fn create_with_policy(
 }
 
 impl Mailbox {
+    /// Returns a non-owning handle to this mailbox.
     pub fn handle(&self) @suspends -> Handle {
         Handle { identity: __outbox_handle(&self.storage) }
     }
+    /// Waits for the next queued message or for the mailbox to close.
     pub fn receive(&mut self) @suspends -> Option<Array<UInt8>> {
         let (received, bytes) = __outbox_receive_bytes(&mut self.storage)
         if received {
@@ -111,6 +129,7 @@ pub fn close(handle: Handle) @suspends {
     __outbox_close(handle.identity)
 }
 
+/// Creates an empty batch for staging outgoing messages.
 pub fn batch(messages: UInt64, bytes: UInt64) @suspends -> Batch {
     __outbox_batch(messages, bytes)
 }
@@ -135,6 +154,7 @@ pub fn stage(
 #intrinsic("outbox.emit")
 fn __emit(token: UInt64, bytes: &Array<UInt8>)
 
+/// Attempts to stage a message for delivery to the selected mailbox.
 pub fn emit(handle: Handle, bytes: &Array<UInt8>) {
     __emit(handle.identity, bytes)
 }

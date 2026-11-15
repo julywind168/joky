@@ -22,20 +22,26 @@ pub struct Path { text: String }
 
 /// Conversion to an owning path and bounded copying for borrowed callers.
 pub trait IntoPath {
+    /// Consumes the value and converts it to an owned path.
     fn into_path(self) -> Path
+    /// Produces an owned path from the borrowed value.
     fn copy_path(&self, max_bytes: UInt64) @noescape -> Option<Path>
 }
 
 impl Path {
+    /// Constructs an owned path from UTF-8 text.
     pub fn from(text: String) -> Path {
         Path { text }
     }
+    /// Copies the path into an independent owner.
     pub fn clone(&self) -> Path {
         Path.from(self.to_string())
     }
+    /// Consumes this path and returns its underlying text.
     pub fn into_string(self) -> String {
         self.text
     }
+    /// Copies the path's text into an owned string.
     pub fn to_string(&self) -> String {
         string.clone(&self.text)
     }
@@ -50,15 +56,19 @@ impl Path {
             None => None
         }
     }
+    /// Returns the final path component when one exists.
     pub fn file_name(&self) -> Option<String> {
         part(&self.text, 2)
     }
+    /// Returns the extension of the final file name when present.
     pub fn extension(&self) -> Option<String> {
         part(&self.text, 3)
     }
+    /// Tests whether the path is absolute under the platform's path syntax.
     pub fn is_absolute(&self) -> Bool {
         buffer.path_query(&self.text, 0) != 0
     }
+    /// Tests whether the path text is empty.
     pub fn is_empty(&self) -> Bool {
         string.byte_length(&self.text) == 0
     }

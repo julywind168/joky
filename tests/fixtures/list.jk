@@ -21,7 +21,7 @@ fn boundaries<Tag>() -> Int32 {
     ensure(!list.insert(1, 1) && list.replace(0, 2).is_none(), "List invalid updates")
     list.reverse()
     ensure(list.front().is_none() && list.back().is_none(), "List empty reads")
-    ensure(lists.insert(&mut list, 0, 42), "List insert empty")
+    ensure(list.insert(0, 42), "List insert empty")
     ensure(list.front().unwrap_or(0) == 42 && list.back().unwrap_or(0) == 42, "List single ends")
     list.reverse()
     ensure(list.pop_back().unwrap_or(0) == 42 && list.is_empty(), "List single back")

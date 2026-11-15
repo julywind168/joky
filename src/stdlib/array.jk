@@ -30,6 +30,7 @@ import joky/check
 
 /// A growable, single-owner sequence. Dropping it drops its remaining elements.
 pub struct Array<T> { storage: Buffer<T> }
+/// Owns the remaining elements of a consumed array and moves them out in order.
 pub struct IntoIter<T> { values: Array<T> }
 
 impl<T> IntoIterator for Array<T> {
@@ -49,7 +50,7 @@ impl<T> Iterator for IntoIter<T> {
 // Reverse once so tail removal yields the original forward order. The buffer
 // retains a fully initialized prefix throughout conversion and iteration;
 // ordinary owner cleanup handles every early exit, including cancellation.
-pub fn into_iter<T>(var values: Array<T>) -> IntoIter<T> {
+fn into_iter<T>(var values: Array<T>) -> IntoIter<T> {
     let length = len(&values)
     var index: UInt64 = 0
     while index < length / 2 {
@@ -60,43 +61,53 @@ pub fn into_iter<T>(var values: Array<T>) -> IntoIter<T> {
 }
 
 // Both APIs share the module algorithms without duplicating their specializations.
-pub fn iter<T>(values: &Array<T>) -> &Iter<T> {
+fn iter<T>(values: &Array<T>) -> &Iter<T> {
     buffer.iter(&values.storage)
 }
 
-pub fn iter_mut<T>(values: &mut Array<T>) -> &mut Iter<T> {
+fn iter_mut<T>(values: &mut Array<T>) -> &mut Iter<T> {
     buffer.iter_mut(&mut values.storage)
 }
 
 impl<T> Array<T> {
+    /// Borrows the array as a cursor over shared references to its elements.
     pub fn iter(&self) -> &Iter<T> {
         iter(self)
     }
+    /// Exclusively borrows the array as a cursor over mutable references to its elements.
     pub fn iter_mut(&mut self) -> &mut Iter<T> {
         iter_mut(self)
     }
 
+    /// Creates an empty array without reserving element storage.
     pub fn new() -> Self {
         new::<T>()
     }
+    /// Creates an empty array with room for the requested number of elements.
     pub fn with_capacity(capacity: UInt64) -> Self {
         with_capacity::<T>(capacity)
     }
+    /// Consumes the array, dropping any remaining elements and releasing its storage.
     pub fn release(self) {
         release(self)
     }
+    /// Consumes the array and moves out its elements in index order.
     pub fn into_iter(self) -> IntoIter<T> {
         into_iter(self)
     }
+    /// Returns the number of elements in the array.
     pub fn len(&self) -> UInt64 {
         len(self)
     }
+    /// Returns the number of elements the array can hold without growing.
     pub fn capacity(&self) -> UInt64 {
         capacity(self)
     }
+    /// Returns true if the array has no elements.
     pub fn is_empty(&self) -> Bool {
         is_empty(self)
     }
+    /// Replaces and drops the value at the index. Returns false if the index is out of bounds.
     pub fn set(&mut self, index: UInt64, value: T) -> Bool {
         set(self, index, value)
     }
@@ -105,6 +116,7 @@ impl<T> Array<T> {
     pub fn replace(&mut self, index: UInt64, next: T) -> Option<T> {
         replace(self, index, next)
     }
+    /// Ensures capacity for the current length plus the requested additional elements.
     pub fn reserve(&mut self, additional: UInt64) {
         reserve(self, additional)
     }
@@ -120,6 +132,7 @@ impl<T> Array<T> {
     pub fn retain<F: Fn(&T) @noescape -> Bool>(&mut self, predicate: F) {
         retain(self, predicate)
     }
+    /// Exchanges two elements. Returns false and leaves the array intact if either index is out of bounds.
     pub fn swap(&mut self, first: UInt64, second: UInt64) -> Bool {
         swap(self, first, second)
     }
@@ -127,6 +140,7 @@ impl<T> Array<T> {
     pub fn sort_by<F: Fn(&T, &T) @noescape -> Int32>(&mut self, compare: F) {
         sort_by(self, compare)
     }
+    /// Moves an element to the end, growing the array if needed.
     pub fn push(&mut self, value: T) {
         push(self, value)
     }
@@ -149,12 +163,16 @@ impl<T> Array<T> {
     pub fn remove(&mut self, index: UInt64) -> Option<T> {
         remove(self, index)
     }
+    /// Inserts at a zero-based index and shifts subsequent elements right, growing the array if needed.
+    /// An index equal to the length appends. A larger index returns false and drops the supplied value, leaving the array intact.
     pub fn insert(&mut self, index: UInt64, value: T) -> Bool {
         insert(self, index, value)
     }
+    /// Moves out the last element. Fails at runtime if the array is empty.
     pub fn take_last(&mut self) -> T {
         take_last(self)
     }
+    /// Borrows the element at the index. An out-of-bounds index fails at runtime.
     pub fn borrow_ref(&self, index: UInt64) -> &T {
         borrow_ref(self, index)
     }
@@ -162,27 +180,35 @@ impl<T> Array<T> {
     pub fn get_ref(&self, index: UInt64) -> Option<&T> {
         get_ref(self, index)
     }
+    /// Borrows the first element, or returns None for an empty array.
     pub fn first(&self) -> Option<&T> {
         first(self)
     }
+    /// Borrows the last element, or returns None for an empty array.
     pub fn last(&self) -> Option<&T> {
         last(self)
     }
+    /// Tests elements in order and stops when the predicate returns true.
     pub fn any<F: Fn(&T) @noescape -> Bool>(&self, predicate: F) -> Bool {
         any(self, predicate)
     }
+    /// Tests elements in order and stops when the predicate returns false. Returns true for an empty array.
     pub fn all<F: Fn(&T) @noescape -> Bool>(&self, predicate: F) -> Bool {
         all(self, predicate)
     }
+    /// Borrows the first element that satisfies the predicate, or returns None.
     pub fn find<F: Fn(&T) @noescape -> Bool>(&self, predicate: F) -> Option<&T> {
         find(self, predicate)
     }
+    /// Returns the first index whose element satisfies the predicate, or None.
     pub fn position<F: Fn(&T) @noescape -> Bool>(&self, predicate: F) -> Option<UInt64> {
         position(self, predicate)
     }
+    /// Creates a shared cursor that visits elements in index order.
     pub fn iter_shared(&self) -> SharedIter<T> {
         iter_shared(self)
     }
+    /// Mutably borrows the element at the index. An out-of-bounds index fails at runtime.
     pub fn borrow_mut_ref(&mut self, index: UInt64) -> &mut T {
         borrow_mut_ref(self, index)
     }
@@ -196,27 +222,32 @@ impl<T> Array<T> {
     }
 }
 
+/// Creates an empty array without reserving element storage.
 pub fn new<T>() -> Array<T> {
     Array { storage: buffer.allocate::<T>(0) }
 }
 
+/// Creates an empty array with room for the requested number of elements.
 pub fn with_capacity<T>(capacity: UInt64) -> Array<T> {
     Array { storage: buffer.allocate::<T>(capacity) }
 }
 
+/// Consumes the array, dropping any remaining elements and releasing its storage.
 pub fn release<T>(values: Array<T>) {
     buffer.release(values.storage)
 }
 
+/// Returns the number of elements in the array.
 pub fn len<T>(values: &Array<T>) -> UInt64 {
     buffer.len(&values.storage)
 }
 
+/// Returns the number of elements the array can hold without growing.
 pub fn capacity<T>(values: &Array<T>) -> UInt64 {
     buffer.capacity(&values.storage)
 }
 
-pub fn is_empty<T>(values: &Array<T>) -> Bool {
+fn is_empty<T>(values: &Array<T>) -> Bool {
     len(values) == 0
 }
 
@@ -230,6 +261,7 @@ pub fn get<T: Copy>(values: &Array<T>, index: UInt64) -> Option<T> {
     }
 }
 
+/// Replaces and drops the value at the index. Returns false if the index is out of bounds.
 pub fn set<T>(values: &mut Array<T>, index: UInt64, value: T) -> Bool {
     let values = &mut values.storage
     if index < buffer.len(values) {
@@ -240,6 +272,7 @@ pub fn set<T>(values: &mut Array<T>, index: UInt64, value: T) -> Bool {
     }
 }
 
+/// Ensures capacity for the current length plus the requested additional elements.
 pub fn reserve<T>(values: &mut Array<T>, additional: UInt64) {
     let values = &mut values.storage
     let length = buffer.len(values)
@@ -282,13 +315,14 @@ fn grow<T>(values: &mut Buffer<T>, required: UInt64, capacity: UInt64, limit: UI
     buffer.replace(values, next)
 }
 
+/// Moves an element to the end, growing the array if needed.
 pub fn push<T>(values: &mut Array<T>, value: T) {
     reserve(values, 1)
     buffer.initialize_next(&mut values.storage, value)
 }
 
 /// Moves the initialized elements of `other` into the tail of `values`.
-pub fn append<T>(values: &mut Array<T>, other: &mut Array<T>) {
+fn append<T>(values: &mut Array<T>, other: &mut Array<T>) {
     let count = len(other)
     if count == 0 {
         return
@@ -298,7 +332,7 @@ pub fn append<T>(values: &mut Array<T>, other: &mut Array<T>) {
 }
 
 /// Copies the slice's elements to the end of the array in order.
-pub fn extend<T: Copy>(values: &mut Array<T>, from: &Slice<T>) {
+fn extend<T: Copy>(values: &mut Array<T>, from: &Slice<T>) {
     let count = slices.len(from)
     if count == 0 {
         return
@@ -309,6 +343,7 @@ pub fn extend<T: Copy>(values: &mut Array<T>, from: &Slice<T>) {
 
 // Copy a borrowed byte range without creating a retained subslice header.
 // Validate before growing, then publish the appended prefix in one checked operation.
+/// Copies bytes from the half-open source range and appends them to the array.
 pub fn extend_bytes(values: &mut Array<UInt8>, source: &Slice<UInt8>, start: UInt64, end: UInt64) {
     if start > end || end > slices.len(source) {
         check.panic("Byte append range is outside the slice")
@@ -317,6 +352,7 @@ pub fn extend_bytes(values: &mut Array<UInt8>, source: &Slice<UInt8>, start: UIn
     buffer.append_bytes(&mut values.storage, source, start, end)
 }
 
+/// Moves out the last element. Fails at runtime if the array is empty.
 pub fn take_last<T>(values: &mut Array<T>) -> T {
     buffer.take_last(&mut values.storage)
 }
@@ -332,18 +368,21 @@ pub fn pop<T>(values: &mut Array<T>) -> Option<T> {
     Some(value)
 }
 
+/// Returns a shared element handle at the index. An out-of-bounds index fails at runtime.
 pub fn borrow<T: Copy>(values: &Array<T>, index: UInt64) -> &Element<T> {
     buffer.borrow(&values.storage, index)
 }
 
+/// Borrows the element at the index. An out-of-bounds index fails at runtime.
 pub fn borrow_ref<T>(values: &Array<T>, index: UInt64) -> &T {
     buffer.borrow_ref(&values.storage, index)
 }
 
-pub fn borrow_mut_ref<T>(values: &mut Array<T>, index: UInt64) -> &mut T {
+fn borrow_mut_ref<T>(values: &mut Array<T>, index: UInt64) -> &mut T {
     buffer.borrow_mut_ref(&mut values.storage, index)
 }
 
+/// Returns an exclusive element handle at the index. An out-of-bounds index fails at runtime.
 pub fn borrow_mut<T: Copy>(values: &mut Array<T>, index: UInt64) -> &mut Element<T> {
     buffer.borrow_mut(&mut values.storage, index)
 }
@@ -361,7 +400,7 @@ pub fn slice_mut<T>(values: &mut Array<T>, start: UInt64, end: UInt64) -> &mut S
 // Fill the removed position with the last element; capacity stays unchanged.
 /// Removes an element by moving the last element into its place.
 /// Returns `None` for an invalid index; the original order is not preserved.
-pub fn swap_remove<T>(values: &mut Array<T>, index: UInt64) -> Option<T> {
+fn swap_remove<T>(values: &mut Array<T>, index: UInt64) -> Option<T> {
     let values = &mut values.storage
     let length = buffer.len(values)
     if index >= length {
@@ -375,7 +414,7 @@ pub fn swap_remove<T>(values: &mut Array<T>, index: UInt64) -> Option<T> {
 // Owner cleanup snapshots may assert temporary runtime memory.
 /// Replaces an element and returns its old value. An invalid index returns `None`
 /// and drops `next` without changing the array.
-pub fn replace<T>(values: &mut Array<T>, index: UInt64, next: T) -> Option<T> {
+fn replace<T>(values: &mut Array<T>, index: UInt64, next: T) -> Option<T> {
     let length = len(values)
     if index >= length {
         return None
@@ -390,7 +429,7 @@ pub fn replace<T>(values: &mut Array<T>, index: UInt64, next: T) -> Option<T> {
 // Rotate the removed element to the tail while preserving its successors.
 /// Removes and returns an element, preserving the order of the remaining elements.
 /// Returns `None` for an invalid index.
-pub fn remove<T>(values: &mut Array<T>, index: UInt64) -> Option<T> {
+fn remove<T>(values: &mut Array<T>, index: UInt64) -> Option<T> {
     let values = &mut values.storage
     let length = buffer.len(values)
     if index >= length {
@@ -405,7 +444,7 @@ pub fn remove<T>(values: &mut Array<T>, index: UInt64) -> Option<T> {
 }
 
 // Append first so allocation succeeds before any existing element is shifted.
-pub fn insert<T>(values: &mut Array<T>, index: UInt64, value: T) -> Bool {
+fn insert<T>(values: &mut Array<T>, index: UInt64, value: T) -> Bool {
     let length = len(values)
     if index > length {
         return false
@@ -422,7 +461,7 @@ pub fn insert<T>(values: &mut Array<T>, index: UInt64, value: T) -> Bool {
 
 // Truncation never grows the initialized prefix or reduces capacity.
 /// Drops elements after `length`; a larger length leaves the array unchanged.
-pub fn truncate<T>(values: &mut Array<T>, length: UInt64) {
+fn truncate<T>(values: &mut Array<T>, length: UInt64) {
     let values = &mut values.storage
     if length < buffer.len(values) {
         buffer.truncate(values, length)
@@ -430,14 +469,14 @@ pub fn truncate<T>(values: &mut Array<T>, length: UInt64) {
 }
 
 /// Drops all elements while retaining allocated capacity.
-pub fn clear<T>(values: &mut Array<T>) {
+fn clear<T>(values: &mut Array<T>) {
     truncate(values, 0)
 }
 
 // Compact by swapping so every slot stays initialized, including on predicate
 // failure or cancellation. Discarded owners are destroyed by the final truncate.
 /// Keeps elements for which the borrowed predicate returns true, preserving order.
-pub fn retain<T, F: Fn(&T) @noescape -> Bool>(values: &mut Array<T>, predicate: F) {
+fn retain<T, F: Fn(&T) @noescape -> Bool>(values: &mut Array<T>, predicate: F) {
     let values = &mut values.storage
     let length = buffer.len(values)
     var kept: UInt64 = 0
@@ -452,7 +491,7 @@ pub fn retain<T, F: Fn(&T) @noescape -> Bool>(values: &mut Array<T>, predicate: 
     buffer.truncate(values, kept)
 }
 
-pub fn swap<T>(values: &mut Array<T>, first: UInt64, second: UInt64) -> Bool {
+fn swap<T>(values: &mut Array<T>, first: UInt64, second: UInt64) -> Bool {
     let values = &mut values.storage
     let length = buffer.len(values)
     if first >= length || second >= length {
@@ -471,9 +510,11 @@ impl<T: Copy> Array<T> {
     pub fn get(&self, index: UInt64) -> Option<T> {
         get(self, index)
     }
+    /// Returns a shared element handle at the index. An out-of-bounds index fails at runtime.
     pub fn borrow(&self, index: UInt64) -> &Element<T> {
         borrow(self, index)
     }
+    /// Returns an exclusive element handle at the index. An out-of-bounds index fails at runtime.
     pub fn borrow_mut(&mut self, index: UInt64) -> &mut Element<T> {
         borrow_mut(self, index)
     }
@@ -485,6 +526,7 @@ impl<T: Clone> Clone for Array<T> {
     }
 }
 
+/// Clones each element into an independently owned array.
 pub fn clone<T: Clone>(values: &Array<T>) -> Array<T> {
     var copy = with_capacity::<T>(values.len())
     for value in values {
@@ -494,9 +536,11 @@ pub fn clone<T: Clone>(values: &Array<T>) -> Array<T> {
 }
 
 impl<T: Eq> Array<T> {
+    /// Tests whether an element compares equal to the borrowed value.
     pub fn contains(&self, value: &T) -> Bool {
         contains(self, value)
     }
+    /// Removes consecutive equal elements, retaining the first value in each run.
     pub fn dedup(&mut self) {
         dedup(self)
     }
@@ -504,7 +548,7 @@ impl<T: Eq> Array<T> {
 
 // Keep the first element of each adjacent equal run. Swaps preserve an
 // initialized buffer even if equality fails; truncate destroys duplicates.
-pub fn dedup<T: Eq>(values: &mut Array<T>) {
+fn dedup<T: Eq>(values: &mut Array<T>) {
     let values = &mut values.storage
     let length = buffer.len(values)
     if length < 2 {
@@ -522,7 +566,7 @@ pub fn dedup<T: Eq>(values: &mut Array<T>) {
     buffer.truncate(values, kept)
 }
 
-pub fn contains<T: Eq>(values: &Array<T>, value: &T) -> Bool {
+fn contains<T: Eq>(values: &Array<T>, value: &T) -> Bool {
     for item in values {
         if Eq.eq(item, value) {
             return true
@@ -532,7 +576,7 @@ pub fn contains<T: Eq>(values: &Array<T>, value: &T) -> Bool {
 }
 
 /// Borrows the element at `index`, or returns `None` when out of bounds.
-pub fn get_ref<T>(values: &Array<T>, index: UInt64) -> Option<&T> {
+fn get_ref<T>(values: &Array<T>, index: UInt64) -> Option<&T> {
     if index < len(values) {
         Some(borrow_ref(values, index))
     } else {
@@ -540,11 +584,11 @@ pub fn get_ref<T>(values: &Array<T>, index: UInt64) -> Option<&T> {
     }
 }
 
-pub fn first<T>(values: &Array<T>) -> Option<&T> {
+fn first<T>(values: &Array<T>) -> Option<&T> {
     get_ref(values, 0)
 }
 
-pub fn last<T>(values: &Array<T>) -> Option<&T> {
+fn last<T>(values: &Array<T>) -> Option<&T> {
     let length = len(values)
     if length == 0 {
         None
@@ -553,7 +597,7 @@ pub fn last<T>(values: &Array<T>) -> Option<&T> {
     }
 }
 
-pub fn any<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> Bool {
+fn any<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> Bool {
     for value in values {
         if predicate(value) {
             return true
@@ -562,7 +606,7 @@ pub fn any<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> B
     false
 }
 
-pub fn all<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> Bool {
+fn all<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> Bool {
     for value in values {
         if !predicate(value) {
             return false
@@ -571,7 +615,7 @@ pub fn all<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> B
     true
 }
 
-pub fn position<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> Option<UInt64> {
+fn position<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> Option<UInt64> {
     for index,
         value in values {
         if predicate(value) {
@@ -581,15 +625,16 @@ pub fn position<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F)
     None
 }
 
-pub fn find<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> Option<&T> {
+fn find<T, F: Fn(&T) @noescape -> Bool>(values: &Array<T>, predicate: F) -> Option<&T> {
     let index = position(values, predicate)?
     get_ref(values, index)
 }
 
 // A composable shared traversal; the source owner remains outside the state.
+/// A cursor over shared borrows of an array's elements.
 pub struct SharedIter<T> { values: &Array<T>, index: UInt64 }
 
-pub fn iter_shared<T>(values: &Array<T>) -> SharedIter<T> {
+fn iter_shared<T>(values: &Array<T>) -> SharedIter<T> {
     SharedIter { values, index: 0 }
 }
 
@@ -626,7 +671,7 @@ impl<T: Ord> Array<T> {
 }
 
 /// Stably sorts in ascending `Ord` order without cloning elements.
-pub fn sort<T: Ord>(values: &mut Array<T>) {
+fn sort<T: Ord>(values: &mut Array<T>) {
     sort_by(
         values,
         |left,
@@ -639,7 +684,7 @@ pub fn sort<T: Ord>(values: &mut Array<T>) {
 // Each pass stably merges runs of original indices. All comparisons finish
 // before the first payload swap, including when the comparator fails.
 /// Stably sorts by the sign of a borrowed comparison, without cloning elements.
-pub fn sort_by<T, F: Fn(&T, &T) @noescape -> Int32>(values: &mut Array<T>, compare: F) {
+fn sort_by<T, F: Fn(&T, &T) @noescape -> Int32>(values: &mut Array<T>, compare: F) {
     let size = values.len()
     if size < 2 {
         return

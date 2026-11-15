@@ -271,12 +271,7 @@ fn text_helpers(cases: &mut Cases) {
             ("trim_end", input.trim_end()),
         ] {
             let name = format!("{method}_{index}");
-            let call = if index % 2 == 0 {
-                format!("original.{method}()")
-            } else {
-                format!("string.{method}(&original)")
-            };
-            cases.source.push_str(&format!("\nfn {name}() -> String {{ let original = {}; let result = {call}; original.release(); result }}", literal(&input)));
+            cases.source.push_str(&format!("\nfn {name}() -> String {{ let original = {}; let result = original.{method}(); original.release(); result }}", literal(&input)));
             cases.strings.push((name, expected.into()));
         }
     }
@@ -307,9 +302,9 @@ fn text_helpers(cases: &mut Cases) {
                     literal(value)
                 )
             });
-            cases.source.push_str(&format!(
-                "match string.{method}(&input, &needle) {{ {check} }}; "
-            ));
+            cases
+                .source
+                .push_str(&format!("match input.{method}(&needle) {{ {check} }}; "));
         }
         cases.source.push_str("let result = input.split_once(&needle); input.release(); needle.release(); match result { ");
         if let Some((left, right)) = input.split_once(needle) {
@@ -333,12 +328,7 @@ fn ascii_and_replace(cases: &mut Cases) {
             ("to_ascii_uppercase", input.to_ascii_uppercase()),
         ] {
             let name = format!("{method}_{index}");
-            let call = if index % 2 == 0 {
-                format!("input.{method}()")
-            } else {
-                format!("string.{method}(&input)")
-            };
-            cases.source.push_str(&format!("\nfn {name}() -> String {{ let input = {}; let result = {call}; input.release(); result }}", literal(input)));
+            cases.source.push_str(&format!("\nfn {name}() -> String {{ let input = {}; let result = input.{method}(); input.release(); result }}", literal(input)));
             cases.strings.push((name, expected));
         }
     }
@@ -355,7 +345,7 @@ fn ascii_and_replace(cases: &mut Cases) {
     .enumerate()
     {
         let name = format!("ascii_equal_{index}");
-        cases.source.push_str(&format!("\nfn {name}() -> Int32 {{ let left = {}; let right = {}; if left.eq_ignore_ascii_case(&right) == {} && string.eq_ignore_ascii_case(&left, &right) == {} {{ 42 }} else {{ 1 }} }}", literal(left), literal(right), left.eq_ignore_ascii_case(right), left.eq_ignore_ascii_case(right)));
+        cases.source.push_str(&format!("\nfn {name}() -> Int32 {{ let left = {}; let right = {}; if left.eq_ignore_ascii_case(&right) == {} {{ 42 }} else {{ 1 }} }}", literal(left), literal(right), left.eq_ignore_ascii_case(right)));
         cases.integers.push((name, 42));
     }
     for (index, (input, from, to)) in [
@@ -377,12 +367,7 @@ fn ascii_and_replace(cases: &mut Cases) {
     .enumerate()
     {
         let name = format!("replace_{index}");
-        let call = if index % 2 == 0 {
-            "input.replace(&from, &to)"
-        } else {
-            "string.replace(&input, &from, &to)"
-        };
-        cases.source.push_str(&format!("\nfn {name}() -> String {{ let input = {}; let from = {}; let to = {}; let result = {call}; input.release(); from.release(); to.release(); result }}", literal(input), literal(from), literal(to)));
+        cases.source.push_str(&format!("\nfn {name}() -> String {{ let input = {}; let from = {}; let to = {}; let result = input.replace(&from, &to); input.release(); from.release(); to.release(); result }}", literal(input), literal(from), literal(to)));
         cases.strings.push((name, input.replace(from, to)));
     }
 }

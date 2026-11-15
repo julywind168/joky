@@ -53,8 +53,8 @@ fn sets() -> Sets { [make_set(), make_set()] }
 fn forward() -> Int32 {
     var a = lists(); var b = maps(); var c = sets()
     list.push_back(a.borrow_mut_ref(0), "ccc")
-    map.insert(b.borrow_mut_ref(0), 4, "xyz")
-    set.insert(c.borrow_mut_ref(0), "ccc")
+    b.borrow_mut_ref(0).insert(4, "xyz")
+    c.borrow_mut_ref(0).insert("ccc")
     check.assert(list.len(a.borrow_ref(0)) == 3 && map.len(b.borrow_ref(0)) == 16 && set.len(c.borrow_ref(0)) == 3, "bad fixed containers")
     a.set(1, make_list()); b.set(9, make_map()); c.set(1, make_set())
     let old = mem.replace(a.borrow_mut_ref(0), make_list())

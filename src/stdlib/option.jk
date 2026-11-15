@@ -21,7 +21,12 @@ import joky/check
 
 /// The standard optional value. Qualified and imported constructors
 /// retain the enum's nominal identity.
-pub enum Option<T> { None, Some(T) }
+pub enum Option<T> {
+    /// No value is present.
+    None,
+    /// Contains the owned value of type `T`.
+    Some(T)
+}
 
 impl<T> Option<T> {
     /// An explicit assertion for callers that consider absence a task failure.
