@@ -400,7 +400,7 @@ impl ScriptInstance for JokyInstance {
             .program
             .methods
             .get(&method.to_string())
-            .map(|m| (m.signature.params.len() - usize::from(!m.task)) as u32)
+            .map(|m| m.argument_count() as u32)
     }
     fn get_owner(&self) -> Option<Gd<Object>> {
         Gd::try_from_instance_id(self.owner).ok()

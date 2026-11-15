@@ -381,6 +381,66 @@ fn ready_read_cancel_closes_and_successful_read_keeps_file_open() {
         f.drained();
     }
 }
+
+#[test]
+fn published_result_cannot_clear_the_next_operations_execution_state() {
+    struct Release(Arc<State>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            self.0.release();
+        }
+    }
+    let state = Arc::new(State::default());
+    let f = Fixture {
+        service: NativeService::new(
+            Arc::new(Backend(state.clone())),
+            FileLimits {
+                workers: 2,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+        state,
+        wake: waker(),
+    };
+    let file = f.open("read");
+    let first = f.submit(Input::Read(8), Some(file.clone()));
+    until(|| f.state.entered.load(Ordering::SeqCst) == 1);
+    let published = Arc::new(State::default());
+    let _release = Release(published.clone());
+    let pause = published.clone();
+    *lock(&first.after_publish) = Some(Box::new(move || pause.wait()));
+    f.state.release();
+    until(|| published.entered.load(Ordering::SeqCst) == 1);
+    // A polling task can observe a result before the worker sends its wake.
+    drop(first.take().unwrap());
+    first.stop();
+    *lock(&f.state.released) = false;
+    let second = f.submit(Input::Read(8), Some(file.clone()));
+    until(|| f.state.entered.load(Ordering::SeqCst) == 2);
+    let retired = Arc::downgrade(&first);
+    drop(first);
+    published.release();
+    until(|| retired.strong_count() == 0);
+    file.close(None);
+    // Let the free worker pass the cleanup queue while the second read is blocked.
+    let sentinel = f.submit(Input::Open("normal", 1), None);
+    f.ready(&sentinel);
+    let closed_while_running = file.close_result().is_some();
+    sentinel.stop();
+    drop(sentinel);
+    f.state.release();
+    f.ready(&second);
+    drop(second.take());
+    second.stop();
+    drop(second);
+    until(|| file.close_result().is_some());
+    drop(file);
+    f.drained();
+    assert!(!closed_while_running, "close overtook active I/O");
+    assert_eq!(f.state.closed.load(Ordering::SeqCst), 2);
+}
+
 #[test]
 fn file_request_and_storage_admission_are_independent() {
     let state = Arc::new(State::default());

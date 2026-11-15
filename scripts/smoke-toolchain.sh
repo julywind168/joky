@@ -17,10 +17,24 @@ if [ ! -x "$task_cli" ]; then
 fi
 # Verify the toolchain's own runtime discovery and default execution mode.
 unset JOKY_RUNTIME JOKY_TASK_WORKERS
+task_prefix=$(CDPATH= cd -- "$(dirname -- "$task_cli")/.." && pwd)
 task_work=$(mktemp -d "${TMPDIR:-/tmp}/joky-smoke.XXXXXX")
 trap 'rm -rf "$task_work"' EXIT HUP INT TERM
 cd "$task_work"
 "$task_cli" --version --verbose
+cat > headers.c <<'HEADERS'
+#include "joky_vm.h"
+#include "joky_cps.h"
+#include "joky_runtime.h"
+#include "joky_task.h"
+#include "joky_text_ffi.h"
+#include "joky_io.h"
+#include "joky_fs.h"
+#include "joky_executor.h"
+#include "joky_resource.h"
+int main(void) { return 0; }
+HEADERS
+cc -std=c11 -Wall -Wextra -Werror -fsyntax-only -I "$task_prefix/include/joky" headers.c
 "$task_cli" init 'hello project' --name hello
 "$task_cli" check 'hello project'
 "$task_cli" fmt --check 'hello project'
@@ -39,4 +53,4 @@ if "$task_cli" check missing.jk > missing.out 2> missing.err; then
 fi
 test ! -s missing.out
 test -s missing.err
-printf 'Passed: init, check, fmt --check, help, JIT, interpreter, AOT and missing-source diagnostics.\n'
+printf 'Passed: public C headers, init, check, fmt --check, help, JIT, interpreter, AOT and missing-source diagnostics.\n'

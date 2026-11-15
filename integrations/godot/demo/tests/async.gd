@@ -27,6 +27,11 @@ func run() -> void:
         if Engine.get_script_language(i).get_class() == "JokyLanguage":
             language = Engine.get_script_language(i)
     check(script != null and script.can_instantiate(), "async script compiles")
+    # Query the ScriptExtension metadata before creating any ScriptInstance.
+    check(script.get_method_argument_count("task_frames") == 0, "script metadata keeps zero-argument task")
+    check(script.get_method_argument_count("task_game") == 1, "script metadata keeps every task argument")
+    check(script.get_method_argument_count("count") == 0, "script metadata omits State receiver")
+    check(script.get_method_argument_count("set_count") == 1, "script metadata keeps explicit argument")
     var a = make(script, "Alpha")
     var b = make(script, "Beta")
     check(a.call("count") == 1 and b.call("count") == 1, "ready executes synchronously")

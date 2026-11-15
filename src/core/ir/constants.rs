@@ -174,7 +174,7 @@ fn evaluate(
         compiler_intrinsic: None,
         buffer_element: None,
         scope: declaration.scope.clone(),
-        name: name.clone(),
+        name,
         type_params: vec![],
         params: vec![],
         ret_ty: declaration.ty.clone(),
@@ -182,42 +182,10 @@ fn evaluate(
         body: declaration.value.clone(),
         span: declaration.span,
     };
-    let mut functions = functions.clone();
-    functions.insert(
-        name,
-        FunctionInfo {
-            every: None,
-            closure_entry: false,
-            noescape: false,
-            noescape_params: vec![],
-            infer_noescape: false,
-            inferred_noescape: Vec::new(),
-            inferred_retained: None,
-            inferred_arena_retained: Vec::new(),
-            cursor_return_independent: false,
-            call_region: false,
-            returns_interior: true,
-            compiler_intrinsic: None,
-            builtin: None,
-            extern_abi: crate::core::builtins::ExternAbi::Scalar,
-            signature: crate::FunctionSignature::new(vec![], declaration.ty.clone()),
-            suspends: false,
-            uses_concurrency: false,
-            may_fail: false,
-            uses_arena: false,
-            needs_arena: false,
-            frame_slots: 0,
-            internal: true,
-            instance_entry: false,
-            domain_entry: false,
-            domain_request_entry: false,
-            script_entry: false,
-            parallel_entry: false,
-            span: declaration.span,
-        },
-    );
+    // Scalar constant bodies have no parameters or callable identity. The planner
+    // derives their slots from the declaration without registering a synthetic entry.
     let local = types.with_parameters(&constant.parameters)?;
-    let plan = FunctionPlan::new(&definition, &functions, &local, nominals, generics, 0)?;
+    let plan = FunctionPlan::new(&definition, functions, &local, nominals, generics, 0)?;
     let mut slots: Vec<Option<Constant>> = vec![None; plan.slot_count];
     for (op, span) in plan.ops.iter_spanned() {
         let (dst, value) = match op {

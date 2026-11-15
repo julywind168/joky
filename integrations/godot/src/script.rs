@@ -252,9 +252,7 @@ impl IScriptExtension for JokyScript {
         self.program()
             .as_ref()
             .and_then(|p| p.methods.get(&method.to_string()))
-            .map_or_else(Variant::nil, |m| {
-                ((m.signature.params.len() - 1) as i64).to_variant()
-            })
+            .map_or_else(Variant::nil, |m| (m.argument_count() as i64).to_variant())
     }
     fn get_method_info(&self, method: StringName) -> AnyDictionary {
         self.program()

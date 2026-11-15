@@ -467,7 +467,7 @@ fn exact<S: Source<Item = U>, U>(source: &mut S) @noescape -> Option<U> {
 | [Eq/BorrowEq](../src/stdlib/eq.jk) | Eq 为按值 self/other，BorrowEq 为双共享引用且 noescape；已有受 Eq 约束的 blanket 适配。T1 回归这一优先级，不改成新继承关系 |
 | [Hash/BorrowHash](../src/stdlib/hash.jk) | 按值与 noescape 借用协议分离，blanket 和 String 显式实现并存；默认方法不改变现有哈希结果 |
 | [Show](../src/stdlib/show.jk) | 向独占 StringBuilder 写入且 noescape；T5 可评估把重复的 to_text 包装做成默认方法，只有减少重复且保持调用兼容时才采用 |
-| [Drop](../src/stdlib/drop.jk) | 编译器识别的特殊普通源码 trait；保持必需同步 drop，不增加空默认体、关联类型或动态化能力 |
+| Drop（[后续撤回记录](custom-drop-withdrawal-review.md)） | T0 基线中是编译器识别的特殊普通源码 trait，保持必需同步 drop，不增加空默认体、关联类型或动态化能力；此后已撤回，不属于当前标准库 |
 | [Map](../src/stdlib/map.jk) | 消费上述 Eq/Hash 或 BorrowEq/BorrowHash；真实 Copy/引用/拥有存储资格仍独立检查，不因 Item 约束放宽 |
 | [Option](../src/stdlib/option.jk) / [Result](../src/stdlib/result.jk) | 现有同步 callable 与拥有载荷路径作为组合回归；T0/T1 不把它们改为关联类型或普通 Fn trait |
 

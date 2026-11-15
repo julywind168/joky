@@ -474,6 +474,8 @@ impl NativeService {
         };
         let action = input.snapshot();
         let ticket = Arc::new(NativeTicket {
+            #[cfg(test)]
+            after_publish: Mutex::new(None),
             state: Mutex::new(NativeTicketState {
                 action: Some(action),
                 running: false,
@@ -651,6 +653,8 @@ struct NativeTicketState {
     delivered: bool,
 }
 pub(crate) struct NativeTicket {
+    #[cfg(test)]
+    after_publish: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     state: Mutex<NativeTicketState>,
     core: Arc<Core>,
     file: Option<Arc<NativeFile>>,
@@ -927,6 +931,19 @@ fn work(core: Arc<Core>) {
             s.running = false;
             let cancelled = s.cancelled;
             let waker = s.waker.clone();
+            // Finish the file state before publishing the result: a polling
+            // consumer can claim it and admit another operation before wake.
+            let close = ticket.file.as_ref().is_some_and(|file| {
+                let mut state = lock(&file.state);
+                state.executing = false;
+                if cancelled || state.closing {
+                    state.active = false;
+                    state.closing = true;
+                    true
+                } else {
+                    false
+                }
+            });
             if !cancelled {
                 s.result = Some(packet);
             } else {
@@ -935,12 +952,12 @@ fn work(core: Arc<Core>) {
                 s = lock(&ticket.state);
             }
             drop(s);
-            if let Some(file) = &ticket.file {
-                lock(&file.state).executing = false;
-                if cancelled || file.is_closed() {
-                    lock(&file.state).active = false;
-                    file.close(None);
-                }
+            #[cfg(test)]
+            if let Some(after_publish) = lock(&ticket.after_publish).take() {
+                after_publish();
+            }
+            if close {
+                ticket.file.as_ref().unwrap().enqueue_close();
             }
             if let Some(w) = waker {
                 w.wake();

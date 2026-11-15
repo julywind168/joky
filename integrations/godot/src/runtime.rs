@@ -60,6 +60,12 @@ pub struct Method {
     pub line: i32,
     pub task: bool,
 }
+impl Method {
+    /// Only synchronous instance methods have an injected State receiver.
+    pub fn argument_count(&self) -> usize {
+        self.signature.params.len() - usize::from(!self.task)
+    }
+}
 pub struct Program {
     pub vm: VmEngine,
     pub methods: BTreeMap<String, Method>,
@@ -410,6 +416,14 @@ mod tests {
             program.methods["task_game"].signature.params,
             vec![Type::Float64]
         );
+        for (name, count) in [
+            ("task_frames", 0),
+            ("task_game", 1),
+            ("count", 0),
+            ("set_count", 1),
+        ] {
+            assert_eq!(program.methods[name].argument_count(), count, "{name}");
+        }
         assert_eq!(program.vm.instance_task_count(), 0);
         for bad in [
             source.replace(
