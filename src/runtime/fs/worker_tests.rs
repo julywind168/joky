@@ -442,6 +442,71 @@ fn published_result_cannot_clear_the_next_operations_execution_state() {
 }
 
 #[test]
+fn file_registration_scans_stay_linear_through_growth_and_quota_turnover() {
+    const FILES: usize = 64;
+    const TURNOVER: usize = 8 * FILES;
+    let state = Arc::new(State::default());
+    let f = Fixture {
+        service: NativeService::new(
+            Arc::new(Backend(state.clone())),
+            FileLimits {
+                files: FILES,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+        state,
+        wake: waker(),
+    };
+    let registry = || {
+        let queue = lock(&f.service.0 .0.queue);
+        (queue.files.len(), queue.file_scan_steps)
+    };
+    let retire = |file: Arc<NativeFile>, remaining| {
+        file.close(None);
+        until(|| file.close_result().is_some());
+        drop(file);
+        until(|| f.service.usage().0 == remaining);
+    };
+    let mut files = Vec::new();
+    let mut largest_registry = 0;
+    for _ in 0..FILES {
+        files.push(f.open("normal"));
+        largest_registry = largest_registry.max(registry().0);
+    }
+    let growth_scans = registry().1;
+    // Keep nearly all files alive while repeatedly reusing the final quota slot.
+    for _ in 0..TURNOVER {
+        retire(files.pop().unwrap(), FILES - 1);
+        files.push(f.open("normal"));
+        largest_registry = largest_registry.max(registry().0);
+    }
+    let turnover_scans = registry().1 - growth_scans;
+    // A historical peak must not retain a large dead registry after usage drops.
+    while files.len() > 1 {
+        let file = files.pop().unwrap();
+        retire(file, files.len());
+    }
+    files.push(f.open("normal"));
+    let compacted = registry().0;
+    f.service.shutdown();
+    until(|| files.iter().all(|file| file.close_result().is_some()));
+    drop(files);
+    f.drained();
+    assert_eq!(f.state.closed.load(Ordering::SeqCst), FILES + TURNOVER + 1);
+    assert!(largest_registry <= 2 * FILES, "unbounded file registry");
+    assert!(compacted <= 4, "dead peak registrations were retained");
+    assert!(
+        growth_scans <= 4 * FILES,
+        "quadratic registration growth: {growth_scans}"
+    );
+    assert!(
+        turnover_scans <= 4 * TURNOVER,
+        "nonlinear quota turnover: {turnover_scans}"
+    );
+}
+
+#[test]
 fn file_request_and_storage_admission_are_independent() {
     let state = Arc::new(State::default());
     let wake = waker();

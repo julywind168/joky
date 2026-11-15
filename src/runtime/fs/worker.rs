@@ -290,6 +290,8 @@ struct Queue {
     jobs: VecDeque<Arc<NativeTicket>>,
     cleanup: VecDeque<Arc<NativeFile>>,
     files: Vec<Weak<NativeFile>>,
+    #[cfg(test)]
+    file_scan_steps: usize,
     shutdown: bool,
     close_turn: bool,
 }
@@ -329,6 +331,8 @@ impl NativeService {
                 jobs: VecDeque::with_capacity(limits.queued),
                 cleanup: VecDeque::with_capacity(limits.files),
                 files: Vec::with_capacity(limits.files),
+                #[cfg(test)]
+                file_scan_steps: 0,
                 shutdown: false,
                 close_turn: true,
             }),
@@ -444,7 +448,18 @@ impl NativeService {
                     file: true,
                 },
             });
-            queue.files.retain(|f| f.strong_count() > 0);
+            // The new file holds a permit, and permits outlive the last strong
+            // reference. At this threshold at least half the table is dead, so
+            // scans amortize over removed registrations and the table stays
+            // bounded by twice the file limit.
+            let live = core.ledger.files.load(Ordering::Acquire);
+            if queue.files.len() >= 2 * live {
+                #[cfg(test)]
+                {
+                    queue.file_scan_steps += queue.files.len();
+                }
+                queue.files.retain(|f| f.strong_count() > 0);
+            }
             queue.files.push(Arc::downgrade(&file));
             Some(file)
         } else if matches!(
