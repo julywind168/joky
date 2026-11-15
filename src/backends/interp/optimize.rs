@@ -34,7 +34,7 @@ fn slot_counts(function: &mut BytecodeFunction) -> (Vec<usize>, Vec<usize>) {
     let mut writes = vec![0; function.info.frame_slots];
     for instruction in &mut function.code {
         visit_reads(instruction, |slot| reads[*slot] += 1);
-        visit_writes(instruction, |slot| writes[slot] += 1);
+        visit_writes(instruction, |slot| writes[*slot] += 1);
     }
     for slot in function.result.iter().chain(&function.aggregate_result) {
         reads[*slot] += 1;
@@ -100,8 +100,8 @@ fn optimize_copies(function: &mut BytecodeFunction) {
             });
         }
         visit_writes(instruction, |slot| {
-            versions[slot] += 1;
-            copies.remove(&slot);
+            versions[*slot] += 1;
+            copies.remove(slot);
         });
         if let Instruction::Copy { dst, src } = instruction {
             if dst != src {
@@ -306,7 +306,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
     }
 }
 
-fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
+fn visit_writes(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize)) {
     match instruction {
         Instruction::DynBorrow { .. }
         | Instruction::DynPack { .. }
@@ -319,11 +319,11 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
             unreachable!("arena bytecode bypasses value-only optimization")
         }
         Instruction::DynCopy { lanes } => {
-            for &(dst, _) in lanes {
+            for (dst, _) in lanes {
                 visit(dst);
             }
         }
-        Instruction::DynMethod { dst, .. } => visit(*dst),
+        Instruction::DynMethod { dst, .. } => visit(dst),
         Instruction::Copy { dst, .. }
         | Instruction::DomainBits { dst, .. }
         | Instruction::Const { dst, .. }
@@ -331,23 +331,23 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         | Instruction::Binary { dst, .. }
         | Instruction::Unary { dst, .. }
         | Instruction::Convert { dst, .. }
-        | Instruction::BinaryImm { dst, .. } => visit(*dst),
+        | Instruction::BinaryImm { dst, .. } => visit(dst),
         Instruction::IndirectCall(call) => {
-            if let Some(slot) = call.result {
+            if let Some(slot) = &mut call.result {
                 visit(slot);
             }
-            for &slot in &call.results {
+            for slot in &mut call.results {
                 visit(slot);
             }
         }
         Instruction::AggregateCall(call) => {
-            for &slot in &call.results {
+            for slot in &mut call.results {
                 visit(slot);
             }
         }
         Instruction::Call { result, .. } => {
             if let Some(result) = result {
-                visit(*result);
+                visit(result);
             }
         }
         Instruction::Concurrent {
@@ -357,12 +357,12 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
             failure,
             ..
         } => {
-            for &slot in result.iter().chain(results).chain(failure) {
+            for slot in result.iter_mut().chain(results).chain(failure) {
                 visit(slot);
             }
             for branch in branches {
-                visit(branch.done);
-                for &slot in branch.result.iter().chain(&branch.results) {
+                visit(&mut branch.done);
+                for slot in branch.result.iter_mut().chain(&mut branch.results) {
                     visit(slot);
                 }
             }
@@ -387,7 +387,7 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
     live[..parameters].fill(true);
     for instruction in &mut function.code {
         visit_reads(instruction, |slot| live[*slot] = true);
-        visit_writes(instruction, |slot| live[slot] = true);
+        visit_writes(instruction, |slot| live[*slot] = true);
     }
     if let Some(slot) = function.result {
         live[slot] = true;
@@ -406,41 +406,7 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
         .collect();
     for instruction in &mut function.code {
         visit_reads(instruction, |slot| *slot = remap[*slot]);
-        match instruction {
-            Instruction::Copy { dst, .. }
-            | Instruction::DomainBits { dst, .. }
-            | Instruction::Const { dst, .. }
-            | Instruction::Binary { dst, .. }
-            | Instruction::Unary { dst, .. }
-            | Instruction::Convert { dst, .. }
-            | Instruction::BinaryImm { dst, .. } => *dst = remap[*dst],
-            Instruction::Call {
-                result: Some(dst), ..
-            } => *dst = remap[*dst],
-            Instruction::AggregateCall(call) => {
-                for slot in &mut call.results {
-                    *slot = remap[*slot];
-                }
-            }
-            Instruction::Concurrent {
-                branches,
-                result,
-                results,
-                failure,
-                ..
-            } => {
-                for slot in result.iter_mut().chain(results).chain(failure) {
-                    *slot = remap[*slot];
-                }
-                for branch in branches {
-                    branch.done = remap[branch.done];
-                    for slot in branch.result.iter_mut().chain(&mut branch.results) {
-                        *slot = remap[*slot];
-                    }
-                }
-            }
-            _ => {}
-        }
+        visit_writes(instruction, |slot| *slot = remap[*slot]);
     }
     function.result = function.result.map(|slot| remap[slot]);
     for slot in &mut function.aggregate_result {

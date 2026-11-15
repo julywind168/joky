@@ -24,7 +24,7 @@ pub(super) fn immediates(function: &mut BytecodeFunction) {
             }
         }
         visit_writes(instruction, |slot| {
-            constants.remove(&slot);
+            constants.remove(slot);
         });
         if let Instruction::Const {
             dst,

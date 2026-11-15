@@ -37,6 +37,14 @@ pub(super) fn compile(source: &str, name: &str, optimized: bool) -> BytecodeFunc
 }
 
 pub(super) fn run(function: Arc<BytecodeFunction>, args: &[i32]) -> Result<i32, ErrorCode> {
+    run_with_callees(function, args, Vec::new())
+}
+
+fn run_with_callees(
+    function: Arc<BytecodeFunction>,
+    args: &[i32],
+    callees: Vec<Arc<BytecodeFunction>>,
+) -> Result<i32, ErrorCode> {
     let module = BytecodeModule {
         request_contracts: Default::default(),
         _parallel_charge: None,
@@ -48,7 +56,10 @@ pub(super) fn run(function: Arc<BytecodeFunction>, args: &[i32]) -> Result<i32, 
         task_targets: Default::default(),
         task_entries: Default::default(),
         functions: Default::default(),
-        callees: Default::default(),
+        callees: callees
+            .into_iter()
+            .map(crate::backends::interp::Callee::User)
+            .collect(),
     };
     let args: Vec<_> = args.iter().copied().map(Value::Int32).collect();
     let frame = Frame::new(function, args.iter()).unwrap();
@@ -580,6 +591,221 @@ fn slot_compaction_preserves_parameter_positions_and_string_constants() {
     };
     assert!(
         matches!(Execution::new(frame, crate::vm::InterpreterLimits::default(), false).poll(&module), Poll::Complete(Value::String(text)) if &*text == "héllo")
+    );
+}
+
+fn assert_slot_compaction(
+    code: Vec<Instruction>,
+    frame_slots: usize,
+    compacted_slots: usize,
+    callees: Vec<Arc<BytecodeFunction>>,
+    expected: i32,
+) {
+    let mut function = compile("fn f(seed: Int32) -> Int32 { seed }", "f", false);
+    function.code = code;
+    function
+        .spans
+        .resize(function.code.len(), function.info.span);
+    function.info.frame_slots = frame_slots;
+    function.result = Some(0);
+    let original = Arc::new(function);
+    assert_eq!(
+        run_with_callees(original.clone(), &[41], callees.clone()),
+        Ok(expected)
+    );
+    let mut compacted = Arc::try_unwrap(original).ok().unwrap();
+    compact_slots(&mut compacted);
+    assert_eq!(compacted.info.frame_slots, compacted_slots);
+    assert!(compacted_slots < frame_slots);
+    // Validate slot bounds before execution, including writes used by frame cleanup.
+    let _ = slot_counts(&mut compacted);
+    assert_eq!(
+        run_with_callees(Arc::new(compacted), &[41], callees),
+        Ok(expected)
+    );
+}
+
+#[test]
+fn slot_compaction_remaps_float_destinations() {
+    use crate::parser::ast::FloatKind;
+    // Slots 1 and 3 are unused, so both the source and destination move.
+    assert_slot_compaction(
+        vec![
+            Instruction::Const {
+                dst: 2,
+                value: ConstantValue::Float64(81.0),
+            },
+            Instruction::Float {
+                dst: 4,
+                src: 2,
+                kind: FloatKind::Sqrt,
+            },
+            Instruction::Convert {
+                dst: 0,
+                target: crate::Type::Int32,
+                operand: 4,
+            },
+        ],
+        5,
+        3,
+        Vec::new(),
+        9,
+    );
+}
+
+#[test]
+fn slot_compaction_remaps_indirect_scalar_results() {
+    let callee = Arc::new(compile(
+        "fn add(seed: Int32) -> Int32 { seed + 1 }",
+        "add",
+        false,
+    ));
+    assert_slot_compaction(
+        vec![
+            Instruction::Const {
+                dst: 2,
+                value: ConstantValue::Function(0),
+            },
+            Instruction::IndirectCall(Box::new(crate::backends::interp::IndirectCall {
+                callee: 2,
+                args: vec![Some(0)],
+                result: Some(4),
+                results: Vec::new(),
+            })),
+            Instruction::Copy { dst: 0, src: 4 },
+        ],
+        5,
+        3,
+        vec![callee],
+        42,
+    );
+}
+
+#[test]
+fn slot_compaction_remaps_indirect_aggregate_results() {
+    let types = TypeRegistry::default().with_prelude(false);
+    let ast = types
+        .resolve_aliases(
+            &crate::parser::parse(
+                "fn pair(seed: Int32) -> (Int32, Int32) { (seed + 1, seed + 2) }",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let plan = ModulePlan::with_import_layouts_and_types(&ast, &HashMap::new(), &types).unwrap();
+    let callee = Arc::new(
+        lower_unoptimized(
+            &plan.functions["pair"],
+            &plan.bodies["pair"],
+            &HashMap::from([("pair".to_owned(), 0)]),
+            &mut HashMap::new(),
+            &mut Default::default(),
+            &HashMap::new(),
+        )
+        .unwrap(),
+    );
+    assert_slot_compaction(
+        vec![
+            Instruction::Const {
+                dst: 2,
+                value: ConstantValue::Function(0),
+            },
+            Instruction::IndirectCall(Box::new(crate::backends::interp::IndirectCall {
+                callee: 2,
+                args: vec![Some(0)],
+                result: None,
+                results: vec![4, 6],
+            })),
+            Instruction::Binary {
+                dst: 0,
+                op: crate::parser::ast::BinOp::Add,
+                lhs: 4,
+                rhs: 6,
+            },
+        ],
+        7,
+        4,
+        vec![callee],
+        85,
+    );
+}
+
+#[test]
+fn slot_compaction_remaps_dyn_copy_destinations() {
+    let callee = Arc::new(compile(
+        "fn add(seed: Int32) -> Int32 { seed + 1 }",
+        "add",
+        false,
+    ));
+    let signature = callee.info.signature.clone();
+    let table = Arc::new(crate::backends::interp::DynMethodTable {
+        entries: vec![(0, signature.clone(), false)],
+    });
+    assert_slot_compaction(
+        vec![
+            Instruction::Const {
+                dst: 2,
+                value: ConstantValue::DynTable(table),
+            },
+            Instruction::DynCopy {
+                lanes: vec![(4, 0), (6, 2)],
+            },
+            Instruction::DynMethod {
+                dst: 0,
+                table: 6,
+                method: 0,
+                signature,
+                suspends: false,
+            },
+            Instruction::IndirectCall(Box::new(crate::backends::interp::IndirectCall {
+                callee: 0,
+                args: vec![Some(4)],
+                result: Some(0),
+                results: Vec::new(),
+            })),
+        ],
+        7,
+        4,
+        vec![callee],
+        42,
+    );
+}
+
+#[test]
+fn slot_compaction_remaps_dyn_method_destinations() {
+    let callee = Arc::new(compile(
+        "fn add(seed: Int32) -> Int32 { seed + 1 }",
+        "add",
+        false,
+    ));
+    let signature = callee.info.signature.clone();
+    let table = Arc::new(crate::backends::interp::DynMethodTable {
+        entries: vec![(0, signature.clone(), false)],
+    });
+    assert_slot_compaction(
+        vec![
+            Instruction::Const {
+                dst: 2,
+                value: ConstantValue::DynTable(table),
+            },
+            Instruction::DynMethod {
+                dst: 4,
+                table: 2,
+                method: 0,
+                signature,
+                suspends: false,
+            },
+            Instruction::IndirectCall(Box::new(crate::backends::interp::IndirectCall {
+                callee: 4,
+                args: vec![Some(0)],
+                result: Some(0),
+                results: Vec::new(),
+            })),
+        ],
+        5,
+        3,
+        vec![callee],
+        42,
     );
 }
 
