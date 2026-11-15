@@ -53,7 +53,7 @@ impl TaskValue {
                     && fields.iter().zip(&r.fields).all(|(v, f)| v.matches(&f.ty))
             }
             (Self::Record { ty: actual, fields }, Type::Record(r))
-                if !r.array && !r.list && !r.map && !r.set =>
+                if !r.array && !r.list && !r.map && !r.set && !r.shared =>
             {
                 actual == ty
                     && fields.len() == r.fields.len()

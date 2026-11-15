@@ -206,6 +206,7 @@ impl TypeRegistry {
 
         let instance = Arc::new(RecordType {
             array: template.array,
+            shared: template.shared,
             list: template.list,
             map: template.map,
             set: template.set,

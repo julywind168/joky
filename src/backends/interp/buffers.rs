@@ -277,6 +277,17 @@ pub(super) fn execute(
                             .as_ptr()
                             .cast(),
                     ),
+                    BufferIntrinsic::SharedFreeze | BufferIntrinsic::SharedClone => {
+                        Value::Reference(
+                            crate::runtime::buffer::shared::create(
+                                arena,
+                                pointer(arg(0))?,
+                                *intrinsic == BufferIntrinsic::SharedFreeze,
+                            )?
+                            .as_ptr()
+                            .cast(),
+                        )
+                    }
                     BufferIntrinsic::Transfer => {
                         Buffer::transfer(pointer(arg(0))?, pointer(arg(1))?)?;
                         Value::Unit

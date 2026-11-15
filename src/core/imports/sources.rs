@@ -385,6 +385,13 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
     },
     SourceDefinition {
         kind: SourceKind::BufferLibrary,
+        path: "joky/shared",
+        source: include_str!("../../stdlib/shared.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::BufferLibrary,
         path: "joky/array",
         source: include_str!("../../stdlib/array.jk"),
         reexport_imports: false,
@@ -668,6 +675,7 @@ impl StandardLibrary {
         if matches!(kind, SourceKind::BufferLibrary) {
             for record in &mut module.records {
                 record.array = path == "joky/array" && record.name == "Array";
+                record.shared = path == "joky/shared" && record.name == "Shared";
                 record.list = path == "joky/list" && record.name == "List";
                 record.map = path == "joky/map" && record.name == "Map";
                 record.set = path == "joky/set" && record.name == "Set";

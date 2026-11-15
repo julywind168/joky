@@ -1005,6 +1005,8 @@ pub(crate) enum CompilerIntrinsic {
 #[derive(joky_image_derive::Image, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BufferIntrinsic {
     Allocate,
+    SharedFreeze,
+    SharedClone,
     Transfer,
     AppendBytes,
     FindByte,
@@ -1217,6 +1219,7 @@ pub enum AttributeValue {
 #[derive(joky_image_derive::Image, Debug, Clone)]
 pub struct RecordDef {
     pub(crate) array: bool,
+    pub(crate) shared: bool,
     pub(crate) list: bool,
     pub(crate) map: bool,
     pub(crate) set: bool,
@@ -1248,6 +1251,7 @@ impl RecordDef {
         let id = fresh_type_id();
         Self {
             array: false,
+            shared: false,
             list: false,
             map: false,
             set: false,

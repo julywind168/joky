@@ -1,0 +1,43 @@
+//! Immutable values with explicit shared ownership within one task tree.
+//!
+//! ```joky
+//! import joky/shared.{type Shared}
+//! import joky/mem
+//!
+//! fn main() {
+//!     let value = Shared.new("hello")
+//!     let other = value.share()
+//!     mem.drop(value)
+//!     assert(other.get().byte_length() == 5, "shared value remains live")
+//! }
+//! ```
+
+import joky/internal/buffer.{type Buffer}
+
+/// An owning handle to immutable, reference-free data. Handles are moved, not implicitly copied.
+/// References, resources, capturing closures, dyn values and nested Shared values are unsupported.
+/// The last handle releases the payload and refunds its task-root memory budget.
+pub struct Shared<T> { storage: Buffer<T> }
+
+impl<T> Shared<T> {
+    /// Consumes and copies a value into a frozen snapshot, discarding unused container capacity.
+    /// The task budget must cover both the input and snapshot during construction.
+    pub fn new(value: T) -> Self {
+        var storage = buffer.allocate::<T>(1)
+        buffer.initialize_next(&mut storage, value)
+        let frozen = buffer.shared_freeze(&storage)
+        buffer.release(storage)
+        Shared { storage: frozen }
+    }
+
+    /// Creates an independent owning handle in the same task tree, charging only its metadata.
+    /// Fails if the task cannot afford another handle; the original remains live.
+    pub fn share(&self) -> Self {
+        Shared { storage: buffer.shared_clone(&self.storage) }
+    }
+
+    /// Borrows the immutable value. The borrow cannot outlive this handle.
+    pub fn get(&self) -> &T {
+        buffer.borrow_ref(&self.storage, 0)
+    }
+}

@@ -811,6 +811,9 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
                 (vec![ptr], vec![ptr])
             }
             BufferIntrinsic::Allocate => (vec![ptr, types::I64, ptr, ptr], vec![ptr]),
+            BufferIntrinsic::SharedFreeze | BufferIntrinsic::SharedClone => {
+                (vec![ptr, ptr], vec![ptr])
+            }
             BufferIntrinsic::Len | BufferIntrinsic::Capacity | BufferIntrinsic::SliceLen => {
                 (vec![ptr], vec![types::I64])
             }
@@ -2290,7 +2293,9 @@ fn lower_ops(
                             values.push(builder.ins().iconst(ptr_ty, layout.size as i64));
                             values.push(builder.ins().iconst(ptr_ty, layout.align as i64));
                         }
-                        BufferIntrinsic::Sha256New
+                        BufferIntrinsic::SharedFreeze
+                        | BufferIntrinsic::SharedClone
+                        | BufferIntrinsic::Sha256New
                         | BufferIntrinsic::HmacSha256New
                         | BufferIntrinsic::PathJoin
                         | BufferIntrinsic::Replace

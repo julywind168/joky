@@ -611,6 +611,11 @@ pub(crate) struct ExternalCharge {
     account: Option<std::sync::Arc<Budget>>,
     parent_account: Option<std::sync::Arc<Budget>>,
 }
+impl ExternalCharge {
+    pub(crate) fn belongs_to(&self, arena: &Arena) -> bool {
+        Rc::ptr_eq(&self.task_bytes, &arena.task_bytes)
+    }
+}
 impl Drop for ExternalCharge {
     fn drop(&mut self) {
         self.external.set(self.external.get() - self.bytes);

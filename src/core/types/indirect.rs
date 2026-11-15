@@ -7,6 +7,7 @@ pub(super) fn shallow(ty: &Type, arguments: Vec<GenericArgument>) -> Type {
     match ty {
         Type::Record(r) => Type::Record(Arc::new(RecordType {
             array: r.array,
+            shared: r.shared,
             list: r.list,
             map: r.map,
             set: r.set,

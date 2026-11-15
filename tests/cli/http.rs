@@ -165,6 +165,13 @@ fn routing() @suspends {
     assert(match router.handle(routed_request(http.Method.Options, "/item")).status { Accepted => true, _ => false }, "explicit OPTIONS handler")
     mem.drop(router)
     assert(String.from_utf8(shared.handle(routed_request(http.Method.Head, "/item")).body)! == "HEAD /item", "shared table owns routes and preserves method in GET fallback")
+    var prepared = shared.prepare()
+    let snapshot = prepared.share()
+    prepared.get("/later", alternate)!
+    assert(match prepared.handle(request("/later")).status { Accepted => true, _ => false }, "adding to a frozen router detaches its table")
+    mem.drop(prepared)
+    assert(match snapshot.handle(request("/later")).status { NotFound => true, _ => false }, "frozen snapshot preserves its original routes")
+    assert(String.from_utf8(snapshot.handle(request("/item")).body)! == "GET /item", "snapshot survives modified router")
 }
 struct Source { tenant: String }
 struct Local { tenant: String, user: Option<String> }

@@ -2,6 +2,14 @@
 use super::*;
 
 #[test]
+fn shared_values_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write("shared.jk", include_str!("../fixtures/shared_values.jk"));
+    work.assert_native("shared.jk", &[], b"", 0);
+    work.assert_native("shared.jk", &["--task-workers", "2"], b"", 0);
+}
+
+#[test]
 fn local_task_width_is_independent_of_recursion_depth() {
     let work = Workspace::new();
     work.write(

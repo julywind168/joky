@@ -7,6 +7,7 @@ mod bytes;
 pub(crate) mod crypto;
 pub(crate) mod path;
 pub(crate) mod random;
+pub(crate) mod shared;
 pub(crate) const BYTE_CHUNK: usize = 16 * 1024;
 
 /// Stable control block; no element pointers or layout inputs are source-visible.
@@ -740,6 +741,11 @@ impl Buffer {
         Ok(())
     }
     pub(crate) fn configure(&mut self, cleanup: ElementCleanup) -> Result<(), Error> {
+        // Shared payloads are released by their refcounted resource, never by
+        // following the element's ordinary unique-owner cleanup descriptor.
+        if self.resource.as_ref().is_some_and(shared::is_handle) {
+            return Ok(());
+        }
         let charge = cleanup
             .metadata_bytes()
             .ok_or_else(|| bounds_error("Cleanup descriptor size overflow"))?;
@@ -1763,6 +1769,9 @@ unsafe extern "C" fn take_last(
 #[export_name = "__joky_buffer_cleanup_new"]
 unsafe extern "C" fn cleanup_new(buffer: *mut Buffer, charge: usize) {
     if let Some(buffer) = buffer.as_mut() {
+        if buffer.resource.as_ref().is_some_and(shared::is_handle) {
+            return;
+        }
         match buffer.reserve_metadata(charge) {
             Ok(()) => {
                 buffer.failed_descriptor = false;
@@ -1777,16 +1786,26 @@ unsafe extern "C" fn cleanup_new(buffer: *mut Buffer, charge: usize) {
 }
 #[export_name = "__joky_buffer_cleanup_owner"]
 unsafe extern "C" fn cleanup_owner(buffer: *mut Buffer, offset: usize) {
-    if let Some(buffer) = buffer.as_mut().filter(|buffer| !buffer.failed_descriptor) {
+    if let Some(buffer) = buffer.as_mut().filter(|buffer| {
+        !buffer.failed_descriptor && !buffer.resource.as_ref().is_some_and(shared::is_handle)
+    }) {
         buffer.cleanup.as_mut().unwrap().owners.push(offset);
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 53] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 55] {
     [
         (
             "__joky_buffer_password_needs_rehash",
             super::password::needs_rehash_native as *const u8,
+        ),
+        (
+            "__joky_buffer_shared_freeze",
+            shared::freeze_native as *const u8,
+        ),
+        (
+            "__joky_buffer_shared_clone",
+            shared::clone_native as *const u8,
         ),
         ("__joky_buffer_append_bytes", bytes::append as *const u8),
         ("__joky_buffer_append_copy", bytes::append_copy as *const u8),

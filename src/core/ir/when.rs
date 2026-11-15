@@ -26,6 +26,7 @@ fn packet(name: String, fields: Vec<(String, Type)>) -> Type {
         .collect();
     Type::Record(Arc::new(RecordType {
         array: false,
+        shared: false,
         list: false,
         map: false,
         set: false,

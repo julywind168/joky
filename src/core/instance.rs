@@ -88,6 +88,9 @@ pub(crate) fn persistent(ty: &Type) -> bool {
     .into_iter()
     .all(|edges| {
         super::types::walk::TypeWalk::new(ty, edges).all(|part| {
+            if matches!(part, Type::Record(record) if record.shared) {
+                return false;
+            }
             scalar(part)
                 || matches!(
                     part,
@@ -128,6 +131,9 @@ pub(crate) fn persistent_graph(
                 pending.push(super::types::reference_target(element, nominals, registry)?)
             }
             Type::Record(record) => {
+                if record.shared {
+                    return Ok(false);
+                }
                 pending.extend(record.arguments.iter().filter_map(|a| a.as_type()).cloned());
                 pending.extend(record.fields.iter().map(|field| field.ty.clone()));
             }

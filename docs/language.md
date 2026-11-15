@@ -2508,6 +2508,26 @@ String、Array、List、Map、Set、拥有记录、枚举和元组仍自动释�
 普通引用的任务期保留规则不因提前释放容器而缩短。Rust runtime 与宿主适配器自身的 Rust Drop 不受影响。
 迁移范围和验证责任见[自定义 Drop 撤回记录](custom-drop-withdrawal-review.md)。
 
+## 不可变共享值 joky/shared
+
+`import joky/shared.{type Shared}` 提供同一任务树内的不可变共享拥有值。
+`Shared.new(value)` 消费输入并冻结完整数据；`share(&self) -> Shared<T>` 创建独立拥有句柄；
+`get(&self) -> &T` 只读借用内容。句柄本身非 Copy，借用不得越过对应句柄的释放、移动或覆盖。
+不需要生命周期参数；移动、临时借用与失败／取消清理沿用普通所有权规则。
+
+首版支持无引用的普通数据、String、Array／List／Map／Set、FixedArray、记录、元组、枚举，
+以及非捕获语言函数值的有限组合。拒绝引用、裸指针、外部资源、捕获闭包、dyn 和嵌套 Shared。
+所有枚举变体和泛型实参都参与检查。包含函数值时，Parallel 仍验证冻结模块的完整候选调用图。
+
+冻结按已初始化内容建立一次独立只读快照，不保留容器的空闲容量；期间新旧数据同时计入预算。
+此后 share 不复制载荷，开销与表大小无关。
+共享载荷及其管理结构向创建任务根计费一次，各句柄另外承担自身控制块费用；最后一个拥有句柄
+销毁后才释放载荷并退款。正常结束、失败和取消均遵循同一规则。
+
+拥有句柄可以在同一根任务的 join/race、scope/branch 之间移动，在 Parallel 下交给不同 worker；
+不开放宿主 TaskValue 输入／输出、持久实例状态或跨根任务共享。其中的函数值沿用模块代码的保活机制。
+从 get 得到的借用仍遵守现有作用域借用准入；需要将工作分派到其他 worker 时，优先移动 share 返回的拥有句柄。
+
 ## 导入与 prelude
 
 默认 prelude 提供 `assert(condition: Bool, message: &String) -> Unit`；关闭 prelude 时
@@ -7393,6 +7413,10 @@ HTTPS 对应入口为 `http.serve_tls_with(listener, config, &stop, options, ser
 匹配使用 request.path()，不包含查询串；区分大小写、尾斜线和原始百分号编码，不解码或规范化路径。
 路径中的 `:id`、`*` 等均按字面字符匹配，尚无参数或通配符语法。
 
+服务在接纳连接前调用一次 `Service.prepare(self) @suspends -> Self`，默认实现直接返回自身。
+内置路由器在此冻结路由表，随后连接共享同一份路径和 handler 表。手动调用尚未准备的路由器的
+share 会创建独立快照；之后修改任一份路由器不影响已有快照，必要时先复制为可变表。
+
 Router 的分发规则如下：
 
 - 优先选择方法及路径完全匹配的 handler。HEAD 未显式注册时复用该路径的 GET handler，
@@ -7405,7 +7429,7 @@ Router 的分发规则如下：
 资源来源 S 实现 `http.ContextSource`，通过关联类型 Context 指定 handler 的 `Request<C>` 中 `ctx` 的类型。
 路由器在以下两个位置使用来源：
 
-- 取得连接名额后，接收循环调用 `share(&self) @suspends @noescape -> Self`，为连接复制长期资源句柄和路由表。在此执行数据库查询或鉴权会阻塞下一次接纳。
+- 取得连接名额后，接收循环调用 `share(&self) @suspends @noescape -> Self`，为连接复制长期资源句柄和已冻结路由表的轻量拥有句柄。在此执行数据库查询或鉴权会阻塞下一次接纳。
 - 完整请求命中路由后，连接任务调用一次 `for_request(&self) @suspends @noescape -> Self.Context`。它可以分享池句柄，并将当前用户等局部字段初始化为空。解析失败及自动 404/405 跳过这一步。
 
 `http.with_state(owner.handle(), source)` 创建带状态域的路由器。状态类型 A 实现 `http.Application`，

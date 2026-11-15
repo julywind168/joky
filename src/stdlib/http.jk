@@ -24,6 +24,7 @@ import joky/uuid
 import joky/admission
 import joky/domain
 import joky/array.{type Array}
+import joky/shared.{type Shared}
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Err}
 import joky/shutdown
@@ -881,6 +882,10 @@ fn handshake_timeout(timeout: Duration) @suspends -> Option<Wire> {
 // Each admitted connection owns its service handle until the handler and write finish.
 /// A suspending request handler used by the HTTP server.
 pub trait Service {
+    /// Prepares owned state once before accepting connections. The default keeps it unchanged.
+    fn prepare(self) @suspends -> Self {
+        self
+    }
     /// Returns a service instance suitable for use by another connection task.
     fn share(&self) @suspends -> Self
     /// Consumes a request and produces its response.
@@ -932,7 +937,7 @@ pub trait Application {
 /// A suspending callback that also receives a write handle to application state.
 pub type StateHandler<A, C> = fn(domain.WriteHandle<A>, Request<C>) @suspends -> Response
 struct Route<H> { method: Method, path: String, handler: H }
-struct RouteTable<H> { entries: Array<Route<H>> }
+struct RouteTable<H> { entries: Array<Route<H>>, frozen: Option<Shared<Array<Route<H>>>> }
 /// A router that creates request context before calling the selected handler.
 pub struct ContextRouter<S, C> { source: S, table: RouteTable<Handler<C>> }
 /// A router that passes a state-domain capability to the selected handler.
@@ -944,7 +949,7 @@ pub struct StateRouter<A, S, C> {
 
 /// Creates a router that builds context for each request using the supplied source.
 pub fn with_context<S: ContextSource>(source: S) -> ContextRouter<S, S.Context> {
-    ContextRouter { source, table: RouteTable { entries: [] } }
+    ContextRouter { source, table: RouteTable { entries: [], frozen: None } }
 }
 
 /// Creates a router that gives handlers a write handle to application state.
@@ -952,7 +957,7 @@ pub fn with_state<A: Application, S: ContextSource<Context = A.RequestContext>>(
     app: domain.WriteHandle<A>,
     source: S
 ) -> StateRouter<A, S, A.RequestContext> {
-    StateRouter { app, source, table: RouteTable { entries: [] } }
+    StateRouter { app, source, table: RouteTable { entries: [], frozen: None } }
 }
 
 fn bind_context<C>(request: Request<Unit>, ctx: C) -> Request<C> {
@@ -1018,6 +1023,9 @@ impl Router {
     }
 }
 impl Service for Router {
+    fn prepare(self) @suspends -> Self {
+        Router { inner: self.inner.prepare() }
+    }
     fn share(&self) @suspends -> Self {
         Router { inner: self.inner.share() }
     }
@@ -1033,11 +1041,16 @@ impl<H: Copy> RouteTable<H> {
         if self.find_handler(&path, method).is_some() {
             return Err(RouteError.DuplicateRoute)
         }
+        if self.frozen.is_some() {
+            let entries = self.copy_entries()
+            self.frozen = None
+            self.entries = entries
+        }
         self.entries.push(Route { method, path, handler })
         result.Ok({})
     }
     fn find_handler(&self, path: &String, method: Method) @noescape -> Option<H> {
-        for entry in &self.entries {
+        for entry in self.routes() {
             if entry.path == path && entry.method == method {
                 return Some(entry.handler)
             }
@@ -1077,14 +1090,34 @@ impl<H: Copy> RouteTable<H> {
             text(Status.MethodNotAllowed, "method not allowed").with_header("Allow", allow)
         }
     }
-    fn copy_routes(&self) -> Self {
+    fn routes(&self) -> &Array<Route<H>> {
+        match &self.frozen {
+            Some(entries) => entries.get(),
+            None => &self.entries
+        }
+    }
+    fn copy_entries(&self) -> Array<Route<H>> {
         var routes: Array<Route<H>> = []
-        for entry in &self.entries {
+        for entry in self.routes() {
             routes.push(
                 Route { method: entry.method, path: entry.path.clone(), handler: entry.handler }
             )
         }
-        RouteTable { entries: routes }
+        routes
+    }
+    fn freeze(self) -> Self {
+        let RouteTable { entries, frozen } = self
+        match frozen {
+            Some(table) => RouteTable { entries, frozen: Some(table) },
+            None => RouteTable { entries: [], frozen: Some(Shared.new(entries)) }
+        }
+    }
+    fn share(&self) -> Self {
+        let table = match &self.frozen {
+            Some(table) => table.share(),
+            None => Shared.new(self.copy_entries())
+        }
+        RouteTable { entries: [], frozen: Some(table) }
     }
 }
 impl<S, C> ContextRouter<S, C> {
@@ -1174,8 +1207,12 @@ impl<A, S, C> StateRouter<A, S, C> {
     }
 }
 impl<S: ContextSource<Context = C>, C> Service for ContextRouter<S, C> {
+    fn prepare(self) @suspends -> Self {
+        let ContextRouter { source, table } = self
+        ContextRouter { source, table: table.freeze() }
+    }
     fn share(&self) @suspends -> Self {
-        ContextRouter { source: self.source.share(), table: self.table.copy_routes() }
+        ContextRouter { source: self.source.share(), table: self.table.share() }
     }
     fn handle(&self, request: Request<Unit>) @suspends -> Response {
         let path = request.path()
@@ -1190,8 +1227,12 @@ impl<A: Application<RequestContext = C>, S: ContextSource<Context = C>, C> Servi
     S,
     C
 > {
+    fn prepare(self) @suspends -> Self {
+        let StateRouter { app, source, table } = self
+        StateRouter { app, source, table: table.freeze() }
+    }
     fn share(&self) @suspends -> Self {
-        StateRouter { app: self.app, source: self.source.share(), table: self.table.copy_routes() }
+        StateRouter { app: self.app, source: self.source.share(), table: self.table.share() }
     }
     fn handle(&self, request: Request<Unit>) @suspends -> Response {
         let path = request.path()
@@ -1318,6 +1359,7 @@ fn listen<S: Service>(
     options: Options,
     service: S
 ) @suspends -> Result<Unit, ServeError> {
+    let service = service.prepare()
     let pool = admission.create(options.max_connections, 0)
     let clients = pool.handle()
     var failed = false

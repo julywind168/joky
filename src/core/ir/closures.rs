@@ -702,6 +702,7 @@ impl FunctionPlan {
             let make_environment = |mode| {
                 Arc::new(RecordType {
                     array: false,
+                    shared: false,
                     list: false,
                     map: false,
                     set: false,

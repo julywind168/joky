@@ -1,0 +1,144 @@
+import joky/shared.{type Shared}
+import joky/mem
+import joky/task
+import joky/list.{type List}
+import joky/set.{type Set}
+import joky/fixed_array.{type FixedArray}
+
+struct Config {
+    names: Array<String>,
+    label: String,
+    extra: Option<(Int32, String)>,
+    handler: fn(Int32) -> Int32
+}
+
+fn answer(value: Int32) -> Int32 {
+    value + 2
+}
+
+struct Containers {
+    table: Map<String, List<String>>,
+    keys: Set<String>,
+    fixed: FixedArray<Option<String>, 2>
+}
+
+fn containers() {
+    var table = Map.new::<String, List<String>>()
+    var values = List.new::<String>()
+    values.push_back("tail")
+    values.push_front("head")
+    table.insert("key", values)
+    var keys = Set.new::<String>()
+    keys.insert("key")
+    let fixed: FixedArray<Option<String>, 2> = [None, Some("fixed")]
+    let shared = Shared.new(Containers { table, keys, fixed })
+    let other = shared.share()
+    mem.drop(shared)
+    let data = other.get()
+    assert(data.table.get_ref("key")!.borrow_ref(0) == "head", "shared map and list")
+    assert(data.keys.contains("key"), "shared set")
+    assert(
+        match &data.fixed[1] {
+            Some(text) => text == "fixed",
+            None => false
+        },
+        "shared fixed array"
+    )
+}
+
+fn produce() @suspends -> Shared<String> {
+    task.yield_now()
+    Shared.new("returned")
+}
+
+fn hold(value: Shared<String>) @suspends -> Int32 {
+    task.sleep(60s)
+    int32(value.get().byte_length())
+}
+
+fn suspended() @suspends -> Int32 {
+    let value = Shared.new("cancelled")
+    let first = value.share()
+    let second = value.share()
+    mem.drop(value)
+    let (a, b) = join {
+        hold(first),
+        hold(second)
+    }
+    a + b
+}
+
+fn ready(value: Shared<String>) @suspends -> Int32 {
+    assert(value.get() == "race", "winning shared handle")
+    42
+}
+
+fn inspect(value: Shared<Config>) @suspends -> Int32 {
+    task.yield_now()
+    let config = value.get()
+    assert(config.names.len() == 2, "shared array length")
+    assert(config.names.borrow_ref(0) == "first", "shared nested string")
+    assert(config.names.borrow_ref(1) == "second", "shared second string")
+    assert(config.label == "configuration", "shared record string")
+    match &config.extra {
+        Some((number, text)) => {
+            assert(number == 7 && text == "payload", "shared enum payload")
+        },
+        None => assert(false, "missing shared enum")
+    }
+    let handler = config.handler
+    handler(40)
+}
+
+fn main() @suspends -> Int32 {
+    containers()
+    let unit = Shared.new({})
+    mem.drop(unit.share())
+    let empty = Shared.new(Array.new::<String>())
+    assert(empty.get().is_empty(), "shared empty container")
+    let scalar = Shared.new(42)
+    assert(*scalar.get() == 42, "shared scalar")
+    let config = Shared.new(Config {
+            names: ["first", "second"],
+            label: "configuration",
+            extra: Some((7, "payload")),
+            handler: answer
+        })
+    let first = config.share()
+    let second = config.share()
+    mem.drop(config)
+    let (left, right) = join {
+        inspect(first),
+        inspect(second)
+    }
+    assert(left == 42 && right == 42, "shared handles survive original and suspension")
+    let (a, b) = join {
+        produce(),
+        produce()
+    }
+    let returned = a.share()
+    mem.drop(a)
+    assert(returned.get() == "returned" && b.get() == "returned", "shared child results")
+    let winner = Shared.new("race")
+    let loser = winner.share()
+    assert(
+        race {
+            hold(loser),
+            ready(winner)
+        } == 42,
+        "cancel shared losing branch"
+    )
+    let scoped = Shared.new("scope")
+    scope {
+        var index = 0
+        while index < 3 {
+            let child = scoped.share()
+            branch {
+                task.yield_now()
+                assert(child.get() == "scope", "shared dynamic branch")
+            }
+            index += 1
+        }
+    }
+    0
+}

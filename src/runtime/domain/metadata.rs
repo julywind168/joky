@@ -308,6 +308,7 @@ impl Reader<'_> {
             + 1;
         let ty = Type::Record(Arc::new(RecordType {
             array: code == 21,
+            shared: false,
             list: false,
             map: false,
             set: false,

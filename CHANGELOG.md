@@ -5,6 +5,10 @@
 
 ## Unreleased
 
+- 新增 `joky/shared.Shared<T>`，支持同一任务树内不可变数据的共享拥有、只读借用和独立句柄清理。
+  首版限制及冻结峰值预算见语言参考。HTTP 在 `Service.prepare` 阶段冻结路由表，连接复用路径存储；
+  自定义 Service 默认无需修改，已有显式路由快照与后续修改保持独立。
+
 - 精简 `joky/array`、`joky/list`、`joky/map`、`joky/set`、`joky/slice`、
   `joky/fixed_array` 和 `joky/string` 中与方法重复的模块导出。升级时将
   `array.insert(&mut values, i, x)` 等调用改为 `values.insert(i, x)`，

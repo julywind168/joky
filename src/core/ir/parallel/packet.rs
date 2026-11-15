@@ -135,7 +135,7 @@ pub(super) fn checked_type(
                     }
                 }
             }
-            Type::Record(r) if r.array => {
+            Type::Record(r) if r.array || r.shared => {
                 let [field] = r.fields.as_slice() else {
                     return None;
                 };

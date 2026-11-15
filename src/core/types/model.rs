@@ -1042,6 +1042,8 @@ impl Eq for TypeParameter {}
 pub struct RecordType {
     /// Identity installed only on the embedded Array declaration.
     pub(crate) array: bool,
+    /// Identity installed only on the embedded immutable Shared declaration.
+    pub(crate) shared: bool,
     /// Identity installed only on the embedded List declaration.
     pub(crate) list: bool,
     pub(crate) map: bool,

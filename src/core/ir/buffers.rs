@@ -85,8 +85,10 @@ impl BufferIntrinsic {
             _ => None,
         }
     }
-    pub(crate) const ALL: [Self; 63] = [
+    pub(crate) const ALL: [Self; 65] = [
         Self::Allocate,
+        Self::SharedFreeze,
+        Self::SharedClone,
         Self::Transfer,
         Self::AppendBytes,
         Self::AppendCopy,
@@ -185,6 +187,8 @@ impl BufferIntrinsic {
         matches!(
             self,
             Self::Allocate
+                | Self::SharedFreeze
+                | Self::SharedClone
                 | Self::PathJoin
                 | Self::Sha256New
                 | Self::HmacSha256New
@@ -365,6 +369,7 @@ impl BufferIntrinsic {
                 Type::reference(element.clone(), true),
             ),
             Self::Allocate => (vec![Type::UInt64], owner),
+            Self::SharedFreeze | Self::SharedClone => (vec![shared], owner),
             Self::Transfer => (vec![exclusive.clone(), exclusive], Type::Unit),
             Self::AppendCopy => (vec![exclusive, Type::reference(slice, false)], Type::Unit),
             Self::AppendBytes => (
@@ -608,6 +613,8 @@ impl BufferIntrinsic {
             Self::IterCurrent => "__joky_buffer_iter_current",
             Self::IterCurrentMut => "__joky_buffer_iter_current_mut",
             Self::Allocate => "__joky_buffer_allocate",
+            Self::SharedFreeze => "__joky_buffer_shared_freeze",
+            Self::SharedClone => "__joky_buffer_shared_clone",
             Self::Transfer => "__joky_buffer_transfer",
             Self::AppendBytes => "__joky_buffer_append_bytes",
             Self::AppendCopy => "__joky_buffer_append_copy",
@@ -660,6 +667,67 @@ impl BufferIntrinsic {
 }
 
 impl FunctionPlan {
+    fn validate_shared_element(&self, element: &Type, span: Span) -> Result<(), Error> {
+        let mut pending = vec![(element.clone(), 0)];
+        let mut remaining = 65_536usize;
+        while let Some((ty, depth)) = pending.pop() {
+            let invalid = || {
+                type_error(&span, ErrorCode::TypeMismatch,
+                "Shared requires finite reference-free data; pointers, resources, closures, dyn and nested Shared values are not supported")
+            };
+            remaining = remaining.checked_sub(1).ok_or_else(invalid)?;
+            if depth > 32 {
+                return Err(invalid());
+            }
+            let ty = self.pointee(&ty, &self.type_registry)?;
+            let mut add = |ty: &Type| pending.push((ty.clone(), depth + 1));
+            match ty {
+                Type::Parameter(_) | Type::Projection(_) => {}
+                Type::String | Type::Function(_) => {}
+                Type::Buffer(element) => add(&element),
+                Type::FixedArray(array) => add(&array.element),
+                Type::Tuple(tuple) => tuple.elements.iter().for_each(&mut add),
+                Type::Record(record) if !record.shared && record.closure.is_none() => {
+                    for argument in &record.arguments {
+                        if let Some(ty) = argument.as_type() {
+                            add(ty);
+                        }
+                    }
+                    for field in &record.fields {
+                        add(&field.ty);
+                    }
+                }
+                Type::Enum(enumeration) => {
+                    for argument in &enumeration.arguments {
+                        if let Some(ty) = argument.as_type() {
+                            add(ty);
+                        }
+                    }
+                    for variant in &enumeration.variants {
+                        if let Some(ty) = &variant.payload {
+                            add(ty);
+                        }
+                    }
+                }
+                Type::Unit
+                | Type::Bool
+                | Type::Rune
+                | Type::Int8
+                | Type::UInt8
+                | Type::Int16
+                | Type::UInt16
+                | Type::Int32
+                | Type::UInt32
+                | Type::Int64
+                | Type::UInt64
+                | Type::Float32
+                | Type::Float64 => {}
+                _ => return Err(invalid()),
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn storage_body(
         &mut self,
         f: &FnDef,
@@ -673,6 +741,12 @@ impl FunctionPlan {
             )
         })?;
         let element = self.pointee(element, &self.type_registry)?;
+        if matches!(
+            intrinsic,
+            BufferIntrinsic::SharedFreeze | BufferIntrinsic::SharedClone
+        ) {
+            self.validate_shared_element(&element, f.span)?;
+        }
         super::super::types::validate_elements(
             &Type::Buffer(Arc::new(element.clone())),
             &self.nominals,
@@ -694,6 +768,8 @@ impl FunctionPlan {
             && !matches!(
                 intrinsic,
                 BufferIntrinsic::Allocate
+                    | BufferIntrinsic::SharedFreeze
+                    | BufferIntrinsic::SharedClone
                     | BufferIntrinsic::Len
                     | BufferIntrinsic::Capacity
                     | BufferIntrinsic::CapacityLimit

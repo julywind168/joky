@@ -48,6 +48,12 @@ pub fn take_last<T>(source: &mut Buffer<T>) -> T
 #intrinsic("buffer.allocate")
 pub fn allocate<T>(capacity: UInt64) -> Buffer<T>
 
+#intrinsic("buffer.shared_freeze")
+pub fn shared_freeze<T>(buffer: &Buffer<T>) -> Buffer<T>
+
+#intrinsic("buffer.shared_clone")
+pub fn shared_clone<T>(buffer: &Buffer<T>) -> Buffer<T>
+
 #intrinsic("buffer.len")
 pub fn len<T>(buffer: &Buffer<T>) -> UInt64
 
