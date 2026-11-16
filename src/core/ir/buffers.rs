@@ -974,6 +974,9 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
         }
     }
     if info.suspends {
+        // Signatures retain their CPS transfer contract. Local values, including
+        // synchronous call inputs/results, are checked at actual suspension edges
+        // by the control-flow loan analysis.
         // Associated bindings describe method signatures, not buffers stored in
         // a dyn view. Its synchronous calls are safe; borrowing.rs rejects any
         // view live at a language suspension or concurrency boundary.
@@ -995,21 +998,8 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                         && ty.is_suspend_safe_view()
                         && info.parameter_noescape(index))
             })
-            || plan.ops.iter().any(|op| match op {
-                Op::Buffer(BufferOp::Storage { args, dst, .. }) => args
-                    .iter()
-                    .chain(dst)
-                    .any(|s| unsupported(&s.ty) && !s.ty.is_buffer_view()),
-                Op::Buffer(BufferOp::Move { dst, .. } | BufferOp::End(dst)) => unsupported(&dst.ty),
-                Op::Call { args, result, .. } => args.iter().flatten().chain(result).any(|s| {
-                    // Borrowed arguments/results may exist inside a synchronous
-                    // segment. The loan analysis checks actual suspension edges.
-                    unsupported(&s.ty) && !s.ty.is_buffer_view()
-                }),
-                _ => false,
-            })
         {
-            return Err(type_error(&info.span, ErrorCode::InvalidCall, "Owning values crossing ordinary language suspension require reference-free storage or suspend-safe shared borrows. Keep other borrowed aggregates and pipelines in a synchronous helper"));
+            return Err(type_error(&info.span, ErrorCode::InvalidCall, "Owning values crossing ordinary language suspension require reference-free storage or suspend-safe shared borrows. Suspending signatures cannot carry other borrowed aggregates or pipelines"));
         }
     }
     if signature.ret.is_owner()

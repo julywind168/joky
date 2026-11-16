@@ -146,9 +146,23 @@ fn refs(slot: &Slot) -> Vec<Slot> {
         .collect()
 }
 
+pub(super) fn is_suspension_scoped(ty: &Type) -> bool {
+    let target = ty.reference_type().map_or(ty, |r| &r.target);
+    target.contains_unstorable_closures() && !target.is_scoped_suspending_closure()
+        || ty.is_owner() && !ty.is_suspend_safe_local_owner()
+        || ty.dyn_interface().is_none()
+            && ty.contains_buffers()
+            && !ty.is_suspend_safe_local_owner()
+            && !ty.is_buffer_view()
+            && !ty.is_resource_view()
+            && !ty.is_scoped_suspending_closure()
+}
+
 pub(super) fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
-    let borrowed_closure =
-        |ty: &Type| ty.closure_info().is_some_and(|c| !c.storable) && !ty.is_owner();
+    operands_with(op, refs)
+}
+
+fn operands_with(op: &Op, refs: impl Fn(&Slot) -> Vec<Slot> + Copy) -> (Vec<Slot>, Vec<Slot>) {
     match op {
         Op::Place(op) => match op {
             PlaceOp::View {
@@ -193,15 +207,16 @@ pub(super) fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
         Op::OutboxEmit { bytes, .. } => (refs(bytes), vec![]),
         Op::Assert { message, .. } | Op::Panic { message } => (refs(message), vec![]),
         Op::Closure(op) => match op.as_ref() {
-            closures::ClosureOp::End(slot) if borrowed_closure(&slot.ty) => {
-                // An environment with no owned captures has no destructor.
-                // Its lexical end does not use the captured references.
-                (vec![], refs(slot))
+            closures::ClosureOp::End(slot) => {
+                // Destruction reads only owned captures. In particular, shared
+                // capture lanes left after a consuming call do not keep the
+                // already-consumed environment live until its lexical end.
+                refs(slot).into_iter().partition(|s| s.ty.is_owner())
             }
             closures::ClosureOp::BorrowCapture { dst, reference } => (refs(reference), refs(dst)),
-            closures::ClosureOp::Access(slot)
-            | closures::ClosureOp::End(slot)
-            | closures::ClosureOp::Consume(slot) => (refs(slot), vec![]),
+            closures::ClosureOp::Access(slot) | closures::ClosureOp::Consume(slot) => {
+                (refs(slot), vec![])
+            }
             closures::ClosureOp::Move { dst, src } if src.ty.is_callable_parameter() => {
                 (refs(src), refs(dst))
             }
@@ -295,18 +310,10 @@ pub(super) fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             std::iter::once(arena).chain(value).flat_map(refs).collect(),
             refs(dst),
         ),
-        // Ending a materialized reference binding or borrowed closure does not
-        // read the stored references.
-        Op::EndLocal(local)
-            if borrowed_closure(&local.ty)
-                || local
-                    .ty
-                    .reference_type()
-                    .is_some_and(|r| r.target.reference_type().is_some()) =>
-        {
-            (vec![], refs(local))
-        }
-        Op::EndLocal(local) => (refs(local), vec![]),
+        // Ending a place invalidates its address without reading its contents.
+        // Destruction is represented by the value's separate owner End, so an
+        // unused or consumed aggregate need not keep its empty place live.
+        Op::EndLocal(local) => (vec![], refs(local)),
         Op::ReadMemory { dst, reference, .. } => {
             (refs(reference), dst.iter().flat_map(refs).collect())
         }
@@ -1001,8 +1008,31 @@ fn analyze(
         }
         index += ty.parameter_slots();
     }
+    // Preserve whole-value eligibility before operands flatten aggregates into
+    // loan/owner lanes. A closure's safe individual captures do not make its
+    // synchronous borrowed environment eligible to cross a suspension.
+    let mut suspension_scoped = plan.suspension_scoped_slots.clone();
     for op in &plan.ops {
-        let (uses, def) = operands(op);
+        let values = RefCell::new(Vec::new());
+        let (uses, def) = operands_with(op, |slot| {
+            values.borrow_mut().push(slot.clone());
+            refs(slot)
+        });
+        for slot in values.into_inner() {
+            // Materialized variables can carry only a nominal pointee in their
+            // address type. Resolve it before inspecting the stored aggregate;
+            // otherwise loop-carried pipelines lose their callback restrictions.
+            let ty = resolved(&slot.ty)?;
+            let target = ty.reference_type().map_or(&ty, |r| &r.target);
+            let value = if local_places.contains(&slot.index) {
+                target
+            } else {
+                &ty
+            };
+            if is_suspension_scoped(value) {
+                suspension_scoped.extend(refs(&slot).iter().map(|s| s.index));
+            }
+        }
         for slot in uses.into_iter().chain(def) {
             types.insert(slot.index, resolved(&slot.ty)?);
         }
@@ -1097,6 +1127,7 @@ fn analyze(
         explicit_allocation_roots: &explicit_allocation_roots,
         reservations: &reservations,
         construction: &construction,
+        suspension_scoped: &suspension_scoped,
         escaped,
     };
     let lifetime = SlotLifetime::new(plan, &next);

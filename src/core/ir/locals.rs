@@ -495,7 +495,6 @@ impl FunctionPlan {
         operand: &Expr,
         mutable: bool,
         vars: &HashMap<String, Binding>,
-        suspends: bool,
         span: Span,
     ) -> Result<Flow, Error> {
         let Some((name, path)) = local_path(operand) else {
@@ -548,31 +547,6 @@ impl FunctionPlan {
                 }
                 return Ok(Flow::Value(Some(dst)));
             }
-        }
-        let ty = slot_type(&binding.slot);
-        if suspends
-            && !(ty.is_copy_value()
-                || path.is_empty() && ty.is_scoped_suspending_closure()
-                || path.is_empty() && ty == Type::String
-                || self
-                    .pointee(
-                        ty.reference_type().map(|r| &r.target).unwrap_or(&ty),
-                        &self.type_registry,
-                    )
-                    .and_then(|target| self.field_target(target, &path, span))
-                    .is_ok_and(|t| {
-                        t.is_suspend_safe_local_owner()
-                            // Copy fields share their owning root's stable CPS storage.
-                            || ty.is_suspend_safe_owner()
-                                && t.is_copy_storage_value()
-                                && !t.contains_references()
-                    }))
-        {
-            return Err(type_error(
-                &span,
-                ErrorCode::InvalidCall,
-                "Local borrowing is only supported in synchronous functions",
-            ));
         }
         if mutable && !binding.mutable {
             return Err(type_error(

@@ -205,8 +205,8 @@ fn parallel_owned_closures_reject_local_targets() {
 #[test]
 fn parallel_owned_closures_preserve_borrow_and_result_boundaries() {
     for source in [
-        "fn main() @suspends { let n = 1; let f = || { n }; f(); }",
-        "fn main() @suspends { let n = 1; let r = &n; let f = move || { *r }; f(); }",
+        "fn pause() @suspends {} fn main() @suspends { let n = 1; let f = || { n }; pause(); f(); }",
+        "fn pause() @suspends {} fn main() @suspends { let n = 1; let r = &n; let f = move || { *r }; pause(); f(); }",
         "fn pass<F>(f: F) @suspends -> F { f } fn main() @suspends { let f = move || { 1 }; let (a,b) = join { pass(f), pass(move || { 2 }) }; }",
         "fn main() @suspends { let f = move || { 1 }; scope { f } }",
         "fn main() @suspends { let text = \"one\"; let f = move || { text }; scope { branch { f(); } }; f(); }",

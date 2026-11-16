@@ -16,6 +16,9 @@ fn invoke_suspending<F: FnOnce() @suspends -> String>(operation: F) @suspends ->
 }
 fn repeat<F: FnMut() -> Int32>(var operation: F) @suspends -> Int32 {
     let first = operation()
+    let view = &first
+    let read = move || { *view }
+    let first = read()
     task.yield_now()
     first + operation()
 }

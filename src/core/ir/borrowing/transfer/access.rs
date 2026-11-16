@@ -395,6 +395,18 @@ impl Instruction<'_> {
                 "A dyn view cannot remain live across suspension or enter concurrency",
             ));
         }
+        if suspending
+            && self.live.iter().any(|index| {
+                self.facts.suspension_scoped.contains(index)
+                    && state.get(index).is_some_and(|value| !value.invalid)
+            })
+        {
+            return Err(type_error(
+                self.span(),
+                ErrorCode::InvalidCall,
+                "A borrowed closure or aggregate cannot remain live across suspension; end its scope before this call",
+            ));
+        }
         // Local places live in stable activation storage. Interior views remain
         // pinned by their owner loans, which forbid relocation and early cleanup.
         // Storage eligibility does not grant permission to retain a reference.

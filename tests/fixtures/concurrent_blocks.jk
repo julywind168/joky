@@ -142,8 +142,9 @@ fn blocks_failure() @suspends -> Int32 {
 
 fn blocks_inner_closures() @suspends -> Int32 {
     let seed = 10
+    let view = &seed
     let (a, b) = join {
-        { let read = || -> Int32 { 10 }; read() }
+        { let read = move || { *view }; read() }
         { let unused = || -> Int32 { 99 }; seed - 9 }
     }
     let c = race {

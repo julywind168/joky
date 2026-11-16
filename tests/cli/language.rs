@@ -2863,7 +2863,10 @@ fn suspending_callers_infer_capture_free_callbacks_as_pointers() {
         }
     "#,
     );
-    failure(&work.cli(&["check", "map.jk"]), "use move");
+    failure(
+        &work.cli(&["check", "map.jk"]),
+        "cannot remain live across suspension",
+    );
 }
 
 #[test]

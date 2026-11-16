@@ -666,7 +666,7 @@ fn captured_pipeline_rejects_mutation_escape_storage_and_retaining_callbacks() {
         "fn bad() { let a = [1]; var calls = 0; for _ in iter.shared(&a).filter(|v| { calls += 1; *v > calls }) {} }",
         "fn bad() { let a = [1]; let limit = 0; for _ in iter.shared(&a).filter(move |v| { *v > limit }) {} }",
         "fn bad() { let a = [1]; let limit = 0; for _ in iter.shared(&a).map(|v| { if *v > limit { v } else { v } }) {} }",
-        "fn bad() @suspends { let a = [1]; let limit = 0; for _ in iter.shared(&a).filter(|v| { *v > limit }) {} }",
+        "extern fn pause() @suspends fn bad() @suspends { let a = [1]; let limit = 0; for _ in iter.shared(&a).filter(|v| { *v > limit }) { pause() } }",
         "fn bad() { let n = 1; let f = || { n }; let saved = Some(f); }",
         "fn require<F: Fn(&Int32) @noescape -> Bool>(f: F) {} fn bad<F: Fn(&Int32) -> Bool>(f: F) { require(f) }",
     ] {
@@ -731,7 +731,7 @@ fn exclusive_pipeline_rejects_duplicate_loans_storage_escape_and_retaining_callb
         "fn bad() { var a = [1]; let offset = 0; for _ in iter.exclusive(&mut a).filter(move |n| { *n > offset }) {} }",
         "fn bad() { var a = [1]; let offset = 0; alloc(iter.exclusive(&mut a).filter(|n| { *n > offset })); }",
         "fn bad() { var a = [1]; let p = iter.exclusive(&mut a); let pair = (p, p); }",
-        "fn bad() @suspends { var a = [1]; for _ in iter.exclusive(&mut a) {} }",
+        "extern fn pause() @suspends fn bad() @suspends { var a = [1]; let limit = 0; for _ in iter.exclusive(&mut a).filter(|v| { *v > limit }) { pause() } }",
         "struct Mixed { cursor: &mut iter.Iter<Int32>, reference: &Int32 } fn bad() {}",
         "fn bad() { var a = [1]; let n = 1; let mixed = (a.iter_mut(), &n); }",
         "enum Saved { Cursor(&mut iter.Iter<Int32>) } fn bad() {}",

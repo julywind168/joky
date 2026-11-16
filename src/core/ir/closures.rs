@@ -333,13 +333,6 @@ impl FunctionPlan {
             self.emit(Op::FunctionRef(dst.clone(), entry.clone()));
             return Ok(Flow::Value(Some(dst)));
         }
-        if suspends && !closure.storable && !closure.suspends {
-            return Err(type_error(
-                &function.span,
-                ErrorCode::InvalidCall,
-                "Suspending frames require a reference-free move environment or a scoped suspending closure; use move for synchronous captures",
-            ));
-        }
         let dst = self.slot(Type::Record(environment.clone()))?;
         let place = self.slot(Type::reference(dst.ty.clone(), true))?;
         self.emit(Op::Local {
@@ -379,7 +372,6 @@ impl FunctionPlan {
                         .unwrap()
                         .mutable,
                     &captured,
-                    false,
                     function.span,
                 )?
             }) else {
@@ -1129,16 +1121,6 @@ impl FunctionPlan {
         types: &TypeRegistry,
         later: Option<&'a Expr>,
     ) -> Result<Option<PreparedCallable>, Error> {
-        if suspends
-            && value.ty.contains_unstorable_closures()
-            && !value.ty.is_scoped_suspending_closure()
-        {
-            return Err(type_error(
-                &span,
-                ErrorCode::InvalidCall,
-                "Suspending frames require a reference-free move environment or a scoped suspending closure; use move for synchronous captures",
-            ));
-        }
         let value = if self.captured_fields.contains_key(&value.index)
             && self
                 .callable_modes
@@ -1244,7 +1226,6 @@ impl FunctionPlan {
                     &expression,
                     mode == CallableKind::FnMut || actual_mode == CallableKind::FnMut,
                     vars,
-                    false,
                     span,
                 )?
                 else {

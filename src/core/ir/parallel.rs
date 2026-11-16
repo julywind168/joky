@@ -90,12 +90,7 @@ fn qualify_with(ty: &Type, resolve: &impl Fn(&Type) -> Result<Type, Error>) -> Q
                 Type::Record(r)
                     // Worker-local borrowed callbacks keep ordinary capture loans;
                     // they gain no permission to transfer an environment to a worker.
-                    if r.closure.as_ref().is_none_or(|c| {
-                        c.storable
-                            || worker_local
-                                && (c.pointer_entry.is_some()
-                                    || c.suspends && c.mode == crate::core::types::CallableKind::FnOnce)
-                    })
+                    if r.closure.as_ref().is_none_or(|c| c.storable || worker_local)
                         && (worker_local || !share || r.closure.is_none()) =>
                 {
                     pending.extend(
@@ -553,7 +548,7 @@ mod tests {
     }
 
     #[test]
-    fn parallel_worker_local_calls_accept_capture_free_closures() {
+    fn parallel_worker_local_calls_accept_borrowed_closures() {
         let source = r#"
             extern fn local(x: Int32) -> Int32
             fn apply<F: FnOnce(Int32) -> Int32>(f: F) -> Int32 { f(41) }
@@ -574,7 +569,7 @@ mod tests {
         effects.require("safe").unwrap();
         effects.require("scoped").unwrap();
         assert!(effects.require("calls_local").is_err());
-        assert!(effects.require("captures").is_err());
+        effects.require("captures").unwrap();
     }
 
     #[test]

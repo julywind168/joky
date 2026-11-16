@@ -20,6 +20,7 @@ pub(super) struct Facts<'a> {
     pub explicit_allocation_roots: &'a Set,
     pub reservations: &'a Set,
     pub construction: &'a Set,
+    pub suspension_scoped: &'a Set,
     pub escaped: Option<&'a RefCell<Escapes>>,
 }
 

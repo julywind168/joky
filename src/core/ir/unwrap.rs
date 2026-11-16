@@ -218,7 +218,6 @@ impl FunctionPlan {
                     },
                     false,
                     &local,
-                    suspends,
                     *span,
                 )?
                 else {

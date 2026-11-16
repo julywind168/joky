@@ -1042,18 +1042,6 @@ pub(super) fn check_module(
                 _ => None,
             };
             for target in storage.into_iter() {
-                if info.suspends
-                    && !target.is_copy_value()
-                    && !target.is_suspend_safe_local_owner()
-                    && !target.is_callable_parameter()
-                    && !target.is_scoped_suspending_closure()
-                {
-                    return Err(type_error(
-                        span,
-                        ErrorCode::InvalidCall,
-                        "Local borrowing is only supported in synchronous functions",
-                    ));
-                }
                 if target
                     .scalar_types()
                     .iter()

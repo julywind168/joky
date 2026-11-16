@@ -259,6 +259,8 @@ mod generic_record_tests;
 mod generic_borrow_tests;
 #[path = "language/generic_tests.rs"]
 mod generic_tests;
+#[path = "tasks/local_suspension_tests.rs"]
+mod local_suspension_tests;
 
 #[path = "language/graph_tests.rs"]
 mod graph_tests;

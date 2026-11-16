@@ -61,7 +61,7 @@ fn concurrent_blocks_reject_conflicting_captures_and_escaping_control_flow() {
         "fn bad() @suspends { let text = \"owned\"; join { { text }, { text } }; }",
         "fn bad() @suspends { var n = 0; let r = &mut n; join { { *r = 1 }, { *r = 2 } } }",
         "fn bad() @suspends { let n = 1; join { { &n } }; }",
-        "fn bad() @suspends { let n = 1; let view = &n; join { { let read = move || { *view }; read() } }; }",
+        "fn pause() @suspends {} fn bad() @suspends { let n = 1; let view = &n; join { { let read = move || { *view }; pause(); read() } }; }",
         "fn value() -> Int32 { 1 } fn bad() @suspends { race { { value } }; }",
         "fn bad() @suspends { while true { join { { break } } } }",
         "fn bad() @suspends { while true { race { { continue } } } }",

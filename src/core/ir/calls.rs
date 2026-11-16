@@ -214,7 +214,7 @@ impl FunctionPlan {
                 self.record_completion(arg, vars, functions, suspends, types)?;
             }
             return self
-                .borrow_local(arg, false, vars, suspends, arg.span())
+                .borrow_local(arg, false, vars, arg.span())
                 .map(|flow| (flow, true));
         }
         let Flow::Value(value) =
@@ -278,7 +278,6 @@ impl FunctionPlan {
             },
             false,
             &locals,
-            suspends,
             arg.span(),
         )
         .map(|flow| (flow, true))

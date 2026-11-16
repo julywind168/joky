@@ -622,6 +622,8 @@ pub(crate) struct FunctionPlan {
     pub(crate) nested: Vec<NestedTask>,
     pub(crate) result: Option<Slot>,
     pub slot_count: usize,
+    /// Whole-value restrictions survive scalar copies into loop-carried slots.
+    suspension_scoped_slots: std::collections::BTreeSet<usize>,
     /// Stable native storage, indexed by a local destination or cleanup value slot.
     pub cps_local_slots: HashMap<usize, usize>,
     pub state_count: u32,
@@ -1544,6 +1546,7 @@ impl FunctionPlan {
             nested: Vec::new(),
             result: None,
             slot_count: parameter_slots,
+            suspension_scoped_slots: Default::default(),
             cps_local_slots: HashMap::new(),
             state_count: 1,
             label_count: 0,
@@ -1972,6 +1975,13 @@ impl FunctionPlan {
             ty,
         };
         self.slot_count += width;
+        if borrowing::is_suspension_scoped(&slot.ty) {
+            self.suspension_scoped_slots.extend(
+                slot.scalars()
+                    .filter(|s| s.ty.reference_type().is_some() || s.ty.is_owner())
+                    .map(|s| s.index),
+            );
+        }
         if slot.ty.is_owner() || slot.ty.is_closure_value() || slot.ty.is_place() {
             self.local_scopes.last_mut().unwrap().push(slot.clone());
         }
@@ -2703,13 +2713,7 @@ impl FunctionPlan {
                     return self.unwrap_expr(expr, vars, functions, suspends, types, expected);
                 }
                 if matches!(op, UnaryOp::Borrow | UnaryOp::BorrowMut) {
-                    return self.borrow_local(
-                        operand,
-                        *op == UnaryOp::BorrowMut,
-                        vars,
-                        suspends,
-                        *span,
-                    );
+                    return self.borrow_local(operand, *op == UnaryOp::BorrowMut, vars, *span);
                 }
                 let Flow::Value(operand) =
                     self.expr_expected(operand, vars, functions, suspends, types, expected)?

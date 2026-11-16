@@ -38,6 +38,7 @@ mod instances;
 mod integers;
 mod interop;
 mod local_slices;
+mod local_suspension;
 mod members;
 mod narrow;
 mod ownership;
