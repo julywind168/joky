@@ -227,6 +227,11 @@ impl Instruction<'_> {
                         continue;
                     }
                     buffer_contents(state, arg)
+                } else if arg.ty.is_owner() {
+                    // Returned shared lanes cannot borrow a consumed owner's
+                    // identity. Only separately tracked stored references can
+                    // survive that owner, including beside another returned owner.
+                    continue;
                 } else {
                     state[&arg.index].clone()
                 };

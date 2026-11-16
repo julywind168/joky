@@ -2890,6 +2890,18 @@ fn closure_capabilities_preserve_storage_in_standalone_aot() {
 
 #[test]
 #[cfg(unix)]
+fn borrowed_owning_tuples_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    let source = include_str!("../fixtures/borrowed_owning_tuples.jk");
+    work.write(
+        "tuples.jk",
+        &format!("{source}\nfn main() @suspends {{ assert_eq(compute(), 42); assert_eq(pending(), 42) }}"),
+    );
+    work.assert_native("tuples.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
 fn closure_effect_context_infers_literals_and_keeps_nested_defaults() {
     let work = Workspace::new();
     work.write(

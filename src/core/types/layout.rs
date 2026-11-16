@@ -957,15 +957,13 @@ pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
         .flat_map(|ty| ty.buffer_elements().iter().cloned())
         .collect();
     if !owners.is_empty()
-        && elements
-            .iter()
-            .any(|ty| !ty.is_owner() && ty.contains_references())
-        && !Type::is_scoped_owning_pair(&elements)
+        && elements.iter().any(Type::contains_references)
+        && !Type::are_scoped_owning_tuple_elements(&elements)
     {
         return Err(error(
             ErrorCode::TypeMismatch,
             span,
-            "Additional elements of an owning tuple must be reference-free Copy data",
+            "Owning tuples require independent reference-free owners and Copy data or scoped shared borrows",
         ));
     }
     let ty = Type::Tuple(Arc::new(TupleType {

@@ -563,20 +563,24 @@ impl Type {
             || self.is_scoped_owning_tuple()
     }
 
-    /// A synchronous transition can return Copy borrow state alongside an independent owner.
-    pub(super) fn is_scoped_owning_pair(elements: &[Self]) -> bool {
-        let [state, item] = elements else {
-            return false;
-        };
-        state.is_aggregate()
-            && state.contains_references()
-            && state.is_copy_argument()
-            && state.scalar_types().iter().all(Self::is_scoped_shared_lane)
-            && item.is_suspend_safe_owner()
+    /// Local tuples can combine shared loans with independent, reference-free owners.
+    /// Inspect flattened lanes so order, arity and nested aggregates use one rule.
+    pub(super) fn are_scoped_owning_tuple_elements(elements: &[Self]) -> bool {
+        elements.iter().any(Self::is_owner)
+            && elements.iter().any(Self::contains_references)
+            && elements.iter().all(|ty| {
+                (ty.is_owner() || ty.is_copy_argument())
+                    && ty.scalar_types().iter().all(|lane| {
+                        lane.is_suspend_safe_owner()
+                            || lane.is_copy_argument() && lane.is_scoped_shared_lane()
+                            // Capture lanes are checked after specializing a Copy callback.
+                            || matches!(lane, Self::Parameter(p) if p.copy && p.callable.is_some())
+                    })
+            })
     }
 
     fn is_scoped_owning_tuple(&self) -> bool {
-        matches!(self, Self::Tuple(tuple) if Self::is_scoped_owning_pair(&tuple.elements))
+        matches!(self, Self::Tuple(tuple) if Self::are_scoped_owning_tuple_elements(&tuple.elements))
     }
 
     /// All underlying element types, including shallow nominal owner views.

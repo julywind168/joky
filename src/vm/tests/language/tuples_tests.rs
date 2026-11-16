@@ -5,6 +5,107 @@ use super::VmMode;
 use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
 use crate::{ErrorCode, FunctionSignature};
 
+const BORROWED_OWNERS: &str = include_str!("../../../../tests/fixtures/borrowed_owning_tuples.jk");
+
+#[test]
+fn borrowed_owning_tuples_execute_and_release_storage() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = super::VmEngine::with_mode(mode);
+        vm.load_source(BORROWED_OWNERS).unwrap_or_else(|error| {
+            panic!(
+                "{error} at {:?}",
+                error.span().and_then(|span| span.slice(BORROWED_OWNERS))
+            )
+        });
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 42, "{mode:?}");
+        assert!(vm
+            .call_unit_0("failed")
+            .unwrap_err()
+            .message()
+            .contains("borrowed tuple failure"));
+        crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+        let result =
+            crate::runtime::driver::block_on(vm.prepare_async("pending", &[]).unwrap()).unwrap();
+        assert_eq!(result, 42, "{mode:?}");
+        crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+        let mut completed = false;
+        for budget in (0..32_768).step_by(64) {
+            let previous = crate::runtime::arena::LIMIT.with(|limit| limit.replace(budget));
+            let result = vm.call_int32_0("compute");
+            crate::runtime::arena::LIMIT.with(|limit| limit.set(previous));
+            crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+            match result {
+                Ok(value) => {
+                    assert_eq!(value, 42);
+                    completed = true;
+                    break;
+                }
+                Err(error) => assert_eq!(error.code(), ErrorCode::ResourceLimit, "{error}"),
+            }
+        }
+        assert!(completed, "{mode:?}: allocation budget never completed");
+    }
+}
+
+#[test]
+fn borrowed_owning_tuples_reject_escape_aliasing_storage_and_suspension() {
+    for body in [
+        "fn bad() -> (String, &Int32) { let n = 42; (\"owned\", &n) }",
+        "fn bad() -> (String, &String) { let s = \"source\"; (\"owned\", &s) }",
+        "fn take(values: Array<&Int32>) -> &Int32 { values[0] } fn bad() -> &Int32 { let n = 42; take([&n]) }",
+        "fn take(values: Array<&Int32>) -> &Int32 { values[0] } fn bad() { var n = 42; let view = take([&n]); n = 43; assert_eq(*view, 42) }",
+        "fn bad() { var n = 42; let pair = (\"owned\", &n); n = 43; assert_eq(*pair.1, 42) }",
+        "fn bad() { let s = \"source\"; let pair = (s, &s) }",
+        "fn bad() { let s = \"source\"; let pair = (&s, s) }",
+        "fn bad() { var n = 42; let pair = (\"owned\", &mut n) }",
+        "fn bad() { let n = 42; let pair = (\"owned\", &n); let first = pair; let second = pair }",
+        "fn bad(pair: &(String, &Int32)) { let (owned, view) = pair }",
+        "fn bad() { let n = 42; let values = [(\"owned\", &n)] }",
+        "fn bad() { let n = 42; let value = alloc((\"owned\", &n)) }",
+        "fn bad() { let n = 42; let values = [&n]; let pair = (values, &n) }",
+        "fn bad() { let n = 42; let f = move || { n }; let pair = (&n, f) }",
+        "fn bad() @suspends { let n = 42; let pair = (\"owned\", &n); task.yield_now(); assert_eq(*pair.1, 42) }",
+        "fn bad() @suspends { let n = 42; let pair = (&n, \"owned\"); task.yield_now(); assert_eq(*pair.0, 42) }",
+        "fn bad() @suspends { let n = 42; let pair = ((\"owned\", &n), 1); task.yield_now(); assert_eq(*pair.0.1, 42) }",
+        "fn pass(value: (String, &Int32)) @suspends {} fn bad() { }",
+        "fn bad() @suspends { let n = 42; let values = join { (\"owned\", &n), 1 } }",
+    ] {
+        let source = format!("import joky/task\n{body}");
+        let error = frontend_error(&source, &crate::ModuleSources::new());
+        assert!(error.span().is_some(), "{source}: {error}");
+    }
+}
+
+fn borrowed_owning_tuple_cancellation(sweep: CancellationSweep) {
+    let mut vm = super::VmEngine::with_mode(VmMode::Interpreter);
+    vm.load_source(BORROWED_OWNERS).unwrap_or_else(|error| {
+        panic!(
+            "{error} at {:?}",
+            error.span().and_then(|span| span.slice(BORROWED_OWNERS))
+        )
+    });
+    assert_cancellation(
+        &mut vm,
+        "pending",
+        20_000,
+        sweep,
+        || {},
+        || crate::runtime::arena::LIVE.with(|live| live.get()),
+        || crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0)),
+    );
+}
+
+#[test]
+fn borrowed_owning_tuples_cancel_at_resource_boundaries() {
+    borrowed_owning_tuple_cancellation(CancellationSweep::ResourceBoundaries);
+}
+
+#[test]
+#[ignore = "exhaustive: cancel borrowed owning tuple transfers at every instruction"]
+fn exhaustive_borrowed_owning_tuples_cancel_every_instruction() {
+    borrowed_owning_tuple_cancellation(CancellationSweep::EveryInstruction);
+}
+
 #[test]
 fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
     let cases = [

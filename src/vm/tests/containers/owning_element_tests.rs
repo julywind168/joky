@@ -423,7 +423,7 @@ fn owning_tuples_reject_reuse_views_and_async_borrows() {
         "fn bad(pair: (Array<Int32>, Int32)) { let (a, _) = pair; a.release(); a.release() }",
         "fn inspect(pair: &(Array<Int32>, Int32)) -> Int32 { 42 } fn bad(pair: (Array<Int32>, Int32)) { let view = &pair; let (_, _) = pair; inspect(view); }",
         "fn bad(pair: &(Array<Int32>, Int32)) { let (a, _) = pair }",
-        "fn bad(a: Array<Int32>, r: &Int32) { let pair = (a, r) }",
+        "fn bad(a: Array<Int32>, r: &mut Int32) { let pair = (a, r) }",
         "fn bad(a: &Array<Int32>) { let pair = (a, 1); alloc(pair); }",
         "struct Hidden<T> { view: &(Option<T>, Int32) } fn bad() { let a = (Some(Array.new::<Int32>()), 1); alloc(Hidden { view: &a }); }",
         "type Hidden<T> = &(Option<T>, Int32) struct Stored<T> { value: Hidden<T> } fn bad() { let a = (Some(Array.new::<Int32>()), 1); alloc(Stored { value: &a }); }",

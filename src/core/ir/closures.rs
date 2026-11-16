@@ -1302,6 +1302,7 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
         let mut slots = vec![slot.clone()];
         let mut result = Vec::new();
         let mut seen = HashSet::new();
+        let mut seen_tuples = HashSet::new();
         while let Some(slot) = slots.pop() {
             *budget = budget.checked_sub(1).ok_or_else(|| {
                 type_error(
@@ -1323,6 +1324,18 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
                         .iter()
                         .map(|field| slot.field_path(std::slice::from_ref(&field.name))),
                 );
+            } else if let Type::Tuple(tuple) = &slot.ty {
+                if !seen_tuples.insert((slot.index, std::sync::Arc::as_ptr(tuple))) {
+                    continue;
+                }
+                let mut index = slot.index;
+                for ty in &tuple.elements {
+                    slots.push(Slot {
+                        index,
+                        ty: ty.clone(),
+                    });
+                    index += ty.scalar_types().len();
+                }
             }
         }
         Ok(result)
@@ -1413,9 +1426,17 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
                 live.extend(environments(dst, &mut budget, plan.span)?);
             }
             Op::Buffer(
-                BufferOp::Extract { dst, owner, .. } | BufferOp::Detach { dst, owner, .. },
+                BufferOp::Extract {
+                    dst,
+                    owner: consumed,
+                    ..
+                }
+                | BufferOp::Detach {
+                    dst, src: consumed, ..
+                },
             ) => {
-                for index in environments(owner, &mut budget, plan.span)? {
+                // Destructuring keeps the remaining fields live until End.
+                for index in environments(consumed, &mut budget, plan.span)? {
                     live.remove(&index);
                 }
                 live.extend(environments(dst, &mut budget, plan.span)?);
