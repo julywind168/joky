@@ -178,6 +178,21 @@ fn enum_constants_execute_in_native_code() {
 
 #[test]
 #[cfg(unix)]
+fn fixed_array_constants_execute_in_native_code() {
+    let work = Workspace::new();
+    work.write(
+        "main.jk",
+        include_str!("../fixtures/fixed_array_constants.jk"),
+    );
+    work.write(
+        "fixed_array_constants_values.jk",
+        include_str!("../fixtures/fixed_array_constants_values.jk"),
+    );
+    work.assert_native("main.jk", &[], b"", 42);
+}
+
+#[test]
+#[cfg(unix)]
 fn user_files_share_host_imports_including_aot() {
     let work = Workspace::new();
     work.write(

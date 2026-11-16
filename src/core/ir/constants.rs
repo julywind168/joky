@@ -3,6 +3,9 @@ use super::*;
 use crate::core::integer::IntegerOutcome;
 use std::rc::Rc;
 
+mod storage;
+use storage::{Data, StorageEvaluator};
+
 const MAX_STRING_BYTES: usize = 1024 * 1024;
 const MAX_TOTAL_STRING_BYTES: usize = 16 * MAX_STRING_BYTES;
 const MAX_EXPRESSION_STRING_BYTES: usize = MAX_TOTAL_STRING_BYTES;
@@ -14,19 +17,12 @@ const MAX_TOTAL_VALUE_NODES: usize = 65536;
 /// expression to recheck in the consumer's namespace or field visibility scope.
 pub(super) struct Value {
     ty: Type,
-    // Includes enum tags and inactive payload lanes; inactive String lanes are NullPtr.
-    lanes: Vec<Constant>,
+    data: Data,
 }
 
 impl Value {
     fn string_bytes(&self) -> usize {
-        self.lanes
-            .iter()
-            .map(|value| match value {
-                Constant::String(text) => text.len(),
-                _ => 0,
-            })
-            .sum()
+        self.data.string_bytes()
     }
 
     pub(super) fn materialize(&self, plan: &mut FunctionPlan) -> Result<Flow, Error> {
@@ -34,7 +30,11 @@ impl Value {
             return Ok(Flow::Value(None));
         }
         let slot = plan.slot(self.ty.clone())?;
-        for (dst, value) in slot.scalars().zip(&self.lanes) {
+        let Data::Scalars(lanes) = &self.data else {
+            self.data.materialize_storage(plan, &slot)?;
+            return Ok(Flow::Value(Some(slot)));
+        };
+        for (dst, value) in slot.scalars().zip(lanes) {
             if let Constant::String(text) = value {
                 // Follow ordinary record construction: each text allocation
                 // has a registered temporary before it joins the aggregate.
@@ -88,6 +88,17 @@ fn value_nodes(ty: &Type, span: Span) -> Result<usize, Error> {
         match ty {
             Type::Record(record) => pending.extend(record.fields.iter().map(|field| &field.ty)),
             Type::Tuple(tuple) => pending.extend(&tuple.elements),
+            Type::FixedArray(array) | Type::FixedArrayInit(array) => {
+                let length = ty.fixed_length() as usize;
+                if length > MAX_VALUE_NODES - nodes {
+                    return Err(type_error(
+                        &span,
+                        ErrorCode::ResourceLimit,
+                        "Constant aggregate values are limited to 4096 components",
+                    ));
+                }
+                pending.extend(std::iter::repeat_n(&array.element, length));
+            }
             Type::Enum(enumeration) => pending.extend(
                 enumeration
                     .variants
@@ -249,7 +260,7 @@ pub(super) fn validate_all(
                 }
                 if matches!(
                     constant.declaration.ty,
-                    Type::Tuple(_) | Type::Record(_) | Type::Enum(_)
+                    Type::Tuple(_) | Type::Record(_) | Type::Enum(_) | Type::FixedArray(_)
                 ) {
                     let nodes = value_nodes(&constant.declaration.ty, constant.declaration.span)?;
                     if nodes > MAX_TOTAL_VALUE_NODES - aggregate_nodes {
@@ -359,7 +370,11 @@ fn evaluate(
     let local = types.with_parameters(&constant.parameters)?;
     let plan = FunctionPlan::new(&definition, functions, &local, nominals, generics, 0)?;
     let mut slots: Vec<Option<Constant>> = vec![None; plan.slot_count];
+    let mut storage = StorageEvaluator::default();
     for (op, span) in plan.ops.iter_spanned() {
+        if storage.execute(op, &mut slots, *span)? {
+            continue;
+        }
         match op {
             Op::Cleanup(CleanupOp::Register { .. }) => continue,
             Op::Buffer(
@@ -412,15 +427,20 @@ fn evaluate(
         };
         slots[dst.index] = Some(value);
     }
-    let lanes = plan
-        .result
-        .iter()
-        .flat_map(Slot::scalars)
-        .map(|slot| slots[slot.index].take().expect("evaluated constant lane"))
-        .collect();
+    let data = if declaration.ty.is_place() {
+        storage.result(plan.result.as_ref().expect("constant storage result"))
+    } else {
+        Data::Scalars(
+            plan.result
+                .iter()
+                .flat_map(Slot::scalars)
+                .map(|slot| slots[slot.index].take().expect("evaluated constant lane"))
+                .collect(),
+        )
+    };
     Ok(Value {
         ty: declaration.ty.clone(),
-        lanes,
+        data,
     })
 }
 
@@ -467,7 +487,7 @@ fn validate_expression<'a>(
             // checked for existence and visibility by the dependency scan.
             Expr::Ident { .. } | Expr::GenericName(_) => {},
             Expr::Field { base, type_args, .. } if type_args.is_empty() => pending.push((base, false)),
-            Expr::Tuple { elements, .. } if !string => pending.extend(elements.iter().map(|expr| (expr, false))),
+            Expr::Array { elements, .. } | Expr::Tuple { elements, .. } if !string => pending.extend(elements.iter().map(|expr| (expr, false))),
             Expr::Record { .. } if !string => pending.extend(expr.children().into_iter().map(|expr| (expr, false))),
             Expr::Block { exprs, .. } if !string && exprs.is_empty() => {},
             Expr::Unary { operand, .. } if !string => pending.push((operand, false)),
@@ -475,7 +495,7 @@ fn validate_expression<'a>(
             Expr::BinaryChain { rest, .. } if !string => { count += rest.len().saturating_sub(1); pending.extend(expr.children().into_iter().map(|expr| (expr, false))); },
             Expr::Call { callee, args, .. } if !string && (IntegerType::conversion(callee).is_some() || matches!(callee.as_str(), "float32" | "float64")) => pending.extend(args.iter().map(|expr| (expr, false))),
             _ if string => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "String constants require a string literal, a string constant reference or an aggregate field read")),
-            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, string literals, tuple/record/enum construction and field reads, module and associated constants, integer conversions and unary/binary operators")),
+            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, string literals, tuple/record/enum/FixedArray construction and field reads, module and associated constants, integer conversions and unary/binary operators")),
         }
     }
     Ok(string_bytes)

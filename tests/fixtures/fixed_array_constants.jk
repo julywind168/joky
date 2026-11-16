@@ -1,0 +1,144 @@
+import fixed_array_constants_values as cfg.{DEFAULT as IMPORTED, type Settings as Config}
+import joky/fixed_array.{type FixedArray}
+import joky/task
+
+struct Settings { unrelated: Bool }
+const FORWARD: Config = Local.DEFAULT
+struct Local {}
+impl Local {
+    const DEFAULT: Config = IMPORTED
+    const NUMBERS: FixedArray<Int32, 3> = [19, 23, 7]
+}
+const NUMBERS: FixedArray<Int32, 3> = Local.NUMBERS
+const NAMES: FixedArray<String, 2> = FORWARD.names
+const COUNT: Int32 = FORWARD.count
+const PAIR: (FixedArray<Int32, 3>, String) = (NUMBERS, "selected")
+const SELECTED: String = PAIR.1
+const EMPTY: FixedArray<String, 0> = []
+const UNITS: FixedArray<Unit, 2> = [{}, {}]
+const TINY: FixedArray<UInt8, 3> = [1, 255, 42]
+const FLOATS: FixedArray<Float64, 2> = [1.5, 2.5]
+enum Item { Empty, Text(String), Numbers(FixedArray<Int32, 3>), Nested(Option<Config>) }
+const ITEMS: FixedArray<Item, 4> = [
+    Item.Empty,
+    Item.Text("item"),
+    Item.Numbers(NUMBERS),
+    Item.Nested(Some(FORWARD))
+]
+const OPTIONAL: Option<FixedArray<String, 2>> = Some(NAMES)
+const ABSENT: Option<FixedArray<String, 2>> = None
+const MATRIX: FixedArray<FixedArray<String, 1>, 2> = [["left"], ["right"]]
+struct Holder<const N: UInt64> {}
+impl<const N: UInt64> Holder<N> {
+    const FIXED: FixedArray<String, 2> = ["fixed", "length"]
+}
+const GENERIC: FixedArray<String, 2> = Holder::<99>.FIXED
+
+fn make() -> Config {
+    FORWARD
+}
+
+fn consume(items: FixedArray<Item, 4>) -> Int32 {
+    let [empty, text, numbers, nested] = items
+    match empty {
+        Item.Empty => {},
+        _ => return 1
+    }
+    match text {
+        Item.Text(value) => if value != "item" {
+            return 2
+        },
+        _ => return 3
+    }
+    match numbers {
+        Item.Numbers(values) => if values[0] + values[1] != 42 {
+            return 4
+        },
+        _ => return 5
+    }
+    match nested {
+        Item.Nested(Some(config)) => config.check()
+        _ => 6
+    }
+}
+
+fn check() -> Int32 {
+    var first = NUMBERS
+    let second = NUMBERS
+    first[0] = 100
+    if second[0] + second[1] != 42 || first[0] != 100 || Local.NUMBERS[0] != 19 || cfg
+        .DEFAULT
+        .matrix[1][1] != 23 {
+        return 1
+    }
+    let config = make()
+    if config.check() != 42 {
+        return 2
+    }
+    config.release()
+    let a = NAMES
+    let [first_name, second_name] = a
+    first_name.release()
+    second_name.release()
+    let [name, tail] = NAMES
+    if name != "é中🙂\0" || tail != "second" {
+        return 3
+    }
+    let updated = cfg.UPDATED
+    if updated.check() != 42 || updated.names[0] != "updated" || updated.names[1] != "tail" {
+        return 4
+    }
+    updated.release()
+    if consume(ITEMS) != 42 {
+        return 5
+    }
+    match OPTIONAL {
+        Some(values) => {
+            let [head, tail] = values
+            if head != "é中🙂\0" || tail != "second" {
+                return 6
+            }
+        }
+        None => return 7
+    }
+    match ABSENT {
+        None => {},
+        Some(_) => return 8
+    }
+    let [[left], [right]] = MATRIX
+    if left != "left" || right != "right" || SELECTED != "selected" || COUNT != 42 {
+        return 9
+    }
+    let [fixed, length] = GENERIC
+    if fixed != "fixed" || length != "length" {
+        return 10
+    }
+    let empty = EMPTY
+    if !empty.is_empty() || UNITS.len() != 2 || TINY[2] != 42 || FLOATS[0] + FLOATS[1] != 4.0 {
+        return 11
+    }
+    42
+}
+
+fn pending() @suspends -> Int32 {
+    let first = FORWARD
+    let second = ITEMS
+    task.yield_now()
+    if first.check() != 42 {
+        return 1
+    }
+    first.release()
+    consume(second)
+}
+
+fn construction() @suspends -> Int32 {
+    let value = cfg.UPDATED
+    value.check()
+}
+
+fn main() @suspends -> Int32 {
+    if check() != 42 {
+        return 1
+    }
+    pending()
+}

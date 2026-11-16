@@ -58,7 +58,7 @@ impl ConstantOwner {
 }
 
 /// Constants hold fixed scalar/string templates and aggregates, never runtime references.
-fn constant_type_supported(ty: &Type) -> bool {
+pub(super) fn constant_type_supported(ty: &Type) -> bool {
     use crate::core::types::{
         walk::{TypeEdges, TypeWalk},
         ConstArgument, GenericArgument,
@@ -83,6 +83,7 @@ fn constant_type_supported(ty: &Type) -> bool {
                     | Type::String
                     | Type::Tuple(_)
                     | Type::Enum(_)
+                    | Type::FixedArray(_)
             )
             || matches!(node, Type::Record(record) if record.closure.is_none())
     })
@@ -247,7 +248,7 @@ impl Members {
                     return Err(type_error(
                         &declaration.span,
                         ErrorCode::TypeMismatch,
-                        "Associated constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record/enum type",
+                        "Associated constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record/enum/FixedArray type",
                     ));
                 }
                 let key = members.scoped_key(
@@ -276,7 +277,7 @@ impl Members {
                 return Err(type_error(
                     &declaration.span,
                     ErrorCode::TypeMismatch,
-                    "Module constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record/enum type",
+                    "Module constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record/enum/FixedArray type",
                 ));
             }
             // The entry module has no canonical path, and its constants are

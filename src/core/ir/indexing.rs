@@ -69,15 +69,16 @@ impl FunctionPlan {
             .is_some_and(|ty| ty.reference_type().is_some())
         {
             self.expr(base, vars, functions, suspends, types)?
-        } else if matches!(
-            base_place,
-            Expr::Ident { .. }
-                | Expr::Index { .. }
-                | Expr::Unary {
-                    op: UnaryOp::Deref,
-                    ..
-                }
-        ) {
+        } else if matches!(base_place, Expr::Ident { name, .. } if vars.contains_key(name))
+            || matches!(
+                base_place,
+                Expr::Index { .. }
+                    | Expr::Unary {
+                        op: UnaryOp::Deref,
+                        ..
+                    }
+            )
+        {
             self.expr(
                 &Expr::Unary {
                     op: if mutable {

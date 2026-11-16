@@ -280,6 +280,8 @@ mod loops_tests;
 mod aggregate_constant_tests;
 #[path = "language/enum_constant_tests.rs"]
 mod enum_constant_tests;
+#[path = "language/fixed_array_constant_tests.rs"]
+mod fixed_array_constant_tests;
 #[path = "language/method_tests.rs"]
 mod method_tests;
 #[path = "language/owning_constant_tests.rs"]

@@ -1,0 +1,26 @@
+import joky/fixed_array.{type FixedArray}
+
+pub struct Settings {
+    pub names: FixedArray<String, 2>,
+    pub matrix: FixedArray<FixedArray<Int32, 2>, 2>,
+    secret: String,
+    pub count: Int32
+}
+const BASE: Settings = Settings {
+    names: ["é中🙂\0", "second"],
+    matrix: [[1, 2], [19, 23]],
+    secret: "private",
+    count: 42
+}
+pub const DEFAULT: Settings = Settings.DEFAULT
+pub const UPDATED: Settings = Settings { names: ["updated", "tail"], .. DEFAULT }
+impl Settings {
+    pub const DEFAULT: Self = BASE
+    pub fn check(&self) -> Int32 {
+        if self.secret != "private" || self.matrix[1][0] + self.matrix[1][1] != 42 {
+            return 1
+        }
+        self.count
+    }
+    pub fn release(self) {}
+}

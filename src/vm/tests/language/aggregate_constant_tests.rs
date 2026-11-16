@@ -54,7 +54,7 @@ fn aggregate_constants_reject_other_owners_symbolic_types_and_invalid_initialize
         ("import joky/array.{type Array} struct S { values: Array<Int32> } struct P { s: S } const BAD: P = P { s: S { values: Array.new::<Int32>() } }", ErrorCode::TypeMismatch, "constants require"),
         ("const BAD: (Int32, &Int32) = (1, &1)", ErrorCode::TypeMismatch, "constants require"),
         ("struct P { p: Ptr } const BAD: P = P { p: Ptr.null() }", ErrorCode::TypeMismatch, "constants require"),
-        ("import joky/fixed_array.{type FixedArray} const BAD: FixedArray<Int32, 2> = [1, 2]", ErrorCode::TypeMismatch, "constants require"),
+        ("import joky/fixed_array.{type FixedArray} import joky/array.{type Array} const BAD: FixedArray<Array<Int32>, 0> = []", ErrorCode::TypeMismatch, "constants require"),
         ("import joky/fixed_array.{type FixedArray} struct Marker<T> {} struct P<const N: UInt64> {} impl<const N: UInt64> P<N> { const BAD: Marker<FixedArray<Int32, N>> = Marker {} }", ErrorCode::TypeMismatch, "constants require"),
         ("enum E { A, Ref(&Int32) } const BAD: (E, Int32) = (E.A, 1)", ErrorCode::TypeMismatch, "constants require"),
         ("struct P<T> { x: T } impl<T> P<T> { const BAD: P<T> = P { x: 1 } }", ErrorCode::TypeMismatch, "constants require"),
