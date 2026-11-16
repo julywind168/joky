@@ -1,0 +1,86 @@
+import string_constants_values as cfg.{NAME as TITLE, type Label as Names, type Text}
+import joky/task
+
+const SECRET: String = "caller scope"
+const FORWARD: Text = Local.VALUE
+const EMPTY: String = ""
+const RAW: String = r#"{"key":"value"}"#
+const MULTILINE: String = """
+    first
+    second
+    """
+struct Local {}
+impl Local {
+    const VALUE: Text = TITLE
+}
+struct Generic<T> { value: T }
+impl<T> Generic<T> {
+    const VALUE: String = FORWARD
+}
+
+fn owned() -> String {
+    FORWARD
+}
+
+fn generic<T>(value: T) -> String {
+    Generic::<T>.VALUE
+}
+
+fn check() -> Int32 {
+    let first = TITLE
+    let second = cfg.NAME
+    first.release()
+    if second.byte_length() != 10 || second.rune_count() != 4 {
+        return 1
+    }
+    if second != Names.VALUE || second != owned() {
+        return 2
+    }
+    second.release()
+    if Generic::<Int32>.VALUE != generic(true) {
+        return 3
+    }
+    if EMPTY.byte_length() != 0 {
+        return 4
+    }
+    if RAW != "{{\"key\":\"value\"}}" {
+        return 5
+    }
+    if MULTILINE != "first\nsecond" {
+        return 6
+    }
+    if TITLE != "é中🙂\0" {
+        return 7
+    }
+    let bytes = Local.VALUE.into_bytes()
+    if bytes.get(9).unwrap_or(1) != 0 {
+        return 8
+    }
+    let TITLE = "shadow"
+    if TITLE.byte_length() != 6 || cfg.NAME.byte_length() != 10 {
+        return 9
+    }
+    if cfg.Label.VALUE.byte_length() != 10 {
+        return 10
+    }
+    42
+}
+
+fn pending() @suspends -> Int32 {
+    let first = TITLE
+    let second = Local.VALUE
+    task.yield_now()
+    first.release()
+    if second == TITLE {
+        42
+    } else {
+        0
+    }
+}
+
+fn main() @suspends -> Int32 {
+    if check() != 42 {
+        return 1
+    }
+    pending()
+}

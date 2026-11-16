@@ -110,16 +110,16 @@ fn module_constants_cover_every_scalar_kind() {
 #[test]
 fn module_constant_expressions_reject_unsupported_forms() {
     // The initializer whitelist is the associated-constant one: no calls, no
-    // locals, no control flow, and no non-scalar types.
+    // locals, no control flow, and no runtime aggregates.
     reject(
         "const A: Int32 = 1 fn helper() -> Int32 { 1 } const B: Int32 = helper()",
         ErrorCode::InvalidState,
         "Constants allow scalar literals",
     );
     reject(
-        "const A: String = \"x\" ",
+        "struct P {} const A: P = P {}",
         ErrorCode::TypeMismatch,
-        "integer, float, Rune or Bool",
+        "integer, float, Rune, Bool or String",
     );
     // A bare function name is not a constant binding.
     reject(

@@ -1,7 +1,24 @@
-//! Bounded scalar constant evaluation after ordinary IR type checking.
+//! Bounded constant evaluation after ordinary IR type checking.
 use super::*;
 use crate::core::integer::IntegerOutcome;
 use std::rc::Rc;
+
+const MAX_STRING_BYTES: usize = 1024 * 1024;
+const MAX_TOTAL_STRING_BYTES: usize = 16 * MAX_STRING_BYTES;
+
+/// An evaluated compile-time value, with no runtime storage or source location.
+/// Materializing a string uses ordinary literal lowering at the read site, so
+/// every read owns its payload and charges the executing task's budget.
+pub(super) struct Value(Literal);
+
+impl Value {
+    pub(super) fn expression(&self, span: Span) -> Expr {
+        Expr::Literal {
+            literal: self.0.clone(),
+            span,
+        }
+    }
+}
 
 pub(super) fn validate_all(
     members: &Rc<members::Members>,
@@ -19,7 +36,10 @@ pub(super) fn validate_all(
         .collect();
     let mut edges = vec![Vec::new(); members.constants.len()];
     for (index, constant) in members.constants.iter().enumerate() {
-        validate_expression(&constant.declaration.value)?;
+        validate_expression(
+            &constant.declaration.value,
+            constant.declaration.ty == Type::String,
+        )?;
         let context = constant.declaration.scope.as_ref();
         let imports = context.map_or_else(
             || generics.borrow().scope.clone(),
@@ -115,6 +135,7 @@ pub(super) fn validate_all(
     }
     let mut state = vec![0; members.constants.len()];
     let mut depths = vec![0usize; members.constants.len()];
+    let mut string_bytes = 0;
     for root in 0..members.constants.len() {
         let mut pending = vec![(root, false)];
         while let Some((index, exit)) = pending.pop() {
@@ -129,6 +150,18 @@ pub(super) fn validate_all(
                     ));
                 }
                 let value = evaluate(constant, functions, types, nominals, generics.clone())?;
+                if let Literal::String(text) = &value.0 {
+                    // Count each evaluated declaration, including aliases, once
+                    // across the entire compilation (entry and imported modules).
+                    if text.len() > MAX_TOTAL_STRING_BYTES - string_bytes {
+                        return Err(type_error(
+                            &constant.declaration.span,
+                            ErrorCode::ResourceLimit,
+                            "Evaluated string constants exceed 16 MiB in total",
+                        ));
+                    }
+                    string_bytes += text.len();
+                }
                 *constant.value.borrow_mut() = Some(value);
                 state[index] = 2;
             } else if state[index] != 2 {
@@ -162,7 +195,7 @@ fn evaluate(
     types: &TypeRegistry,
     nominals: &Arc<HashMap<String, Type>>,
     generics: Rc<std::cell::RefCell<generics::GenericContext>>,
-) -> Result<Expr, Error> {
+) -> Result<Value, Error> {
     let declaration = &constant.declaration;
     let name = format!("{}.<const:{}>", constant.key, declaration.name);
     let definition = FnDef {
@@ -182,10 +215,32 @@ fn evaluate(
         body: declaration.value.clone(),
         span: declaration.span,
     };
-    // Scalar constant bodies have no parameters or callable identity. The planner
+    // Constant bodies have no parameters or callable identity. The planner
     // derives their slots from the declaration without registering a synthetic entry.
     let local = types.with_parameters(&constant.parameters)?;
     let plan = FunctionPlan::new(&definition, functions, &local, nominals, generics, 0)?;
+    if declaration.ty == Type::String {
+        // Syntax validation restricts this body to a literal or a constant read.
+        // Planning checks the usual type, visibility and generic bounds, and
+        // expands reads to a single literal. Extract its bytes without executing
+        // the allocation, return transfer or cleanup operations in the plan.
+        let text = plan.ops.iter_spanned().find_map(|(op, _)| match op {
+            Op::Text {
+                source: TextSource::Literal(text),
+                ..
+            } => Some(text.clone()),
+            _ => None,
+        });
+        return text
+            .map(|text| Value(Literal::String(text)))
+            .ok_or_else(|| {
+                type_error(
+                    &declaration.span,
+                    ErrorCode::InvalidState,
+                    "String constants require a string literal or a string constant reference",
+                )
+            });
+    }
     let mut slots: Vec<Option<Constant>> = vec![None; plan.slot_count];
     for (op, span) in plan.ops.iter_spanned() {
         let (dst, value) = match op {
@@ -228,13 +283,10 @@ fn evaluate(
         Constant::Bool(n) => Literal::Bool(n),
         Constant::String(_) | Constant::NullPtr => unreachable!(),
     };
-    Ok(Expr::Literal {
-        literal,
-        span: declaration.span,
-    })
+    Ok(Value(literal))
 }
 
-fn validate_expression(expr: &Expr) -> Result<(), Error> {
+fn validate_expression(expr: &Expr, string: bool) -> Result<(), Error> {
     let mut pending = vec![expr];
     let mut count = 0;
     while let Some(expr) = pending.pop() {
@@ -248,16 +300,22 @@ fn validate_expression(expr: &Expr) -> Result<(), Error> {
         }
         match expr {
             Expr::Literal { literal: Literal::ConstParameter(_), .. } => return Err(type_error(&expr.span(),ErrorCode::TypeMismatch,"Associated constants cannot depend on const parameters; return the value from a method")),
+            Expr::Literal { literal: Literal::String(text), span } if string => {
+                if text.len() > MAX_STRING_BYTES {
+                    return Err(type_error(span, ErrorCode::ResourceLimit, "String constants are limited to 1 MiB of UTF-8 bytes each"));
+                }
+            },
             Expr::Literal { literal, .. } if !matches!(literal, Literal::String(_)) => {},
             // A bare name is a module constant reference, and a dotted path is
             // either a module constant or an associated constant. Both are
             // checked for existence and visibility by the dependency scan.
             Expr::Ident { .. } | Expr::GenericName(_) => {},
             Expr::Field { base, type_args, .. } if type_args.is_empty() && expression_path(base).is_some() => {},
-            Expr::Unary { operand, .. } => pending.push(operand),
-            Expr::BinOp { lhs, rhs, .. } => { pending.push(lhs); pending.push(rhs); },
-            Expr::BinaryChain { rest, .. } => { count += rest.len().saturating_sub(1); pending.extend(expr.children()); },
-            Expr::Call { callee, args, .. } if (IntegerType::conversion(callee).is_some() || matches!(callee.as_str(), "float32" | "float64")) => pending.extend(args),
+            Expr::Unary { operand, .. } if !string => pending.push(operand),
+            Expr::BinOp { lhs, rhs, .. } if !string => { pending.push(lhs); pending.push(rhs); },
+            Expr::BinaryChain { rest, .. } if !string => { count += rest.len().saturating_sub(1); pending.extend(expr.children()); },
+            Expr::Call { callee, args, .. } if !string && (IntegerType::conversion(callee).is_some() || matches!(callee.as_str(), "float32" | "float64")) => pending.extend(args),
+            _ if string => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "String constants require a string literal or a string constant reference")),
             _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, module and associated constants, integer conversions and unary/binary operators")),
         }
     }

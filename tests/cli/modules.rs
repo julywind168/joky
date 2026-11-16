@@ -127,6 +127,18 @@ fn user_file_runtime_trace_and_output_protection_cover_dependencies() {
 
 #[test]
 #[cfg(unix)]
+fn string_constants_execute_in_native_code() {
+    let work = Workspace::new();
+    work.write("main.jk", include_str!("../fixtures/string_constants.jk"));
+    work.write(
+        "string_constants_values.jk",
+        include_str!("../fixtures/string_constants_values.jk"),
+    );
+    work.assert_native("main.jk", &[], b"", 42);
+}
+
+#[test]
+#[cfg(unix)]
 fn user_files_share_host_imports_including_aot() {
     let work = Workspace::new();
     work.write(

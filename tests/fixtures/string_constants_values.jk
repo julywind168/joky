@@ -1,0 +1,8 @@
+pub type Text = String
+pub const NAME: Text = Label.VALUE
+const SECRET: Text = "é中🙂\0"
+pub struct Label {}
+impl Label {
+    pub const VALUE: Text = SECRET
+    const PRIVATE: Text = "private"
+}

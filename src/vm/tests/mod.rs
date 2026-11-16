@@ -278,6 +278,8 @@ mod loops_tests;
 
 #[path = "language/method_tests.rs"]
 mod method_tests;
+#[path = "language/string_constant_tests.rs"]
+mod string_constant_tests;
 
 #[path = "language/multi_owner_tests.rs"]
 mod multi_owner_tests;

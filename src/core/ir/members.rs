@@ -32,7 +32,7 @@ pub(super) struct ConstMember {
     pub owner: ConstantOwner,
     pub parameters: Vec<Arc<crate::core::types::TypeParameter>>,
     pub declaration: AssociatedConst,
-    pub value: RefCell<Option<Expr>>,
+    pub value: RefCell<Option<constants::Value>>,
 }
 
 impl ConstantOwner {
@@ -57,12 +57,9 @@ impl ConstantOwner {
     }
 }
 
-/// Scalars a constant may hold: the eight integers, both floats, Rune and Bool.
-/// Structs, strings, references, pointers and aggregates stay out of the first
-/// version, and Rune keeps its Unicode-scalar checking through the ordinary
-/// literal rules rather than opening arbitrary integers.
+/// Constants hold scalars or string templates, never runtime owners or references.
 fn constant_type_supported(ty: &Type) -> bool {
-    ty.is_numeric() || matches!(ty, Type::Rune | Type::Bool)
+    ty.is_numeric() || matches!(ty, Type::Rune | Type::Bool | Type::String)
 }
 
 pub(super) fn owner_name(ty: &Type) -> String {
@@ -220,11 +217,11 @@ impl Members {
                 module.items.push(Item::FnDef(definition));
             }
             for declaration in &implementation.constants {
-                if !declaration.ty.is_numeric() && declaration.ty != Type::Bool {
+                if !constant_type_supported(&declaration.ty) {
                     return Err(type_error(
                         &declaration.span,
                         ErrorCode::TypeMismatch,
-                        "Associated constants currently require a numeric or Bool type",
+                        "Associated constants require an integer, float, Rune, Bool or String type",
                     ));
                 }
                 let key = members.scoped_key(
@@ -253,7 +250,7 @@ impl Members {
                 return Err(type_error(
                     &declaration.span,
                     ErrorCode::TypeMismatch,
-                    "Module constants require an integer, float, Rune or Bool type",
+                    "Module constants require an integer, float, Rune, Bool or String type",
                 ));
             }
             // The entry module has no canonical path, and its constants are
@@ -809,11 +806,6 @@ impl FunctionPlan {
                     );
                 }
                 let root = path.split('.').next().unwrap();
-                if !vars.contains_key(root)
-                    && (!path.contains('.') || !self.source_nominals().contains_key(root))
-                {
-                    return Ok(None);
-                }
                 let mut segments = path.split('.');
                 let mut receiver = Expr::Ident {
                     name: segments.next().unwrap().into(),
@@ -826,6 +818,13 @@ impl FunctionPlan {
                         type_args: Vec::new(),
                         span: *span,
                     };
+                }
+                if !vars.contains_key(root)
+                    && (!path.contains('.') || !self.source_nominals().contains_key(root))
+                    && self.module_constant_key(path, vars, types).is_none()
+                    && self.associated_constant(&receiver, vars, types)?.is_none()
+                {
+                    return Ok(None);
                 }
                 return self.member_call(
                     &Expr::MethodCall(Box::new(crate::parser::ast::MethodCall {
@@ -1203,13 +1202,18 @@ impl FunctionPlan {
         let Some(constant) = constant else {
             return Ok(None);
         };
-        let value = constant.value.borrow().clone().ok_or_else(|| {
-            type_error(
-                &constant.declaration.span,
-                ErrorCode::InvalidState,
-                "Constant dependency has not been evaluated",
-            )
-        })?;
+        let value = constant
+            .value
+            .borrow()
+            .as_ref()
+            .map(|value| value.expression(self.current_span))
+            .ok_or_else(|| {
+                type_error(
+                    &constant.declaration.span,
+                    ErrorCode::InvalidState,
+                    "Constant dependency has not been evaluated",
+                )
+            })?;
         self.expr(&value, vars, functions, suspends, types)
             .map(Some)
     }
@@ -1229,21 +1233,20 @@ impl FunctionPlan {
                 .map(Some);
         }
         if let Some(constant) = self.associated_constant(expr, vars, types)? {
-            let value = constant.value.borrow().clone().ok_or_else(|| {
-                type_error(
-                    &constant.declaration.span,
-                    ErrorCode::InvalidState,
-                    "Constant dependency has not been evaluated",
-                )
-            })?;
+            let value = constant
+                .value
+                .borrow()
+                .as_ref()
+                .map(|value| value.expression(expr.span()))
+                .ok_or_else(|| {
+                    type_error(
+                        &constant.declaration.span,
+                        ErrorCode::InvalidState,
+                        "Constant dependency has not been evaluated",
+                    )
+                })?;
             return self
-                .expr(
-                    &value.with_span(expr.span()),
-                    vars,
-                    functions,
-                    suspends,
-                    types,
-                )
+                .expr(&value, vars, functions, suspends, types)
                 .map(Some);
         }
         // Module constants occupy the value namespace, so they follow member
