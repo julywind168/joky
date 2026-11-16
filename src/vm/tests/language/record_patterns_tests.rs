@@ -152,7 +152,7 @@ fn record_patterns_enforce_field_visibility_across_modules() {
 }
 
 #[test]
-fn record_patterns_reject_mut_and_borrowed_suspension() {
+fn record_patterns_preserve_ownership_and_reject_exclusive_destructuring() {
     let prefix = r#"
         import joky/array.{type Array}
         extern fn record_drop(value: Int32)
@@ -173,10 +173,6 @@ fn record_patterns_reject_mut_and_borrowed_suspension() {
         (
             "fn good2() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 }; let Holder { left, .. } = r; left.id }",
             "unused",
-        ),
-        (
-            "fn bad() @suspends -> Int32 { let p = Point { x: 1, y: 2 }; let Point { x, .. } = &p; x }",
-            "synchronous function",
         ),
         (
             "fn bad() -> Int32 { var p = Point { x: 1, y: 2 }; let view = &mut p; let Point { x, .. } = view; x }",

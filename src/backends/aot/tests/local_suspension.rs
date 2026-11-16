@@ -17,6 +17,9 @@ fn local_suspension_segments_execute_in_standalone_aot() {
         "local_control_flow",
         "local_pipelines",
         "local_without_suspension",
+        "local_borrowed_records",
+        "borrowed_record_views",
+        "borrowed_sequence_views",
     ] {
         declarations.push_str(&format!("int32_t {name}(JokyCpsFrame *);\n"));
         let slots = compiler.cps_frame_slots(name).unwrap();

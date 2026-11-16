@@ -115,7 +115,7 @@ impl FunctionPlan {
                         ));
                     }
                 }
-                self.destructure_binding(pattern, *mutable, value, suspends, types, vars)?;
+                self.destructure_binding(pattern, *mutable, value, types, vars)?;
                 Ok(Flow::Value(None))
             }
             _ => unreachable!(),

@@ -567,7 +567,6 @@ impl FunctionPlan {
         pattern: &BindingPattern,
         mutable: bool,
         value: Option<Slot>,
-        suspends: bool,
         types: &TypeRegistry,
         vars: &mut HashMap<String, Binding>,
     ) -> Result<(), Error> {
@@ -600,13 +599,8 @@ impl FunctionPlan {
                     "Exclusive references cannot be destructured; use a shared reference",
                 ));
             }
-            if suspends {
-                return Err(type_error(
-                    &pattern.span(),
-                    ErrorCode::InvalidCall,
-                    "Borrowed record destructuring requires a synchronous function",
-                ));
-            }
+            // Shared projections use the same loan and suspension-boundary
+            // checks as ordinary field access.
             return self.bind_shared_binding(pattern, reference, types, mutable, vars);
         }
         let mut names = HashSet::new();

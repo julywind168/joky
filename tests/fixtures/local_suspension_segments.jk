@@ -1,5 +1,12 @@
 import joky/iter
 import joky/task
+import joky/fixed_array.{type FixedArray}
+
+struct PatternPoint { x: Int32, y: Int32 }
+struct PatternBox<T> { value: T }
+struct PatternLeaf { value: Int32, text: String }
+struct PatternRoot { leaf: PatternLeaf, ignored: String }
+struct PatternBatch { values: FixedArray<Int32, 2> }
 
 fn apply<F: Fn() -> Int32>(operation: F) -> Int32 { operation() }
 
@@ -95,5 +102,48 @@ fn local_without_suspension() @suspends -> Int32 {
     let number = alloc(42)
     let values = [&*number]
     let read = || { *values[0] }
-    read()
+    let point = PatternPoint { x: read(), y: 0 }
+    let PatternPoint { x, .. } = &point
+    x
+}
+
+fn local_borrowed_records() @suspends -> Int32 {
+    let first = {
+        let cell = alloc(21)
+        let wrapped = PatternBox { value: [&*cell] }
+        let PatternBox { value: values } = &wrapped
+        *values[0]
+    }
+    task.yield_now()
+    var point = PatternPoint { x: 20, y: 22 }
+    var PatternPoint { x, .. } = &point
+    point.x = 100
+    x += 1
+    task.yield_now()
+    assert_eq(point.x, 100)
+    first + x
+}
+
+fn borrowed_record_views() @suspends -> Int32 {
+    let root = PatternRoot {
+        leaf: PatternLeaf { value: 42, text: "alive" }
+        ignored: "retained"
+    }
+    let PatternRoot { leaf: PatternLeaf { value, text }, .. } = &root
+    task.yield_now()
+    assert_eq(text, "alive")
+    assert_eq(root.ignored, "retained")
+    value
+}
+
+fn borrowed_sequence_views() @suspends -> Int32 {
+    let values: FixedArray<String, 3> = ["first", "ignored", "last"]
+    let [first, _, last] = &values
+    let batch = PatternBatch { values: [20, 22] }
+    let PatternBatch { values: [left, right] } = &batch
+    task.yield_now()
+    assert_eq(first, "first")
+    assert_eq(last, "last")
+    assert_eq(values.len(), 3)
+    left + right
 }

@@ -9,6 +9,9 @@ const ENTRIES: &[&str] = &[
     "local_control_flow",
     "local_pipelines",
     "local_without_suspension",
+    "local_borrowed_records",
+    "borrowed_record_views",
+    "borrowed_sequence_views",
 ];
 
 fn cleaned() {
@@ -88,12 +91,29 @@ fn local_suspension_segments_reject_live_borrowed_values_at_the_boundary() {
         "var values = [41]; let pipeline = iter.exclusive(&mut values); task.yield_now(); for value in pipeline { *value += 1 }; values[0]",
         "let values = [42]; let limit = 0; for _ in iter.shared(&values).filter(|v| { *v > limit }) { task.yield_now() }; 42",
         "var values = [42]; let limit = 0; for _ in iter.exclusive(&mut values).filter(|v| { *v > limit }) { task.yield_now() }; 42",
+        "let p = alloc(42); let wrapped = PatternBox { value: [&*p] }; let PatternBox { value } = &wrapped; task.yield_now(); *value[0]",
+        "let p = alloc(42); let wrapped = PatternBox { value: [&*p] }; let PatternBox { value } = &wrapped; join { task.yield_now(), task.yield_now() }; *value[0]",
     ] {
-        let source = format!("import joky/task import joky/iter fn bad() @suspends -> Int32 {{ {body} }}");
+        let source = format!("import joky/task import joky/iter struct PatternBox<T> {{ value: T }} fn bad() @suspends -> Int32 {{ {body} }}");
         let error = frontend_error(&source, &crate::ModuleSources::new());
         assert_eq!(error.code(), ErrorCode::InvalidCall, "{body}: {error}");
         assert!(error.message().contains("cannot remain live across suspension"), "{body}: {error}");
         let marked = error.span().unwrap().slice(&source).unwrap();
         assert!(marked.contains("yield_now") || marked == "wait()", "{body}: {marked}");
+    }
+}
+
+#[test]
+fn borrowed_destructuring_preserves_conflict_and_escape_checks() {
+    for body in [
+        "fn bad() -> &String { let source = Box { value: \"local\" }; let Box { value } = &source; value }",
+        "fn bad() @suspends { var source = Box { value: \"old\" }; let Box { value } = &source; source = Box { value: \"new\" }; assert_eq(value, \"old\") }",
+        "fn bad() @suspends { let source = Box { value: \"old\" }; let Box { value } = &source; let moved = source; assert_eq(value, \"old\") }",
+        "fn bad() @suspends { let escaped = { let source = Box { value: \"local\" }; let Box { value } = &source; value }; assert_eq(escaped, \"local\") }",
+    ] {
+        let source = format!("struct Box<T> {{ value: T }}\n{body}");
+        let error = frontend_error(&source, &crate::ModuleSources::new());
+        assert_eq!(error.code(), ErrorCode::InvalidAssignment, "{body}: {error}");
+        assert!(error.span().is_some(), "{body}: {error}");
     }
 }
