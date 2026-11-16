@@ -14,6 +14,7 @@ const BASE: Settings = Settings {
 }
 pub const DEFAULT: Settings = Settings.DEFAULT
 pub const UPDATED: Settings = Settings { names: ["updated", "tail"], .. DEFAULT }
+pub const ROW: FixedArray<Int32, 2> = DEFAULT.matrix[1]
 impl Settings {
     pub const DEFAULT: Self = BASE
     pub fn check(&self) -> Int32 {

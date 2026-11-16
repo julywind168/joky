@@ -12,6 +12,7 @@ const MAX_EXPRESSION_STRING_BYTES: usize = MAX_TOTAL_STRING_BYTES;
 
 const MAX_VALUE_NODES: usize = 4096;
 const MAX_TOTAL_VALUE_NODES: usize = 65536;
+const MAX_EVALUATION_STEPS: usize = 1024 * 1024;
 
 /// Evaluated data with its resolved nominal/layout identity, never a constructor
 /// expression to recheck in the consumer's namespace or field visibility scope.
@@ -371,11 +372,47 @@ fn evaluate(
     let plan = FunctionPlan::new(&definition, functions, &local, nominals, generics, 0)?;
     let mut slots: Vec<Option<Constant>> = vec![None; plan.slot_count];
     let mut storage = StorageEvaluator::default();
-    for (op, span) in plan.ops.iter_spanned() {
+    let mut labels = vec![0; plan.label_count];
+    for (pc, op) in plan.ops.iter().enumerate() {
+        if let Op::Label(label) = op {
+            labels[*label] = pc;
+        }
+    }
+    let mut pc = 0;
+    let mut steps = 0;
+    while let Some(op) = plan.ops.get(pc) {
+        let span = &plan.ops.spans()[pc];
+        steps += 1;
+        if steps > MAX_EVALUATION_STEPS {
+            return Err(type_error(
+                span,
+                ErrorCode::ResourceLimit,
+                "Constant evaluation exceeds 1048576 instructions",
+            ));
+        }
+        pc += 1;
         if storage.execute(op, &mut slots, *span)? {
             continue;
         }
         match op {
+            // Only compiler-generated spread loops reach this evaluator; the
+            // source whitelist still rejects user control flow and calls.
+            Op::Label(_) => continue,
+            Op::Jump(label) => {
+                pc = labels[*label];
+                continue;
+            }
+            Op::Branch {
+                condition,
+                then_label,
+                else_label,
+            } => {
+                let Some(Constant::Bool(condition)) = slots[condition.index] else {
+                    unreachable!("checked constant branch condition")
+                };
+                pc = labels[if condition { *then_label } else { *else_label }];
+                continue;
+            }
             Op::Cleanup(CleanupOp::Register { .. }) => continue,
             Op::Buffer(
                 BufferOp::Move { dst, src }
@@ -487,7 +524,9 @@ fn validate_expression<'a>(
             // checked for existence and visibility by the dependency scan.
             Expr::Ident { .. } | Expr::GenericName(_) => {},
             Expr::Field { base, type_args, .. } if type_args.is_empty() => pending.push((base, false)),
+            Expr::Index { base, index, .. } => { pending.push((base, false)); pending.push((index, false)); },
             Expr::Array { elements, .. } | Expr::Tuple { elements, .. } if !string => pending.extend(elements.iter().map(|expr| (expr, false))),
+            Expr::Spread { value, .. } if !string => pending.push((value, false)),
             Expr::Record { .. } if !string => pending.extend(expr.children().into_iter().map(|expr| (expr, false))),
             Expr::Block { exprs, .. } if !string && exprs.is_empty() => {},
             Expr::Unary { operand, .. } if !string => pending.push((operand, false)),
@@ -495,7 +534,7 @@ fn validate_expression<'a>(
             Expr::BinaryChain { rest, .. } if !string => { count += rest.len().saturating_sub(1); pending.extend(expr.children().into_iter().map(|expr| (expr, false))); },
             Expr::Call { callee, args, .. } if !string && (IntegerType::conversion(callee).is_some() || matches!(callee.as_str(), "float32" | "float64")) => pending.extend(args.iter().map(|expr| (expr, false))),
             _ if string => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "String constants require a string literal, a string constant reference or an aggregate field read")),
-            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, string literals, tuple/record/enum/FixedArray construction and field reads, module and associated constants, integer conversions and unary/binary operators")),
+            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, string literals, tuple/record/enum/FixedArray construction, field reads, FixedArray indexing and spreads, module and associated constants, integer conversions and unary/binary operators")),
         }
     }
     Ok(string_bytes)

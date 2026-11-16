@@ -8,7 +8,31 @@ struct Local {}
 impl Local {
     const DEFAULT: Config = IMPORTED
     const NUMBERS: FixedArray<Int32, 3> = [19, 23, 7]
+    const ROW: FixedArray<Int32, 2> = cfg.DEFAULT.matrix[INDEX]
+    const ANSWER: Int32 = cfg.DEFAULT.matrix[INDEX][0] + NUMBERS[INDEX]
+    const JOINED: FixedArray<Int32, 8> = [0, .. cfg.ROW, 1, .. NUMBERS, 2]
 }
+const INDEX: UInt64 = INDICES[0] + 0
+const INDICES: FixedArray<UInt64, 2> = [1, 0]
+const JOINED: FixedArray<Int32, 4> = [.. Local.ROW, .. cfg.ROW]
+const COPIED_MATRIX: FixedArray<FixedArray<Int32, 2>, 4> = [
+    .. cfg.DEFAULT.matrix,
+    .. cfg.DEFAULT.matrix
+]
+const BORROWED_ROW: FixedArray<Int32, 2> = [.. &cfg.DEFAULT.matrix[1]]
+const OWNED_PAIRS: FixedArray<(String, Int32), 2> = [("first", 7), ("last", 42)]
+const OWNED_FIELD: Int32 = OWNED_PAIRS[1].1
+const LAST: Int32 = Local.JOINED[INDICES[0] + 6]
+const POINTS: FixedArray<(UInt8, Int32), 2> = [(1, 9), (2, 42)]
+const POINT: (UInt8, Int32) = POINTS[1]
+const TAGS: FixedArray<Option<Int32>, 2> = [None, Some(42)]
+const TAG: Option<Int32> = TAGS[1]
+const COPIED_TAGS: FixedArray<Option<Int32>, 4> = [.. TAGS, .. TAGS]
+const CONFIGS: FixedArray<Config, 2> = [FORWARD, cfg.UPDATED]
+const INDEXED_COUNT: Int32 = CONFIGS[1].count
+const EMPTY_COPY: FixedArray<Unit, 0> = []
+const UNIT_COPY: Unit = UNITS[1]
+const SPREAD_UNITS: FixedArray<Unit, 4> = [.. EMPTY_COPY, .. UNITS, {}, UNIT_COPY, .. EMPTY_COPY]
 const NUMBERS: FixedArray<Int32, 3> = Local.NUMBERS
 const NAMES: FixedArray<String, 2> = FORWARD.names
 const COUNT: Int32 = FORWARD.count
@@ -116,6 +140,27 @@ fn check() -> Int32 {
     let empty = EMPTY
     if !empty.is_empty() || UNITS.len() != 2 || TINY[2] != 42 || FLOATS[0] + FLOATS[1] != 4.0 {
         return 11
+    }
+    var joined = JOINED
+    joined[0] = 100
+    if JOINED[0] != 19 || JOINED[3] != 23 || Local.ANSWER != 42 || LAST != 2 || POINT.0 != 2 ||
+        POINT.1 != 42 || INDEXED_COUNT != 42 || SPREAD_UNITS.len() != 4 {
+        return 12
+    }
+    if COPIED_MATRIX[3][1] != 23 || BORROWED_ROW[0] != 19 || OWNED_FIELD != 42 {
+        return 16
+    }
+    match TAG {
+        Some(42) => {},
+        _ => return 13
+    }
+    let [none, some, again_none, again_some] = COPIED_TAGS
+    if !none.is_none() || !again_none.is_none() {
+        return 14
+    }
+    match (some, again_some) {
+        (Some(42), Some(42)) => {},
+        _ => return 15
     }
     42
 }

@@ -67,7 +67,22 @@ impl Data {
 
 #[derive(Default)]
 pub(super) struct StorageEvaluator {
-    places: HashMap<usize, Rc<RefCell<Storage>>>,
+    places: HashMap<usize, Place>,
+}
+
+#[derive(Clone)]
+struct Place {
+    storage: Rc<RefCell<Storage>>,
+    offset: usize,
+}
+
+impl From<Storage> for Place {
+    fn from(storage: Storage) -> Self {
+        Self {
+            storage: Rc::new(RefCell::new(storage)),
+            offset: 0,
+        }
+    }
 }
 
 impl StorageEvaluator {
@@ -80,7 +95,9 @@ impl StorageEvaluator {
     // reads/writes. Zeroed inactive enum fields have their typed zero value.
     fn read(&self, base: &Slot, offset: usize, ty: &Type) -> Storage {
         let size = ty.storage_layout().unwrap().size;
-        let mut source = self.places[&base.index].borrow_mut();
+        let place = &self.places[&base.index];
+        let offset = place.offset + offset;
+        let mut source = place.storage.borrow_mut();
         let mut result = Storage::default();
         for (&position, cell) in source.cells.range_mut(offset..offset + size) {
             let value = if matches!(cell.value, Constant::String(_)) {
@@ -97,6 +114,39 @@ impl StorageEvaluator {
             );
         }
         result
+    }
+
+    fn project(&mut self, dst: &Slot, src: &Slot, offset: usize) {
+        let mut place = self.places[&src.index].clone();
+        place.offset += offset;
+        self.places.insert(dst.index, place);
+    }
+
+    fn load(
+        &mut self,
+        dst: &Slot,
+        reference: &Slot,
+        offset: usize,
+        slots: &mut [Option<Constant>],
+    ) {
+        let mut data = self.read(reference, offset, &dst.ty);
+        if dst.ty.is_place() {
+            self.places.insert(dst.index, data.into());
+        } else {
+            for ((offset, ty), slot) in dst
+                .ty
+                .storage_scalars()
+                .unwrap()
+                .into_iter()
+                .zip(dst.scalars())
+            {
+                slots[slot.index] = Some(
+                    data.cells
+                        .remove(&offset)
+                        .map_or_else(|| zero(&ty), |cell| cell.value),
+                );
+            }
+        }
     }
 
     fn value(&self, value: &Slot, slots: &mut [Option<Constant>]) -> Storage {
@@ -125,7 +175,9 @@ impl StorageEvaluator {
     fn write(&self, base: &Slot, offset: usize, value: &Slot, slots: &mut [Option<Constant>]) {
         let data = self.value(value, slots);
         let size = value.ty.storage_layout().unwrap().size;
-        let mut destination = self.places[&base.index].borrow_mut();
+        let place = &self.places[&base.index];
+        let offset = place.offset + offset;
+        let mut destination = place.storage.borrow_mut();
         destination
             .cells
             .retain(|&position, _| position < offset || position >= offset + size);
@@ -163,8 +215,7 @@ impl StorageEvaluator {
                     ));
                 }
                 value_nodes(&ty, span)?;
-                self.places
-                    .insert(dst.index, Rc::new(RefCell::new(Storage::default())));
+                self.places.insert(dst.index, Storage::default().into());
             }
             Op::Place(PlaceOp::Alias { dst, src })
             | Op::Buffer(BufferOp::Borrow { dst, src, .. })
@@ -180,6 +231,59 @@ impl StorageEvaluator {
             Op::Reference { dst, src, .. } if self.places.contains_key(&src.index) => {
                 self.alias(dst, src)
             }
+            Op::PatternProject {
+                dst, src, offset, ..
+            } if self.places.contains_key(&src.index) => self.project(dst, src, *offset),
+            Op::Project { dst, src, path, .. } if self.places.contains_key(&src.index) => {
+                let offset = src
+                    .ty
+                    .reference_type()
+                    .unwrap()
+                    .target
+                    .storage_field_path(path)
+                    .unwrap()
+                    .0;
+                self.project(dst, src, offset)
+            }
+            Op::Place(PlaceOp::View {
+                reference,
+                start,
+                end: None,
+                dst,
+                ..
+            }) => {
+                let Some(Constant::UInt64(index)) = slots[start.index] else {
+                    unreachable!("checked constant index")
+                };
+                let ty = &reference.ty.reference_type().unwrap().target;
+                let length = ty.fixed_length();
+                if index >= length {
+                    return Err(type_error(
+                        &span,
+                        ErrorCode::InvalidState,
+                        format!("FixedArray constant index {index} is out of bounds for length {length}"),
+                    ));
+                }
+                let stride = ty.fixed_shape().element.storage_layout().unwrap().size;
+                self.project(dst, reference, index as usize * stride);
+            }
+            Op::ReadMemory {
+                dst,
+                reference,
+                path,
+            } if self.places.contains_key(&reference.index) => {
+                if let Some(dst) = dst {
+                    let offset = reference
+                        .ty
+                        .reference_type()
+                        .unwrap()
+                        .target
+                        .storage_field_path(path)
+                        .unwrap()
+                        .0;
+                    self.load(dst, reference, offset, slots);
+                }
+            }
             Op::Place(PlaceOp::MoveInit { dst, src, .. }) => {
                 let data = self
                     .places
@@ -190,7 +294,7 @@ impl StorageEvaluator {
             Op::Place(PlaceOp::Copy { dst, src }) => {
                 if dst.index != src.index {
                     let data = self.read(src, 0, &src.ty);
-                    self.places.insert(dst.index, Rc::new(RefCell::new(data)));
+                    self.places.insert(dst.index, data.into());
                 }
             }
             Op::Place(PlaceOp::Write {
@@ -201,35 +305,18 @@ impl StorageEvaluator {
             Op::Place(PlaceOp::WriteNext { reference, value }) => {
                 let shape = reference.ty.fixed_shape();
                 let stride = shape.element.storage_layout().unwrap().size;
-                let next = self.places[&reference.index].borrow().next;
+                let next = self.places[&reference.index].storage.borrow().next;
                 if let Some(value) = value {
                     self.write(reference, next * stride, value, slots);
                 }
-                self.places[&reference.index].borrow_mut().next += 1;
+                self.places[&reference.index].storage.borrow_mut().next += 1;
             }
             Op::Place(PlaceOp::Read {
                 dst,
                 reference,
                 offset,
             }) => {
-                let data = self.read(reference, *offset, &dst.ty);
-                if dst.ty.is_place() {
-                    self.places.insert(dst.index, Rc::new(RefCell::new(data)));
-                } else {
-                    for ((offset, ty), slot) in dst
-                        .ty
-                        .storage_scalars()
-                        .unwrap()
-                        .into_iter()
-                        .zip(dst.scalars())
-                    {
-                        slots[slot.index] = Some(
-                            data.cells
-                                .get(&offset)
-                                .map_or_else(|| zero(&ty), |cell| cell.value.clone()),
-                        );
-                    }
-                }
+                self.load(dst, reference, *offset, slots);
             }
             Op::Place(PlaceOp::End(value)) | Op::Buffer(BufferOp::End(value))
                 if value.ty.is_place() =>

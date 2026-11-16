@@ -2027,7 +2027,7 @@ fn example() -> Int32 {
   泛型函数可以对已知具体类型调用方法，不能对无约束 T 猜测方法能力。
 - `const NAME: Type = expression` 必须有注解，支持八种整数、`Float32` / `Float64`、`Rune`、Bool、Unit、String，
   以及由这些类型递归组成的元组、结构体、枚举和 FixedArray，允许嵌套 String 字段、载荷与元素。
-  支持标量与字符串字面量、Unit 的 `{}`、FixedArray 的数组字面量、元组 / 结构体 / 枚举构造、结构体更新、字段读取、模块常量与关联常量引用，
+  支持标量与字符串字面量、Unit 的 `{}`、FixedArray 的数组字面量、Copy 元素下标与展开、元组 / 结构体 / 枚举构造、结构体更新、字段读取、模块常量与关联常量引用，
   以及整数和浮点内建转换、标量的一元操作和二元算术/位运算/比较；
   不支持普通函数调用、控制流、非空块、局部绑定或运行时状态。前向引用可用，依赖环报错，
   每个表达式最多 256 个语法节点，依赖链最多 32 层。
@@ -3045,12 +3045,18 @@ const PORTS: FixedArray<UInt16, 2> = [8080, 8443]
 struct Defaults {}
 impl Defaults {
     const LABELS: FixedArray<String, 2> = ["main", "admin"]
+    const ALL_PORTS: FixedArray<UInt16, 3> = [.. PORTS, 9000]
+    const PRIMARY: UInt16 = PORTS[0]
 }
 
 fn main() {
     var ports = PORTS
     ports[0] = 80
     assert(PORTS[0] == 8080, "independent constant storage")
+    assert(
+        Defaults.ALL_PORTS[2] == 9000 && Defaults.PRIMARY == 8080,
+        "constant indexing and spread"
+    )
     let [primary, admin] = Defaults.LABELS
     assert(primary == "main" && admin == "admin", "constant labels")
 }
@@ -3082,8 +3088,13 @@ fn main() -> Int32 { SCALED + config.LIMIT + config.reveal() }
   每表达式 256 个语法节点、依赖链 32 层，模块常量与关联常量共用依赖图并检测环。
   枚举可用限定、裸名、导入重命名构造器和显式类型实参，遵循普通歧义、可见性及载荷检查；
   无载荷变体不带括号。普通函数 / 方法调用和 `match` 等控制流仍不能用于初始化式。
-  FixedArray 字面量须有具体元素类型与长度上下文，支持 `[]` 和嵌套字面量；初始化式暂不支持下标、
-  数组展开、repeat/from_fn 或其他函数调用。读取常量后的普通代码可使用现有的数组操作。
+  FixedArray 字面量须有具体元素类型与长度上下文，支持 `[]`、嵌套字面量及多段 `..values` 展开。
+  展开源须是具体长度的 FixedArray 或其合法借用，元素须为 Copy，展开后总长度必须匹配目标类型；不能展开 String 等拥有元素，即使数组为空。
+  使用 `..VALUES` 即可展开常量；直接 `&VALUES` 仍不支持，常量名不会因此成为局部绑定或静态借用。
+  `values[index]` 按 UInt64 常量表达式求下标，支持嵌套下标和元素字段读取；越界在编译期报错，包含空数组和零大小元素。
+  按值读取元素也要求 Copy，不能用下标隐式复制 String；可按普通借用规则读取拥有元素中的 Copy 字段。
+  切片、repeat/from_fn 和普通函数调用仍不支持；没有类型上下文的 `[1, 2]` 是 Array，不能作为固定数组展开源。
+  每个初始化式最多执行 1,048,576 条内部指令，约束展开循环的编译期工作量；源码控制流仍不开放。
 - 聚合常量类型最多嵌套 32 层；单个值展开后最多 4096 个组件，同次编译的聚合常量合计最多
   65536 个组件。每个元组、结构体、枚举、FixedArray、标量、String 和 Unit 都计一个组件，空结构体也计数；
   数组每个元素均按完整类型展开计数，零大小元素也计数，零长度数组本身计一个组件。
