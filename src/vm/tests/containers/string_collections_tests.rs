@@ -87,9 +87,8 @@ fn string_collections_rejects_copy_get_moves_conflicting_views_and_suspension() 
         "import joky/array.{type Array} fn f() { var a = Array.new::<String>(); a.push(\"中\"); let b = a.borrow_ref(0); a.clear(); b.byte_length(); }",
         "import joky/array.{type Array} import joky/slice fn f() { var a = Array.new::<String>(); a.push(\"中\"); let b = a.borrow_ref(0).bytes(); a.clear(); slice.len(b); }",
         "import joky/array.{type Array} fn f() -> &String { var a = Array.new::<String>(); a.push(\"中\"); a.borrow_ref(0) }",
-        "struct Mixed { text: String, reference: &Int32 } fn f() {}",
         "fn pass<T>(x: T) -> T { x } fn f() { let x = Some(\"中\"); pass(x); x.is_some(); }",
-        "struct Pair { left: String, right: &Int32 } fn f(a: Pair) @suspends {}",
+        "import joky/array.{type Array} import joky/task struct Pair { left: String, right: &Array<&Int32> } fn f() @suspends -> UInt64 { let n = alloc(42); let refs = [&*n]; let pair = Pair { left: \"owned\", right: &refs }; task.yield_now(); pair.right.len() }",
         "import joky/string.{type StringBuilder} fn f(a: &Option<StringBuilder>) @suspends -> &Option<StringBuilder> { a }",
         "unsafe extern \"C\" fn f(a: String)",
     ] {

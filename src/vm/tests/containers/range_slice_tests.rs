@@ -141,7 +141,6 @@ fn borrowed_queries_reject_invalidation_storage_and_escape() {
         "fn bad() { let a = [\"a\"]; alloc(a.get_ref(0)); }",
         "fn bad() { let a = [\"a\"]; let saved = [a.get_ref(0)]; }",
         "fn bad() { var a = [\"a\"]; let saved: Option<&mut String> = Some(a.borrow_mut_ref(0)); }",
-        "struct Invalid { owner: String, view: &String } fn bad() {}",
         "fn bad(a: &Array<String>) @noescape -> Option<&String> { a.get_ref(0) }",
         "fn bad() { var m: Map<String, String> = Map.new(); m.insert(\"k\", \"v\"); let r = m.get_ref(\"k\"); m.clear(); r.is_some(); }",
     ] {
