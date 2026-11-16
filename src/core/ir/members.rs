@@ -77,7 +77,12 @@ fn constant_type_supported(ty: &Type) -> bool {
         node.is_numeric()
             || matches!(
                 node,
-                Type::Rune | Type::Bool | Type::Unit | Type::String | Type::Tuple(_)
+                Type::Rune
+                    | Type::Bool
+                    | Type::Unit
+                    | Type::String
+                    | Type::Tuple(_)
+                    | Type::Enum(_)
             )
             || matches!(node, Type::Record(record) if record.closure.is_none())
     })
@@ -242,7 +247,7 @@ impl Members {
                     return Err(type_error(
                         &declaration.span,
                         ErrorCode::TypeMismatch,
-                        "Associated constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record type",
+                        "Associated constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record/enum type",
                     ));
                 }
                 let key = members.scoped_key(
@@ -271,7 +276,7 @@ impl Members {
                 return Err(type_error(
                     &declaration.span,
                     ErrorCode::TypeMismatch,
-                    "Module constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record type",
+                    "Module constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record/enum type",
                 ));
             }
             // The entry module has no canonical path, and its constants are

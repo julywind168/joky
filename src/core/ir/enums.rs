@@ -14,6 +14,145 @@ pub(super) struct Constructor<'a> {
     pub(super) span: Span,
 }
 
+/// Shared constructor recognition for ordinary expressions and constant dependencies.
+/// Payload type inference and argument validation remain in the ordinary planner.
+pub(super) fn resolve_constructor<'a>(
+    expr: &'a Expr,
+    scope: &crate::core::imports::ImportScope,
+    nominals: &HashMap<String, Type>,
+    members: &members::Members,
+    definition_scope: Option<&crate::core::imports::DefinitionScope>,
+    shadowed: impl Fn(&str) -> bool,
+) -> Result<Option<Constructor<'a>>, Error> {
+    let Some((path, payload, type_args)) = (|| {
+        let parts: (String, _, &[crate::core::types::GenericArgument]) = match expr {
+            Expr::Call {
+                callee,
+                args,
+                type_args,
+                ..
+            } => (callee.clone(), Some(args.as_slice()), type_args),
+            Expr::GenericName(name) => (name.name.clone(), None, &name.type_args),
+            Expr::Ident { name, .. } => (name.clone(), None, &[]),
+            Expr::Field {
+                base,
+                name,
+                type_args,
+                ..
+            } => {
+                if let Some(arguments) = super::expression_type_arguments(base) {
+                    if !type_args.is_empty() {
+                        return None;
+                    }
+                    (
+                        format!("{}.{name}", super::expression_path(base)?),
+                        None,
+                        arguments,
+                    )
+                } else {
+                    (super::expression_path(expr)?, None, type_args)
+                }
+            }
+            Expr::MethodCall(call) => {
+                let arguments = super::expression_type_arguments(&call.receiver)?;
+                if !call.type_args.is_empty() {
+                    return None;
+                }
+                (
+                    format!("{}.{}", super::expression_path(&call.receiver)?, call.name),
+                    Some(call.args.as_slice()),
+                    arguments,
+                )
+            }
+            _ => return None,
+        };
+        Some(parts)
+    })() else {
+        return Ok(None);
+    };
+    if shadowed(path.split('.').next().unwrap()) {
+        return Ok(None);
+    }
+    let qualified = path
+        .rsplit_once('.')
+        .is_some_and(|(root, _)| named_enum(root, scope, nominals).is_some());
+    if !qualified
+        && scope
+            .constructors
+            .get(&path)
+            .is_some_and(|bindings| bindings.len() > 1)
+    {
+        return Err(type_error(
+            &expr.span(),
+            ErrorCode::UnknownName,
+            format!("Ambiguous enum constructor '{path}'; qualify it with its enum type"),
+        ));
+    }
+    let Some((enumeration, variant)) = constructor_binding(&path, scope, nominals) else {
+        return Ok(None);
+    };
+
+    let ty = Type::Enum(enumeration.clone());
+    if members.method(&ty, &variant, definition_scope).is_some()
+        || members.constants.iter().any(|c| {
+            c.owner
+                .target()
+                .is_some_and(|target| super::members::same_owner(target, &ty))
+                && c.declaration.name == variant
+        })
+    {
+        return Ok(None);
+    }
+    Ok(Some(Constructor {
+        enumeration,
+        name: variant,
+        args: payload,
+        type_args,
+        span: expr.span(),
+    }))
+}
+
+fn named_enum<'a>(
+    name: &str,
+    scope: &crate::core::imports::ImportScope,
+    nominals: &'a HashMap<String, Type>,
+) -> Option<&'a Arc<EnumType>> {
+    // Match named_type's visibility and transparent-alias rules. Only nominal
+    // enum names can introduce a constructor namespace.
+    if (name.contains('.') && !scope.types.contains_key(name))
+        || scope
+            .types
+            .get(name)
+            .is_some_and(|binding| binding.resolved.is_some())
+    {
+        return None;
+    }
+    match nominals.get(name) {
+        Some(Type::Enum(enumeration)) => Some(enumeration),
+        _ => None,
+    }
+}
+
+fn constructor_binding(
+    path: &str,
+    scope: &crate::core::imports::ImportScope,
+    nominals: &HashMap<String, Type>,
+) -> Option<(Arc<EnumType>, String)> {
+    if let Some((root, variant)) = path.rsplit_once('.') {
+        if let Some(enumeration) = named_enum(root, scope, nominals) {
+            return Some((enumeration.clone(), variant.into()));
+        }
+    }
+    let [binding] = scope.constructors.get(path)?.as_slice() else {
+        return None;
+    };
+    let Type::Enum(enumeration) = nominals.get(&binding.enumeration.name)? else {
+        return None;
+    };
+    (Some(enumeration.id) == binding.enumeration.declaration)
+        .then(|| (enumeration.clone(), binding.variant.clone()))
+}
+
 impl FunctionPlan {
     // Local values shadow constructor roots, as they shadow dotted calls.
     pub(super) fn enum_constructor<'a>(
@@ -21,113 +160,18 @@ impl FunctionPlan {
         expr: &'a Expr,
         vars: &HashMap<String, Binding>,
     ) -> Result<Option<Constructor<'a>>, Error> {
-        let Some((path, payload, type_args)) = (|| {
-            let parts: (String, _, &[crate::core::types::GenericArgument]) = match expr {
-                Expr::Call {
-                    callee,
-                    args,
-                    type_args,
-                    ..
-                } => (callee.clone(), Some(args.as_slice()), type_args),
-                Expr::GenericName(name) => (name.name.clone(), None, &name.type_args),
-                Expr::Ident { name, .. } => (name.clone(), None, &[]),
-                Expr::Field {
-                    base,
-                    name,
-                    type_args,
-                    ..
-                } => {
-                    if let Some(arguments) = super::expression_type_arguments(base) {
-                        if !type_args.is_empty() {
-                            return None;
-                        }
-                        (
-                            format!("{}.{name}", super::expression_path(base)?),
-                            None,
-                            arguments,
-                        )
-                    } else {
-                        (super::expression_path(expr)?, None, type_args)
-                    }
-                }
-                Expr::MethodCall(call) => {
-                    let arguments = super::expression_type_arguments(&call.receiver)?;
-                    if !call.type_args.is_empty() {
-                        return None;
-                    }
-                    (
-                        format!("{}.{}", super::expression_path(&call.receiver)?, call.name),
-                        Some(call.args.as_slice()),
-                        arguments,
-                    )
-                }
-                _ => return None,
-            };
-            Some(parts)
-        })() else {
-            return Ok(None);
-        };
-        if vars.contains_key(path.split('.').next().unwrap()) {
-            return Ok(None);
-        }
-        let qualified = path
-            .rsplit_once('.')
-            .is_some_and(|(root, _)| matches!(self.named_type(root), Some(Type::Enum(_))));
-        if !qualified
-            && self
-                .scope
-                .constructors
-                .get(&path)
-                .is_some_and(|bindings| bindings.len() > 1)
-        {
-            return Err(type_error(
-                &expr.span(),
-                ErrorCode::UnknownName,
-                format!("Ambiguous enum constructor '{path}'; qualify it with its enum type"),
-            ));
-        }
-        let Some((enumeration, variant)) = self.constructor_binding(&path) else {
-            return Ok(None);
-        };
-
-        let ty = Type::Enum(enumeration.clone());
-        let context = self.generics.borrow();
-        if context
-            .members
-            .method(&ty, &variant, self.definition_scope.as_deref())
-            .is_some()
-            || context.members.constants.iter().any(|c| {
-                c.owner
-                    .target()
-                    .is_some_and(|target| super::members::same_owner(target, &ty))
-                    && c.declaration.name == variant
-            })
-        {
-            return Ok(None);
-        }
-        Ok(Some(Constructor {
-            enumeration,
-            name: variant,
-            args: payload,
-            type_args,
-            span: expr.span(),
-        }))
+        resolve_constructor(
+            expr,
+            &self.scope,
+            self.source_nominals(),
+            &self.generics.borrow().members,
+            self.definition_scope.as_deref(),
+            |name| vars.contains_key(name),
+        )
     }
 
     pub(super) fn constructor_binding(&self, path: &str) -> Option<(Arc<EnumType>, String)> {
-        if let Some((root, variant)) = path.rsplit_once('.') {
-            if let Some(Type::Enum(enumeration)) = self.named_type(root) {
-                return Some((enumeration.clone(), variant.into()));
-            }
-        }
-        let [binding] = self.scope.constructors.get(path)?.as_slice() else {
-            return None;
-        };
-        let Type::Enum(enumeration) = self.source_nominals().get(&binding.enumeration.name)? else {
-            return None;
-        };
-        (Some(enumeration.id) == binding.enumeration.declaration)
-            .then(|| (enumeration.clone(), binding.variant.clone()))
+        constructor_binding(path, &self.scope, self.source_nominals())
     }
 
     pub(super) fn pattern_variant(&self, enumeration: &EnumType, name: &str) -> Option<String> {

@@ -1,0 +1,164 @@
+import enum_constants_values as cfg.{
+    DEFAULT as IMPORTED,
+    type Choice as ImportedChoice,
+    Text as FromText,
+    Empty as FromEmpty
+}
+import joky/task
+
+enum Choice { Unrelated }
+struct Local {}
+impl Local {
+    const DEFAULT: ImportedChoice = IMPORTED
+}
+const FORWARD: cfg.Choice = Local.DEFAULT
+const EMPTY: cfg.Choice = FromEmpty
+const COUNT: cfg.Choice = cfg.Choice.Count(42)
+const BARE: cfg.Choice = FromText("bare")
+const QUALIFIED: cfg.Choice = cfg.Text("qualified")
+const ALIASED: cfg.Label = cfg.Choice.Text("alias")
+const UNIT: cfg.Choice = cfg.Choice.Done({})
+const NESTED_VARIANT: cfg.Choice = cfg.Choice.Nested(Some(("nested", 42)))
+const EXPLICIT: Option<String> = Option::<String>.Some("explicit")
+const MEMBER_ARGS: Option<String> = Option.Some::<String>("member")
+const BARE_ARGS: Option<String> = Some::<String>("bare")
+const ABSENT: Option<String> = Option::<String>.None
+const NESTED: Option<Result<(String, cfg.Choice), String>> = Some(Ok(("outer", FORWARD)))
+const ERROR: Result<Int32, String> = Err("error")
+enum Marker<T> { Idle, Value(T) }
+impl<T> Marker<T> {
+    const FIXED: Marker<String> = Marker.Value("fixed")
+}
+const GENERIC: Marker<String> = Marker::<Int32>.FIXED
+enum Scalar { Off, Value((Float64, Rune, UInt8)) }
+const SCALAR: Scalar = Scalar.Value((1.5 + 2.5, 'é', uint8(42)))
+const OFF: Scalar = Scalar.Off
+enum Flag { Off, On }
+const FLAG: Flag = Flag.On
+const SAME: Bool = Flag.On == FLAG
+struct Envelope { choice: cfg.Choice, text: String, number: Int32 }
+const ENVELOPE: Envelope = Envelope { choice: FORWARD, text: "envelope", number: 42 }
+const PROJECTED: cfg.Choice = ENVELOPE.choice
+const UPDATED: Envelope = Envelope { text: "updated", .. ENVELOPE }
+const NUMBER: Int32 = ENVELOPE.number
+
+fn option_text(value: Option<String>, expected: &String) -> Bool {
+    match value {
+        Some(text) => text == expected
+        None => false
+    }
+}
+
+fn choice_text(value: cfg.Choice, expected: &String) -> Bool {
+    match value {
+        cfg.Choice.Text(text) => text == expected
+        _ => false
+    }
+}
+
+fn scalar(value: Scalar) -> Int32 {
+    match value {
+        Scalar.Off => 0
+        Scalar.Value((number, rune, byte)) => {
+            if number != 4.0 || rune != 'é' {
+                return 1
+            }
+            int32(byte)
+        }
+    }
+}
+
+fn nested(value: Option<Result<(String, cfg.Choice), String>>) -> Int32 {
+    match value {
+        Some(Ok((text, choice))) => if text == "outer" {
+            choice.consume()
+        } else {
+            1
+        }
+        _ => 2
+    }
+}
+
+fn check() -> Int32 {
+    let first = FORWARD
+    let second = cfg.Choice.DEFAULT
+    if first.consume() != 42 || second.consume() != 42 {
+        return 1
+    }
+    if !choice_text(BARE, "bare") || !choice_text(QUALIFIED, "qualified") || !choice_text(
+        ALIASED,
+        "alias"
+    ) {
+        return 2
+    }
+    if !option_text(EXPLICIT, "explicit") || !option_text(MEMBER_ARGS, "member") || !option_text(
+        BARE_ARGS,
+        "bare"
+    ) {
+        return 3
+    }
+    match GENERIC {
+        Marker.Value(text) => if text != "fixed" {
+            return 4
+        }
+        Marker.Idle => return 4
+    }
+    if nested(NESTED) != 42 {
+        return 4
+    }
+    match ERROR {
+        Err(text) => if text != "error" {
+            return 5
+        }
+        Ok(_) => return 6
+    }
+    let copy = SCALAR
+    if scalar(copy) != 42 || scalar(copy) != 42 || scalar(OFF) != 0 || !SAME {
+        return 7
+    }
+    if NESTED_VARIANT.consume() != 42 || UNIT.consume() != 42 || PROJECTED.consume() != 42 {
+        return 8
+    }
+    let Envelope { choice, text, number } = UPDATED
+    if choice.consume() != 42 || text != "updated" || number != 42 || NUMBER != 42 {
+        return 9
+    }
+    42
+}
+
+fn inactive() -> Int32 {
+    let count = COUNT
+    if EMPTY.consume() != 42 || cfg.Choice.EMPTY.consume() != 42 || count.consume() != 42 {
+        return 1
+    }
+    match ABSENT {
+        None => 42
+        Some(_) => 2
+    }
+}
+
+fn pending() @suspends -> Int32 {
+    let first = FORWARD
+    let second = NESTED
+    task.yield_now()
+    if first.consume() != 42 {
+        return 1
+    }
+    nested(second)
+}
+
+fn construction() @suspends -> Int32 {
+    let value = UPDATED
+    let Envelope { choice, text, number } = value
+    if text != "updated" || number != 42 {
+        return 1
+    }
+    choice.consume()
+}
+
+fn main() @suspends -> Int32 {
+    if check() != 42 || inactive() != 42 {
+        return 1
+    }
+    pending()
+}

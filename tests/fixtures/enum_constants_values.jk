@@ -1,0 +1,42 @@
+pub struct Payload { pub title: String, hidden: String, pub code: Int32 }
+pub enum Choice {
+    Empty,
+    Text(String),
+    Count(Int32),
+    Data(Payload),
+    Nested(Option<(String, Int32)>),
+    Done(Unit)
+}
+pub type Label = Choice
+pub const DEFAULT: Choice = Choice.DEFAULT
+const PAYLOAD: Payload = Payload { title: "é中🙂\0", hidden: "private", code: 42 }
+impl Choice {
+    pub const DEFAULT: Self = Self.Data(PAYLOAD)
+    pub const EMPTY: Self = Self.Empty
+    pub fn consume(self) -> Int32 {
+        match self {
+            Empty => 42
+            Text(text) => if text.byte_length() > 0 {
+                42
+            } else {
+                1
+            }
+            Count(number) => number
+            Data(data) => {
+                if data.title != "é中🙂\0" || data.hidden != "private" {
+                    return 2
+                }
+                data.code
+            }
+            Nested(value) => match value {
+                Some((text, number)) => if text == "nested" {
+                    number
+                } else {
+                    3
+                }
+                None => 4
+            }
+            Done(_) => 42
+        }
+    }
+}

@@ -14,6 +14,7 @@ const MAX_TOTAL_VALUE_NODES: usize = 65536;
 /// expression to recheck in the consumer's namespace or field visibility scope.
 pub(super) struct Value {
     ty: Type,
+    // Includes enum tags and inactive payload lanes; inactive String lanes are NullPtr.
     lanes: Vec<Constant>,
 }
 
@@ -87,6 +88,12 @@ fn value_nodes(ty: &Type, span: Span) -> Result<usize, Error> {
         match ty {
             Type::Record(record) => pending.extend(record.fields.iter().map(|field| &field.ty)),
             Type::Tuple(tuple) => pending.extend(&tuple.elements),
+            Type::Enum(enumeration) => pending.extend(
+                enumeration
+                    .variants
+                    .iter()
+                    .filter_map(|variant| variant.payload.as_ref()),
+            ),
             _ => {}
         }
     }
@@ -110,17 +117,41 @@ pub(super) fn validate_all(
     let mut edges = vec![Vec::new(); members.constants.len()];
     let mut literal_bytes = Vec::with_capacity(members.constants.len());
     for (index, constant) in members.constants.iter().enumerate() {
-        literal_bytes.push(validate_expression(
-            &constant.declaration.value,
-            constant.declaration.ty == Type::String,
-        )?);
         let context = constant.declaration.scope.as_ref();
         let imports = context.map_or_else(
             || generics.borrow().scope.clone(),
             |scope| scope.imports.clone(),
         );
+        let source_nominals = context.map_or(nominals.as_ref(), |scope| scope.nominals.as_ref());
+        literal_bytes.push(validate_expression(
+            &constant.declaration.value,
+            constant.declaration.ty == Type::String,
+            |expr| {
+                enums::resolve_constructor(
+                    expr,
+                    &imports,
+                    source_nominals,
+                    members,
+                    context.map(AsRef::as_ref),
+                    |_| false,
+                )
+            },
+        )?);
         let mut pending = vec![&constant.declaration.value];
         while let Some(expr) = pending.pop() {
+            if let Some(constructor) = enums::resolve_constructor(
+                expr,
+                &imports,
+                source_nominals,
+                members,
+                context.map(AsRef::as_ref),
+                |_| false,
+            )? {
+                // Constructor names are not dependencies; only their payloads
+                // can refer to other constants, including forward references.
+                pending.extend(constructor.args.unwrap_or(&[]));
+                continue;
+            }
             match expr {
                 Expr::Ident { name, span } => {
                     let dependency = imports
@@ -216,7 +247,10 @@ pub(super) fn validate_all(
                         "Constant dependency depth exceeds 32 levels",
                     ));
                 }
-                if matches!(constant.declaration.ty, Type::Tuple(_) | Type::Record(_)) {
+                if matches!(
+                    constant.declaration.ty,
+                    Type::Tuple(_) | Type::Record(_) | Type::Enum(_)
+                ) {
                     let nodes = value_nodes(&constant.declaration.ty, constant.declaration.span)?;
                     if nodes > MAX_TOTAL_VALUE_NODES - aggregate_nodes {
                         return Err(type_error(
@@ -390,7 +424,11 @@ fn evaluate(
     })
 }
 
-fn validate_expression(expr: &Expr, string: bool) -> Result<usize, Error> {
+fn validate_expression<'a>(
+    expr: &'a Expr,
+    string: bool,
+    constructor: impl Fn(&'a Expr) -> Result<Option<enums::Constructor<'a>>, Error>,
+) -> Result<usize, Error> {
     let mut pending = vec![(expr, string)];
     let mut count = 0;
     let mut string_bytes = 0;
@@ -402,6 +440,18 @@ fn validate_expression(expr: &Expr, string: bool) -> Result<usize, Error> {
                 ErrorCode::ResourceLimit,
                 "Constant expressions are limited to 256 syntax nodes",
             ));
+        }
+        if !string {
+            if let Some(constructor) = constructor(expr)? {
+                pending.extend(
+                    constructor
+                        .args
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|expr| (expr, false)),
+                );
+                continue;
+            }
         }
         match expr {
             Expr::Literal { literal: Literal::ConstParameter(_), .. } => return Err(type_error(&expr.span(),ErrorCode::TypeMismatch,"Associated constants cannot depend on const parameters; return the value from a method")),
@@ -425,7 +475,7 @@ fn validate_expression(expr: &Expr, string: bool) -> Result<usize, Error> {
             Expr::BinaryChain { rest, .. } if !string => { count += rest.len().saturating_sub(1); pending.extend(expr.children().into_iter().map(|expr| (expr, false))); },
             Expr::Call { callee, args, .. } if !string && (IntegerType::conversion(callee).is_some() || matches!(callee.as_str(), "float32" | "float64")) => pending.extend(args.iter().map(|expr| (expr, false))),
             _ if string => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "String constants require a string literal, a string constant reference or an aggregate field read")),
-            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, string literals, tuple/record construction and field reads, module and associated constants, integer conversions and unary/binary operators")),
+            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, string literals, tuple/record/enum construction and field reads, module and associated constants, integer conversions and unary/binary operators")),
         }
     }
     Ok(string_bytes)
