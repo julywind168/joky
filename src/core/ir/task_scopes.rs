@@ -216,6 +216,7 @@ impl FunctionPlan {
             infer_noescape: true,
             inferred_noescape: Vec::new(),
             inferred_retained: None,
+            inferred_returns: None,
             inferred_arena_retained: Vec::new(),
             cursor_return_independent: false,
             call_region: false,

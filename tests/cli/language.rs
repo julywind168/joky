@@ -3267,3 +3267,17 @@ fn strict_native_stack_cli_routes_policy_and_preserves_failed_output() {
     assert_eq!(run.status.code(), Some(42), "{run:?}");
     success(&work.cli(&["build", "--strict-native-stack", "strict-project"]));
 }
+
+#[test]
+#[cfg(unix)]
+fn return_borrow_origins_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    let source = include_str!("../fixtures/return_borrow_origins.jk");
+    work.write(
+        "origins.jk",
+        &format!(
+            "{source}\nfn main() @suspends {{ assert_eq(probe(), 42); assert_eq(pending(), 42) }}"
+        ),
+    );
+    work.assert_native("origins.jk", &[], b"", 0);
+}

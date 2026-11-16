@@ -96,6 +96,8 @@ pub(crate) struct FunctionInfo {
     pub inferred_noescape: Vec<usize>,
     /// None means unknown; Some lists parameters whose borrows may be stored.
     pub inferred_retained: Option<Vec<usize>>,
+    /// Per-result reference lane dependencies, using flattened parameter offsets.
+    pub inferred_returns: Option<borrowing::ReturnOrigins>,
     /// Stored source parameter and destination explicit-arena parameter pairs.
     pub inferred_arena_retained: Vec<(usize, usize)>,
     /// A returned reference may point into scoped or relocatable aggregate storage.
@@ -147,6 +149,7 @@ impl FunctionInfo {
             infer_noescape: false,
             inferred_noescape: Vec::new(),
             inferred_retained: None,
+            inferred_returns: None,
             inferred_arena_retained: Vec::new(),
             call_region: false,
             returns_interior: true,
@@ -872,6 +875,7 @@ impl ModulePlan {
                     && !members.traits.requirements.contains(name),
                 inferred_noescape: Vec::new(),
                 inferred_retained: None,
+                inferred_returns: None,
                 inferred_arena_retained: Vec::new(),
                 cursor_return_independent: false,
                 call_region: false,

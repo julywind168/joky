@@ -781,6 +781,7 @@ impl FunctionPlan {
             info.noescape_params = vec![0];
             info.inferred_noescape.clear();
             info.inferred_retained = None;
+            info.inferred_returns = None;
             info.infer_noescape = true;
             info.internal = true;
             info.instance_entry = false;

@@ -173,9 +173,21 @@ impl Instruction<'_> {
             let identity = state[&arg.index].clone();
             add_contents(state, &identity, &contents);
         }
+        // Summaries use the callee's physical parameter/result offsets. Abstract
+        // calls whose closure or generic lanes expand differently keep the
+        // signature-wide fallback until their concrete body is specialized.
+        let returns = callee.inferred_returns.as_ref().filter(|_| {
+            callee.parameter_slots() == args.len()
+                && arguments.iter().all(|(parameter, _)| parameter.is_some())
+                && result.as_ref().is_some_and(|slot| {
+                    slot.ty.parameter_slots() == callee.signature.ret.parameter_slots()
+                })
+        });
         for mut dst in result.iter().flat_map(refs) {
             dst.ty = self.facts.types[&dst.index].clone();
             let mutable = exclusive_access(&dst.ty);
+            let returned =
+                returns.and_then(|lanes| lanes.get(&(dst.index - result.as_ref().unwrap().index)));
             // A proved independent callback lane and its exclusive cursor must
             // retain distinct origins when returned in the same packet.
             let independent_capture = !mutable && callee.cursor_return_independent;
@@ -189,24 +201,58 @@ impl Instruction<'_> {
                     + self.pc
             };
             let mut value = Reference {
-                origins: BTreeSet::from([Origin::new(origin)]),
+                origins: if returned.is_none_or(|lane| lane.fresh) {
+                    BTreeSet::from([Origin::new(origin)])
+                } else {
+                    BTreeSet::new()
+                },
                 loans: Set::from([loan]),
                 storage: dst.ty.is_owner() || dst.ty.is_buffer_view(),
                 // Unknown ordinary host references retain their existing ABI
                 // contract. Unknown owner views must remain conservative.
                 interior: !dst.ty.is_owner()
-                    && callee.returns_interior
+                    && returned.map_or(callee.returns_interior, |lane| lane.interior)
                     && (callee.inferred_retained.is_some() || dst.ty.is_buffer_view()),
                 ..Default::default()
             };
-            for arg in &inputs {
-                if noescape_inputs.contains(&arg.index) && !arg.ty.is_owner() {
+            let dependencies: Vec<_> = if let Some(returned) = returned {
+                returned
+                    .sources
+                    .iter()
+                    .flat_map(|source| {
+                        let (offset, contents) = match *source {
+                            ReturnSource::Argument(offset) => (offset, false),
+                            ReturnSource::Contents(offset) => (offset, true),
+                        };
+                        args[offset].iter().flat_map(refs).map(move |mut slot| {
+                            slot.ty = self.facts.types[&slot.index].clone();
+                            (slot, Some(contents))
+                        })
+                    })
+                    .collect()
+            } else {
+                inputs.iter().cloned().map(|slot| (slot, None)).collect()
+            };
+            for (arg, stored_contents) in &dependencies {
+                // A precise body summary can return stored element references
+                // without returning a borrow of its noescape container argument.
+                if returned.is_none() && noescape_inputs.contains(&arg.index) && !arg.ty.is_owner()
+                {
                     continue;
                 }
-                if independent_capture && arg.ty.reference_type().is_some_and(|r| r.mutable) {
+                if returned.is_none()
+                    && independent_capture
+                    && arg.ty.reference_type().is_some_and(|r| r.mutable)
+                {
                     continue;
                 }
-                let source = if dst.ty.is_owner() {
+                let source = if let Some(contents) = stored_contents {
+                    if *contents {
+                        buffer_contents(state, arg)
+                    } else {
+                        state[&arg.index].clone()
+                    }
+                } else if dst.ty.is_owner() {
                     // Owner identity flows only from consumed owners.
                     if !arg.ty.is_owner() {
                         continue;

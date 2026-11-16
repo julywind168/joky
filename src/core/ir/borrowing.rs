@@ -11,11 +11,34 @@ type Set = BTreeSet<usize>;
 #[derive(Default)]
 struct Escapes {
     returned: Set,
+    returned_lanes: BTreeMap<usize, ReturnedRoots>,
     shared_returned: Set,
     retained: Set,
     arena_retained: BTreeMap<usize, Set>,
     returns_interior: bool,
 }
+
+#[derive(Default)]
+struct ReturnedRoots {
+    roots: Set,
+    interior: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ReturnSource {
+    Argument(usize),
+    Contents(usize),
+}
+
+/// A body-proved result lane depends on parameter identities or stored contents.
+/// Fresh origins stay conservative: distinct allocations are not inferred here.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ReturnOrigin {
+    sources: BTreeSet<ReturnSource>,
+    fresh: bool,
+    interior: bool,
+}
+pub(crate) type ReturnOrigins = BTreeMap<usize, ReturnOrigin>;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Projection {
@@ -669,6 +692,19 @@ pub(super) fn infer_module(
             continue;
         }
         info.inferred_retained = Some(Vec::new());
+        info.inferred_returns = Some(
+            body.result
+                .iter()
+                .flat_map(refs)
+                .filter(|slot| !slot.ty.is_owner())
+                .map(|slot| {
+                    (
+                        slot.index - body.result.as_ref().unwrap().index,
+                        ReturnOrigin::default(),
+                    )
+                })
+                .collect(),
+        );
         info.inferred_arena_retained.clear();
         info.returns_interior = false;
         info.cursor_return_independent = info.signature.ret.is_scoped_cursor_value();
@@ -728,10 +764,23 @@ pub(super) fn infer_module(
             }
         }
         let escaped = escaped.into_inner();
+        let return_work = escaped
+            .returned_lanes
+            .values()
+            .map(|lane| 1 + lane.roots.len())
+            .sum();
+        budget = budget.checked_sub(return_work).ok_or_else(|| {
+            type_error(
+                &info.span,
+                ErrorCode::ResourceLimit,
+                "Borrow effect inference exceeds its compilation budget",
+            )
+        })?;
         let mut slot = 0;
         let mut rejected = Set::new();
         let mut retained = Set::new();
         let mut parameter_roots = Vec::new();
+        let mut return_inputs = BTreeMap::new();
         let mut shared_depends_on_exclusive = false;
         for (index, ty) in info.signature.params.iter().enumerate() {
             let resolved = if let Some(reference) = ty.reference_type() {
@@ -748,9 +797,12 @@ pub(super) fn infer_module(
             })
             .iter()
             .flat_map(|s| {
+                return_inputs.insert(s.index, ReturnSource::Argument(s.index));
                 let mut roots = vec![s.index];
                 if reference_buffer(&s.ty) {
-                    roots.push(body.slot_count + body.ops.len() + s.index);
+                    let content_root = body.slot_count + body.ops.len() + s.index;
+                    roots.push(content_root);
+                    return_inputs.insert(content_root, ReturnSource::Contents(s.index));
                 }
                 if s.ty.reference_type().is_some_and(|r| r.mutable) {
                     shared_depends_on_exclusive |= roots
@@ -789,6 +841,24 @@ pub(super) fn infer_module(
             }
         }
         let info = functions.get_mut(&name).unwrap();
+        let mut returns_changed = false;
+        if result.is_err() {
+            returns_changed = info.inferred_returns.take().is_some();
+        } else if let Some(returns) = &mut info.inferred_returns {
+            for (offset, value) in &escaped.returned_lanes {
+                let lane = returns.entry(*offset).or_default();
+                let before = (lane.sources.len(), lane.fresh, lane.interior);
+                for root in &value.roots {
+                    if let Some(source) = return_inputs.get(root) {
+                        lane.sources.insert(*source);
+                    } else {
+                        lane.fresh = true;
+                    }
+                }
+                lane.interior |= value.interior;
+                returns_changed |= before != (lane.sources.len(), lane.fresh, lane.interior);
+            }
+        }
         let previous = (
             info.inferred_noescape.len(),
             info.inferred_retained.as_ref().unwrap().len(),
@@ -811,14 +881,15 @@ pub(super) fn infer_module(
                 info.inferred_arena_retained.push(effect);
             }
         }
-        if previous
-            != (
-                info.inferred_noescape.len(),
-                stored.len(),
-                info.returns_interior,
-                info.inferred_arena_retained.len(),
-                info.cursor_return_independent,
-            )
+        if returns_changed
+            || previous
+                != (
+                    info.inferred_noescape.len(),
+                    stored.len(),
+                    info.returns_interior,
+                    info.inferred_arena_retained.len(),
+                    info.cursor_return_independent,
+                )
         {
             pending.extend(callers.get(&name).into_iter().flatten().cloned());
         }

@@ -255,3 +255,53 @@ fn noescape_inference_follows_imported_private_generic_helpers() {
     }
     crate::backends::aot::tests::assert_sync_int32(&ast, "probe", 42);
 }
+
+#[test]
+fn return_borrow_origins_preserve_independent_fields() {
+    let source = include_str!("../../../../tests/fixtures/return_borrow_origins.jk");
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source)
+            .unwrap_or_else(|error| panic!("{mode:?}: {error}"));
+        assert_eq!(vm.call_int32_0("probe").unwrap(), 42);
+        let result =
+            crate::runtime::driver::block_on(vm.prepare_async("pending", &[]).unwrap()).unwrap();
+        assert_eq!(result, 42);
+        crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+}
+
+#[test]
+fn return_borrow_origins_reject_actual_aliases_escape_and_retention() {
+    for body in [
+        "fn bad() { var a = 1; var b = 2; let p = pair(&a, &b); b = 3; assert_eq(*p.second, 2) }",
+        "fn duplicate(a: &Int32, b: &Int32) -> Pair { Pair { first: a, second: a } } fn bad() { var a = 1; let b = 2; let p = duplicate(&a, &b); a = 3; assert_eq(*p.second, 1) }",
+        "fn bad() { var a = 1; let p = pair(&a, &a); a = 3; assert_eq(*p.second, 1) }",
+        "fn choose(a: &Int32, b: &Int32, flag: Bool) -> Pair { if flag { pair(a, b) } else { pair(b, a) } } fn bad(flag: Bool) { var a = 1; let b = 2; let p = choose(&a, &b, flag); a = 3; assert_eq(*p.second, 2) }",
+        "fn cycle(a: &Int32, b: &Int32, n: Int32) -> Pair { if n == 0 { pair(a, b) } else { cycle(b, a, n - 1) } } fn bad(n: Int32) { var a = 1; let b = 2; let p = cycle(&a, &b, n); a = 3; assert_eq(*p.second, 2) }",
+        "fn choose(a: &Int32, b: &Int32, n: Int32) -> Pair { var p = pair(a, b); for _ in 0..n { p = pair(b, a) }; p } fn bad(n: Int32) { var a = 1; let b = 2; let p = choose(&a, &b, n); a = 3; assert_eq(*p.second, 2) }",
+        "fn bad(value: &Int32) -> &Int32 { let local = 1; pair(value, &local).second }",
+        "fn bad(a: &Int32, b: &Int32) @noescape(a) -> &Int32 { pair(b, a).second }",
+        "fn stored(a: &Int32, b: &Int32) -> &Int32 { let saved = [a]; b } fn bad() { let a = 1; let b = 2; assert_eq(*stored(&a, &b), 2) }",
+        "fn bad(f: fn(&Int32, &Int32) -> Pair) { var a = 1; let b = 2; let p = f(&a, &b); a = 3; assert_eq(*p.second, 2) }",
+        "fn pending(a: &Int32, b: &Int32) @suspends -> Pair { task.yield_now(); pair(a, b) } fn bad() @suspends { var a = 1; var b = 2; let p = pending(&a, &b); task.yield_now(); b = 3; assert_eq(*p.second, 2) }",
+    ] {
+        rejects(&format!("import joky/task\nstruct Pair {{ first: &Int32, second: &Int32 }}\nfn pair(first: &Int32, second: &Int32) -> Pair {{ Pair {{ first, second }} }}\n{body}"));
+    }
+}
+
+#[test]
+fn return_borrow_origins_cross_module_generic_inputs() {
+    let mut modules = crate::ModuleSources::new();
+    modules.insert("helpers", "fn reverse<T>(a: T, b: T) -> (T, T) { (b, a) } pub fn select<T>(a: T, b: T) -> (T, T) { reverse(a, b) }").unwrap();
+    let ast = crate::TypeRegistry::default().resolve_with_modules(
+        &crate::parser::parse("import helpers fn probe() -> Int32 { var a = 1; let b = 42; let (kept, _) = helpers.select(&a, &b); a = 3; *kept }").unwrap(), &modules
+    ).unwrap();
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_module(&ast)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(vm.call_int32_0("probe").unwrap(), 42);
+    }
+    crate::backends::aot::tests::assert_sync_int32(&ast, "probe", 42);
+}

@@ -298,6 +298,19 @@ impl Instruction<'_> {
             for slot in refs(result) {
                 let value = state.get(&slot.index);
                 self.record_escape(value, true);
+                if !slot.ty.is_owner() {
+                    if let (Some(escaped), Some(value)) = (self.facts.escaped, value) {
+                        let mut escaped = escaped.borrow_mut();
+                        let lane = escaped
+                            .returned_lanes
+                            .entry(slot.index - result.index)
+                            .or_default();
+                        lane.roots
+                            .extend(value.origins.iter().map(|origin| origin.root));
+                        lane.roots.extend(&value.arenas);
+                        lane.interior |= value.interior;
+                    }
+                }
                 if let (Some(escaped), Some(value)) = (
                     cursor_summary,
                     value.filter(|_| !exclusive_access(&slot.ty)),

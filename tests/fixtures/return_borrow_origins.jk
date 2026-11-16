@@ -1,0 +1,84 @@
+import joky/task
+
+struct Pair { first: &Int32, second: &Int32 }
+struct Values { first: Int32, second: Int32 }
+struct Nested<T> { tag: Int32, value: T }
+fn pair(first: &Int32, second: &Int32) -> Pair { Pair { first, second } }
+fn reverse(value: Pair) -> (&Int32, &Int32) { (value.second, value.first) }
+fn identity<T>(value: T) -> T { value }
+fn padded(prefix: (Int32, Int32), unit: Unit, first: &Int32, second: &Int32) -> Pair {
+    pair(first, second)
+}
+fn stored_view(values: &Array<&Int32>) @noescape -> &Int32 { values[0] }
+fn elements(first: &Array<Int32>, second: &Array<Int32>) -> Pair {
+    Pair { first: first.get_ref(0)!, second: second.get_ref(0)! }
+}
+fn recurse(first: &Int32, second: &Int32, depth: Int32) -> Pair {
+    if depth == 0 { pair(first, second) } else { relay(first, second, depth - 1) }
+}
+fn relay(first: &Int32, second: &Int32, depth: Int32) -> Pair {
+    recurse(first, second, depth)
+}
+fn texts(first: &String, second: &String) -> (String, &String, &String) {
+    ("owned", first, second)
+}
+fn pending_pair(first: &Int32, second: &Int32) @suspends -> Pair {
+    task.yield_now()
+    pair(first, second)
+}
+
+fn probe() -> Int32 {
+    var first = 20
+    var second = 22
+    let result = padded((1, 2), {}, &first, &second)
+    assert_eq(*result.first, 20)
+    first = 0
+    assert_eq(*result.second, 22)
+    var fields = Values { first: 20, second: 22 }
+    let kept = pair(&fields.first, &fields.second).second
+    fields.first = 42
+    assert_eq(*kept, 22)
+    let (right, left) = reverse(pair(&first, &second))
+    assert_eq(*right, 22)
+    second = 42
+    assert_eq(*left, 0)
+    let nested = identity(Nested { tag: 1, value: Some(pair(&first, &second)) })
+    let Pair { first: _, second: kept } = nested.value!
+    first = 9
+    assert_eq(*kept, 42)
+    let kept = {
+        let temporary = 10
+        recurse(&temporary, &second, 3).second
+    }
+    assert_eq(*kept, 42)
+    var left = "left"
+    var right = "right"
+    let (owned, a, b) = texts(&left, &right)
+    assert_eq(owned, "owned")
+    assert_eq(a, "left")
+    left = "changed"
+    assert_eq(b, "right")
+    right = "changed"
+    var values = [20]
+    let others = [22]
+    let views = elements(&values, &others)
+    assert_eq(*views.first, 20)
+    values.push(42)
+    assert_eq(*views.second, 22)
+    let cell = alloc(42)
+    let stored = { let refs = [&*cell]; stored_view(&refs) }
+    assert_eq(*stored, 42)
+    second
+}
+
+fn pending() @suspends -> Int32 {
+    var first = 1
+    var second = 42
+    let result = pending_pair(&first, &second)
+    task.yield_now()
+    assert_eq(*result.first, 1)
+    first = 2
+    assert_eq(*result.second, 42)
+    second = 40
+    first + second
+}
