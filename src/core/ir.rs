@@ -2234,7 +2234,7 @@ impl FunctionPlan {
         // A `Module.NAME` constant read must resolve before field projection,
         // which would otherwise treat the module alias as an undefined variable.
         if matches!(expr, Expr::Field { .. }) {
-            if let Some(flow) = self.module_constant_read(expr, vars, functions, suspends, types)? {
+            if let Some(flow) = self.module_constant_read(expr, vars, types)? {
                 return Ok(flow);
             }
         }
@@ -2291,7 +2291,11 @@ impl FunctionPlan {
         if let Expr::Field { .. } = expr {
             if let Some(path) = expression_path(expr) {
                 if let Some(root) = path.split('.').next() {
-                    if !vars.contains_key(root) && self.scope.modules.contains_key(root) {
+                    if !vars.contains_key(root)
+                        && self.scope.modules.contains_key(root)
+                        && !matches!(expr, Expr::Field { base, .. }
+                            if self.type_hint(base, vars, functions, types).is_some())
+                    {
                         return Err(type_error(
                             &expr.span(),
                             ErrorCode::UnknownName,
@@ -2384,9 +2388,7 @@ impl FunctionPlan {
                 // A local binding shadows a bare module constant; only an
                 // unshadowed name reaches the module's constant namespace.
                 if !vars.contains_key(name) {
-                    if let Some(flow) =
-                        self.module_constant_expr(name, vars, functions, suspends, types)?
-                    {
+                    if let Some(flow) = self.module_constant_expr(name, vars, types)? {
                         return Ok(flow);
                     }
                 }

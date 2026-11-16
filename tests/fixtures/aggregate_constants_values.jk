@@ -1,0 +1,11 @@
+pub struct Point { pub x: Int32, pub y: Int32 }
+pub struct Settings { pub point: Point, pub pair: (UInt16, Bool), hidden: UInt64 }
+const BASE: Settings = Settings { pair: (7, true), hidden: 20, point: Point { y: 4, x: 11 } }
+pub const DEFAULT: Settings = Settings.DEFAULT
+impl Settings {
+    pub const DEFAULT: Settings = BASE
+    pub fn score(self) -> Int32 {
+        self.point.x + self.point.y + int32(self.pair.0) + int32(self.hidden)
+    }
+}
+pub type Config = Settings

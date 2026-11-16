@@ -6,18 +6,71 @@ use std::rc::Rc;
 const MAX_STRING_BYTES: usize = 1024 * 1024;
 const MAX_TOTAL_STRING_BYTES: usize = 16 * MAX_STRING_BYTES;
 
-/// An evaluated compile-time value, with no runtime storage or source location.
-/// Materializing a string uses ordinary literal lowering at the read site, so
-/// every read owns its payload and charges the executing task's budget.
-pub(super) struct Value(Literal);
+const MAX_VALUE_NODES: usize = 4096;
+const MAX_TOTAL_VALUE_NODES: usize = 65536;
+
+/// Evaluated data with its resolved nominal/layout identity, never a constructor
+/// expression to recheck in the consumer's namespace or field visibility scope.
+pub(super) enum Value {
+    Copy { ty: Type, lanes: Vec<Constant> },
+    String(String),
+}
 
 impl Value {
-    pub(super) fn expression(&self, span: Span) -> Expr {
-        Expr::Literal {
-            literal: self.0.clone(),
-            span,
+    pub(super) fn materialize(&self, plan: &mut FunctionPlan) -> Result<Flow, Error> {
+        let slot = match self {
+            Self::Copy { ty, lanes } => {
+                if *ty == Type::Unit {
+                    return Ok(Flow::Value(None));
+                }
+                let slot = plan.slot(ty.clone())?;
+                for (dst, value) in slot.scalars().zip(lanes) {
+                    plan.emit(Op::Literal(dst, value.clone()));
+                }
+                slot
+            }
+            Self::String(text) => {
+                let slot = plan.slot(Type::String)?;
+                plan.emit(Op::Text {
+                    dst: slot.clone(),
+                    source: TextSource::Literal(text.clone()),
+                });
+                plan.register_owner(slot.clone(), None);
+                slot
+            }
+        };
+        Ok(Flow::Value(Some(slot)))
+    }
+}
+
+/// Count expanded inline components, including zero-sized fields. A shared type
+/// DAG can describe exponentially many components without using scalar lanes.
+fn value_nodes(ty: &Type, span: Span) -> Result<usize, Error> {
+    if ty.layout_depth() > 32 {
+        return Err(type_error(
+            &span,
+            ErrorCode::ResourceLimit,
+            "Constant aggregate nesting exceeds 32 levels",
+        ));
+    }
+    let mut pending = vec![ty];
+    let mut nodes = 0;
+    while let Some(ty) = pending.pop() {
+        nodes += 1;
+        if nodes > MAX_VALUE_NODES {
+            return Err(type_error(
+                &span,
+                ErrorCode::ResourceLimit,
+                "Constant aggregate values are limited to 4096 components",
+            ));
+        }
+        match ty {
+            Type::Record(record) => pending.extend(record.fields.iter().map(|field| &field.ty)),
+            Type::Tuple(tuple) => pending.extend(&tuple.elements),
+            _ => {}
         }
     }
+    Ok(nodes)
 }
 
 pub(super) fn validate_all(
@@ -48,94 +101,87 @@ pub(super) fn validate_all(
         let mut pending = vec![&constant.declaration.value];
         while let Some(expr) = pending.pop() {
             match expr {
-                // A bare name binds only through the declaring scope's
-                // constant spellings: a same-module constant, a selector
-                // import or a prelude name. Local bindings cannot occur in a
-                // constant expression, so nothing else can shadow the name.
                 Expr::Ident { name, span } => {
-                    let key = imports.constants.get(name).cloned().ok_or_else(|| {
-                        type_error(
-                            span,
-                            ErrorCode::UnknownName,
-                            format!("Unknown module constant `{name}`"),
-                        )
-                    })?;
-                    let dependency = names.get(&key).copied().ok_or_else(|| {
-                        type_error(
-                            span,
-                            ErrorCode::UnknownName,
-                            format!("Unknown module constant `{name}`"),
-                        )
-                    })?;
+                    let dependency = imports
+                        .constants
+                        .get(name)
+                        .and_then(|key| names.get(key))
+                        .copied()
+                        .ok_or_else(|| {
+                            type_error(
+                                span,
+                                ErrorCode::UnknownName,
+                                format!("Unknown module constant `{name}`"),
+                            )
+                        })?;
                     edges[index].push(dependency);
                 }
                 Expr::Field {
                     base, name, span, ..
                 } => {
-                    let root = expression_path(base).expect("validated constant path");
-                    // A module constant resolves by declaration identity before
-                    // any nominal typing: `cfg.LIMIT` names a constant, not a
-                    // member. Every legal spelling — the defining module's own
-                    // names included — is already visibility-filtered by
-                    // `ImportScope::constants`, which never binds another
-                    // module's private constants.
-                    let spelling = format!("{root}.{name}");
-                    if let Some(key) = imports.constants.get(&spelling).cloned() {
-                        let dependency = names.get(&key).copied().ok_or_else(|| {
-                            type_error(
-                                span,
-                                ErrorCode::UnknownName,
-                                format!("Unknown module constant `{spelling}`"),
-                            )
-                        })?;
-                        edges[index].push(dependency);
-                        continue;
-                    }
-                    let spelling_visible = (!root.contains('.')
-                        || imports.types.contains_key(&root))
-                        && !imports
-                            .types
-                            .get(&root)
-                            .is_some_and(|binding| binding.resolved.is_some());
-                    let root = context
-                        .map_or(nominals.as_ref(), |scope| scope.nominals.as_ref())
-                        .get(&root)
-                        .map_or(root.clone(), members::owner_name);
-                    let key = format!("{root}.{name}");
-                    let visible = spelling_visible
-                        && context.map_or_else(
-                            || !members.private.contains(&key),
-                            |scope| scope.members.contains(&key),
-                        );
-                    let scoped = members.scoped_key(key.clone(), context.map(AsRef::as_ref));
-                    let dependency =
-                        names
-                            .get(&scoped)
-                            .copied()
-                            .filter(|_| visible)
-                            .ok_or_else(|| {
-                                type_error(
+                    if let Some(root) = expression_path(base) {
+                        let spelling = format!("{root}.{name}");
+                        if let Some(dependency) = imports
+                            .constants
+                            .get(&spelling)
+                            .and_then(|key| names.get(key))
+                        {
+                            edges[index].push(*dependency);
+                            continue;
+                        }
+                        let nominal = context
+                            .map_or(nominals.as_ref(), |scope| scope.nominals.as_ref())
+                            .get(&root);
+                        // A nominal namespace denotes an associated constant;
+                        // otherwise the suffix is a field projection and only
+                        // its base contributes a dependency.
+                        if nominal.is_some() || crate::core::types::primitive_type(&root).is_some()
+                        {
+                            let spelling_visible = (!root.contains('.')
+                                || imports.types.contains_key(&root))
+                                && !imports
+                                    .types
+                                    .get(&root)
+                                    .is_some_and(|binding| binding.resolved.is_some());
+                            let owner = nominal.map_or_else(|| root.clone(), members::owner_name);
+                            let key = format!("{owner}.{name}");
+                            let visible = spelling_visible
+                                && context.map_or_else(
+                                    || !members.private.contains(&key),
+                                    |scope| scope.members.contains(&key),
+                                );
+                            let scoped =
+                                members.scoped_key(key.clone(), context.map(AsRef::as_ref));
+                            if let Some(dependency) =
+                                names.get(&scoped).copied().filter(|_| visible)
+                            {
+                                edges[index].push(dependency);
+                            } else if imports.constants.contains_key(&root) {
+                                // Types and values have separate namespaces. If
+                                // no associated constant matches, a same-named
+                                // module value can still supply a record field.
+                                pending.push(base);
+                            } else {
+                                return Err(type_error(
                                     span,
                                     ErrorCode::UnknownName,
                                     format!("Unknown associated constant `{key}`"),
-                                )
-                            })?;
-                    edges[index].push(dependency);
+                                ));
+                            }
+                            continue;
+                        }
+                    }
+                    pending.push(base);
                 }
-                Expr::Unary { operand, .. } => pending.push(operand),
-                Expr::BinaryChain { .. } => pending.extend(expr.children()),
-                Expr::BinOp { lhs, rhs, .. } => {
-                    pending.push(lhs);
-                    pending.push(rhs);
-                }
-                Expr::Call { args, .. } => pending.extend(args),
-                _ => {}
+                // Constructor names and field labels are not value references.
+                _ => pending.extend(expr.children()),
             }
         }
     }
     let mut state = vec![0; members.constants.len()];
     let mut depths = vec![0usize; members.constants.len()];
     let mut string_bytes = 0;
+    let mut aggregate_nodes = 0;
     for root in 0..members.constants.len() {
         let mut pending = vec![(root, false)];
         while let Some((index, exit)) = pending.pop() {
@@ -149,8 +195,19 @@ pub(super) fn validate_all(
                         "Constant dependency depth exceeds 32 levels",
                     ));
                 }
+                if matches!(constant.declaration.ty, Type::Tuple(_) | Type::Record(_)) {
+                    let nodes = value_nodes(&constant.declaration.ty, constant.declaration.span)?;
+                    if nodes > MAX_TOTAL_VALUE_NODES - aggregate_nodes {
+                        return Err(type_error(
+                            &constant.declaration.span,
+                            ErrorCode::ResourceLimit,
+                            "Evaluated aggregate constants exceed 65536 components in total",
+                        ));
+                    }
+                    aggregate_nodes += nodes;
+                }
                 let value = evaluate(constant, functions, types, nominals, generics.clone())?;
-                if let Literal::String(text) = &value.0 {
+                if let Value::String(text) = &value {
                     // Count each evaluated declaration, including aliases, once
                     // across the entire compilation (entry and imported modules).
                     if text.len() > MAX_TOTAL_STRING_BYTES - string_bytes {
@@ -231,15 +288,13 @@ fn evaluate(
             } => Some(text.clone()),
             _ => None,
         });
-        return text
-            .map(|text| Value(Literal::String(text)))
-            .ok_or_else(|| {
-                type_error(
-                    &declaration.span,
-                    ErrorCode::InvalidState,
-                    "String constants require a string literal or a string constant reference",
-                )
-            });
+        return text.map(Value::String).ok_or_else(|| {
+            type_error(
+                &declaration.span,
+                ErrorCode::InvalidState,
+                "String constants require a string literal or a string constant reference",
+            )
+        });
     }
     let mut slots: Vec<Option<Constant>> = vec![None; plan.slot_count];
     for (op, span) in plan.ops.iter_spanned() {
@@ -267,23 +322,16 @@ fn evaluate(
         };
         slots[dst.index] = Some(value);
     }
-    let result = slots[plan.result.as_ref().unwrap().index].take().unwrap();
-    let literal = match result {
-        Constant::Float32(n) => Literal::Float32(n),
-        Constant::Float64(n) => Literal::Float64(n),
-        Constant::Int8(n) => Literal::Int8(n),
-        Constant::Int16(n) => Literal::Int16(n),
-        Constant::Int32(n) => Literal::Int32(n),
-        Constant::Int64(n) => Literal::Int64(n),
-        Constant::UInt8(n) => Literal::UInt8(n),
-        Constant::UInt16(n) => Literal::UInt16(n),
-        Constant::UInt32(n) => Literal::UInt32(n),
-        Constant::Rune(n) => Literal::Rune(n),
-        Constant::UInt64(n) => Literal::UInt64(n),
-        Constant::Bool(n) => Literal::Bool(n),
-        Constant::String(_) | Constant::NullPtr => unreachable!(),
-    };
-    Ok(Value(literal))
+    let lanes = plan
+        .result
+        .iter()
+        .flat_map(Slot::scalars)
+        .map(|slot| slots[slot.index].take().expect("evaluated constant lane"))
+        .collect();
+    Ok(Value::Copy {
+        ty: declaration.ty.clone(),
+        lanes,
+    })
 }
 
 fn validate_expression(expr: &Expr, string: bool) -> Result<(), Error> {
@@ -310,13 +358,18 @@ fn validate_expression(expr: &Expr, string: bool) -> Result<(), Error> {
             // either a module constant or an associated constant. Both are
             // checked for existence and visibility by the dependency scan.
             Expr::Ident { .. } | Expr::GenericName(_) => {},
-            Expr::Field { base, type_args, .. } if type_args.is_empty() && expression_path(base).is_some() => {},
+            Expr::Field { base, type_args, .. } if type_args.is_empty() && (!string || expression_path(base).is_some()) => {
+                if !string { pending.push(base); }
+            },
+            Expr::Tuple { elements, .. } if !string => pending.extend(elements),
+            Expr::Record { .. } if !string => pending.extend(expr.children()),
+            Expr::Block { exprs, .. } if !string && exprs.is_empty() => {},
             Expr::Unary { operand, .. } if !string => pending.push(operand),
             Expr::BinOp { lhs, rhs, .. } if !string => { pending.push(lhs); pending.push(rhs); },
             Expr::BinaryChain { rest, .. } if !string => { count += rest.len().saturating_sub(1); pending.extend(expr.children()); },
             Expr::Call { callee, args, .. } if !string && (IntegerType::conversion(callee).is_some() || matches!(callee.as_str(), "float32" | "float64")) => pending.extend(args),
             _ if string => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "String constants require a string literal or a string constant reference")),
-            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, module and associated constants, integer conversions and unary/binary operators")),
+            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, Copy tuple/record construction and field reads, module and associated constants, integer conversions and unary/binary operators")),
         }
     }
     Ok(())

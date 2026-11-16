@@ -1,0 +1,89 @@
+import aggregate_constants_values as cfg.{DEFAULT as IMPORTED, type Config}
+import joky/task
+
+struct Settings { wrong: Bool }
+struct Empty {}
+struct Collision { value: Int32 }
+const Collision: Collision = Collision { value: 13 }
+const COLLISION: Int32 = Collision.value
+struct Pair<T> { first: T, second: T }
+impl<T> Pair<T> {
+    const FIXED: (Int32, Bool) = (20, true)
+    const RECORD: Pair<Int32> = GENERIC
+}
+const GENERIC: Pair<Int32> = Pair { second: 22, first: 20 }
+const COPIED: Config = Local.DEFAULT
+const POINT: cfg.Point = cfg.Point { y: 8, .. cfg.DEFAULT.point }
+const UNIT: Unit = {}
+const EMPTY: Empty = Empty {}
+const NESTED: ((Int8, Float64, Rune), (Unit, Empty), Bool) = ((-7, 1.5, '中'), (UNIT, EMPTY), true)
+const NUMBER: Int32 = cfg.DEFAULT.point.x + cfg.Settings.DEFAULT.point.y
+const PROJECTED: Int32 = (cfg.Point { x: 17, y: 2 }).x + (3, 4).1
+struct Local {}
+impl Local {
+    const DEFAULT: Config = IMPORTED
+    const TUPLE: ((Int8, Float64, Rune), (Unit, Empty), Bool) = NESTED
+    const FIELD: Int32 = POINT.x
+}
+
+fn owned_copy() -> Config {
+    COPIED
+}
+
+fn check() -> Int32 {
+    var first = COPIED
+    let second = first
+    first.point.x = 99
+    if second.score() != 42 || COPIED.score() != 42 {
+        return 1
+    }
+    if owned_copy().score() != 42 || cfg.DEFAULT.score() != 42 {
+        return 2
+    }
+    if cfg.Settings.DEFAULT.score() != 42 || Local.DEFAULT.score() != 42 {
+        return 3
+    }
+    if POINT.x != 11 || POINT.y != 8 || NUMBER != 15 || PROJECTED != 21 {
+        return 4
+    }
+    let ((small, fraction, rune), (unit, empty), flag) = Local.TUPLE
+    unit;
+    empty
+    if small != -7 || fraction != 1.5 || rune != '中' || !flag {
+        return 5
+    }
+    if Local.FIELD != 11 || Pair::<Bool>.FIXED.0 != 20 {
+        return 6
+    }
+    if GENERIC.first + Pair::<Bool>.RECORD.second != 42 {
+        return 9
+    }
+    if COLLISION != 13 || Collision.value != 13 {
+        return 10
+    }
+    let COPIED = cfg.Point { x: 9, y: 0 }
+    if COPIED.x != 9 || cfg.DEFAULT.point.x != 11 {
+        return 7
+    }
+    if cfg.DEFAULT.point.x.to_string() != "11" {
+        return 8
+    }
+    42
+}
+
+fn pending() @suspends -> Int32 {
+    let value = COPIED
+    task.yield_now()
+    if value.score() == cfg.DEFAULT.score() {
+        42
+    } else {
+        0
+    }
+}
+
+fn main() @suspends -> Int32 {
+    if check() != 42 {
+        return 1
+    }
+    pending()
+}

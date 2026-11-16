@@ -117,9 +117,9 @@ fn module_constant_expressions_reject_unsupported_forms() {
         "Constants allow scalar literals",
     );
     reject(
-        "struct P {} const A: P = P {}",
+        "struct P { text: String } const A: P = P { text: \"x\" }",
         ErrorCode::TypeMismatch,
-        "integer, float, Rune, Bool or String",
+        "constants require",
     );
     // A bare function name is not a constant binding.
     reject(

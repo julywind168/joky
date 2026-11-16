@@ -57,9 +57,30 @@ impl ConstantOwner {
     }
 }
 
-/// Constants hold scalars or string templates, never runtime owners or references.
+/// Constants hold fixed Copy data or string templates, never runtime references.
 fn constant_type_supported(ty: &Type) -> bool {
-    ty.is_numeric() || matches!(ty, Type::Rune | Type::Bool | Type::String)
+    use crate::core::types::{
+        walk::{TypeEdges, TypeWalk},
+        ConstArgument, GenericArgument,
+    };
+    if *ty == Type::String {
+        return true;
+    }
+    // Inspect nominal arguments too: a phantom T or N must not make a cached
+    // associated constant's type depend on the eventual impl specialization.
+    if TypeWalk::new(ty, TypeEdges::Fields).any(|node| {
+        matches!(node, Type::Parameter(_) | Type::Projection(_))
+            || matches!(node, Type::FixedArray(array) if matches!(array.length, ConstArgument::Parameter(_)))
+            || matches!(node, Type::Record(record) if record.arguments.iter().any(|arg|
+                matches!(arg, GenericArgument::Const(ConstArgument::Parameter(_)))))
+    }) {
+        return false;
+    }
+    TypeWalk::new(ty, TypeEdges::Inline).all(|node| {
+        node.is_numeric()
+            || matches!(node, Type::Rune | Type::Bool | Type::Unit | Type::Tuple(_))
+            || matches!(node, Type::Record(record) if record.closure.is_none())
+    })
 }
 
 pub(super) fn owner_name(ty: &Type) -> String {
@@ -221,7 +242,7 @@ impl Members {
                     return Err(type_error(
                         &declaration.span,
                         ErrorCode::TypeMismatch,
-                        "Associated constants require an integer, float, Rune, Bool or String type",
+                        "Associated constants require an integer, float, Rune, Bool, Unit, String or concrete Copy tuple/record type",
                     ));
                 }
                 let key = members.scoped_key(
@@ -250,7 +271,7 @@ impl Members {
                 return Err(type_error(
                     &declaration.span,
                     ErrorCode::TypeMismatch,
-                    "Module constants require an integer, float, Rune, Bool or String type",
+                    "Module constants require an integer, float, Rune, Bool, Unit, String or concrete Copy tuple/record type",
                 ));
             }
             // The entry module has no canonical path, and its constants are
@@ -823,6 +844,7 @@ impl FunctionPlan {
                     && (!path.contains('.') || !self.source_nominals().contains_key(root))
                     && self.module_constant_key(path, vars, types).is_none()
                     && self.associated_constant(&receiver, vars, types)?.is_none()
+                    && self.type_hint(&receiver, vars, functions, types).is_none()
                 {
                     return Ok(None);
                 }
@@ -1166,8 +1188,6 @@ impl FunctionPlan {
         &mut self,
         expr: &Expr,
         vars: &mut HashMap<String, Binding>,
-        functions: &HashMap<String, FunctionInfo>,
-        suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Option<Flow>, Error> {
         let path = match expr {
@@ -1181,16 +1201,14 @@ impl FunctionPlan {
             }
             _ => return Ok(None),
         };
-        self.module_constant_expr(&path, vars, functions, suspends, types)
+        self.module_constant_expr(&path, vars, types)
     }
 
-    /// Inline a module constant read as the literal produced by evaluation.
+    /// Materialize a typed module constant value at its read site.
     pub(super) fn module_constant_expr(
         &mut self,
         path: &str,
         vars: &mut HashMap<String, Binding>,
-        functions: &HashMap<String, FunctionInfo>,
-        suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Option<Flow>, Error> {
         let Some(key) = self.module_constant_key(path, vars, types) else {
@@ -1202,20 +1220,21 @@ impl FunctionPlan {
         let Some(constant) = constant else {
             return Ok(None);
         };
-        let value = constant
-            .value
-            .borrow()
+        self.materialize_constant(&constant).map(Some)
+    }
+
+    fn materialize_constant(&mut self, constant: &ConstMember) -> Result<Flow, Error> {
+        let value = constant.value.borrow();
+        value
             .as_ref()
-            .map(|value| value.expression(self.current_span))
             .ok_or_else(|| {
                 type_error(
                     &constant.declaration.span,
                     ErrorCode::InvalidState,
                     "Constant dependency has not been evaluated",
                 )
-            })?;
-        self.expr(&value, vars, functions, suspends, types)
-            .map(Some)
+            })?
+            .materialize(self)
     }
 
     pub(super) fn member_expr(
@@ -1233,28 +1252,12 @@ impl FunctionPlan {
                 .map(Some);
         }
         if let Some(constant) = self.associated_constant(expr, vars, types)? {
-            let value = constant
-                .value
-                .borrow()
-                .as_ref()
-                .map(|value| value.expression(expr.span()))
-                .ok_or_else(|| {
-                    type_error(
-                        &constant.declaration.span,
-                        ErrorCode::InvalidState,
-                        "Constant dependency has not been evaluated",
-                    )
-                })?;
-            return self
-                .expr(&value, vars, functions, suspends, types)
-                .map(Some);
+            return self.materialize_constant(&constant).map(Some);
         }
         // Module constants occupy the value namespace, so they follow member
         // resolution: `Foo.NAME` on a nominal type never reaches this branch.
         if let Some(path) = expression_path(expr) {
-            if let Some(flow) =
-                self.module_constant_expr(&path, vars, functions, suspends, types)?
-            {
+            if let Some(flow) = self.module_constant_expr(&path, vars, types)? {
                 return Ok(Some(flow));
             }
         }

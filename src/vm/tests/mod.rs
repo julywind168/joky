@@ -276,6 +276,8 @@ mod local_field_tests;
 #[path = "language/loops_tests.rs"]
 mod loops_tests;
 
+#[path = "language/aggregate_constant_tests.rs"]
+mod aggregate_constant_tests;
 #[path = "language/method_tests.rs"]
 mod method_tests;
 #[path = "language/string_constant_tests.rs"]
