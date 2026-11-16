@@ -1,13 +1,10 @@
 import joky/iter
 
-fn nonempty(value: &String) @noescape -> Bool { value != "" }
-fn byte_length(value: &String) @noescape -> UInt64 { value.byte_length() }
-
 fn shared_demo() {
     let names = ["Alice", "", "Bob", "Carol"]
     let lengths = iter.shared(&names)
-        .filter(nonempty)
-        .map(byte_length)
+        .filter(|value| { value != "" })
+        .map(|value| { value.byte_length() })
         .take(2)
 
     for index, length in lengths { println("{index}: {length}") }

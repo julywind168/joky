@@ -10,9 +10,9 @@ fn main() @suspends {
 
     task.sleep(250us)
     let message = "completed"
-    let result = task.timeout(timeout, move || @suspends {
-            task.yield_now()
-            message
-        })
+    let result = task.timeout(timeout, move || {
+        task.yield_now()
+        message
+    })
     println(result.unwrap())
 }

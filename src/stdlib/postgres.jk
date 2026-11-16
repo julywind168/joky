@@ -233,10 +233,18 @@ pub fn param_json(value: &json.Value) @noescape -> Result<Value, DbError> {
 
 /// Encodes a typed Joky value for binding as JSONB.
 pub fn param_json_as<T: typed.ToJson>(value: &T) @noescape -> Result<Value, DbError> {
-    match typed.encode(value) {
-        Ok(text) => Ok(JsonValue(text)),
-        Err(error) => Err(JsonCodec(error))
-    }
+    typed
+        .encode(value)
+        .map(
+            |text| {
+                JsonValue(text)
+            }
+        )
+        .map_err(
+            |error| {
+                JsonCodec(error)
+            }
+        )
 }
 
 /// Binds None as SQL NULL and encodes a present value as JSONB.
