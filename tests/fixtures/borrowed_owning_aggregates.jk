@@ -1,0 +1,144 @@
+import joky/task
+
+struct State { value: &Int32 }
+struct Direct { owned: String, view: &Int32, values: Array<Int32> }
+struct Mixed<T> { owned: String, view: T }
+struct Reversed<T> { view: T, owned: String }
+struct Wrapped { value: (String, &Int32) }
+fn identity<T>(value: T) -> T { value }
+fn pack<T: Copy>(view: T) -> Mixed<T> { Mixed { owned: "record", view } }
+fn relay<T>(value: T) @suspends -> T { task.yield_now(); value }
+fn pack_callback<F: Copy + Fn() -> Int32>(view: F) -> Mixed<F> {
+    Mixed { owned: "callback", view }
+}
+fn forward<S: Copy, T>(state: S, item: T) -> (S, T) { (state, item) }
+fn reverse<S: Copy, T>(state: S, item: T) -> (T, S) { (item, state) }
+fn many(value: &Int32) -> (String, &Int32, Array<Int32>, &Int32) {
+    ("first", value, [*value], value)
+}
+fn choose(value: &Int32, flag: Bool) -> Option<(String, &Int32)> {
+    if flag { Some(("chosen", value)) } else { None }
+}
+fn shared_owner(value: &String) -> (&String, String) { (value, "other") }
+fn with_callback<F: Copy + Fn() -> Int32>(callback: F) -> (String, F) {
+    ("callback", callback)
+}
+fn take_reference(values: Array<&Int32>) -> &Int32 { values[0] }
+
+fn compute() -> Int32 {
+    var number = 42
+    let state = State { value: &number }
+    let (state, text) = forward(state, "forward")
+    assert_eq(*state.value, 42)
+    assert_eq(text, "forward")
+    let (text, state) = reverse(state, "reverse")
+    assert_eq(*state.value, 42)
+    assert_eq(text, "reverse")
+    let (view, text) = forward(&number, "direct")
+    assert_eq(*view, 42)
+    assert_eq(text, "direct")
+    let cell = alloc(42)
+    let recovered = take_reference([&*cell])
+    assert_eq(*recovered, 42)
+    let (text, view) = reverse(&number, "direct")
+    assert_eq(*view, 42)
+    assert_eq(text, "direct")
+    let (text, view, values, other) = identity(many(&number))
+    assert_eq(text, "first")
+    assert_eq(*view + *other, 84)
+    assert_eq(values[0], 42)
+    let ((text, view), (other, values), flag) = identity((("nested", &number), (&number, [42]), true))
+    assert_eq(text, "nested")
+    assert_eq(*view + *other + values[0], 126)
+    assert_eq(flag, true)
+    let (text, view) = choose(&number, true)!
+    assert_eq(text, "chosen")
+    assert_eq(*view, 42)
+    let original = "source"
+    let (view, text) = shared_owner(&original)
+    assert_eq(view, "source")
+    assert_eq(text, "other")
+    let callback = || { number }
+    let ((text, callback), values) = identity((with_callback(callback), [42]))
+    assert_eq(text, "callback")
+    assert_eq(callback() + values[0], 84)
+    let Mixed { owned, view } = identity(pack(&number))
+    assert_eq(owned, "record")
+    assert_eq(*view, 42)
+    let Reversed { view, owned } = Reversed { view: &number, owned: "reversed" }
+    assert_eq(*view, 42)
+    assert_eq(owned, "reversed")
+    let Wrapped { value: (owned, view) } = Wrapped { value: ("wrapped", &number) }
+    assert_eq(owned, "wrapped")
+    assert_eq(*view, 42)
+    let Mixed { owned, view: Mixed { owned: inner, view } } =
+        identity(Mixed { owned: "outer", view: pack(&number) })
+    assert_eq(owned, "outer")
+    assert_eq(inner, "record")
+    assert_eq(*view, 42)
+    let Mixed { owned, view: callback } = identity(pack_callback(callback))
+    assert_eq(owned, "callback")
+    assert_eq(callback(), 42)
+    let reference = &number
+    let callback = move || { *reference }
+    let Mixed { owned, view: callback } = identity(pack_callback(callback))
+    assert_eq(owned, "callback")
+    assert_eq(callback(), 42)
+    let (_, remaining) = (&number, "remaining")
+    number = 43
+    assert_eq(remaining, "remaining")
+    number - 1
+}
+
+fn failed() {
+    let number = 42
+    let mixed = (Mixed { owned: "failure", view: &number }, [42])
+    assert_eq(*mixed.0.view, 42)
+    panic("borrowed aggregate failure")
+}
+
+fn pending() @suspends -> Int32 {
+    let number = 42
+    let (text, view, values, _) = many(&number)
+    assert_eq(*view, 42)
+    assert_eq(text, "first")
+    let result = values[0]
+    let _ = values
+    assert_eq(compute(), 42)
+    let record = Direct { owned: "record", view: &number, values: [42] }
+    let tuple = ("tuple", &number)
+    let reversed = (&number, "reversed")
+    let nested = (("nested", &number), 1)
+    task.yield_now()
+    assert_eq(*record.view, 42)
+    let Direct { owned, view, values } = record
+    assert_eq(owned, "record")
+    assert_eq(*view, 42)
+    assert_eq(values[0], 42)
+    let (owned, view) = relay(tuple)
+    assert_eq(owned, "tuple")
+    assert_eq(*view, 42)
+    let (view, owned) = reversed
+    assert_eq(*view, 42)
+    assert_eq(owned, "reversed")
+    let ((owned, view), tag) = nested
+    assert_eq(owned, "nested")
+    assert_eq(*view + tag, 43)
+    var source = "source"
+    let Mixed { owned, view } = relay(identity(pack(&source)))
+    assert_eq(owned, "record")
+    assert_eq(view, "source")
+    source = "changed"
+    let (owned, view) = relay(("tuple", &source))
+    assert_eq(owned, "tuple")
+    assert_eq(view, "changed")
+    for _ in 0..2 {
+        let nested = Some(Mixed { owned: "outer", view: ("inner", &source) })
+        task.yield_now()
+        let Mixed { owned, view: (inner, view) } = nested!
+        assert_eq(owned, "outer")
+        assert_eq(inner, "inner")
+        assert_eq(view, "changed")
+    }
+    result
+}

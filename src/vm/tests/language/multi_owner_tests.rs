@@ -181,7 +181,7 @@ fn multi_owner_contracts_reject_partial_moves_and_hidden_borrows() {
         ("fn bad() { var b = Buffers.new::<&Int32>(); let p = alloc(42); b.add((&*p)) ; (*(p) = 0) }", "retained"),
         ("type Refs = Buffers<&Int32> fn store(b: &mut Refs, p: &Int32) { b.second.set(0, p); } fn bad() { var b = Buffers.new::<&Int32>(); let p = 42; store(&mut b, &p) }", "local borrow"),
         ("type Refs = Buffers<&Int32> fn store(b: &mut Refs, p: &Int32) { b.second.set(0, p); } fn bad() { var b = Buffers.new::<&Int32>(); let p = alloc(42); store(&mut b, (&*p)) ; (*(p) = 0) }", "retained"),
-        ("struct Invalid { a: Array<Int32>, b: Array<Int64>, p: &Int32 }", "reference-free Copy"),
+        ("struct Invalid { a: Array<Int32>, b: Array<Int64>, p: &mut Int32 }", "Copy value or an owner"),
         ("fn bad() { let b = Buffers.new::<Int32>(); let t = (b, 1); let again = b }", "moved"),
         ("fn bad() { let b = Buffers.new::<Int32>(); alloc(b); }", "Copy"),
         ("fn bad() { let b = Buffers.new::<Int32>() ; (*(&b)); }", "non-Copy"),

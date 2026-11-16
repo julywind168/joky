@@ -5,10 +5,11 @@ use super::VmMode;
 use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
 use crate::{ErrorCode, FunctionSignature};
 
-const BORROWED_OWNERS: &str = include_str!("../../../../tests/fixtures/borrowed_owning_tuples.jk");
+const BORROWED_OWNERS: &str =
+    include_str!("../../../../tests/fixtures/borrowed_owning_aggregates.jk");
 
 #[test]
-fn borrowed_owning_tuples_execute_and_release_storage() {
+fn borrowed_owning_aggregates_execute_and_release_storage() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = super::VmEngine::with_mode(mode);
         vm.load_source(BORROWED_OWNERS).unwrap_or_else(|error| {
@@ -22,7 +23,7 @@ fn borrowed_owning_tuples_execute_and_release_storage() {
             .call_unit_0("failed")
             .unwrap_err()
             .message()
-            .contains("borrowed tuple failure"));
+            .contains("borrowed aggregate failure"));
         crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
         let result =
             crate::runtime::driver::block_on(vm.prepare_async("pending", &[]).unwrap()).unwrap();
@@ -48,7 +49,7 @@ fn borrowed_owning_tuples_execute_and_release_storage() {
 }
 
 #[test]
-fn borrowed_owning_tuples_reject_escape_aliasing_storage_and_suspension() {
+fn borrowed_owning_aggregates_reject_escape_aliasing_storage_and_suspension() {
     for body in [
         "fn bad() -> (String, &Int32) { let n = 42; (\"owned\", &n) }",
         "fn bad() -> (String, &String) { let s = \"source\"; (\"owned\", &s) }",
@@ -64,19 +65,30 @@ fn borrowed_owning_tuples_reject_escape_aliasing_storage_and_suspension() {
         "fn bad() { let n = 42; let value = alloc((\"owned\", &n)) }",
         "fn bad() { let n = 42; let values = [&n]; let pair = (values, &n) }",
         "fn bad() { let n = 42; let f = move || { n }; let pair = (&n, f) }",
-        "fn bad() @suspends { let n = 42; let pair = (\"owned\", &n); task.yield_now(); assert_eq(*pair.1, 42) }",
-        "fn bad() @suspends { let n = 42; let pair = (&n, \"owned\"); task.yield_now(); assert_eq(*pair.0, 42) }",
-        "fn bad() @suspends { let n = 42; let pair = ((\"owned\", &n), 1); task.yield_now(); assert_eq(*pair.0.1, 42) }",
-        "fn pass(value: (String, &Int32)) @suspends {} fn bad() { }",
+        "fn bad() @suspends -> Int32 { let n = 42; let f = || { n }; let pair = (\"owned\", f); task.yield_now(); (pair.1)() }",
+        "fn bad() @suspends -> Int32 { let cell = alloc(42); let values = [&*cell]; let pair = (\"owned\", &values); task.yield_now(); *pair.1[0] }",
         "fn bad() @suspends { let n = 42; let values = join { (\"owned\", &n), 1 } }",
+        "fn bad() -> Mixed<&Int32> { let n = 42; Mixed { owned: \"local\", view: &n } }",
+        "fn bad() { var n = 42; let mixed = Mixed { owned: \"local\", view: &n }; n = 43; assert_eq(*mixed.view, 42) }",
+        "fn bad() { let s = \"source\"; let mixed = Mixed { view: &s, owned: s } }",
+        "fn bad() { let s = \"source\"; let mixed = Mixed { owned: s, view: &s } }",
+        "fn bad() { var n = 42; let mixed = Mixed { owned: \"local\", view: &mut n } }",
+        "fn bad() { let n = 42; let mixed = Mixed { owned: \"local\", view: &n }; let first = mixed; let again = mixed }",
+        "fn bad() { let n = 42; let values = [Mixed { owned: \"local\", view: &n }] }",
+        "fn bad() { let n = 42; alloc(Mixed { owned: \"local\", view: &n }) }",
+        "fn bad() @suspends -> Int32 { let n = 42; let f = || { n }; let mixed = Mixed { owned: \"local\", view: f }; task.yield_now(); (mixed.view)() }",
+        "fn bad() @suspends -> Int32 { let cell = alloc(42); let values = [&*cell]; let mixed = Mixed { owned: \"local\", view: &values }; task.yield_now(); *mixed.view[0] }",
+        "fn bad() @suspends { let text = \"source\"; let mixed = Mixed { owned: \"local\", view: &text }; isolate { let Mixed { owned, view } = mixed; assert_eq(view, \"source\") } }",
+        "fn bad() @suspends { let text = \"source\"; let values = join { Mixed { owned: \"local\", view: &text }, 1 } }",
+        "fn bad() @suspends { var text = \"source\"; let mixed = Mixed { owned: \"local\", view: &text }; task.yield_now(); text = \"changed\"; assert_eq(mixed.view, \"source\") }",
     ] {
-        let source = format!("import joky/task\n{body}");
+        let source = format!("import joky/task\nstruct Mixed<T> {{ owned: String, view: T }}\n{body}");
         let error = frontend_error(&source, &crate::ModuleSources::new());
         assert!(error.span().is_some(), "{source}: {error}");
     }
 }
 
-fn borrowed_owning_tuple_cancellation(sweep: CancellationSweep) {
+fn borrowed_owning_aggregate_cancellation(sweep: CancellationSweep) {
     let mut vm = super::VmEngine::with_mode(VmMode::Interpreter);
     vm.load_source(BORROWED_OWNERS).unwrap_or_else(|error| {
         panic!(
@@ -96,14 +108,14 @@ fn borrowed_owning_tuple_cancellation(sweep: CancellationSweep) {
 }
 
 #[test]
-fn borrowed_owning_tuples_cancel_at_resource_boundaries() {
-    borrowed_owning_tuple_cancellation(CancellationSweep::ResourceBoundaries);
+fn borrowed_owning_aggregates_cancel_at_resource_boundaries() {
+    borrowed_owning_aggregate_cancellation(CancellationSweep::ResourceBoundaries);
 }
 
 #[test]
-#[ignore = "exhaustive: cancel borrowed owning tuple transfers at every instruction"]
-fn exhaustive_borrowed_owning_tuples_cancel_every_instruction() {
-    borrowed_owning_tuple_cancellation(CancellationSweep::EveryInstruction);
+#[ignore = "exhaustive: cancel borrowed owning aggregate transfers at every instruction"]
+fn exhaustive_borrowed_owning_aggregates_cancel_every_instruction() {
+    borrowed_owning_aggregate_cancellation(CancellationSweep::EveryInstruction);
 }
 
 #[test]

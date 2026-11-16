@@ -811,27 +811,33 @@ fn validate_cursor_packet<'a>(
     Ok(())
 }
 
-/// Owning records contain one or more owners and reference-free Copy metadata.
-pub(super) fn record_owners(fields: &[RecordField], span: Span) -> Result<Vec<Arc<Type>>, Error> {
-    validate_cursor_packet(fields.iter().map(|field| &field.ty), span)?;
-    let owners: Vec<_> = fields
-        .iter()
-        .filter(|field| field.ty.is_owner())
-        .flat_map(|field| field.ty.buffer_elements().iter().cloned())
+/// Records and tuples share the same rules for inline owners and shared loans.
+fn aggregate_owners<'a>(
+    members: impl Iterator<Item = &'a Type> + Clone,
+    span: Span,
+    kind: &str,
+) -> Result<Vec<Arc<Type>>, Error> {
+    validate_cursor_packet(members.clone(), span)?;
+    let owners: Vec<_> = members
+        .clone()
+        .filter(|ty| ty.is_owner())
+        .flat_map(|ty| ty.buffer_elements().iter().cloned())
         .collect();
     if !owners.is_empty()
-        && fields.iter().any(|field| {
-            !field.ty.is_owner()
-                && (!field.ty.is_copy_storage_value() || field.ty.contains_references())
-        })
+        && members.clone().any(Type::contains_references)
+        && !Type::are_scoped_owning_members(members)
     {
         return Err(error(
             ErrorCode::TypeMismatch,
             span,
-            "Additional fields of an owning record must be reference-free Copy data",
+            format!("Owning {kind} require independent reference-free owners and Copy data or scoped shared borrows"),
         ));
     }
     Ok(owners)
+}
+
+pub(super) fn record_owners(fields: &[RecordField], span: Span) -> Result<Vec<Arc<Type>>, Error> {
+    aggregate_owners(fields.iter().map(|field| &field.ty), span, "records")
 }
 
 /// Owning sums keep fixed owner lanes for every variant. Inactive lanes are null.
@@ -950,22 +956,7 @@ pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
         }
         extend_layout(&mut scalars, &mut depth, ty, span, "Tuple")?;
     }
-    validate_cursor_packet(elements.iter(), span)?;
-    let owners: Vec<_> = elements
-        .iter()
-        .filter(|ty| ty.is_owner())
-        .flat_map(|ty| ty.buffer_elements().iter().cloned())
-        .collect();
-    if !owners.is_empty()
-        && elements.iter().any(Type::contains_references)
-        && !Type::are_scoped_owning_tuple_elements(&elements)
-    {
-        return Err(error(
-            ErrorCode::TypeMismatch,
-            span,
-            "Owning tuples require independent reference-free owners and Copy data or scoped shared borrows",
-        ));
-    }
+    let owners = aggregate_owners(elements.iter(), span, "tuples")?;
     let ty = Type::Tuple(Arc::new(TupleType {
         owners,
         elements,

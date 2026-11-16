@@ -2890,14 +2890,14 @@ fn closure_capabilities_preserve_storage_in_standalone_aot() {
 
 #[test]
 #[cfg(unix)]
-fn borrowed_owning_tuples_execute_in_standalone_aot() {
+fn borrowed_owning_aggregates_execute_in_standalone_aot() {
     let work = Workspace::new();
-    let source = include_str!("../fixtures/borrowed_owning_tuples.jk");
+    let source = include_str!("../fixtures/borrowed_owning_aggregates.jk");
     work.write(
-        "tuples.jk",
+        "aggregates.jk",
         &format!("{source}\nfn main() @suspends {{ assert_eq(compute(), 42); assert_eq(pending(), 42) }}"),
     );
-    work.assert_native("tuples.jk", &[], b"", 0);
+    work.assert_native("aggregates.jk", &[], b"", 0);
 }
 
 #[test]

@@ -457,7 +457,6 @@ impl Type {
         self.is_owner()
             && self.contains_references()
             && !self.contains_unstorable_closures()
-            && !TypeWalk::new(self, TypeEdges::Inline).any(Self::is_scoped_owning_tuple)
             && self.scalar_types().iter().all(|ty| {
                 if let Some(reference) = ty.reference_type() {
                     !reference.mutable && ty.is_suspend_safe_view()
@@ -560,15 +559,17 @@ impl Type {
     pub(crate) fn is_scoped_borrowed_value(&self) -> bool {
         self.is_scoped_shared_value()
             || self.is_scoped_cursor_value()
-            || self.is_scoped_owning_tuple()
+            || self.is_scoped_owning_aggregate()
     }
 
-    /// Local tuples can combine shared loans with independent, reference-free owners.
+    /// Local aggregates can combine shared loans with independent, reference-free owners.
     /// Inspect flattened lanes so order, arity and nested aggregates use one rule.
-    pub(super) fn are_scoped_owning_tuple_elements(elements: &[Self]) -> bool {
-        elements.iter().any(Self::is_owner)
-            && elements.iter().any(Self::contains_references)
-            && elements.iter().all(|ty| {
+    pub(super) fn are_scoped_owning_members<'a>(
+        mut members: impl Iterator<Item = &'a Self> + Clone,
+    ) -> bool {
+        members.clone().any(Self::is_owner)
+            && members.clone().any(Self::contains_references)
+            && members.all(|ty| {
                 (ty.is_owner() || ty.is_copy_argument())
                     && ty.scalar_types().iter().all(|lane| {
                         lane.is_suspend_safe_owner()
@@ -579,8 +580,14 @@ impl Type {
             })
     }
 
-    fn is_scoped_owning_tuple(&self) -> bool {
-        matches!(self, Self::Tuple(tuple) if Self::are_scoped_owning_tuple_elements(&tuple.elements))
+    fn is_scoped_owning_aggregate(&self) -> bool {
+        match self {
+            Self::Record(record) if record.closure.is_none() => {
+                Self::are_scoped_owning_members(record.fields.iter().map(|field| &field.ty))
+            }
+            Self::Tuple(tuple) => Self::are_scoped_owning_members(tuple.elements.iter()),
+            _ => false,
+        }
     }
 
     /// All underlying element types, including shallow nominal owner views.
@@ -744,8 +751,8 @@ impl Type {
             || self.scalar_types().iter().any(|ty| {
                 ty.reference_type().is_some()
                     || ty.is_callable_parameter()
-                    // Callable fields are admitted only through a record
-                    // specialization that rejects borrowing environments.
+                    // Rigid callable fields defer capture checks to concrete
+                    // record specialization, including local borrowed environments.
                     && !matches!(self, Self::Record(r) if r.closure.is_none())
             })
     }

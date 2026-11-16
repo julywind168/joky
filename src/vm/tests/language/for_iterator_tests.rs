@@ -619,7 +619,7 @@ fn shared_pipeline_rejects_borrowed_results_retaining_callbacks_and_owner_invali
         "fn f(value: &Int32) @noescape -> Result<&Int32, String> { Ok(alloc(1)) } fn bad() { let a = [1]; iter.shared(&a).map(f); }",
         "fn bad() { let a = [1]; let (next, _) = iter.step_shared(iter.shared(&a).map(|n| { [*n] })); a.release(); next.count(); }",
         "fn bad() { let a = [1]; let step = iter.step_shared(iter.shared(&a).map(|n| { [*n] })); let saved = [step]; }",
-        "struct State { value: &Int32 } fn bad(step: (State, String)) @suspends {}",
+        "struct State { value: &Array<&Int32> } fn bad(step: (State, String)) @suspends {}",
     ] {
         frontend_error(&format!("import joky/array.{{type Array}} import joky/iter {source}"), &crate::ModuleSources::new());
     }
