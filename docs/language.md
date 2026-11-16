@@ -7414,7 +7414,9 @@ HTTPS 对应入口为 `http.serve_tls_with(listener, config, &stop, options, ser
 路径中的 `:id`、`*` 等均按字面字符匹配，尚无参数或通配符语法。
 
 服务在接纳连接前调用一次 `Service.prepare(self) @suspends -> Self`，默认实现直接返回自身。
-内置路由器在此冻结路由表，随后连接共享同一份路径和 handler 表。手动调用尚未准备的路由器的
+内置路由器注册时维护按路径查找的 Map，每个路径保存七种方法的 handler 槽位；prepare 冻结该索引，
+随后连接共享同一份路径和 handler 表。每次分发只查询一次路径，HEAD 回退及 Allow 只检查该路径的方法槽位。
+Map 查询受路径长度和哈希冲突影响，不承诺最坏情况常数时间。手动调用尚未准备的路由器的
 share 会创建独立快照；之后修改任一份路由器不影响已有快照，必要时先复制为可变表。
 
 Router 的分发规则如下：

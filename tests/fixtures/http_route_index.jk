@@ -1,0 +1,223 @@
+import joky/http.{type Service}
+import joky/log
+import joky/uuid
+import joky/mem
+import joky/task
+
+fn request(method: http.Method, target: String) -> http.Request<Unit> {
+    let id = uuid.Uuid.parse("00112233-4455-6677-8899-aabbccddeeff")!
+    http.Request {
+        ctx: {},
+        request_id: id,
+        log: http.RequestLog { request_id: id, logger: log.Logger.new(log.Level.Info) },
+        method,
+        target,
+        headers: [],
+        body: []
+    }
+}
+
+fn even(request: http.Request<Unit>) @suspends -> http.Response {
+    task.yield_now()
+    http.empty(http.Status.Accepted)
+}
+
+fn odd(request: http.Request<Unit>) @suspends -> http.Response {
+    http.empty(http.Status.NoContent)
+}
+
+fn build(count: Int32) -> http.Router {
+    var router = http.Router.new()
+    var index = 0
+    while index < count {
+        let handler = if index % 2 == 0 {
+            even
+        } else {
+            odd
+        }
+        router.get("/route/{index}", handler)!
+        index += 1
+    }
+    router
+}
+
+fn check_routes(router: http.Router, count: Int32) @suspends {
+    var index = 0
+    while index < count {
+        let reply = router.handle(request(http.Method.Head, "/route/{index}?query=yes"))
+        assert(
+            if index % 2 == 0 {
+                match reply.status {
+                    Accepted => true,
+                    _ => false
+                }
+            } else {
+                match reply.status {
+                    NoContent => true,
+                    _ => false
+                }
+            },
+            "indexed handler after growth and implicit HEAD"
+        )
+        index += 1
+    }
+}
+
+fn methods() @suspends {
+    let empty = http.Router.new().prepare()
+    assert(
+        match empty.handle(request(http.Method.Get, "/")).status {
+            NotFound => true,
+            _ => false
+        },
+        "empty frozen index"
+    )
+    var router = build(128)
+    for method in [
+        http.Method.Delete,
+        http.Method.Patch,
+        http.Method.Put,
+        http.Method.Post,
+        http.Method.Head,
+        http.Method.Get
+    ] {
+        router.add(method, "/mixed", even)!
+    }
+    router.head("/head-only", odd)!
+    let unprepared = router.share()
+    var router = router.prepare().prepare()
+    assert(
+        match router.get("/mixed", odd) {
+            Err(DuplicateRoute) => true,
+            _ => false
+        },
+        "frozen duplicate preserves existing handler"
+    )
+    assert(
+        match router.get("/bad?query", odd) {
+            Err(InvalidPath) => true,
+            _ => false
+        },
+        "frozen invalid path"
+    )
+    let snapshot = router.share()
+    router.options("/mixed", odd)!
+    router.head("/route/0", odd)!
+    assert(
+        match router.handle(request(http.Method.Head, "/route/0")).status {
+            NoContent => true,
+            _ => false
+        },
+        "explicit HEAD can be added after freezing"
+    )
+    assert(
+        match router.handle(request(http.Method.Options, "/mixed")).status {
+            NoContent => true,
+            _ => false
+        },
+        "detached method slot"
+    )
+    assert(
+        match router.handle(request(http.Method.Get, "/route/0")).status {
+            Accepted => true,
+            _ => false
+        },
+        "detaching preserves GET"
+    )
+    let router = router.prepare()
+    assert(
+        match router.handle(request(http.Method.Options, "/mixed")).status {
+            NoContent => true,
+            _ => false
+        },
+        "refrozen index includes new slot"
+    )
+    mem.drop(router)
+    for method in [
+        http.Method.Get,
+        http.Method.Head,
+        http.Method.Post,
+        http.Method.Put,
+        http.Method.Patch,
+        http.Method.Delete
+    ] {
+        assert(
+            match snapshot.handle(request(method, "/mixed")).status {
+                Accepted => true,
+                _ => false
+            },
+            "all explicit method slots"
+        )
+    }
+    let denied = snapshot.handle(request(http.Method.Options, "/mixed"))
+    assert(
+        match denied.status {
+            MethodNotAllowed => true,
+            _ => false
+        },
+        "snapshot excludes new method"
+    )
+    assert(
+        denied.headers.len() == 1 && denied.headers[0].value ==
+            "GET, HEAD, POST, PUT, PATCH, DELETE",
+        "canonical Allow order is independent of insertion"
+    )
+    let denied = snapshot.handle(request(http.Method.Get, "/head-only"))
+    assert(
+        match denied.status {
+            MethodNotAllowed => true,
+            _ => false
+        },
+        "HEAD never implies GET"
+    )
+    assert(denied.headers[0].value == "HEAD", "HEAD-only Allow")
+    for target in ["/missing", "/Route/0", "/route/0/"] {
+        assert(
+            match snapshot.handle(request(http.Method.Get, target)).status {
+                NotFound => true,
+                _ => false
+            },
+            "exact path index"
+        )
+    }
+    join {
+        check_routes(snapshot, 128),
+        check_routes(unprepared, 128)
+    }
+}
+
+// Replaced by a host budget probe in the VM regression; standalone runs need no host API.
+fn observe(stage: Int32) @suspends {}
+
+fn retained(count: Int32) @suspends {
+    let router = build(count).prepare()
+    observe(0)
+    var handles: Array<http.Router> = []
+    var index = 0
+    while index < 32 {
+        handles.push(router.share())
+        index += 1
+    }
+    observe(1)
+    mem.drop(router)
+    observe(2)
+    while !handles.is_empty() {
+        let handle = handles.take_last()
+        assert(
+            match handle.handle(request(http.Method.Get, "/route/0")).status {
+                Accepted => true,
+                _ => false
+            },
+            "shared index survives original"
+        )
+    }
+    mem.drop(handles)
+    observe(3)
+}
+
+fn main() @suspends -> Int32 {
+    methods()
+    retained(4)
+    retained(256)
+    0
+}

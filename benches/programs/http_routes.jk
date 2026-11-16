@@ -1,0 +1,76 @@
+// Standalone diagnostic: construction and warmed public routing, without TCP.
+import joky/http.{type Service}
+import joky/log
+import joky/uuid
+import joky/time
+
+fn handle(request: http.Request<Unit>) @suspends -> http.Response {
+    http.empty(http.Status.NoContent)
+}
+
+fn request(method: http.Method, target: String, id: uuid.Uuid) -> http.Request<Unit> {
+    http.Request {
+        ctx: {},
+        request_id: id,
+        log: http.RequestLog { request_id: id, logger: log.Logger.new(log.Level.Info) },
+        method,
+        target,
+        headers: [],
+        body: []
+    }
+}
+
+fn measure(count: Int32) @suspends {
+    let start = time.Instant.now()
+    var router = http.Router.new()
+    var index = 0
+    while index < count {
+        router.get("/route/{index}", handle)!
+        index += 1
+    }
+    let router = router.prepare()
+    println("{count},build,0,1,{start.elapsed()!.as_nanos()}")
+    let id = uuid.Uuid.parse("00112233-4455-6677-8899-aabbccddeeff")!
+    let hit = "/route/{count - 1}"
+    for kind in [0, 1, 2] {
+        let target = if kind == 1 {
+            "/missing"
+        } else {
+            hit.clone()
+        }
+        let method = if kind == 2 {
+            http.Method.Post
+        } else {
+            http.Method.Head
+        }
+        var sample = 0
+        while sample < 6 {
+            let start = time.Instant.now()
+            var index = 0
+            var checksum = 0
+            while index < 100 {
+                let response = router.handle(request(method, target.clone(), id))
+                checksum += match response.status {
+                    NoContent => 1,
+                    NotFound => 2,
+                    MethodNotAllowed => 3,
+                    _ => 0
+                }
+                index += 1
+            }
+            let nanos = start.elapsed()!.as_nanos()
+            assert(checksum == (kind + 1) * 100, "routing benchmark result")
+            if sample > 0 {
+                println("{count},{kind},{sample},100,{nanos}")
+            }
+            sample += 1
+        }
+    }
+}
+
+fn main() @suspends {
+    println("routes,operation,sample,calls,nanoseconds")
+    for count in [10, 100, 1000] {
+        measure(count)
+    }
+}

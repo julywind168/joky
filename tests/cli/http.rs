@@ -2,6 +2,14 @@ use super::tcp_server::{connect, Running};
 use super::*;
 use std::io::{Read, Write};
 
+#[test]
+fn http_route_index_executes_in_standalone_aot() {
+    let work = Workspace::new();
+    work.write("index.jk", include_str!("../fixtures/http_route_index.jk"));
+    work.assert_native("index.jk", &[], b"", 0);
+    work.assert_native("index.jk", &["--task-workers", "2"], b"", 0);
+}
+
 fn http_reply(port: u16, fragments: &[&[u8]]) -> String {
     let mut stream = connect(port);
     for bytes in fragments {

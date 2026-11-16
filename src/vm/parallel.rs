@@ -31,6 +31,8 @@ mod fs_tests;
 #[cfg(test)]
 mod function_tests;
 #[cfg(test)]
+mod http_tests;
+#[cfg(test)]
 mod isolate_tests;
 #[cfg(test)]
 mod migration_tests;

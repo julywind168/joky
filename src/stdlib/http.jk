@@ -24,6 +24,7 @@ import joky/uuid
 import joky/admission
 import joky/domain
 import joky/array.{type Array}
+import joky/map.{type Map}
 import joky/shared.{type Shared}
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Err}
@@ -936,8 +937,20 @@ pub trait Application {
 }
 /// A suspending callback that also receives a write handle to application state.
 pub type StateHandler<A, C> = fn(domain.WriteHandle<A>, Request<C>) @suspends -> Response
-struct Route<H> { method: Method, path: String, handler: H }
-struct RouteTable<H> { entries: Array<Route<H>>, frozen: Option<Shared<Array<Route<H>>>> }
+// One path owns its method slots. Lookup and Allow generation never scan other paths.
+struct RouteHandlers<H> {
+    get: Option<H>,
+    head: Option<H>,
+    post: Option<H>,
+    put: Option<H>,
+    patch: Option<H>,
+    delete: Option<H>,
+    options: Option<H>
+}
+enum RouteTable<H> {
+    Building(Map<String, RouteHandlers<H>>),
+    Frozen(Shared<Map<String, RouteHandlers<H>>>)
+}
 /// A router that creates request context before calling the selected handler.
 pub struct ContextRouter<S, C> { source: S, table: RouteTable<Handler<C>> }
 /// A router that passes a state-domain capability to the selected handler.
@@ -949,7 +962,7 @@ pub struct StateRouter<A, S, C> {
 
 /// Creates a router that builds context for each request using the supplied source.
 pub fn with_context<S: ContextSource>(source: S) -> ContextRouter<S, S.Context> {
-    ContextRouter { source, table: RouteTable { entries: [], frozen: None } }
+    ContextRouter { source, table: RouteTable.Building(Map.new()) }
 }
 
 /// Creates a router that gives handlers a write handle to application state.
@@ -957,7 +970,7 @@ pub fn with_state<A: Application, S: ContextSource<Context = A.RequestContext>>(
     app: domain.WriteHandle<A>,
     source: S
 ) -> StateRouter<A, S, A.RequestContext> {
-    StateRouter { app, source, table: RouteTable { entries: [], frozen: None } }
+    StateRouter { app, source, table: RouteTable.Building(Map.new()) }
 }
 
 fn bind_context<C>(request: Request<Unit>, ctx: C) -> Request<C> {
@@ -1033,39 +1046,49 @@ impl Service for Router {
         self.inner.handle(request)
     }
 }
-impl<H: Copy> RouteTable<H> {
-    fn add(&mut self, method: Method, path: String, handler: H) -> Result<Unit, RouteError> {
-        if !valid_route_path(&path) {
-            return Err(RouteError.InvalidPath)
+impl<H: Copy> RouteHandlers<H> {
+    fn new() -> Self {
+        RouteHandlers {
+            get: None,
+            head: None,
+            post: None,
+            put: None,
+            patch: None,
+            delete: None,
+            options: None
         }
-        if self.find_handler(&path, method).is_some() {
-            return Err(RouteError.DuplicateRoute)
-        }
-        if self.frozen.is_some() {
-            let entries = self.copy_entries()
-            self.frozen = None
-            self.entries = entries
-        }
-        self.entries.push(Route { method, path, handler })
-        result.Ok({})
     }
-    fn find_handler(&self, path: &String, method: Method) @noescape -> Option<H> {
-        for entry in self.routes() {
-            if entry.path == path && entry.method == method {
-                return Some(entry.handler)
-            }
+    fn find(&self, method: Method) @noescape -> Option<H> {
+        match method {
+            Get => self.get,
+            Head => self.head,
+            Post => self.post,
+            Put => self.put,
+            Patch => self.patch,
+            Delete => self.delete,
+            Method.Options => self.options
         }
-        None
     }
-    fn select(&self, path: &String, method: Method) @noescape -> Option<H> {
-        let handler = self.find_handler(path, method)
+    fn insert(&mut self, method: Method, handler: H) {
+        match method {
+            Get => self.get = Some(handler),
+            Head => self.head = Some(handler),
+            Post => self.post = Some(handler),
+            Put => self.put = Some(handler),
+            Patch => self.patch = Some(handler),
+            Delete => self.delete = Some(handler),
+            Method.Options => self.options = Some(handler)
+        }
+    }
+    fn select(&self, method: Method) @noescape -> Option<H> {
+        let handler = self.find(method)
         if handler.is_none() && method == Method.Head {
-            self.find_handler(path, Method.Get)
+            self.get
         } else {
             handler
         }
     }
-    fn allowed(&self, path: &String) @noescape -> String {
+    fn allowed(&self) @noescape -> String {
         var names: Array<String> = []
         for method in [
             Method.Get,
@@ -1076,48 +1099,71 @@ impl<H: Copy> RouteTable<H> {
             Method.Delete,
             Method.Options
         ] {
-            if self.select(path, method).is_some() {
+            if self.select(method).is_some() {
                 names.push(method_name(method))
             }
         }
         names.join(", ")
     }
-    fn unmatched(&self, path: &String) @noescape -> Response {
-        let allow = self.allowed(path)
-        if allow.is_empty() {
-            text(Status.NotFound, "not found")
-        } else {
-            text(Status.MethodNotAllowed, "method not allowed").with_header("Allow", allow)
+}
+impl<H: Copy> RouteTable<H> {
+    fn add(&mut self, method: Method, path: String, handler: H) -> Result<Unit, RouteError> {
+        if !valid_route_path(&path) {
+            return Err(RouteError.InvalidPath)
+        }
+        var handlers = self.routes().get(&path).unwrap_or(RouteHandlers.new())
+        if handlers.find(method).is_some() {
+            return Err(RouteError.DuplicateRoute)
+        }
+        handlers.insert(method, handler)
+        match self {
+            Building(entries) => {
+                entries.insert(path, handlers);
+            },
+            Frozen(_) => {
+                var entries = self.copy_entries()
+                entries.insert(path, handlers)
+                *self = Building(entries)
+            }
+        }
+        result.Ok({})
+    }
+    fn resolve(&self, path: &String, method: Method) @noescape -> Result<H, Response> {
+        match self.routes().get_ref(path) {
+            None => Err(text(Status.NotFound, "not found")),
+            Some(handlers) => match handlers.select(method) {
+                Some(handler) => result.Ok(handler),
+                None => Err(
+                    text(Status.MethodNotAllowed, "method not allowed")
+                        .with_header("Allow", handlers.allowed())
+                )
+            }
         }
     }
-    fn routes(&self) -> &Array<Route<H>> {
-        match &self.frozen {
-            Some(entries) => entries.get(),
-            None => &self.entries
+    fn routes(&self) -> &Map<String, RouteHandlers<H>> {
+        match self {
+            Frozen(entries) => entries.get(),
+            Building(entries) => entries
         }
     }
-    fn copy_entries(&self) -> Array<Route<H>> {
-        var routes: Array<Route<H>> = []
-        for entry in self.routes() {
-            routes.push(
-                Route { method: entry.method, path: entry.path.clone(), handler: entry.handler }
-            )
+    fn copy_entries(&self) -> Map<String, RouteHandlers<H>> {
+        var routes = Map.with_capacity::<String, RouteHandlers<H>>(self.routes().len())
+        for (path, handlers) in self.routes() {
+            routes.insert(path.clone(), *handlers)
         }
         routes
     }
     fn freeze(self) -> Self {
-        let RouteTable { entries, frozen } = self
-        match frozen {
-            Some(table) => RouteTable { entries, frozen: Some(table) },
-            None => RouteTable { entries: [], frozen: Some(Shared.new(entries)) }
+        match self {
+            Frozen(table) => Frozen(table),
+            Building(entries) => Frozen(Shared.new(entries))
         }
     }
     fn share(&self) -> Self {
-        let table = match &self.frozen {
-            Some(table) => table.share(),
-            None => Shared.new(self.copy_entries())
+        match self {
+            Frozen(table) => Frozen(table.share()),
+            Building(_) => Frozen(Shared.new(self.copy_entries()))
         }
-        RouteTable { entries: [], frozen: Some(table) }
     }
 }
 impl<S, C> ContextRouter<S, C> {
@@ -1216,10 +1262,10 @@ impl<S: ContextSource<Context = C>, C> Service for ContextRouter<S, C> {
     }
     fn handle(&self, request: Request<Unit>) @suspends -> Response {
         let path = request.path()
-        if let Some(handler) = self.table.select(&path, request.method) {
-            return handler(bind_context(request, self.source.for_request()))
+        match self.table.resolve(&path, request.method) {
+            result.Ok(handler) => handler(bind_context(request, self.source.for_request())),
+            Err(response) => response
         }
-        self.table.unmatched(&path)
     }
 }
 impl<A: Application<RequestContext = C>, S: ContextSource<Context = C>, C> Service for StateRouter<
@@ -1236,10 +1282,13 @@ impl<A: Application<RequestContext = C>, S: ContextSource<Context = C>, C> Servi
     }
     fn handle(&self, request: Request<Unit>) @suspends -> Response {
         let path = request.path()
-        if let Some(handler) = self.table.select(&path, request.method) {
-            return handler(self.app, bind_context(request, self.source.for_request()))
+        match self.table.resolve(&path, request.method) {
+            result.Ok(handler) => handler(
+                self.app,
+                bind_context(request, self.source.for_request())
+            ),
+            Err(response) => response
         }
-        self.table.unmatched(&path)
     }
 }
 struct FunctionService { callback: fn(Request<Unit>) @suspends -> Response }

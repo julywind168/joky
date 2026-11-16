@@ -391,3 +391,43 @@ M1 Pro／macOS、Release、speed，16 客户端，1／4 房间 × 1／2／4 work
 两版使用相同 clients、rooms、workers、payload、warmup 和最短时长；CSV 的 broadcasts 为实际完成数，
 延长后的最终余额按实际发送数验证。至少运行数秒有助于降低 `ps` CPU 时间精度的影响，
 但不能消除 Python 客户端饱和。对照须报告 client CPU，不能将客户端受限的吞吐当作服务端容量上限。
+
+## HTTP 路由专项诊断
+
+[http_routes.jk](programs/http_routes.jk) 使用公开 Router API，分别记录 10、100、1000 条路径的
+注册与 prepare 耗时，以及最后路径的隐式 HEAD 命中、404 和 405 分发耗时。
+每组先预热 100 次，再记录五批、每批 100 次查询；每批都验证响应状态校验和。
+计时包含请求／响应创建和释放，不包含 TCP、编译、链接或进程启动，不代表服务端吞吐。
+
+使用当前 Debug runtime 的独立 AOT 程序运行，避免为日常诊断引入 Release 构建：
+
+```sh
+cargo build --lib --bin joky
+mkdir -p target/benchmarks/http-routes
+target/debug/joky build benches/programs/http_routes.jk -o target/benchmarks/http-routes/run
+target/benchmarks/http-routes/run > target/benchmarks/http-routes/samples.csv
+```
+
+CSV 的 operation 为 build、0（HEAD 命中）、1（404）、2（405）；耗时单位为纳秒。
+比较版本时分别保存已构建程序、源码和环境信息，待构建与其他检查结束后交替运行。
+Debug 数据只用于同机同构建口径下的趋势诊断；没有性能断言，也不并入默认检查脚本。
+连接共享成本由 `http_route_index_preserves_dispatch_and_charges_only_handles_for_connections`
+通过实际 TaskBudget 增量验证，不把耗时当作内存或零复制证据。
+
+2026-11-16 在 Apple M1 Pro、macOS 26.6.2、Rust 1.99.0 上，将 `b66dfb44` 的共享数组路由
+与本次路径索引改动进行三轮交替对照。两版均为独立 AOT 程序、默认代码生成选项、同一 Debug runtime。
+构造列是三次注册加 prepare 的中位数；查询列是 15 批平均调用耗时的中位数，每批 100 次，
+不是单次请求延迟分布。表中均为旧版 → 索引版：
+
+| 路径数 | 构造（ms） | HEAD 命中（µs） | 404（µs） | 405（µs） |
+| --- | --- | --- | --- | --- |
+| 10 | 1.43 → 1.64 | 255.36 → 151.39 | 420.59 → 117.20 | 828.21 → 263.95 |
+| 100 | 35.51 → 12.21 | 1325.85 → 153.16 | 1390.17 → 115.82 | 5652.95 → 267.48 |
+| 1000 | 2942.25 → 204.08 | 12132.78 → 154.92 | 11103.51 → 116.36 | 54459.46 → 270.38 |
+
+该输入下索引查询耗时基本不随路径数增长；小表的构造成本略增，较大表的注册也受益于 Map 查重。
+索引额外存储哈希信息和七个方法槽位，不能据此推断总内存减少。
+独立预算回归验证了 4／256 条路由各增加 32 个句柄时，增量均小于 128 KiB、两者相差小于 4 KiB，
+原始句柄释放后数据仍可用，最后一个句柄释放后退款，根任务结束后预算归零。
+完整样本、源码快照、二进制 SHA-256、环境和汇总留在忽略的 `target/benchmarks/http-routes-index/`。
+这些 Debug 诊断数据不代表 Release、其他后端或真实网络服务器的性能。
