@@ -158,7 +158,7 @@ fn arena_cycles_reject_unchecked_construction_in_all_backends() {
         ("fn f() { graph.alloc(Node { value: 1, next: None }); }", "direct let binding"),
         ("fn f() { let a = alloc(Node { value: 1, next: None }); graph.link(a.next, a); }", "direct let binding"),
         ("fn f() { graph { let a = graph.alloc(Node { value: 1, next: None }); let copy = a; a } }", "Construction handles"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1, next: None }); let copy = Some(a); a } }", "Copy type"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1, next: None }); let copy = Some(a); a } }", "Enum members require"),
         ("fn f() { graph { let a = graph.alloc(Node { value: 1, next: None }); let copy: &Node = a; a } }", "Construction handles"),
         ("fn f() { graph { let a = graph.alloc(Node { value: 1, next: None }); let copy = (a,); a } }", "Construction handles"),
         ("fn f() { graph { let a = graph.alloc(Node { value: 1, next: None }); let copy = (*a); a } }", "Construction handles"),

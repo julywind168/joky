@@ -33,7 +33,7 @@ impl session.Handler for Context {
 fn deadline(stop: &shutdown.Controller) @suspends { stop.wait(); task.sleep(2ms) }
 fn server(connection: session.Connection, stream: TcpStream, ctx: &Context) @suspends {
     if ctx.slow {
-        race { { session.run_draining(connection, stream, session.Lines.default(), ctx, &ctx.stop); }, deadline(&ctx.stop) }
+        race { { let _ = session.run_draining(connection, stream, session.Lines.default(), ctx, &ctx.stop); }, deadline(&ctx.stop) }
     } else {
         let outcome = session.run_draining(connection, stream, session.Lines.default(), ctx, &ctx.stop)
         check.assert(match outcome { Ok(Shutdown) => true, _ => false }, "shutdown is reported after draining")

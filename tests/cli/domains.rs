@@ -134,7 +134,7 @@ fn state_domains_snapshot_checks_proofs_and_generic_request_values() {
         ("fn bad(s: &State) -> Int32 { let f = identity; f(s.count) } fn main() @suspends { let o = domain.create(make, 1); domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
         ("fn helper(n: Int32) { io.println(&n) } fn bad(s: &State) -> Int32 { helper(s.count); s.count } fn main() @suspends { let o = domain.create(make, 1); domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
         ("fn bad(s: &State) -> Int32 { let values = [s.count]; values.any(|value| { io.println(value); true }); s.count } fn main() @suspends { let o = domain.create(make, 1); domain.read_from(o.read_handle(), bad).unwrap(); }", "Domain operation must be a proved"),
-        ("fn main() @suspends { let o = domain.create(make, 1); relay(o.handle(), (1, Ptr.null())); }", "bounded value"),
+        ("fn main() @suspends { let o = domain.create(make, 1); let _ = relay(o.handle(), (1, Ptr.null())); }", "bounded value"),
     ] {
         work.write("rejected.jk", &format!("{prefix}\n{case}"));
         let output = work.cli(&["build", "rejected.jk", "-o", "rejected"]);
@@ -407,7 +407,7 @@ fn send(target:outbox.Handle) @suspends ->Int32 {
     let state=domain.create(make,0)
     var bytes=Array.new::<UInt8>(); bytes.push(255)
     var batch=outbox.batch(1,1)
-    outbox.stage(&mut batch,target,bytes);
+    outbox.stage(&mut batch,target,bytes)!
     let candidate=domain.candidate_from(domain.snapshot_from(state.read_handle(),read), state.handle(), make, 1).with_outbox(batch)
     var receipt=domain.commit_to(state.handle(),candidate)
     match receipt.wait() { Ok(_) => 1, _ => 0 }
@@ -454,7 +454,7 @@ fn directory_lookup_checks_imported_state_types_in_all_backends() {
 fn main() @suspends {
     let table=domain.directory(1)
     let owner=domain.create(model.make,42)
-    table.handle().insert(1,owner.handle());
+    table.handle().insert(1,owner.handle())!
     let message="imported directory type"
     check.assert(domain.lookup::<model.Room>(table.handle(),1).is_some(),&message)
 }"#,
@@ -467,7 +467,7 @@ struct Player { value:Int32 }
 fn main() @suspends {
     let table=domain.directory(1)
     let owner=domain.create(model.make,42)
-    table.handle().insert(1,owner.handle());
+    table.handle().insert(1,owner.handle())!
     domain.lookup::<Player>(table.handle(),1);
 }"#,
     );
@@ -1265,59 +1265,59 @@ fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
     let prefix =
         "import joky/domain import joky/outbox struct S{n:Int32} fn make(n:Int32)->S{S{n:n}}";
     for (extra, body, expected) in [
-        ("", "when \"\" (h) {h.n};", "must not be empty"),
-        ("", "when () {};", "1 to 64"),
-        ("", "when (h,h) {};", "Duplicate binding"),
-        ("", "let d=domain.directory(2); let routes=d.handle(); when (h, s?:S=routes[1]) {};", "else branch"),
-        ("", "let d=domain.directory(2); let routes=d.handle(); when (s?:S=routes[1], h) {} else {};", "must be last"),
-        ("fn key()->UInt64{1}", "let d=domain.directory(2); let routes=d.handle(); when (h,s:S=routes[key()]) {};", "UInt64/String keys"),
-        ("", "let d=domain.directory(2); let routes=d.handle(); when (h,s:S=routes[h.n]) {};", "UInt64/String keys"),
-        ("", "let d=domain.directory(2); let routes=d.handle(); when (h,s?:S=routes[1]) {s.n} else {s.n};", "Undefined"),
-        ("", "let d=domain.directory(2); let routes=d.handle(); let text=\"owned\"; when (h,s:S=routes[1]) {let owned:String=text; owned};", "String"),
+        ("", "let _ = when \"\" (h) {h.n};", "must not be empty"),
+        ("", "let _ = when () {};", "1 to 64"),
+        ("", "let _ = when (h,h) {};", "Duplicate binding"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); let _ = when (h, s?:S=routes[1]) {};", "else branch"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); let _ = when (s?:S=routes[1], h) {} else {};", "must be last"),
+        ("fn key()->UInt64{1}", "let d=domain.directory(2); let routes=d.handle(); let _ = when (h,s:S=routes[key()]) {};", "UInt64/String keys"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); let _ = when (h,s:S=routes[h.n]) {};", "UInt64/String keys"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); let _ = when (h,s?:S=routes[1]) {s.n} else {s.n};", "Undefined"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); let text=\"owned\"; let _ = when (h,s:S=routes[1]) {let owned:String=text; owned};", "String"),
 
-        ("", "let d=domain.directory(2); let routes=d.handle(); when (h,s?:S=routes.get_or_stage(1,make(1))) {} else {};", "cannot also be optional"),
-        ("", "let d=domain.directory(2); let routes=d.handle(); when (s:S=routes.get_or_stage(1,make(1)), t:S=routes[s.n]) {};", "creation fallback"),
-        ("fn noisy()->S{println(1);make(1)}", "let d=domain.directory(2); let routes=d.handle(); when (s:S=routes.get_or_stage(1,noisy())) {};", "proved synchronous"),
-        ("fn noisy(s:&S)->Bool{println(s.n);true}", "let d=domain.directory(2); let name=\"room\"; domain.remove_named_if(d.handle(),&name,noisy);", "proved synchronous"),
-        ("", "when (o.handle()) {};", "Expected"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); let _ = when (h,s?:S=routes.get_or_stage(1,make(1))) {} else {};", "cannot also be optional"),
+        ("", "let d=domain.directory(2); let routes=d.handle(); let _ = when (s:S=routes.get_or_stage(1,make(1)), t:S=routes[s.n]) {};", "creation fallback"),
+        ("fn noisy()->S{println(1);make(1)}", "let d=domain.directory(2); let routes=d.handle(); let _ = when (s:S=routes.get_or_stage(1,noisy())) {};", "proved synchronous"),
+        ("fn noisy(s:&S)->Bool{println(s.n);true}", "let d=domain.directory(2); let name=\"room\"; let _ = domain.remove_named_if(d.handle(),&name,noisy);", "proved synchronous"),
+        ("", "let _ = when (o.handle()) {};", "Expected"),
         (
             "",
-            "when \"same\" (h) {}; when \"same\" (h) {};",
+            "let _ = when \"same\" (h) {}; let _ = when \"same\" (h) {};",
             "Duplicate when label",
         ),
         (
             "",
-            "if true { when \"same\" (h) {}; } else { when \"same\" (h) {}; }",
+            "if true { let _ = when \"same\" (h) {}; } else { let _ = when \"same\" (h) {}; }",
             "Duplicate when label",
         ),
-        ("", "when (h) {return 1};", "cannot contain return"),
-        ("", "while true {when (h) {break};}", "break"),
-        ("", "when (h) {when (h) {}};", "cannot be nested"),
-        ("", "let ro=h.read_only(); when (mut ro) {};", "WriteHandle"),
-        ("", "when (h) {h.n=2};", "shared"),
-        ("", "when (mut h) {println(1)};", "proved synchronous"),
+        ("", "let _ = when (h) {return 1};", "cannot contain return"),
+        ("", "while true {let _ = when (h) {break};}", "break"),
+        ("", "let _ = when (h) {let _ = when (h) {}};", "cannot be nested"),
+        ("", "let ro=h.read_only(); let _ = when (mut ro) {};", "WriteHandle"),
+        ("", "let _ = when (h) {h.n=2};", "shared"),
+        ("", "let _ = when (mut h) {println(1)};", "proved synchronous"),
         (
             "fn emit(s:&mut S,target:outbox.Handle){let bytes=\"x\".into_bytes(); outbox.emit(target,&bytes)}",
-            "let q=outbox.create(1,8); domain.write_to(h,emit,q.handle());",
+            "let q=outbox.create(1,8); let _ = domain.write_to(h,emit,q.handle());",
             "proved",
         ),
         (
             "",
-            "let text=\"owned\"; let view=&text; when (h) {view};",
+            "let text=\"owned\"; let view=&text; let _ = when (h) {view};",
             "value packet",
         ),
         (
             "",
-            "let text=\"owned\"; let view=&text; when (h) {view.byte_length()};",
+            "let text=\"owned\"; let view=&text; let _ = when (h) {view.byte_length()};",
             "value packet",
         ),
-        ("", "var n=1; let r=&n; when (h) {*r};", "value packet"),
+        ("", "var n=1; let r=&n; let _ = when (h) {*r};", "value packet"),
         (
             "fn get(n:Int32)->Int32{n}",
-            "let f=get; when (h) {f(h.n)};",
+            "let f=get; let _ = when (h) {f(h.n)};",
             "value packet",
         ),
-        ("", "when (h) {&h.n};", "bounded value"),
+        ("", "let _ = when (h) {&h.n};", "bounded value"),
         (
             "impl S {fn add(&mut self,n:Int32){self.n+=n}}",
             "let ro=h.read_only(); ro.add(2);",
@@ -1335,7 +1335,7 @@ fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
         ),
         (
             "impl S {fn noisy(&self){println(1)}}",
-            "h.noisy();",
+            "let _ = h.noisy();",
             "proved synchronous",
         ),
         ("#state struct Bad{f:fn()->Int32}", "", "#state requires"),
@@ -1343,7 +1343,7 @@ fn state_domains_when_reject_invalid_syntax_captures_and_effects() {
         ("#state(1) struct Bad{n:Int32}", "", "accepts no arguments"),
         ("#state #state struct Bad{n:Int32}", "", "Duplicate #state"),
         (
-            "fn generic<T>(h:domain.ReadHandle<S>,v:T) @suspends {when(h){h.n};}",
+            "fn generic<T>(h:domain.ReadHandle<S>,v:T) @suspends {let _ = when(h){h.n};}",
             "",
             "nongeneric",
         ),
@@ -1446,7 +1446,7 @@ pub fn update(h:domain.WriteHandle<S>,n:Int32) @suspends ->Int32 {when "更新"(
 "#);
     work.write("imports.jk", "import room import joky/domain fn main() @suspends ->Int32 {let o=domain.create(room.make,1); room.update(o.handle(),2); room.probe(o.read_handle())+o.read_handle().value().unwrap()}");
     work.assert_all_backends("imports.jk", &[], b"", 6);
-    work.write("failure.jk", "import room import joky/domain fn main() @suspends {let a=domain.create(room.make,1); let b=domain.create(room.make,2); let x=a.handle(); let y=b.handle(); let zero=0; when(mut x,mut y){x.n=10; y.n=20; x.n/zero};}");
+    work.write("failure.jk", "import room import joky/domain fn main() @suspends {let a=domain.create(room.make,1); let b=domain.create(room.make,2); let x=a.handle(); let y=b.handle(); let zero=0; let _ = when(mut x,mut y){x.n=10; y.n=20; x.n/zero};}");
     for args in [
         ["run", "failure.jk"].as_slice(),
         ["run", "--interpreter", "failure.jk"].as_slice(),

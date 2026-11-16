@@ -1189,7 +1189,7 @@ impl Pool {
             Err(error) => {
                 // A failed SQL operation may already have retired the connection.
                 // Preserve the original failure even if rollback also fails.
-                tx.rollback()
+                let _ = tx.rollback()
                 Err(error)
             }
         }

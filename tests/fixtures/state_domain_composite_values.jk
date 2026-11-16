@@ -27,7 +27,7 @@ fn request(value:Input) @suspends ->Result<Pair<Int32>,Fault> {
     task.yield_now(); domain.write(update,value).unwrap()
 }
 fn request_read(value:(Int32,Bool)) @suspends ->Pair<Int32> {domain.query(query,value).unwrap()}
-fn tick(s:&mut State,value:Input) {update(s,value);}
+fn tick(s:&mut State,value:Input) {let _ = update(s,value);}
 fn edit(s:&mut State,value:(Int32,Empty<Bool>)) {s.n=value.0}
 impl State {
     fn apply(&mut self,value:Input)->Result<Pair<Int32>,Fault> {update(self,value)}

@@ -50,17 +50,10 @@ impl TypeRegistry {
         // Validate even unused parameters before erasing the transparent alias.
         for arg in arguments.iter().filter_map(|a| a.as_type()) {
             self.validate(arg)?;
-            if arg.contains_unstorable_closures() && !arg.is_scoped_borrowed_value()
-                || !arg.is_copy_storage_value()
-                    && !arg.is_scoped_borrowed_value()
-                    && !arg.is_owner()
-                    && !arg.is_callable_parameter()
-            {
+            if !arg.is_generic_argument() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
-                    format!(
-                        "Generic alias argument must be a Copy type or owning record, got {arg}"
-                    ),
+                    format!("Unsupported generic type argument {arg}"),
                 ));
             }
         }
@@ -134,17 +127,10 @@ impl TypeRegistry {
         }
         for arg in arguments.iter().filter_map(|a| a.as_type()) {
             self.validate(arg)?;
-            if arg.contains_unstorable_closures() && !arg.is_scoped_borrowed_value()
-                || !arg.is_copy_storage_value()
-                    && !arg.is_scoped_borrowed_value()
-                    && !arg.is_owner()
-                    && !arg.is_callable_parameter()
-            {
+            if !arg.is_generic_argument() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
-                    format!(
-                        "Generic record argument must be a Copy type or owning record, got {arg}"
-                    ),
+                    format!("Unsupported generic type argument {arg}"),
                 ));
             }
         }
@@ -253,14 +239,10 @@ impl TypeRegistry {
         }
         for arg in arguments.iter().filter_map(|a| a.as_type()) {
             self.validate(arg)?;
-            if arg.contains_closures()
-                || !arg.is_copy_storage_value()
-                    && !arg.is_scoped_borrowed_value()
-                    && !arg.is_owner()
-            {
+            if arg.contains_closures() || !arg.is_generic_argument() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
-                    format!("Generic enum argument must be a Copy type or an owner, got {arg}"),
+                    format!("Unsupported generic enum argument {arg}"),
                 ));
             }
         }

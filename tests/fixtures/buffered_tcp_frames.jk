@@ -112,8 +112,8 @@ fn lines() @suspends -> Int32 {
     42
 }
 fn wait(buffered: &mut BufferedTcp, mode: UInt64) @suspends {
-    if mode == 0 { buffered.read_exact(3); }
-    else { if mode == 1 { buffered.read_until(10, 3); } else { buffered.read_line(3); } }
+    if mode == 0 { let _ = buffered.read_exact(3); }
+    else { if mode == 1 { let _ = buffered.read_until(10, 3); } else { let _ = buffered.read_line(3); } }
 }
 fn pending(mode: UInt64) @suspends -> Int32 {
     let (stream, peer) = match pair() { Ok(pair) => pair, _ => { return 1 } }
@@ -121,7 +121,7 @@ fn pending(mode: UInt64) @suspends -> Int32 {
     ensure(peer.write_all(bytes("x")).is_ok())
     var buffered = BufferedTcp.new(stream)
     wait(&mut buffered, mode)
-    peer.close();
+    let _ = peer.close()
     42
 }
 fn pending_exact() @suspends -> Int32 { pending(0) }

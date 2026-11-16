@@ -31,6 +31,8 @@ mod floats;
 #[cfg(unix)]
 mod for_indexed;
 mod function_values;
+#[cfg(unix)]
+mod generic_borrows;
 mod generics;
 mod instances;
 mod integers;

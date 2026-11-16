@@ -26,7 +26,7 @@ impl session.Handler for ClientHandler {
     }
     fn on_close(&self) @suspends @noescape {
         let script = &self.script
-        script.entries.forget.try_call(&script.vm, self.client);
+        let _ = script.entries.forget.try_call(&script.vm, self.client)
     }
 }
 
@@ -72,7 +72,7 @@ fn serve(script: &Script, host: Host, var listener: TcpListener, stop: &shutdown
             }
         }
         admission.close();
-        listener.close();
+        let _ = listener.close()
         stop.request();
     }
     0

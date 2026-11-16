@@ -231,7 +231,7 @@ fn run() @suspends ->Int32 {
     let queue=outbox.create(1,1)
     var batch=outbox.batch(1,1)
     var bytes=Array.new::<UInt8>(); bytes.push(99)
-    outbox.stage(&mut batch,queue.handle(),bytes);
+    outbox.stage(&mut batch,queue.handle(),bytes)!
     let next=domain.candidate_from(domain.snapshot_from(state.read_handle(),read), state.handle(), make, 99).with_outbox(batch)
     outbox_test_ready(); task.yield_now()
     var receipt=domain.commit_to(state.handle(),next)
@@ -496,9 +496,9 @@ fn session_blocked_writer(draining: bool) {
             .unwrap();
         }
         let run = if draining {
-            "let stop = shutdown.create(); session.run_draining(connection,stream,session.Lines.default(),&handler,&stop)"
+            "let stop = shutdown.create(); let _ = session.run_draining(connection,stream,session.Lines.default(),&handler,&stop)"
         } else {
-            "session.run(connection,stream,session.Lines.default(),&handler)"
+            "let _ = session.run(connection,stream,session.Lines.default(),&handler)"
         };
         let keep_reading = !draining;
         vm.load_source(&format!(

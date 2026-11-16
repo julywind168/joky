@@ -138,10 +138,6 @@ fn borrowed_arrays_do_not_expose_owning_values_storage_or_host_capabilities() {
             "fn bad(a: &Element<Int32>) { let pair = (a, 1) }",
             "copyable",
         ),
-        (
-            "fn id<T>(p: T) -> T { p } fn bad(a: &Slice<Int32>) { id(a); }",
-            "Copy",
-        ),
         ("fn bad(a: Array<&Element<Int32>>) {}", "Copy"),
         ("fn bad(a: Array<&Slice<Int32>>) {}", "Copy"),
         ("fn bad(a: &Element<Int32>) { alloc(a); }", "Copy"),

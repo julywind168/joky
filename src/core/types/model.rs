@@ -463,13 +463,29 @@ impl Type {
                 .iter()
                 .any(|ty| ty.is_buffer_target() || ty.is_buffer_view())
     }
-    /// Buffer views can be copied locally, but cannot be stored or generalized.
+    /// Buffer views can be copied locally, but cannot be retained in storage.
     pub(crate) fn is_copy_storage_value(&self) -> bool {
         self.is_copy_value() && !self.contains_buffers() && !self.contains_unstorable_closures()
     }
     /// Copy bounds grant duplication, not permission to retain a loan in storage.
     pub(crate) fn is_copy_argument(&self) -> bool {
-        self.is_copy_storage_value() || self.is_scoped_shared_value()
+        self.is_copy_storage_value()
+            || self.is_scoped_shared_value()
+            || self
+                .reference_type()
+                .is_some_and(|r| !r.mutable && !r.target.is_explicit_arena())
+    }
+    /// Specialization permits local loans; it does not grant storage or Copy.
+    /// Concrete signatures, aggregate members and storage sites check their own
+    /// capabilities after substitution, just as they do for non-generic types.
+    pub(crate) fn is_generic_argument(&self) -> bool {
+        !self.contains_explicit_arena()
+            && (self.reference_type().is_some()
+                || self.is_scoped_borrowed_value()
+                || !self.contains_unstorable_closures()
+                    && (self.is_copy_storage_value()
+                        || self.is_owner()
+                        || self.is_callable_parameter()))
     }
     /// Shared owner references and read-only borrowed closures can travel locally.
     /// They remain ineligible for container and arena storage.

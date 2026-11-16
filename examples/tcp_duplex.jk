@@ -23,8 +23,8 @@ fn serve(listener: &mut TcpListener) @suspends {
     let stream = listener.accept().expect("Duplex message session")
     var (reader, writer) = BufferedTcp.new(stream).split()
     join { commands(&mut reader), pushes(&mut writer) }
-    reader.close();
-    writer.close();
+    let _ = reader.close()
+    let _ = writer.close()
 }
 fn send(writer: &mut TcpWriter) @suspends {
     for index in 1 .. 4 {
@@ -49,8 +49,8 @@ fn client(address: Address) @suspends {
     var (reader, writer) = BufferedTcp.new(stream).split()
     // Both halves stay owned by this task until the entire session ends.
     join { receive(&mut reader), send(&mut writer) }
-    reader.close();
-    writer.close();
+    let _ = reader.close()
+    let _ = writer.close()
 }
 fn main() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, _ => { return 1 } }

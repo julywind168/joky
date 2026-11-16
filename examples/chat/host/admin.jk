@@ -41,7 +41,7 @@ pub fn serve(engine: &vm.Vm, path: String, var listener: TcpListener, stop: &shu
         if stop.requested() { break }
         if race { connection(engine, &path, stream), { stop.wait(); true } } { stop.request(); break }
     }
-    listener.close();
+    let _ = listener.close()
     stop.request();
     status
 }

@@ -19,7 +19,7 @@ fn server(config: &tls.ServerConfig, socket: TcpStream, scenario: Int32) @suspen
     if scenario == 3 { return } // Deliberately omit close_notify.
     if scenario == 4 {
         // Wait until the client cancels a pending read and drops its socket.
-        stream.read(1);
+        let _ = stream.read(1)
         return
     }
     let bytes = stream.read_exact(20000)!!
@@ -28,7 +28,7 @@ fn server(config: &tls.ServerConfig, socket: TcpStream, scenario: Int32) @suspen
     stream.close()!
 }
 fn cancelled_read(stream: &mut tls.TlsStream) @suspends {
-    stream.read_exact(8);
+    let _ = stream.read_exact(8)
 }
 fn client(config: &tls.ClientConfig, socket: TcpStream, scenario: Int32) @suspends {
     let name = if scenario == 1 { "wrong-server-name.example" } else { "localhost" }
@@ -64,7 +64,7 @@ fn exchange(c: &tls.ClientConfig, s: &tls.ServerConfig, scenario: Int32) @suspen
     let (outgoing, incoming) = pair()
     join { client(c, outgoing, scenario), server(s, incoming, scenario) }
 }
-fn start_handshake(c: &tls.ClientConfig, socket: TcpStream, name: &String) @suspends { c.connect(socket, name); }
+fn start_handshake(c: &tls.ClientConfig, socket: TcpStream, name: &String) @suspends { let _ = c.connect(socket, name); }
 fn main() @suspends {
     let c = tls.ClientConfig.from_ca_pem(pem("ca.pem"))!
     let s = tls.ServerConfig.from_pem(pem("server.pem"), pem("test-only-key.pem"))!

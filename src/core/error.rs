@@ -47,6 +47,7 @@ pub enum ErrorCode {
     Panic,
     Cancelled,
     UnusedValue,
+    UnusedResult,
 }
 
 impl ErrorCode {
@@ -85,6 +86,7 @@ impl ErrorCode {
             Self::Panic => "panic",
             Self::Cancelled => "cancelled",
             Self::UnusedValue => "unused_value",
+            Self::UnusedResult => "unused_result",
         }
     }
 }

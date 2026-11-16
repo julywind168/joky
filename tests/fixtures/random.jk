@@ -75,7 +75,7 @@ fn random_pattern() -> Int32 {
     for byte in bytes { assert(byte == 90, "injected entropy bytes") }
     42
 }
-fn random_huge() -> Int32 { random.secure_bytes(18446744073709551615); 0 }
+fn random_huge() -> Int32 { let _ = random.secure_bytes(18446744073709551615); 0 }
 fn random_pending() @suspends -> Int32 {
     var rng = Rng.seeded(0)
     assert(rng.next_u64() == 5987356902031041503, "before suspension")

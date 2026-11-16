@@ -43,7 +43,7 @@ fn resolved() @suspends -> Int32 {
     42
 }
 fn pending() @suspends -> Int32 { expect(dns.lookup("controlled.test", 443)); 42 }
-fn cancelled_branch() @suspends { dns.lookup("controlled.test", 443); }
+fn cancelled_branch() @suspends { let _ = dns.lookup("controlled.test", 443); }
 fn reuse() @suspends -> Int32 {
     race { cancelled_branch(), task.yield_now() }
     expect(dns.lookup("next.test", 443));

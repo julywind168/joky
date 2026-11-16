@@ -51,7 +51,7 @@ fn main() @suspends {
     assert(full.failed_outbox()! == target.identity())
     // An ignored staging failure poisons the entire batch, never publishing a prefix.
     var batch=outbox.batch(1,3)
-    outbox.stage(&mut batch,target,bytes(11));
+    let _ = outbox.stage(&mut batch,target,bytes(11))
     assert(match outbox.stage(&mut batch,target,bytes(12)) { Err(Full) => true, _ => false })
     var poisoned=domain.commit_to(handle,domain.candidate_from(domain.snapshot_from(handle.read_only(),read), handle, make, 11).with_outbox(batch))
     assert(match poisoned.wait() { Err(OutboxFull) => true, _ => false })
@@ -94,7 +94,7 @@ fn many() @suspends {
     let set=domain.candidate_set_add(set,b.handle(),make,20)
     let set=domain.candidate_set_add(set,c.handle(),make,30)
     var messages=staged(lh,10)
-    outbox.stage(&mut messages,rh,bytes(20));
+    let _ = outbox.stage(&mut messages,rh,bytes(20))
     // The second target's byte capacity rejects the entire three-domain commit.
     var rejected=domain.commit_set(set.with_outbox(messages))
     assert(match rejected.wait() { Err(OutboxFull) => true, _ => false })
@@ -107,7 +107,7 @@ fn many() @suspends {
     let set=domain.candidate_set_add(set,b.handle(),make,21)
     let set=domain.candidate_set_add(set,c.handle(),make,31)
     var messages=staged(lh,11)
-    outbox.stage(&mut messages,rh,Array.new::<UInt8>());
+    let _ = outbox.stage(&mut messages,rh,Array.new::<UInt8>())
     var accepted=domain.commit_set(set.with_outbox(messages))
     assert(match accepted.wait() { Ok(_)=> true, _ => false })
     let received=match left.receive() { Some(bytes) => bytes, None => Array.new::<UInt8>() }

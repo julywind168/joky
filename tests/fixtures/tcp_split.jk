@@ -67,12 +67,12 @@ fn duplex() @suspends {
         receive(&mut read_server, 32769)
         send(&mut write_server, 16401)
     }
-    read_client.close();
+    let _ = read_client.close()
     checked(write_client.close())
-    read_server.close();
+    let _ = read_server.close()
     checked(write_server.close())
 }
-fn pending_read(reader: &mut TcpReader) @suspends { reader.read(1); }
+fn pending_read(reader: &mut TcpReader) @suspends { let _ = reader.read(1); }
 fn discard_reader(reader: TcpReader) {}
 fn discard_writer(writer: TcpWriter) {}
 fn eof_reply() @suspends {
@@ -122,8 +122,8 @@ fn pending() @suspends {
     var (client, server) = connected()
     var (reader, writer) = client.split()
     join { pending_read(&mut reader), task.sleep(100s) }
-    writer.peer_addr();
-    server.peer_addr();
+    let _ = writer.peer_addr()
+    let _ = server.peer_addr()
 }
 fn main() @suspends -> Int32 {
     duplex()
@@ -140,7 +140,7 @@ fn create(reader: TcpReader, writer: TcpWriter, peer: TcpStream) -> State {
 }
 fn state_read(state: &mut State) @suspends {
     var reader = match mem.replace(&mut state.reader, None) { Some(value) => value, None => return }
-    reader.read(1);
+    let _ = reader.read(1)
     mem.replace(&mut state.reader, Some(reader));
 }
 fn state_write(state: &mut State) @suspends {

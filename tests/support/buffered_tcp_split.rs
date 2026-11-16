@@ -8,7 +8,7 @@ pub fn frames_source() -> String {
             "match split_buffer(stream, 16384) { Ok(value) => value, _ => { return 1 } }",
         )
         // Direction close may report an OS shutdown error after both FINs.
-        .replace("ensure(buffered.close().is_ok())", "buffered.close();");
+        .replace("ensure(buffered.close().is_ok())", "let _ = buffered.close()");
     format!(
         "{source}\nfn split_buffer(stream: TcpStream, capacity: UInt64) @suspends -> Result<BufferedTcpReader, ReadError> {{\n\
          let (reader, writer) = stream.split()\n\
@@ -24,5 +24,5 @@ pub fn reset_source(port: u16, method: &str) -> String {
             "    match first.kind()",
             "    var (buffered, writer) = buffered.split()\n    match first.kind()",
         )
-        .replace("if !buffered.close().is_ok() { return 10 }", "buffered.close();")
+        .replace("if !buffered.close().is_ok() { return 10 }", "let _ = buffered.close()")
 }

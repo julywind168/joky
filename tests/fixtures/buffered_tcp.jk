@@ -79,11 +79,11 @@ fn pending() @suspends -> Int32 {
     ensure(peer.write_all(bytes).is_ok())
     let first = match buffered.read(1) { Ok(bytes) => bytes, Err(error) => { return 5 } }
     ensure(first.get(0).unwrap_or(0) == 42 && buffered.buffered_len() == 0)
-    buffered.read(1);
-    peer.close();
+    let _ = buffered.read(1)
+    let _ = peer.close()
     42
 }
-fn wait(buffered: &mut BufferedTcp) @suspends { buffered.read(1); }
+fn wait(buffered: &mut BufferedTcp) @suspends { let _ = buffered.read(1); }
 fn cancel() @suspends {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { ensure(false); return } }
     let address = match listener.local_addr() { Ok(address) => address, Err(error) => { ensure(false); return } }

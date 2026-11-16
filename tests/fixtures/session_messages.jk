@@ -173,7 +173,7 @@ fn cancel_pending_packet() @suspends {
     let protocol = Packets { sequence: 0, label: "packet", pause: true, counts: owner.handle() }
     // Cancel only after the reader has constructed its owning message.
     let handler_ref = &handler
-    race { { session.run(connection, stream, protocol, handler_ref); }, wait_reading(owner.handle()) }
+    race { { let _ = session.run(connection, stream, protocol, handler_ref); }, wait_reading(owner.handle()) }
     check.assert(peer.read(1)!.is_empty(), "cancelling a custom reader releases the socket")
     let counts = owner.handle()
     when (counts) { check.assert(counts.messages == 0 && counts.closed == 0, "parent cancellation skips callbacks") }!

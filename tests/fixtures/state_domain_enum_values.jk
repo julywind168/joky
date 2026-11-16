@@ -32,7 +32,7 @@ fn request(input:Command) @suspends ->Result<Int32,Rejection> {
     domain.write(update,input).unwrap()
 }
 fn request_read(input:Option<Int32>) @suspends ->Option<Int32> {domain.query(query,input).unwrap()}
-fn tick(s:&mut State,input:Command) {update(s,input);}
+fn tick(s:&mut State,input:Command) {let _ = update(s,input);}
 fn edit(s:&mut State,input:Option<Int32>) {s.n=input.unwrap_or(0)}
 impl State {
     fn apply(&mut self,input:Command)->Result<Int32,Rejection> {update(self,input)}

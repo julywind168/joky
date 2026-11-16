@@ -73,19 +73,19 @@ impl RequestLog {
     }
     /// Attempts to emit a debug event with this request's correlation ID.
     pub fn debug(&self, event: String, fields: Array<log.Field>) {
-        self.emit(log.Level.Debug, event, fields);
+        let _ = self.emit(log.Level.Debug, event, fields)
     }
     /// Attempts to emit an informational event with this request's correlation ID.
     pub fn info(&self, event: String, fields: Array<log.Field>) {
-        self.emit(log.Level.Info, event, fields);
+        let _ = self.emit(log.Level.Info, event, fields)
     }
     /// Attempts to emit a warning event with this request's correlation ID.
     pub fn warn(&self, event: String, fields: Array<log.Field>) {
-        self.emit(log.Level.Warn, event, fields);
+        let _ = self.emit(log.Level.Warn, event, fields)
     }
     /// Attempts to emit an error event with this request's correlation ID.
     pub fn error(&self, event: String, fields: Array<log.Field>) {
-        self.emit(log.Level.Error, event, fields);
+        let _ = self.emit(log.Level.Error, event, fields)
     }
 }
 /// A parsed request and its application context.
@@ -1436,12 +1436,12 @@ fn listen<S: Service>(
             }
             let worker = service.share()
             branch {
-                isolate {
+                let _ = isolate {
                     connection(transport, stream, shared, options, worker, permit)
-                };
+                }
             }
         }
-        listener.close()
+        let _ = listener.close()
         stop.request();
     }
     if failed {

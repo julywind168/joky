@@ -128,7 +128,7 @@ fn borrowed_host_io_pending_io_survives_reload_and_vm_drop() {
 fn opaque_types_reject_ownership_and_buffer_host_abis() {
     for (source, message) in [
 
-        ("import joky/result.{type Result, Ok} fn wrap(socket: Socket) -> Result<Socket, Int32> { Ok(socket) }", "Generic enum argument must be a Copy type or an owner"),
+        ("import joky/result.{type Result, Ok} fn wrap(socket: Socket) -> Result<Socket, Int32> { Ok(socket) }", "Unsupported generic enum argument"),
         ("struct Holder { socket: Socket }", "Record fields and enum payloads require a Copy value or an owner"),
         ("import joky/array.{type Array} extern fn read(bytes: &mut Array<UInt8>) @suspends -> Int32", "Buffer owners and views are not supported by the host ABI"),
         ("import joky/slice.{type Slice} extern fn read(bytes: &mut Slice<UInt8>) @suspends -> Int32", "Buffer owners and views are not supported by the host ABI"),

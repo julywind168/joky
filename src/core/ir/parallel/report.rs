@@ -436,7 +436,7 @@ mod tests {
                 let values = [1]
                 join { reader(&values), recurse(&values, 1) };
                 join { printer(&values), recurse(&values, 1) };
-                isolate { join { recurse(&values, 1), recurse(&values, 2) }; };
+                let _ = isolate { join { recurse(&values, 1), recurse(&values, 2) }; }
             }
             fn unreachable() @suspends { let values = [1]; join { recurse(&values, 1), recurse(&values, 2) }; }
         "#,

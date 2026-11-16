@@ -46,7 +46,7 @@ fn wait_for_close(handle: domain.WriteHandle<State>) @suspends {
     }
 }
 fn close_owner(owner: domain.Owner<State>) @suspends { owner.close() }
-fn slow(handle: domain.WriteHandle<State>) @suspends { domain.request(handle, delayed, 100); }
+fn slow(handle: domain.WriteHandle<State>) @suspends { let _ = domain.request(handle, delayed, 100); }
 fn ready() @suspends { task.yield_now() }
 
 fn lifecycle() @suspends -> Int32 {

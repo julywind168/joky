@@ -64,7 +64,7 @@ fn serve(listener: &mut TcpListener) @suspends {
     let stream = match listener.accept() { Ok(stream) => stream, _ => panic("JSON message session") }
     var (reader, writer) = BufferedTcp.new(stream).split()
     ensure(exchange(&mut reader, &mut writer) == 2)
-    reader.close(); writer.close();
+    let _ = reader.close(); let _ = writer.close()
 }
 fn send(writer: &mut TcpWriter) @suspends {
     ensure(writer.write_message("[".into_bytes(), 65536).is_ok())
@@ -98,7 +98,7 @@ fn client(address: Address) @suspends {
     let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => panic("JSON message session") }
     var (reader, writer) = BufferedTcp.new(stream).split()
     join { receive(&mut reader), send(&mut writer) }
-    reader.close(); writer.close();
+    let _ = reader.close(); let _ = writer.close()
 }
 fn main() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, _ => { return 1 } }

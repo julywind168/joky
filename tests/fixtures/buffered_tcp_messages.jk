@@ -175,8 +175,8 @@ fn pending(mode: UInt64) @suspends -> Int32 {
     if mode == 0 { prefix.truncate(2) } else { prefix.push(42) }
     ensure(peer.write_all(prefix).is_ok())
     var buffered = BufferedTcp.new(stream)
-    buffered.read_message(3);
-    peer.close();
+    let _ = buffered.read_message(3)
+    let _ = peer.close()
     42
 }
 fn pending_header() @suspends -> Int32 { pending(0) }
@@ -198,7 +198,7 @@ fn write_failure() @suspends -> Int32 {
     42
 }
 
-fn wait(buffered: &mut BufferedTcp) @suspends { buffered.read_message(3); }
+fn wait(buffered: &mut BufferedTcp) @suspends { let _ = buffered.read_message(3); }
 fn cancel() @suspends -> Int32 {
     var mode: UInt64 = 0
     while mode < 2 {

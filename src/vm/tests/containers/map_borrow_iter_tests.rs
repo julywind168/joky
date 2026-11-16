@@ -236,7 +236,7 @@ fn map_borrow_iter_rejects_conflicts_and_escaping_entries() {
         ("fn bad() -> &Entry<Int32, Int32> { var m=Map.new::<Int32,Int32>(); m.insert(1,2); let i=m.iter(); map.advance(i); map.current(i) }", "compatible borrowed input"),
         ("fn bad(e: Entry<Int32, Int32>) {}", "borrow-only targets"),
         ("fn bad(i: Iter<Int32, Int32>) {}", "borrow-only targets"),
-        ("fn bad(m: &Map<Int32, Int32>) { for e in m.iter() { let saved = [e]; } }", "Generic type argument must be"),
+        ("fn bad(m: &Map<Int32, Int32>) { for e in m.iter() { let saved = [e]; } }", "Buffer elements require"),
         ("fn bad(m: &Map<Int32, &Int32>) { m.iter(); }", "reference"),
     ] {
         let error = frontend_error(&format!("{prefix}{function}"), &crate::ModuleSources::new());

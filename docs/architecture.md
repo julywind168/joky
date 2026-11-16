@@ -86,9 +86,9 @@ VM/AOT 在内置调用重写及 ABI 检查前执行该步骤，CLI 也在检查 
 parser 的 `Module.type_aliases`、`Module.records`、`Module.enums` 保存独立声明和源码范围；手工构造 Module
 的 Rust 调用方需要初始化这些字段。记录及枚举声明具有独立身份，克隆 AST 保留身份，新解析生成新身份。类型与值名称分开解析，类型别名不会出现在函数导出列表或对象符号中。
 
-泛型别名的 `TypeAlias.type_params` 使用声明局部的刚性 Copy 参数。内部 `TypeDefinition` 区分
+泛型别名的 `TypeAlias.type_params` 使用声明局部的刚性参数及其显式 Copy 约束。内部 `TypeDefinition` 区分
 已解析类型和 `AliasTemplate`；模板目标在定义作用域中规范化，导入绑定保留模板及参数身份，
-调用点只替换参数，不按消费者的同名类型重新绑定。未使用的实参也检查 Copy 约束。
+调用点只替换参数，不按消费者的同名类型重新绑定。未使用的实参也检查资格及声明的 Copy 约束。
 `core::types::specialization` 复用元组 / 记录 / 枚举的有界替换，规范化阶段单独缓存最多 256 个不同
 别名应用（含刚性参数应用）；重复应用复用目标，参数最多 64 个，目标沿用 65,536 槽 / 256 层上限。
 模板不进入构造查找、可执行 `Type`、IR 或 ABI；透明展开不创建名义身份或运行时符号。
@@ -100,6 +100,12 @@ AST、类型环境和绑定声明快照。宿主绑定提供完整 CPS frame 布
 `ModulePlan` 统一检查声明、调用、返回类型、赋值权限、作用域和挂起约定。
 `FunctionPlan` 保存 typed slots、操作、对应源码范围、控制流标签及挂起状态。
 三个后端消费相同结果，不在 lowering 中重新推导语言类型。
+`Type::is_generic_argument` 统一局部值与借用的实例化资格，`function_type_arguments` 共用普通调用和函数值的
+Copy、trait、关联等式及 callable 检查。共享视图可满足 Copy，独占引用只可移动／重借用；这些资格不授予存储能力。
+聚合布局扩展另检查替换后的实际成员，防止泛型字段绕过具体字段对独占引用和局部视图的限制。
+原有借用来源传播与逃逸契约仍在具体 IR 上检查，不能因类型别名或泛型转发而擦除。
+序列和循环的丢弃位置按标准枚举身份检查 Result，沿元组逐层检查并报告 `unused_result`；
+不沿引用或用户包装类型展开，不做绑定使用情况的数据流分析。`let _ =` 保留显式消费和正常清理语义。
 `joky::Checker` 使用标准绑定声明与 CPS 布局，经同一 `PreparedModule` / `ModulePlan` 完成
 静态检查后丢弃规划结果，不创建 VM 或调用后端。CLI `check` 用其 `type_registry()` 解析文件，
 再调用 `check_module()`；入口和自定义 extern 的 CLI 限制仍由 CLI 层验证。
@@ -187,7 +193,7 @@ for 在解析阶段展开为独立 Block、隐藏可变迭代器、While 与条�
 条件 Match 保留 parser-authored iteration 标记；共享 IR 确认输入是 `&Iter<T>` / `&mut Iter<T>` 时，
 将该步改写为 advance 条件及直接 current/current_mut 绑定，普通 Iterator 仍走 Option。
 借用游标的 Type::BufferIterator 沿用 Buffer 视图的类型、来源及跨挂起检查。
-共享游标不能成为聚合字段或一般泛型实参；独占游标允许与无引用 Copy 元数据组成局部记录/元组，
+共享游标引用可作为局部泛型实参，但不能成为聚合字段；独占游标允许与无引用 Copy 元数据组成局部记录/元组，
 按逐标量 Reference(move) 转移，不满足 Copy，不准入枚举、存储、对整个包取引用或普通语言挂起。
 不放宽 `Option<&mut T>` 或 @noescape。每个游标构造都有独立的描述符身份，
 保存非拥有元素地址、长度、步幅和 Cell 位置；共享副本共享位置。生成的原语复用 BufferOp::Storage，
@@ -901,7 +907,8 @@ store/initialize_next 保留元素借用，replace 合并源内容，get/pop 继
 borrow/slice 复制原始缓冲区身份并延长父借用链，所有冲突仍按整个缓冲区判断；不采用独立版本号或区间拆分。
 element.read / slice.get 复制元素内容来源，element.write / slice.set 保留任务期存储借用。
 类型解析恢复视图中内联元素的名义布局，跨模块按声明身份解析，普通引用目标仍保持间接身份。
-这些能力拒绝进入聚合、普通 Copy 泛型、alloc/graph、memory 原语和宿主边界；无引用元素视图可跨语言挂起。
+这些视图引用可作为局部泛型实参，共享引用可满足 Copy；仍拒绝进入聚合、alloc/graph、memory 原语和宿主边界。
+无引用元素视图可跨语言挂起。
 
 `runtime::buffer::Buffer` 是 arena 内稳定的 data/len/capacity/element-layout 控制块，空数组也有独立计费控制块。
 元素布局复用 MemoryLayout，载荷大小以受检 UInt64 转换、容量乘步长及 Layout 验证；
@@ -960,7 +967,7 @@ parser 为每个函数类型参数创建独立的 `Type::Parameter` 身份，`Fn
 `core::ir::generics` 管理一个只存在于编译期间的上下文。`ModulePlan` 先登记签名，
 以刚性参数检查每个泛型模板，包括未使用者，再规划普通函数并迭代处理实例队列。
 推导只读取类型提示；按实参源码顺序收集已有类型，再为未定参数尝试整数字面量默认类型，
-实际求值与副作用仍由原调用规划执行。模板只具有 Copy 能力，不能依赖某次具体实例的运算或字段。
+实际求值与副作用仍由原调用规划执行。模板只具有声明的能力，复制需要 Copy 约束，不能依赖某次具体实例的运算或字段。
 
 严格推导只使用已知实参类型；如果返回类型已确定，其他参数可留到实际调用时定型。
 泛型调用和方法接收者的类型提示在同一调用树内复用，严格查询与允许默认化的查询分别缓存。

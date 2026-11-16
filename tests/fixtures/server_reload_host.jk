@@ -130,7 +130,7 @@ fn connection(h:&vm.Vm,ctx:Context,queue:outbox.Mailbox) @suspends {
     let address=match listener.local_addr() {Ok(a)=>a,Err(_)=>{assert(false); return}}
     let client=match TcpStream.connect(address) {Ok(s)=>s,Err(_)=>{assert(false); return}}
     let accepted=match listener.accept() {Ok(s)=>s,Err(_)=>{assert(false); return}}
-    listener.close()
+    let _ = listener.close()
     let (reader,output)=accepted.split()
     checkpoint(1)
     join { server(h,ctx,reader), writer(queue,output), peer(client) }

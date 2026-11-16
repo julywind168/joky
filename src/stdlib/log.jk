@@ -138,19 +138,19 @@ impl Logger {
     }
     /// Attempts to emit a structured event at debug severity.
     pub fn debug(&self, event: String, fields: Array<Field>) {
-        self.emit(Level.Debug, event, fields);
+        let _ = self.emit(Level.Debug, event, fields)
     }
     /// Attempts to emit a structured event at informational severity.
     pub fn info(&self, event: String, fields: Array<Field>) {
-        self.emit(Level.Info, event, fields);
+        let _ = self.emit(Level.Info, event, fields)
     }
     /// Attempts to emit a structured event at warning severity.
     pub fn warn(&self, event: String, fields: Array<Field>) {
-        self.emit(Level.Warn, event, fields);
+        let _ = self.emit(Level.Warn, event, fields)
     }
     /// Attempts to emit a structured event at error severity.
     pub fn error(&self, event: String, fields: Array<Field>) {
-        self.emit(Level.Error, event, fields);
+        let _ = self.emit(Level.Error, event, fields)
     }
 }
 /// A named value added to a structured log event.
@@ -297,20 +297,20 @@ pub fn emit(level: Level, event: String, fields: Array<Field>) -> Result<Unit, L
 
 /// Attempts to emit a structured event at debug severity.
 pub fn debug(event: String, fields: Array<Field>) {
-    emit(Level.Debug, event, fields);
+    let _ = emit(Level.Debug, event, fields)
 }
 
 /// Attempts to emit a structured event at informational severity.
 pub fn info(event: String, fields: Array<Field>) {
-    emit(Level.Info, event, fields);
+    let _ = emit(Level.Info, event, fields)
 }
 
 /// Attempts to emit a structured event at warning severity.
 pub fn warn(event: String, fields: Array<Field>) {
-    emit(Level.Warn, event, fields);
+    let _ = emit(Level.Warn, event, fields)
 }
 
 /// Attempts to emit a structured event at error severity.
 pub fn error(event: String, fields: Array<Field>) {
-    emit(Level.Error, event, fields);
+    let _ = emit(Level.Error, event, fields)
 }

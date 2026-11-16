@@ -2,6 +2,38 @@
 use super::*;
 
 #[test]
+fn unused_result_diagnostic_matches_cli_routes_and_json_source_ranges() {
+    let work = Workspace::new();
+    let source =
+        "// 中文\npub fn fail() -> Result<Int32, Int32> { Err(1) }\npub fn bad() { fail(); }\n";
+    work.write("dependency.jk", source);
+    work.write(
+        "main.jk",
+        "import dependency fn main() { dependency.bad() }",
+    );
+    for args in [
+        vec!["check", "main.jk"],
+        vec!["run", "main.jk"],
+        vec!["run", "--interpreter", "main.jk"],
+        vec!["build", "main.jk", "-o", "program"],
+    ] {
+        let output = work.cli(&args);
+        failure(&output, "unused_result");
+        failure(&output, "dependency.jk:3:");
+        failure(&output, "let _ =");
+    }
+    let output = work.cli(&["check", "--diagnostic-format", "json", "main.jk"]);
+    assert_eq!(output.status.code(), Some(1));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let diagnostic = &json["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "unused_result");
+    let primary = &diagnostic["primary"];
+    let start = primary["startByte"].as_u64().unwrap() as usize;
+    let end = primary["endByte"].as_u64().unwrap() as usize;
+    assert_eq!(&source[start..end], "fail()");
+}
+
+#[test]
 fn user_file_diagnostics_name_the_dependency_and_full_cycle() {
     let work = Workspace::new();
     work.write(

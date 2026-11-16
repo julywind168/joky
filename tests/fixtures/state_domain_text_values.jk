@@ -28,7 +28,7 @@ fn request(p:Input) @suspends ->Result<String,Failure> {
 }
 fn echo(text:String) @suspends ->String {task.yield_now(); text}
 fn slow(text:String) @suspends ->String {task.sleep(10s); text}
-fn pending(h:domain.WriteHandle<State>) @suspends {domain.request(h,slow,"cancel me");}
+fn pending(h:domain.WriteHandle<State>) @suspends {let _ = domain.request(h,slow,"cancel me");}
 fn ready() @suspends {task.yield_now()}
 impl State {
     fn value(&self)->String {read(self)}

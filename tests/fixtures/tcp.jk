@@ -80,7 +80,7 @@ fn errors() @suspends -> Int32 {
 }
 fn pending() @suspends -> Int32 {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
-    listener.accept();
+    let _ = listener.accept()
     42
 }
 fn reuse() @suspends -> Int32 {
@@ -95,7 +95,7 @@ fn main() @suspends -> Int32 { addresses(); if ipv4() != 42 {return 1}; if ipv6(
 fn assert_value(value: Int32) { let message = "TCP roundtrip"; assert(value == 42, &message) }
 fn serve(listener: &mut TcpListener) @suspends { assert_value(server(listener)) }
 fn send(address: Address) @suspends { assert_value(client(address)) }
-fn wait_accept(listener: &mut TcpListener) @suspends { listener.accept(); }
+fn wait_accept(listener: &mut TcpListener) @suspends { let _ = listener.accept(); }
 
 fn addresses() {
     let endpoint = Address.ipv6(0xfe80000000000000, 1, 443).with_scope(42)

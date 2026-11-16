@@ -103,7 +103,7 @@ fn main() @suspends ->Int32 {
     let room=domain.create(make,42)
     let owner=domain.directory(1)
     let directory=owner.handle()
-    directory.insert(1,room.handle());
+    directory.insert(1,room.handle())!
     match domain.lookup::<Player>(directory,1) { Some(_)=>1,None=>0 }
 }"#,
         )

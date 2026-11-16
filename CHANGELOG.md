@@ -5,6 +5,11 @@
 
 ## Unreleased
 
+- 泛型调用、函数值和透明别名统一类型实参资格检查，支持局部独占引用和 Slice 引用；
+  函数值同时校验 callable 与关联类型等式约束。Copy、聚合成员、存储和逃逸限制仍分别检查。
+- 未处理而直接丢弃标准 `Result`（含元组内的 Result）现在报告 `unused_result`，覆盖换行、分号和循环体末值。
+  迁移时处理／传播错误；确实忽略时将 `operation();` 改为 `let _ = operation()`。
+
 - macOS arm64 的普通 JIT 和独立 AOT 为挂起函数补齐首次调用、间接入口及恢复时的原生栈检查，
   过深的挂起递归通过 `ResourceLimit` 失败。CPS 子帧改为迭代清理，避免失败／取消时再次因递归销毁耗尽栈。
   其他平台及任意宿主回调的栈上界仍未覆盖；编译器与 runtime 需成套重建，详见[实现范围](docs/architecture.md#cps-栈保护与迭代清理)。

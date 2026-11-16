@@ -1,6 +1,7 @@
 //! Shared control-flow typing and lowering. Abrupt exits have no normal value.
 use super::*;
 use crate::parser::ast::{ConditionClause, IfLetChain};
+use std::collections::HashSet;
 
 pub(super) fn is_true_literal(expr: &Expr) -> bool {
     matches!(
@@ -183,6 +184,12 @@ impl FunctionPlan {
                     None
                 },
             )?;
+            if index + 1 < exprs.len() || matches!(container, Expr::Sequence { trailing: true, .. })
+            {
+                if let Flow::Value(value) = &flow {
+                    self.check_discarded_result(value, expr, types)?;
+                }
+            }
             if implicit
                 && index + 1 < exprs.len()
                 && matches!(&flow, Flow::Value(Some(slot)) if !slot.ty.is_owner())
@@ -191,6 +198,48 @@ impl FunctionPlan {
             }
         }
         Ok(flow)
+    }
+
+    fn check_discarded_result(
+        &self,
+        value: &Option<Slot>,
+        mut expression: &Expr,
+        types: &TypeRegistry,
+    ) -> Result<(), Error> {
+        let Some(value) = value else { return Ok(()) };
+        // Tuples include join results. References and user wrappers do not
+        // become must-use merely because they contain a Result somewhere.
+        let mut pending = vec![&value.ty];
+        let mut seen = HashSet::new();
+        while let Some(ty) = pending.pop() {
+            match ty {
+                Type::Tuple(tuple) if seen.insert(Arc::as_ptr(tuple)) => {
+                    pending.extend(&tuple.elements);
+                }
+                Type::Enum(enumeration)
+                    if types.standard_success_variant(enumeration.id) == Some("Ok") =>
+                {
+                    while let Expr::Block { exprs, .. }
+                    | Expr::Unsafe { exprs, .. }
+                    | Expr::Sequence {
+                        exprs,
+                        trailing: false,
+                        ..
+                    } = expression
+                    {
+                        let Some(last) = exprs.last() else { break };
+                        expression = last;
+                    }
+                    return Err(type_error(
+                        &expression.span(),
+                        ErrorCode::UnusedResult,
+                        "Unused Result may contain an unhandled error. Handle it with match or '?', return it, or use 'let _ =' to ignore it explicitly.",
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     fn check_implicit_discard(&self, mut tail: &Expr, start: usize) -> Result<(), Error> {
@@ -366,10 +415,10 @@ impl FunctionPlan {
                     });
                 }
                 self.emit(Op::Label(body_label));
-                if matches!(
-                    self.expr(body, &mut vars.clone(), functions, suspends, types)?,
-                    Flow::Value(_)
-                ) {
+                if let Flow::Value(value) =
+                    self.expr(body, &mut vars.clone(), functions, suspends, types)?
+                {
+                    self.check_discarded_result(&value, body, types)?;
                     self.emit(Op::Jump(header));
                 }
                 let targets = self.loops.pop().unwrap();

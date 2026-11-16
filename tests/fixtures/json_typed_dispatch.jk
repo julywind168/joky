@@ -48,7 +48,7 @@ impl ToJson for Recover {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
         var fields = match context.object() { Ok(fields) => fields, Err(error) => { return Err(error) } }
         let nested = Duplicate {}
-        context.put_field(&mut fields, "failed", &nested);
+        let _ = context.put_field(&mut fields, "failed", &nested)
         let good = Array.new::<UInt8>()
         match context.put_field(&mut fields, "good", &good) { Err(error) => { return Err(error) }, Ok(_) => {} }
         Ok(Value.Object(fields))

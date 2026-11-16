@@ -884,6 +884,21 @@ pub(super) fn extend_layout(
             "Arena capabilities cannot be stored in aggregates or containers",
         ));
     }
+    // Generic arguments may be local loans even when a concrete field or
+    // payload cannot hold them. Check the substituted member, not its parameter.
+    if !ty.is_copy_storage_value()
+        && !ty.is_scoped_borrowed_value()
+        && !ty.is_owner()
+        && !ty.is_callable_parameter()
+    {
+        return Err(error(
+            ErrorCode::TypeMismatch,
+            span,
+            format!(
+                "{kind} members require a Copy value, supported scoped borrow or owner, got {ty}"
+            ),
+        ));
+    }
     *depth = (*depth).max(ty.layout_depth() + 1);
     if *depth > 256 {
         return Err(error(

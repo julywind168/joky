@@ -24,9 +24,9 @@ fn batch(target:outbox.Handle) @suspends ->outbox.Batch {
     assert(outbox.stage(&mut batch,target,bytes).is_ok())
     batch
 }
-fn wait_single(r:&mut domain.CommitReceipt) @suspends {r.wait();}
-fn wait_pair(r:&mut domain.PairCommitReceipt) @suspends {r.wait();}
-fn wait_set(r:&mut domain.SetCommitReceipt) @suspends {r.wait();}
+fn wait_single(r:&mut domain.CommitReceipt) @suspends {let _ = r.wait();}
+fn wait_pair(r:&mut domain.PairCommitReceipt) @suspends {let _ = r.wait();}
+fn wait_set(r:&mut domain.SetCommitReceipt) @suspends {let _ = r.wait();}
 fn stop_wait() @suspends {}
 fn lifecycle() @suspends ->Int32 {
     let a=domain.create(make,1); let b=domain.create(rules,10)

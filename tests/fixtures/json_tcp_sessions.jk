@@ -2,7 +2,7 @@ fn native(port: UInt16, expected: Int32) @suspends -> Int32 {
     let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port)) { Ok(stream) => stream, _ => { return 1 } }
     var (reader, writer) = BufferedTcp.new(stream).split()
     let count = exchange(&mut reader, &mut writer)
-    reader.close(); writer.close();
+    let _ = reader.close(); let _ = writer.close()
     ensure(count == expected)
     42
 }
@@ -31,6 +31,6 @@ fn pressure(port: UInt16) @suspends -> Int32 {
     // Both the borrowed encoded string and the original tree survive suspension.
     let after = match json.encode_with_limits(&value, limits()) { Ok(text) => text, _ => { return 3 } }
     ensure(text == after)
-    reader.close(); writer.close();
+    let _ = reader.close(); let _ = writer.close()
     42
 }

@@ -1,0 +1,87 @@
+import joky/array.{type Array}
+import joky/slice.{type Slice}
+import joky/string
+import joky/task
+
+type Local<T> = T
+struct View<T> { value: T }
+
+fn identity<T>(value: T) -> T {
+    value
+}
+
+fn discard<T>(value: T) @noescape {
+    let _ = value
+}
+
+fn copy_local<T: Copy>(value: T) -> T {
+    let saved = value
+    let _ = value
+    saved
+}
+
+fn suspended<T>(value: T) @suspends -> T {
+    task.yield_now()
+    value
+}
+
+fn suspended_discard<T>(value: T) @suspends @noescape {
+    task.yield_now()
+    let _ = value
+}
+
+fn borrow_shared() -> Int32 {
+    let text = "hello"
+    let direct = identity(&text)
+    let function = identity::<Local<&String>>
+    let view = View { value: function(direct) }
+    let copied = copy_local(view)
+    int32(copied.value.byte_length()) + 37
+}
+
+fn borrow_mutable() -> Int32 {
+    var value = 1
+    let function = discard::<Local<&mut Int32>>
+    function(&mut value)
+    let reference = identity(&mut value)
+    *reference += 41
+    value
+}
+
+fn borrow_slices() -> Int32 {
+    var values: Array<Int32> = [1, 2]
+    let mutable = discard::<&mut Slice<Int32>>
+    mutable(&mut values[..])
+    let target = identity(&mut values[..])
+    target[1] = 41
+    let shared = discard::<&Slice<Int32>>
+    shared(&values[..])
+    let view = copy_local(identity(&values[..]))
+    view[0] + view[1]
+}
+
+fn borrow_pending() @suspends -> Int32 {
+    let text = "hello"
+    var value = 1
+    let function = suspended_discard::<&mut Int32>
+    function(&mut value)
+    let reference = suspended(&mut value)
+    let reader = suspended_discard::<&String>
+    reader(&text)
+    *reference += int32(text.byte_length()) + 36
+    value
+}
+
+fn attempt(counter: &mut Int32) -> Result<String, String> {
+    *counter += 1
+    Err("ignored")
+}
+
+fn discard_explicit() -> Int32 {
+    var counter = 0
+    let _ = attempt(&mut counter)
+    while counter < 2 {
+        let _ = attempt(&mut counter)
+    }
+    counter + 40
+}

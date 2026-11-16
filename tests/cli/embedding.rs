@@ -794,7 +794,7 @@ struct State{{n:Int32}}
 fn make(n:Int32)->State{{State{{n:n}}}}
 fn pending(directory:domain.DirectoryHandle) @suspends ->{result_type} {{
     let owner=domain.create(make,0)
-    directory.insert(1,owner.handle());
+    directory.insert(1,owner.handle())!
     while domain.lookup::<State>(directory,1).is_some() {{task.yield_now()}}
     {value}
 }}"#

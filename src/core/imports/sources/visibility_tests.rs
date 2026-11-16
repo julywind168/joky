@@ -100,7 +100,7 @@ fn standard_library_private_entries_reject_user_access() {
         "import joky/fs fn f() -> UInt64 { fs.IO_CHUNK_SIZE }",
         "import joky/http.{type Wire} fn f() {}",
         "import joky/http.{type ReadFailure} fn f() {}",
-        "import joky/http fn f(c: &http.Client) @suspends { c.open(); }",
+        "import joky/http fn f(c: &http.Client) @suspends { let _ = c.open(); }",
         "import joky/tls fn f() -> UInt64 { tls.MAX_IO }",
         "import joky/tls fn f(s: &mut tls.TlsStream) @suspends { s.flush(); }",
         "import joky/shutdown fn f() { shutdown.reason(0); }",

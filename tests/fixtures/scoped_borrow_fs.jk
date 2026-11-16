@@ -38,7 +38,7 @@ fn main() @suspends -> Int32 {
 }
 fn read(path: &String) @suspends {
     var file = fs.open(path, fs.OpenOptions.default())!
-    file.read(16);
+    let _ = file.read(16)
 }
 fn parked() @suspends {
     let path = "blocked"

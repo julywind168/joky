@@ -125,30 +125,15 @@ impl FunctionPlan {
                 "Generic function values require all explicit type arguments",
             ));
         }
-        for (parameter, ty) in template.type_params.iter().zip(explicit) {
-            types
-                .validate_argument(parameter, ty)
-                .map_err(|e| e.with_span(span))?;
-            let Some(ty) = ty.as_type() else {
-                continue;
-            };
-            types.validate(ty).map_err(|e| e.with_span(span))?;
-            validate_nominal_type(ty, &self.nominals, &span)?;
-            if !ty.is_copy_storage_value() && !ty.is_owner() {
-                return Err(type_error(
-                    &span,
-                    ErrorCode::TypeMismatch,
-                    "Generic function values require Copy or owning type arguments",
-                ));
-            }
-            context.members.traits.check_bounds(parameter, ty, span)?;
-        }
         let substitutions = template
             .type_params
             .iter()
             .zip(explicit)
             .map(|(p, t)| (p.id, t.clone()))
             .collect();
+        let template = template.clone();
+        drop(context);
+        self.function_type_arguments(&template, &substitutions, types, &span, &name)?;
         info.signature = crate::FunctionSignature::new(
             template
                 .params
@@ -157,7 +142,6 @@ impl FunctionPlan {
                 .collect::<Result<_, _>>()?,
             substitute(&template.ret_ty, &substitutions, types)?,
         );
-        drop(context);
         if !instantiate {
             return Ok(Some((name, info)));
         }

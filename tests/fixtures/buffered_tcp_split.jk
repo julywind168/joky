@@ -56,8 +56,8 @@ fn duplex() @suspends -> Int32 {
         receive(&mut server_reader)
         send(&mut server_writer)
     }
-    client_reader.close();
-    server_reader.close();
+    let _ = client_reader.close()
+    let _ = server_reader.close()
     ensure(client_writer.close().is_ok() && server_writer.close().is_ok())
     42
 }
@@ -91,7 +91,7 @@ fn sweep() @suspends -> Int32 {
     match peer.read_message(2) { Ok(Some(bytes)) => ensure(bytes.len() == 2), _ => { return 10 } }
     42
 }
-fn wait(reader: &mut BufferedTcpReader) @suspends { reader.read_message(3); }
+fn wait(reader: &mut BufferedTcpReader) @suspends { let _ = reader.read_message(3); }
 fn pending() @suspends -> Int32 {
     let (stream, peer) = match pair() { Ok(value) => value, _ => { return 1 } }
     var peer = peer
@@ -100,8 +100,8 @@ fn pending() @suspends -> Int32 {
     ensure(peer.write_all(prefix).is_ok())
     var (reader, writer) = BufferedTcp.new(stream).split()
     join { wait(&mut reader), task.sleep(100s) }
-    writer.peer_addr();
-    peer.peer_addr();
+    let _ = writer.peer_addr()
+    let _ = peer.peer_addr()
     42
 }
 fn cancel() @suspends -> Int32 {
@@ -117,9 +117,9 @@ fn cancel() @suspends -> Int32 {
     var peer = BufferedTcp.new(peer)
     match peer.read_message(2) { Ok(Some(bytes)) => ensure(bytes.len() == 2), _ => { return 2 } }
     // Cancelled framing can lose a prefix; terminate both local directions.
-    reader.close();
-    writer.close();
-    peer.close();
+    let _ = reader.close()
+    let _ = writer.close()
+    let _ = peer.close()
     42
 }
 fn limits() @suspends -> Int32 {

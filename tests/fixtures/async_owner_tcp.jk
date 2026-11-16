@@ -27,8 +27,8 @@ fn send(address: Address) @suspends {
     bytes.push(10)
     bytes.push(12)
     bytes.push(20)
-    stream.write_all(bytes);
-    stream.shutdown(Shutdown.Write);
+    let _ = stream.write_all(bytes)
+    let _ = stream.shutdown(Shutdown.Write)
 }
 fn receive(listener: &mut TcpListener) @suspends {
     let stream = match listener.accept() { Ok(stream) => stream, Err(error) => { return } }

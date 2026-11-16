@@ -255,6 +255,8 @@ mod generic_method_tests;
 #[path = "language/generic_record_tests.rs"]
 mod generic_record_tests;
 
+#[path = "language/generic_borrow_tests.rs"]
+mod generic_borrow_tests;
 #[path = "language/generic_tests.rs"]
 mod generic_tests;
 

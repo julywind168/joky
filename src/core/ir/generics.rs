@@ -358,7 +358,6 @@ impl FunctionPlan {
         else {
             unreachable!()
         };
-        let members = self.generics.borrow().members.clone();
         if template
             .type_params
             .iter()
@@ -374,7 +373,29 @@ impl FunctionPlan {
             )?;
         }
 
-        let arguments: Vec<_> = template.type_params.iter().map(|p| {
+        let arguments =
+            self.function_type_arguments(&template, &substitutions, types, span, callee)?;
+        let params = template
+            .params
+            .iter()
+            .map(|p| substitute(&p.ty, &substitutions, types).map_err(|e| e.with_span(*span)))
+            .collect::<Result<_, _>>()?;
+        let ret =
+            substitute(&template.ret_ty, &substitutions, types).map_err(|e| e.with_span(*span))?;
+        Ok((arguments, FunctionSignature::new(params, ret)))
+    }
+
+    /// Direct calls and function values instantiate the same language contract.
+    pub(super) fn function_type_arguments(
+        &self,
+        template: &FnDef,
+        substitutions: &crate::core::types::Substitutions,
+        types: &TypeRegistry,
+        span: &Span,
+        callee: &str,
+    ) -> Result<Vec<GenericArgument>, Error> {
+        let members = self.generics.borrow().members.clone();
+        template.type_params.iter().map(|p| {
             let argument = substitutions.argument(p).ok_or_else(|| type_error(span, ErrorCode::TypeMismatch,
                 format!("Cannot infer {} parameter `{}` for `{}`; use explicit generic arguments", if p.kind == crate::core::types::ParameterKind::Const { "constant" } else { "type" }, p.name, self.diagnostic_function_name(callee))))?;
             types.validate_argument(p, &argument).map_err(|e| e.with_span(*span))?;
@@ -384,17 +405,17 @@ impl FunctionPlan {
             if ty.contains_explicit_arena() && !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) {
                 return Err(type_error(span, ErrorCode::TypeMismatch, "Arena capabilities cannot be generic type arguments"));
             }
-            if !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) && p.callable.is_none() && (ty.contains_unstorable_closures() && !ty.is_scoped_borrowed_value() || !ty.is_copy_storage_value() && !ty.is_scoped_borrowed_value() && !ty.is_owner()) {
+            if !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) && p.callable.is_none() && !ty.is_generic_argument() {
                 return Err(type_error(span, ErrorCode::TypeMismatch,
-                    format!("Generic type argument must be a Copy type or owning record, got {ty}")));
+                    format!("Unsupported generic type argument {ty}")));
             }
             members.traits.check_bounds(p, ty, *span).map_err(|e| if callee == "$joky_iter.into_iter" && e.code() == ErrorCode::TypeMismatch {
                 type_error(span, e.code(), format!("Cannot iterate over {ty}: for requires an IntoIterator implementation"))
             } else { e })?;
-            types.check_associated_bounds(p, ty, &substitutions, *span)?;
+            types.check_associated_bounds(p, ty, substitutions, *span)?;
             if let Some(bound) = &p.callable {
                 let Some((mode, actual)) = super::closures::callable_signature(ty) else { return Err(type_error(span, ErrorCode::TypeMismatch, if bound.suspends { "Callable bound requires a suspending language callable" } else { "Callable bound requires a synchronous language callable" })); };
-                let required = FunctionSignature::new(bound.signature.params.iter().map(|t| substitute(t, &substitutions, types)).collect::<Result<_, _>>()?, substitute(&bound.signature.ret, &substitutions, types)?);
+                let required = FunctionSignature::new(bound.signature.params.iter().map(|t| substitute(t, substitutions, types)).collect::<Result<_, _>>()?, substitute(&bound.signature.ret, substitutions, types)?);
                 if mode > bound.mode || actual != required || super::closures::callable_suspends(ty) != bound.suspends { return Err(type_error(span, ErrorCode::TypeMismatch, "Callable capability or signature does not satisfy its bound")); }
                 if bound.noescape {
                     let target = ty.reference_type().map_or(ty, |r| &r.target);
@@ -406,15 +427,7 @@ impl FunctionPlan {
                 }
             }
             Ok(argument)
-        }).collect::<Result<_, Error>>()?;
-        let params = template
-            .params
-            .iter()
-            .map(|p| substitute(&p.ty, &substitutions, types).map_err(|e| e.with_span(*span)))
-            .collect::<Result<_, _>>()?;
-        let ret =
-            substitute(&template.ret_ty, &substitutions, types).map_err(|e| e.with_span(*span))?;
-        Ok((arguments, FunctionSignature::new(params, ret)))
+        }).collect::<Result<_, Error>>()
     }
 
     pub(super) fn generic_result_hint(

@@ -54,7 +54,7 @@ fn isolate_rejects_escaping_control_flow_and_borrows() {
             "reference-free",
         ),
         (
-            "fn main() @suspends { let x=\"moved\"; isolate {x}; x; }",
+            "fn main() @suspends { let x=\"moved\"; let _ = isolate {x}; x; }",
             "moved",
         ),
     ] {

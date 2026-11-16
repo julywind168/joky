@@ -120,7 +120,7 @@ fn array_borrow_iter_rejects_conflicting_loans_and_escaping_views() {
         ("var a = [1, 2]; let i = a.iter(); iter.current_mut(i);", "expected &mut Iter"),
         ("let a = [1, 2]; let i = a.iter(); let moved = a; for _ in i {}", "conflicts with a live borrow"),
         ("let a = [1, 2]; let i = a.iter(); let stored = (i, 1);", "Tuple element must be"),
-        ("let a = [1, 2]; let i = a.iter(); let stored = [i];", "Generic type argument must be"),
+        ("let a = [1, 2]; let i = a.iter(); let stored = [i];", "Buffer elements require"),
         ("var a = [1, 2]; for r in a.iter_mut() { a.push(*r) }", "conflicts with a live borrow"),
         ("let a = [1, 2]; for r in a.iter() { *r = 5 }", "shared reference"),
     ] {

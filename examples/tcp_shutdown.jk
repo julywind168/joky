@@ -14,13 +14,13 @@ fn connection(stream: TcpStream, stop: &shutdown.Controller) @suspends {
     // This final state observation is the request admission point.
     if stop.requested() { return }
     if line == "shutdown" {
-        stream.write_all("shutting down\n".into_bytes());
+        let _ = stream.write_all("shutting down\n".into_bytes())
         stop.request();
         return
     }
     println("accepted")
     if line == "slow" { task.sleep(60s) } else { task.sleep(250ms) }
-    stream.write_all("done\n".into_bytes());
+    let _ = stream.write_all("done\n".into_bytes())
 }
 fn serve(stop: &shutdown.Controller, var listener: TcpListener) @suspends -> Int32 {
     scope {
@@ -33,7 +33,7 @@ fn serve(stop: &shutdown.Controller, var listener: TcpListener) @suspends -> Int
             branch { connection(stream, stop) }
         }
         // Close before scope waits for existing connections, not after it returns.
-        listener.close();
+        let _ = listener.close()
         println("stopped accepting")
     }
     0
