@@ -104,7 +104,7 @@ pub(crate) fn compile<M: Module>(
         None
     };
     // Checkpoints are needed on CPS roots and their entire synchronous call
-    // graph. Native stack admission separately makes synchronous calls fallible.
+    // graph. Native stack admission separately makes native calls fallible.
     let mut cancellable: HashSet<String> = plan
         .functions
         .iter()
@@ -314,7 +314,7 @@ pub(crate) fn compile<M: Module>(
     let mut stack_frames = HashMap::new();
     if protected {
         for name in &names {
-            if !functions[*name].suspends && float_bodies.contains_key(&ids[*name]) {
+            if float_bodies.contains_key(&ids[*name]) {
                 let id = module
                     .declare_anonymous_data(false, false)
                     .map_err(|e| compile_error(e.to_string()))?;

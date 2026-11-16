@@ -40,6 +40,21 @@ fn nested_buffers(arena: &mut arena::Arena) -> *mut Buffer {
     owner.as_ptr()
 }
 
+fn nested_cps() -> Box<crate::runtime::cps::CpsFrame> {
+    use crate::runtime::cps::{child, joky_cps_set_text_input_v2, CpsFrame};
+    let mut root = Box::new(CpsFrame::new(0));
+    let mut current = &mut *root as *mut CpsFrame;
+    for _ in 0..10_000 {
+        current = unsafe { child(current, 1) };
+        assert!(!current.is_null());
+        assert_eq!(
+            unsafe { joky_cps_set_text_input_v2(current, 0, b"owned".as_ptr(), 5) },
+            0
+        );
+    }
+    root
+}
+
 unsafe fn exercise(nodes: &[crate::runtime::place::CopyNode]) {
     let sp: usize;
     std::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack));
@@ -55,6 +70,7 @@ unsafe fn exercise(nodes: &[crate::runtime::place::CopyNode]) {
     error::joky_runtime_error_clear();
 
     admitted::exercise(nodes);
+    let cps = nested_cps();
     let mut arena = arena::Arena::default();
     // Include the native call-region wrappers used by admitted direct calls.
     let symbols = arena::symbols();
@@ -164,6 +180,7 @@ unsafe fn exercise(nodes: &[crate::runtime::place::CopyNode]) {
         error::call_failed(7, site, site + 1);
     }
     cleanup::finish(frame);
+    drop(cps);
     // Ordinary arena deallocation is part of the constrained exit path too.
     drop(arena);
     float_env::restore(saved);

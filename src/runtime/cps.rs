@@ -8,6 +8,7 @@ pub(crate) mod concurrent;
 mod isolate;
 pub(crate) mod parallel;
 pub(crate) mod protocol;
+mod release;
 pub(crate) mod task;
 
 use super::arena::Arena;
@@ -81,6 +82,7 @@ pub struct CpsFrame {
     task_protocol: Vec<protocol::Scope>,
     parallel_charge: Option<super::parallel::Lease>,
     pub(crate) parallel_result: Option<super::parallel::Lease>,
+    release_cursor: release::Cursor,
 }
 
 impl CpsFrame {
@@ -119,6 +121,7 @@ impl CpsFrame {
             task_protocol: Vec::new(),
             parallel_charge: None,
             parallel_result: None,
+            release_cursor: Default::default(),
         }
     }
 
@@ -202,12 +205,16 @@ impl CpsFrame {
         ready.then(|| failure.map_or(Ok(()), Err))
     }
 
-    pub(crate) fn release(&mut self) {
+    fn begin_release(&mut self) {
         self.stop_host(STOP_CANCELLED);
         if self.state != DONE {
             self.state = FAILED;
         }
-        let primary = super::error::current_error();
+        // Ordinary call chains need no diagnostic materialization during
+        // emergency cleanup. Task groups retain their selected failure.
+        let primary = (self.concurrent.is_some() || !self.task_scopes.is_empty())
+            .then(super::error::current_error)
+            .flatten();
         if let Some(group) = &mut self.concurrent {
             group.stop(primary.clone());
             let _ = group.begin_drain();
@@ -219,25 +226,15 @@ impl CpsFrame {
             }
             let _ = scope.begin_drain();
         }
-        let prepared: Vec<_> = self
-            .task_protocol
-            .iter_mut()
-            .flat_map(|scope| scope.take_prepared())
-            .collect();
-        drop(prepared);
-        self.children.clear();
-        if let Some(group) = &mut self.concurrent {
-            if !group.drain_finished() {
-                let cleanup = super::error::current_error().map_or(Ok(()), Err);
-                let _ = group.finish_drain(cleanup);
-            }
+        for index in 0..self.task_protocol.len() {
+            // Unpublished packets have never executed: their frames contain
+            // only capture storage, not a nested activation tree.
+            let prepared = self.task_protocol[index].take_prepared();
+            drop(prepared);
         }
-        for index in 0..self.task_scopes.len() {
-            let children = self.task_scopes[index].take_children();
-            drop(children);
-            let cleanup = super::error::current_error().map_or(Ok(()), Err);
-            let _ = self.task_scopes[index].finish_drain(cleanup);
-        }
+    }
+
+    fn finish_release(&mut self) {
         self.task_scopes.clear();
         self.release_concurrent_results();
         self.concurrent = None;

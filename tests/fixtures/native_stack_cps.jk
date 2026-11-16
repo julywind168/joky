@@ -1,0 +1,57 @@
+extern fn stack_owner(tag: UInt64) -> StackResource
+extern fn stack_wait(value: &mut Int32) @suspends -> Int32
+
+struct Owner { resource: StackResource, text: String }
+
+fn direct(n: Int32, owner: Owner) @suspends -> Int32 {
+    if n == 0 {
+        var value = 42
+        stack_wait(&mut value)
+    } else {
+        direct(n - 1, owner)
+    }
+}
+
+fn indirect(n: Int32, owner: Owner) @suspends -> Int32 {
+    if n == 0 {
+        var value = 42
+        stack_wait(&mut value)
+    } else {
+        let next: fn(Int32, Owner) @suspends -> Int32 = indirect
+        next(n - 1, owner)
+    }
+}
+
+fn mutual(n: Int32, owner: Owner) @suspends -> Int32 {
+    if n == 0 { direct(0, owner) } else { other(n - 1, owner) }
+}
+
+fn other(n: Int32, owner: Owner) @suspends -> Int32 {
+    mutual(n, owner)
+}
+
+fn start_direct(n: Int32) @suspends -> Int32 {
+    direct(n, Owner { resource: stack_owner(7), text: "owned" })
+}
+
+fn start_indirect(n: Int32) @suspends -> Int32 {
+    indirect(n, Owner { resource: stack_owner(7), text: "owned" })
+}
+
+fn start_mutual(n: Int32) @suspends -> Int32 {
+    mutual(n, Owner { resource: stack_owner(7), text: "owned" })
+}
+
+fn start_branch(n: Int32) @suspends -> Int32 {
+    scope {
+        branch {
+            direct(n, Owner { resource: stack_owner(7), text: "owned" });
+        }
+    }
+    42
+}
+
+fn reject_owner(value: String) @suspends -> Int32 {
+    let saved = value
+    42
+}

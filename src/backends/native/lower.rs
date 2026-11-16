@@ -1043,6 +1043,48 @@ fn check_call(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn check_stack(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    data: &DataRefs,
+    direct: Option<&str>,
+    frame: Option<Value>,
+    cleanup: Option<Value>,
+    span: crate::Span,
+    ptr_ty: types::Type,
+) {
+    if !data.stack_protected {
+        return;
+    }
+    let bytes = if let Some(&descriptor) = direct.and_then(|name| data.stack_frames.get(name)) {
+        let address = builder.ins().symbol_value(ptr_ty, descriptor);
+        builder
+            .ins()
+            .load(ptr_ty, MemFlagsData::trusted(), address, 0)
+    } else {
+        builder.ins().iconst(ptr_ty, super::stack::ENVELOPE as i64)
+    };
+    let sp = builder.ins().get_stack_pointer(ptr_ty);
+    let source = builder
+        .ins()
+        .iconst(types::I64, span.source_id().raw() as i64);
+    let start = builder.ins().iconst(ptr_ty, span.start() as i64);
+    let end = builder.ins().iconst(ptr_ty, span.end() as i64);
+    let room = helper(
+        builder,
+        refs,
+        "__joky_native_stack_room_v1",
+        &[sp, bytes, source, start, end],
+    );
+    let ready = builder.create_block();
+    let failed = builder.create_block();
+    builder.ins().brif(room, ready, &[], failed, &[]);
+    builder.switch_to_block(failed);
+    failure_return(builder, refs, frame, cleanup);
+    builder.switch_to_block(ready);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn check_integer_operand(
     builder: &mut FunctionBuilder,
     refs: &HashMap<String, FuncRef>,
@@ -2015,7 +2057,12 @@ fn lower_suspending_call(
     frame: Value,
     states: &[cranelift_codegen::ir::Block],
     state_offset: i32,
+    span: crate::Span,
 ) {
+    // Reserve the target and emergency path before allocating its frame or
+    // transferring owning arguments. Direct private bodies bypass the wrapper.
+    let direct = indirect.is_none().then_some(name);
+    check_stack(builder, refs, data, direct, Some(frame), None, span, ptr_ty);
     let descriptor = indirect.as_ref().map(|target| slots.read(builder, target));
     let count = cps_slot_count(builder, &functions[name], descriptor, ptr_ty);
     let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
@@ -2029,6 +2076,8 @@ fn lower_suspending_call(
     builder.switch_to_block(states[state as usize]);
     // Re-enter only the child poll. Argument evaluation and side
     // effects before this point must not run again on resumption.
+    // Every poll uses the actual execution thread's remaining machine stack.
+    check_stack(builder, refs, data, direct, Some(frame), None, span, ptr_ty);
     let descriptor = indirect.as_ref().map(|target| slots.read(builder, target));
     let count = cps_slot_count(builder, &functions[name], descriptor, ptr_ty);
     let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
@@ -3023,36 +3072,16 @@ fn lower_ops(
                 state: None,
                 indirect,
             } => {
-                if data.stack_protected {
-                    let bytes = if let Some(&frame_size) =
-                        data.stack_frames.get(name).filter(|_| indirect.is_none())
-                    {
-                        let address = builder.ins().symbol_value(ptr_ty, frame_size);
-                        builder
-                            .ins()
-                            .load(ptr_ty, MemFlagsData::trusted(), address, 0)
-                    } else {
-                        builder.ins().iconst(ptr_ty, super::stack::ENVELOPE as i64)
-                    };
-                    let sp = builder.ins().get_stack_pointer(ptr_ty);
-                    let source = builder
-                        .ins()
-                        .iconst(types::I64, span.source_id().raw() as i64);
-                    let start = builder.ins().iconst(ptr_ty, span.start() as i64);
-                    let end = builder.ins().iconst(ptr_ty, span.end() as i64);
-                    let room = helper(
-                        builder,
-                        refs,
-                        "__joky_native_stack_room_v1",
-                        &[sp, bytes, source, start, end],
-                    );
-                    let ready = builder.create_block();
-                    let failed = builder.create_block();
-                    builder.ins().brif(room, ready, &[], failed, &[]);
-                    builder.switch_to_block(failed);
-                    failure_return(builder, refs, mode.frame(), mode.cleanup());
-                    builder.switch_to_block(ready);
-                }
+                check_stack(
+                    builder,
+                    refs,
+                    data,
+                    indirect.is_none().then_some(name),
+                    mode.frame(),
+                    mode.cleanup(),
+                    span,
+                    ptr_ty,
+                );
                 if let (Some(admitted), Some(target)) = (data.admitted_targets, indirect) {
                     let address = slots.read(builder, target);
                     let mut accepted = builder.ins().iconst(types::I8, 0);
@@ -3116,6 +3145,7 @@ fn lower_ops(
                     frame,
                     states,
                     state_offset,
+                    span,
                 );
             }
             Op::TaskScopeEnter => {

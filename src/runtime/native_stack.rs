@@ -1,12 +1,13 @@
 //! Native-stack admission for the ordinary macOS AArch64 ABI.
 //!
-//! This protects generated synchronous frames, not arbitrary host code. Host
+//! This protects generated synchronous and CPS frames, not arbitrary host code. Host
 //! callbacks must return within the reserved runtime/cleanup stack budget.
 use crate::{SourceId, Span};
 use std::cell::Cell;
 
-/// Budget exercised by cold admission, deferred failure and Local cleanup on
-/// a real small pthread stack. It excludes arbitrary host callbacks and CPS.
+/// Budget exercised by cold admission, deferred failure, Local cleanup and
+/// native activation-tree cleanup on a real small pthread stack. Arbitrary
+/// host callbacks still require their own bounded-stack contract.
 pub(crate) const EMERGENCY_BUDGET: usize = 64 * 1024;
 /// Additional margin for runtime/system calls that have no per-helper frame
 /// descriptor yet. This is headroom, not evidence of bounded host stack use.

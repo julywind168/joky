@@ -201,6 +201,21 @@ impl<T> LocalTaskScope<T> {
             .collect()
     }
 
+    /// Detach one child in registration order after entering drain. The caller
+    /// owns the cursor so polling state cannot skip a pending child's cleanup.
+    pub(crate) fn take_next_child(&mut self, cursor: &mut usize) -> Option<T> {
+        while let Some(child) = self.children.get_mut(*cursor) {
+            *cursor += 1;
+            if let Some(value) = child.value.take() {
+                self.live -= 1;
+                return Some(value);
+            }
+        }
+        self.children.clear();
+        self.cursor = 0;
+        None
+    }
+
     pub(crate) fn live_len(&self) -> usize {
         self.live
     }

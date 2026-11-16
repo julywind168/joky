@@ -1,4 +1,4 @@
-//! Frame descriptors for synchronous stack admission. Never embed compiler
+//! Frame descriptors for native stack admission. Never embed compiler
 //! addresses: descriptors and helper calls use ordinary module relocations.
 use super::lower;
 use crate::core::ir::FunctionInfo;
@@ -114,9 +114,31 @@ pub(super) fn wrap<M: Module>(
     let failed = b.create_block();
     b.ins().brif(room, ready, &[], failed, &[]);
     b.switch_to_block(failed);
-    lower::reject_arguments(&mut b, entry.info, &args, &refs, &places, ptr);
-    b.ins().call(refs["__joky_float_env_restore"], &[saved]);
-    lower::failure_return(&mut b, &refs, None, None);
+    if entry.info.suspends {
+        // Captures may already belong to an unpolled child, or this may be a
+        // resumed frame on a different worker. Its registered cleanup owns
+        // both cases; never interpret CPS slots as direct ABI arguments.
+        let frame = args[0];
+        b.ins().call(refs["__joky_cps_finish"], &[frame]);
+        let failed = b
+            .ins()
+            .iconst(types::I32, crate::runtime::cps::FAILED as i64);
+        b.ins().store(
+            MemFlagsData::new(),
+            failed,
+            frame,
+            std::mem::offset_of!(crate::runtime::cps::CpsFrame, state) as i32,
+        );
+        b.ins().call(refs["__joky_float_env_restore"], &[saved]);
+        let status = b
+            .ins()
+            .iconst(types::I32, crate::runtime::cps::RUNTIME_ERROR as i64);
+        b.ins().return_(&[status]);
+    } else {
+        lower::reject_arguments(&mut b, entry.info, &args, &refs, &places, ptr);
+        b.ins().call(refs["__joky_float_env_restore"], &[saved]);
+        lower::failure_return(&mut b, &refs, None, None);
+    }
     b.switch_to_block(ready);
     let call = b.ins().call(body, &args);
     let values = b.inst_results(call).to_vec();
