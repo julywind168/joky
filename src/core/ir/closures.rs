@@ -343,7 +343,7 @@ impl FunctionPlan {
         self.closure_places.insert(dst.index, place.clone());
         self.emit(Op::Literal(
             dst.scalars().next().unwrap(),
-            if environment.closure.as_ref().unwrap().storable {
+            if !environment.owners.is_empty() {
                 Constant::NullPtr
             } else {
                 Constant::UInt8(0)
@@ -613,7 +613,9 @@ impl FunctionPlan {
             } else {
                 CallableKind::Fn
             };
-            let mut storable = function.moving;
+            // Storage eligibility follows capture lifetimes, independently of
+            // whether the environment is Copy or has an owning identity.
+            let mut storable = function.moving || captures.is_empty();
             let mut pending: Vec<_> = captures.iter().map(|(_, ty, _)| ty.clone()).collect();
             let mut checked = Vec::new();
             let mut budget = 65_536usize;
@@ -643,9 +645,9 @@ impl FunctionPlan {
                     "Suspending closures require reference-free move captures",
                 ));
             }
-            // A null owner lane gives even an empty movable environment a stable
-            // cleanup/move identity. It never allocates or owns a buffer payload.
-            let identity = if storable {
+            // Move and consuming suspending environments retain a null owner
+            // identity. Capture-free synchronous environments remain Copy.
+            let identity = if storable && (function.moving || suspends) {
                 Type::Buffer(Arc::new(Type::Unit))
             } else {
                 Type::UInt8

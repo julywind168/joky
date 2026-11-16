@@ -4,9 +4,9 @@ fn nonempty(value: &String) @noescape -> Bool { value != "" }
 
 fn main() {
     let offset = 10
-    // Ordinary adapters accept owning closures, including captured values.
+    // Ordinary adapters accept move captures and capture-free closures.
     let mapped = iter.map(0..10, move |value| { value + offset })
-    let even = iter.filter(mapped, move |value| { *value % 2 == 0 })
+    let even = iter.filter(mapped, |value| { *value % 2 == 0 })
     for index, value in iter.take(even, 3) {
         println("{index}: {value}")
     }

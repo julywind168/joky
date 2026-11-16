@@ -48,6 +48,14 @@ fn closure_storage_rejects_borrow_escape_copy_and_unsupported_storage() {
 }
 
 #[test]
+fn closure_noncapturing_storage_preserves_copy_and_owned_wrappers() {
+    executes(
+        include_str!("../../../../tests/fixtures/noncapturing_closure_storage.jk"),
+        42,
+    );
+}
+
+#[test]
 fn closure_noncapturing_identity_and_move_rejections() {
     executes(
         "fn probe() -> Int32 { let n = 42; var f = || { n }; let g = f; f = g; f() }",
@@ -91,6 +99,8 @@ fn closure_borrowed_captures_and_exclusive_updates() {
 
 #[test]
 fn closure_borrowed_capture_conflicts_and_escape_rejections() {
+    rejects("struct Holder<F> { text: String, callback: F } fn probe() { let n = 1; let callback = || { n }; let holder = Holder { text: \"owned\", callback } }");
+    rejects("struct Holder<F> { text: String, callback: F } fn probe() { let n = 1; let reference = &n; let callback = move || { *reference }; let holder = Holder { text: \"owned\", callback } }");
     rejects("fn probe() { var n = 1; let f = || { n }; n = 2; f() }");
     rejects("fn probe() { let n = 1; let f = || { n = 2 } }");
     rejects("fn probe() { var n = 1; let f = || { n = 2 }; f() }");

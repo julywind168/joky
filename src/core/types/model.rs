@@ -704,7 +704,7 @@ impl Type {
                 && !self.is_owner()
                 && !TypeWalk::new(self, TypeEdges::Inline).any(|ty| {
                     ty.closure_info()
-                        .is_some_and(|c| c.storable || c.mode != CallableKind::Fn)
+                        .is_some_and(|c| c.mode != CallableKind::Fn)
                 })
                 && !self
                     .scalar_types()

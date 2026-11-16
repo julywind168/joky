@@ -119,6 +119,7 @@ fn suspending_closures_reject_effect_erasure_borrows_and_reuse() {
         "fn bad() { let n = 1; let r = &n; let f = move || @suspends { *r } }",
         "fn bad() { let f = move || @suspends {}; f() }",
         "fn bad() @suspends { let f = move || @suspends {}; f(); f() }",
+        "fn keep<F>(f: F) -> F { f } fn bad() @suspends { let f = keep(|| @suspends {}); f(); f() }",
         "fn bad() @suspends { let f = move || @suspends {}; let r = &f; r() }",
         "fn bad<F: FnOnce() @suspends -> Unit>(f: F) { f() }",
         "fn bad<F: FnOnce() @suspends -> Unit>(f: F) @suspends { f(); f() }",

@@ -147,7 +147,7 @@ pub(super) fn checked_type(
                 }
             }
             Type::Record(r) if !r.indirect && r.closure.as_ref().is_none_or(|c| c.storable) => {
-                // A closure's first field is the compiler-owned null cleanup identity.
+                // The compiler-owned identity is either a null owner or a Copy marker.
                 let start = usize::from(r.closure.is_some());
                 if r.closure.is_none() {
                     for i in 0..r.arguments.len() {

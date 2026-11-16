@@ -64,8 +64,16 @@ fn main() @suspends -> Int32 {
     check.assert(mapped == 9, "iterator adapter retains its owned callback across suspension")
     let text = "owned"
     let operation = move || { text }
-    let (left, right) = join { invoke(operation, 1), invoke(move || { "empty" }, 2) }
+    let empty = store(|| { "empty" })
+    let (left, right) = join { invoke(operation, 1), invoke(empty.operation, 2) }
     check.assert(left == "owned" && right == "empty", "FnOnce and empty environment")
+    check.assert((&empty.operation)() == "empty", "capture-free environment remains Copy after transfer")
+    let suspending_empty = store(|| @suspends { task.yield_now(); "empty" })
+    let (empty, other) = join {
+        invoke_suspending(suspending_empty.operation)
+        fast("other")
+    }
+    check.assert(empty == "empty" && other == "other", "capture-free suspending environment")
     var count = 20
     let counter = move || { count += 1; count }
     let (total, zero) = join { repeat(counter), repeat(move || { 0 }) }

@@ -27,7 +27,7 @@ pub(crate) enum Shape {
     // A compiler-generated value under the frozen module's closed target proof.
     // This shape is never accepted at the public TaskValue or host ABI boundary.
     Function,
-    // Compiler-created move closures retain a null owner identity.
+    // Moving and consuming closure environments retain a null owner identity.
     EmptyOwner,
     Buffer,
     Product(Vec<Shape>),
@@ -70,7 +70,12 @@ impl Shape {
                         .collect::<Result<_, _>>()?,
                 ),
                 Type::Record(r) if r.closure.as_ref().is_some_and(|c| c.storable) => {
-                    let mut fields = vec![Shape::EmptyOwner];
+                    let identity = &r.fields[0].ty;
+                    let mut fields = vec![if identity.is_owner() {
+                        Shape::EmptyOwner
+                    } else {
+                        build(identity, depth + 1)?
+                    }];
                     fields.extend(
                         r.fields
                             .iter()

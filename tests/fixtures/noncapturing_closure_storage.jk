@@ -1,0 +1,36 @@
+struct Callback<F> { operation: F }
+struct OwnedCallback<F> { name: String, callback: Callback<F> }
+type Stored<F> = OwnedCallback<F>
+
+fn forward<F>(operation: F) -> F { operation }
+fn store<F>(operation: F) -> Stored<F> {
+    OwnedCallback { name: "stored", callback: Callback { operation } }
+}
+fn invoke<F: Fn(Int32) -> Int32>(value: &Stored<F>, argument: Int32) -> Int32 {
+    (&value.callback.operation)(argument)
+}
+fn twice<F: Copy + Fn(Int32) -> Int32>(operation: F, argument: Int32) -> Int32 {
+    let copy = operation
+    operation(argument) + copy(argument)
+}
+
+fn probe() -> Int32 {
+    let callback = |value: Int32| { value + 1 }
+    let forwarded = forward(callback)
+    let first = store(callback)
+    let second = store(first.callback.operation)
+    assert_eq(invoke(&first, 20), 21)
+    assert_eq(invoke(&second, 20), 21)
+    assert_eq(twice(callback, 20), 42)
+    let nested = move |value: Int32| { forwarded(value) }
+    let wrapped = store(nested)
+    assert_eq(invoke(&wrapped, 20), 21)
+    let factory = store(|| {
+        let text = "factory"
+        move || { text }
+    })
+    let produced = (&factory.callback.operation)()
+    assert_eq(produced(), "factory")
+    assert_eq(first.name, "stored")
+    42
+}
