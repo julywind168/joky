@@ -1,0 +1,21 @@
+import joky/array.{type Array}
+
+pub struct Config {
+    pub names: Array<String>,
+    secret: String,
+    pub count: Int32
+}
+const BASE: Config = Config { names: ["é中🙂\0", "second"], secret: "private", count: 42 }
+pub const DEFAULT: Config = Config.DEFAULT
+pub const UPDATED: Config = Config { names: ["updated"], .. DEFAULT }
+impl Config {
+    pub const DEFAULT: Self = BASE
+    pub const NUMBERS: Array<Int32> = [19, 23]
+    pub fn check(&self) -> Int32 {
+        if self.secret != "private" {
+            return 1
+        }
+        self.count
+    }
+    pub fn release(self) {}
+}

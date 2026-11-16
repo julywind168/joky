@@ -254,6 +254,9 @@ impl FunctionPlan {
         context: &ArrayContext<'_>,
         span: Span,
     ) -> Result<Option<Slot>, Error> {
+        if self.constant_evaluation {
+            return self.constant_array_operation(name, element, args, context.types, span);
+        }
         let mut local = HashMap::new();
         let args = args
             .into_iter()

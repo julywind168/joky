@@ -1,0 +1,130 @@
+import array_constants_values as cfg.{DEFAULT as IMPORTED, type Config as Settings}
+import joky/array.{type Array}
+import joky/fixed_array.{type FixedArray}
+import joky/task
+
+struct Config { unrelated: Bool }
+struct Local {}
+impl Local {
+    const DEFAULT: Settings = IMPORTED
+    const NUMBERS: Array<Int32> = [0, .. cfg.Config.NUMBERS, 7]
+    const ANSWER: Int32 = NUMBERS[INDEX] + NUMBERS[INDEX + 1]
+}
+const FORWARD: Settings = Local.DEFAULT
+const NUMBERS: Array<Int32> = Local.NUMBERS
+const INDEX: UInt64 = INDICES[0]
+const INDICES: Array<UInt64> = [1, 0]
+const NAMES: Array<String> = FORWARD.names
+const JOINED: Array<String> = ["head", .. NAMES, ..["tail"]]
+const PAIR: (Array<Int32>, String) = (NUMBERS, "selected")
+const SELECTED: String = PAIR.1
+const EMPTY: Array<String> = []
+const UNITS: Array<Unit> = [{}, {}]
+const MORE_UNITS: Array<Unit> = [.. UNITS, {}]
+const FIXED: FixedArray<Array<String>, 2> = [NAMES, []]
+const MATRIX: Array<Array<Int32>> = [[1, 2], [19, 23]]
+const ROWS: Array<Array<Int32>> = [.. MATRIX, .. MATRIX]
+const TOTAL: Int32 = ROWS[3][0] + MATRIX[1][1]
+const GRID: Array<FixedArray<Int32, 2>> = [[1, 2], [19, 23]]
+const GRID_ROW: FixedArray<Int32, 2> = GRID[1]
+const FLAT: Array<Int32> = [.. GRID_ROW, .. &GRID[0]]
+const BORROWED: Array<Int32> = [.. &MATRIX[1], .. &ROWS[0]]
+const PAIRS: Array<(String, Int32)> = [("first", 1), ("second", 42)]
+const FIELD: Int32 = PAIRS[1].1
+enum Item { Empty, Values(Array<String>), Fixed(FixedArray<Array<Int32>, 1>) }
+const ITEMS: Array<Item> = [Item.Empty, Item.Values(JOINED), Item.Fixed([NUMBERS])]
+const OPTIONAL: Option<Array<String>> = Some(NAMES)
+const ABSENT: Option<Array<String>> = None
+const COPIED_TAG: Option<Int32> = [None, Some(42)][1]
+
+fn check() -> Int32 {
+    var first = NUMBERS
+    let second = NUMBERS
+    first[1] = 100
+    first.push(9)
+    if second[1] != 19 || NUMBERS[1] != 19 || first.len() != 5 || Local.ANSWER != 42 {
+        return 1
+    }
+    let config = FORWARD
+    if config.check() != 42 || config.names.len() != 2 {
+        return 2
+    }
+    config.release()
+    let updated = cfg.UPDATED
+    if updated.check() != 42 || updated.names[0] != "updated" {
+        return 3
+    }
+    let names = JOINED
+    let [head, unicode, second_name, tail] = names else {
+        return 4
+    }
+    if head != "head" || unicode != "é中🙂\0" || second_name != "second" || tail != "tail" {
+        return 5
+    }
+    let [fixed, empty] = FIXED
+    if fixed.len() != 2 || !empty.is_empty() || !EMPTY.is_empty() || MORE_UNITS.len() != 3 {
+        return 6
+    }
+    if TOTAL != 42 || GRID_ROW[1] != 23 || FLAT[2] != 1 || FIELD != 42 || SELECTED != "selected" {
+        return 7
+    }
+    if BORROWED[0] != 19 || BORROWED[3] != 2 {
+        return 18
+    }
+    let [empty_item, values, nested] = ITEMS else {
+        return 8
+    }
+    match empty_item {
+        Item.Empty => {},
+        _ => return 9
+    }
+    match values {
+        Item.Values(values) => if values.len() != 4 {
+            return 10
+        },
+        _ => return 11
+    }
+    match nested {
+        Item.Fixed([values]) => if values[2] != 23 {
+            return 12
+        },
+        _ => return 13
+    }
+    match OPTIONAL {
+        Some(values) => if values[1] != "second" {
+            return 14
+        },
+        None => return 15
+    }
+    match ABSENT {
+        None => {},
+        Some(_) => return 16
+    }
+    match COPIED_TAG {
+        Some(42) => {},
+        _ => return 17
+    }
+    42
+}
+
+fn pending() @suspends -> Int32 {
+    let values = JOINED
+    let nested = ROWS
+    task.yield_now()
+    if values.len() != 4 || nested[3][1] != 23 {
+        return 1
+    }
+    42
+}
+
+fn construction() @suspends -> Int32 {
+    let values = ITEMS
+    int32(values.len()) + 39
+}
+
+fn main() @suspends -> Int32 {
+    if check() != 42 {
+        return 1
+    }
+    pending()
+}

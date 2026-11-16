@@ -3,8 +3,9 @@ use super::*;
 use crate::core::integer::IntegerOutcome;
 use std::rc::Rc;
 
+mod arrays;
 mod storage;
-use storage::{Data, StorageEvaluator};
+use storage::{Data, Lane, StorageEvaluator};
 
 const MAX_STRING_BYTES: usize = 1024 * 1024;
 const MAX_TOTAL_STRING_BYTES: usize = 16 * MAX_STRING_BYTES;
@@ -31,36 +32,7 @@ impl Value {
             return Ok(Flow::Value(None));
         }
         let slot = plan.slot(self.ty.clone())?;
-        let Data::Scalars(lanes) = &self.data else {
-            self.data.materialize_storage(plan, &slot)?;
-            return Ok(Flow::Value(Some(slot)));
-        };
-        for (dst, value) in slot.scalars().zip(lanes) {
-            if let Constant::String(text) = value {
-                // Follow ordinary record construction: each text allocation
-                // has a registered temporary before it joins the aggregate.
-                // Failure partway through construction must release earlier
-                // fields even before the whole aggregate is registered.
-                let text_slot = if self.ty == Type::String {
-                    dst.clone()
-                } else {
-                    plan.slot(Type::String)?
-                };
-                plan.emit(Op::Text {
-                    dst: text_slot.clone(),
-                    source: TextSource::Literal(text.clone()),
-                });
-                plan.register_owner(text_slot.clone(), None);
-                if self.ty != Type::String {
-                    plan.emit(Op::Copy(dst, text_slot));
-                }
-            } else {
-                plan.emit(Op::Literal(dst, value.clone()));
-            }
-        }
-        if self.ty != Type::String && self.ty.is_owner() {
-            plan.register_owner(slot.clone(), None);
-        }
+        self.data.materialize(plan, &slot)?;
         Ok(Flow::Value(Some(slot)))
     }
 }
@@ -68,6 +40,48 @@ impl Value {
 /// Count expanded inline components, including zero-sized fields. A shared type
 /// DAG can describe exponentially many components without using scalar lanes.
 fn value_nodes(ty: &Type, span: Span) -> Result<usize, Error> {
+    // Array's physical handle stops layout traversal, but its element type
+    // still contributes to the logical constant nesting limit, even when empty.
+    let mut depths = HashMap::new();
+    let mut pending = vec![(ty, 0)];
+    while let Some((ty, depth)) = pending.pop() {
+        let depth = depth
+            + usize::from(matches!(
+                ty,
+                Type::Record(_)
+                    | Type::Tuple(_)
+                    | Type::Enum(_)
+                    | Type::FixedArray(_)
+                    | Type::FixedArrayInit(_)
+            ));
+        if depth > 32 {
+            return Err(type_error(
+                &span,
+                ErrorCode::ResourceLimit,
+                "Constant aggregate nesting exceeds 32 levels",
+            ));
+        }
+        if depths
+            .get(&std::ptr::from_ref(ty))
+            .is_some_and(|known| *known >= depth)
+        {
+            continue;
+        }
+        depths.insert(std::ptr::from_ref(ty), depth);
+        match ty {
+            Type::Record(r) if r.array => pending.push((r.arguments[0].as_type().unwrap(), depth)),
+            Type::Record(r) => pending.extend(r.fields.iter().map(|f| (&f.ty, depth))),
+            Type::Tuple(t) => pending.extend(t.elements.iter().map(|t| (t, depth))),
+            Type::Enum(e) => pending.extend(
+                e.variants
+                    .iter()
+                    .filter_map(|v| v.payload.as_ref())
+                    .map(|t| (t, depth)),
+            ),
+            Type::FixedArray(a) | Type::FixedArrayInit(a) => pending.push((&a.element, depth)),
+            _ => {}
+        }
+    }
     if ty.layout_depth() > 32 {
         return Err(type_error(
             &span,
@@ -87,6 +101,7 @@ fn value_nodes(ty: &Type, span: Span) -> Result<usize, Error> {
             ));
         }
         match ty {
+            Type::Record(record) if record.array => {}
             Type::Record(record) => pending.extend(record.fields.iter().map(|field| &field.ty)),
             Type::Tuple(tuple) => pending.extend(&tuple.elements),
             Type::FixedArray(array) | Type::FixedArrayInit(array) => {
@@ -277,13 +292,19 @@ pub(super) fn validate_all(
                 // can reference a large template many times, even if a later
                 // projection discards its text. Dependency edges keep repeats.
                 let mut input_bytes = literal_bytes[index];
+                let mut input_nodes = 0;
                 for &dependency in &edges[index] {
-                    input_bytes += members.constants[dependency]
-                        .value
-                        .borrow()
-                        .as_ref()
-                        .expect("evaluated dependency")
-                        .string_bytes();
+                    let dependency = members.constants[dependency].value.borrow();
+                    let dependency = dependency.as_ref().expect("evaluated dependency");
+                    input_bytes += dependency.string_bytes();
+                    input_nodes += dependency.data.dynamic_nodes();
+                    if input_nodes > MAX_TOTAL_VALUE_NODES {
+                        return Err(type_error(
+                            &constant.declaration.span,
+                            ErrorCode::ResourceLimit,
+                            "Constant expressions are limited to 65536 expanded Array components",
+                        ));
+                    }
                     if input_bytes > MAX_EXPRESSION_STRING_BYTES {
                         break;
                     }
@@ -296,6 +317,24 @@ pub(super) fn validate_all(
                     ));
                 }
                 let value = evaluate(constant, functions, types, nominals, generics.clone())?;
+                let dynamic_nodes = value.data.dynamic_nodes();
+                if value_nodes(&value.ty, constant.declaration.span)? + dynamic_nodes
+                    > MAX_VALUE_NODES
+                {
+                    return Err(type_error(
+                        &constant.declaration.span,
+                        ErrorCode::ResourceLimit,
+                        "Constant aggregate values are limited to 4096 components",
+                    ));
+                }
+                if dynamic_nodes > MAX_TOTAL_VALUE_NODES - aggregate_nodes {
+                    return Err(type_error(
+                        &constant.declaration.span,
+                        ErrorCode::ResourceLimit,
+                        "Evaluated aggregate constants exceed 65536 components in total",
+                    ));
+                }
+                aggregate_nodes += dynamic_nodes;
                 // Every string leaf counts, including repeated fields and aliases.
                 let bytes = value.string_bytes();
                 if bytes > MAX_STRING_BYTES {
@@ -369,8 +408,16 @@ fn evaluate(
     // Constant bodies have no parameters or callable identity. The planner
     // derives their slots from the declaration without registering a synthetic entry.
     let local = types.with_parameters(&constant.parameters)?;
-    let plan = FunctionPlan::new(&definition, functions, &local, nominals, generics, 0)?;
-    let mut slots: Vec<Option<Constant>> = vec![None; plan.slot_count];
+    let plan = FunctionPlan::new_with_mode(
+        &definition,
+        functions,
+        &local,
+        nominals,
+        generics,
+        0,
+        PlanningMode::Constant,
+    )?;
+    let mut slots: Vec<Option<Lane>> = vec![None; plan.slot_count];
     let mut storage = StorageEvaluator::default();
     let mut labels = vec![0; plan.label_count];
     for (pc, op) in plan.ops.iter().enumerate() {
@@ -407,7 +454,7 @@ fn evaluate(
                 then_label,
                 else_label,
             } => {
-                let Some(Constant::Bool(condition)) = slots[condition.index] else {
+                let Some(Lane::Scalar(Constant::Bool(condition))) = slots[condition.index] else {
                     unreachable!("checked constant branch condition")
                 };
                 pc = labels[if condition { *then_label } else { *else_label }];
@@ -437,22 +484,29 @@ fn evaluate(
             _ => {}
         }
         let (dst, value) = match op {
-            Op::Literal(dst, value) => (dst, value.clone()),
+            Op::Literal(dst, value) => (dst, value.clone().into()),
             Op::Text {
                 dst,
                 source: TextSource::Literal(text),
-            } => (dst, Constant::String(text.clone())),
+            } => (dst, Constant::String(text.clone()).into()),
             Op::Copy(dst, src) => (dst, slots[src.index].clone().unwrap()),
-            Op::Convert(dst, src) => (dst, convert(slots[src.index].as_ref().unwrap(), &dst.ty)),
-            Op::Unary(dst, op, src) => (dst, unary(op, slots[src.index].as_ref().unwrap())),
+            Op::Convert(dst, src) => (
+                dst,
+                convert(slots[src.index].as_ref().unwrap().scalar(), &dst.ty).into(),
+            ),
+            Op::Unary(dst, op, src) => (
+                dst,
+                unary(op, slots[src.index].as_ref().unwrap().scalar()).into(),
+            ),
             Op::Binary(dst, op, lhs, rhs) => (
                 dst,
                 binary(
                     op,
-                    slots[lhs.index].as_ref().unwrap(),
-                    slots[rhs.index].as_ref().unwrap(),
+                    slots[lhs.index].as_ref().unwrap().scalar(),
+                    slots[rhs.index].as_ref().unwrap().scalar(),
                     *span,
-                )?,
+                )?
+                .into(),
             ),
             _ => {
                 return Err(type_error(
@@ -534,7 +588,7 @@ fn validate_expression<'a>(
             Expr::BinaryChain { rest, .. } if !string => { count += rest.len().saturating_sub(1); pending.extend(expr.children().into_iter().map(|expr| (expr, false))); },
             Expr::Call { callee, args, .. } if !string && (IntegerType::conversion(callee).is_some() || matches!(callee.as_str(), "float32" | "float64")) => pending.extend(args.iter().map(|expr| (expr, false))),
             _ if string => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "String constants require a string literal, a string constant reference or an aggregate field read")),
-            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, string literals, tuple/record/enum/FixedArray construction, field reads, FixedArray indexing and spreads, module and associated constants, integer conversions and unary/binary operators")),
+            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, string literals, tuple/record/enum/FixedArray/Array construction, field reads, array indexing and spreads, module and associated constants, integer conversions and unary/binary operators")),
         }
     }
     Ok(string_bytes)

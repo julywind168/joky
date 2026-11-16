@@ -129,7 +129,7 @@ fn enum_constants_reject_invalid_constructors_payloads_and_ownership() {
         ("enum E<T> { Empty } impl<T> E<T> { const BAD: E<T> = Self.Empty }", ErrorCode::TypeMismatch, "constants require"),
         ("enum E { Empty, Borrowed(&Int32) } const BAD: E = E.Empty", ErrorCode::TypeMismatch, "constants require"),
         ("enum E { Empty, Pointer(Ptr) } const BAD: E = E.Empty", ErrorCode::TypeMismatch, "constants require"),
-        ("import joky/array.{type Array} const BAD: Option<Array<Int32>> = None", ErrorCode::TypeMismatch, "constants require"),
+        ("import joky/set.{type Set} const BAD: Option<Set<Int32>> = None", ErrorCode::TypeMismatch, "constants require"),
         ("const VALUE: Option<String> = Some(\"a\") fn bad() { let value = VALUE; let moved = value; let again = value; }", ErrorCode::InvalidAssignment, "moved"),
         ("const VALUE: Option<String> = Some(\"a\") fn bad() -> &String { match VALUE { Some(text) => &text, None => panic(\"missing\") } }", ErrorCode::InvalidAssignment, "borrowed input"),
     ] {

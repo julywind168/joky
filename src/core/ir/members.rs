@@ -57,7 +57,7 @@ impl ConstantOwner {
     }
 }
 
-/// Constants hold fixed scalar/string templates and aggregates, never runtime references.
+/// Constants hold concrete value templates, never runtime references.
 pub(super) fn constant_type_supported(ty: &Type) -> bool {
     use crate::core::types::{
         walk::{TypeEdges, TypeWalk},
@@ -73,20 +73,39 @@ pub(super) fn constant_type_supported(ty: &Type) -> bool {
     }) {
         return false;
     }
-    TypeWalk::new(ty, TypeEdges::Inline).all(|node| {
-        node.is_numeric()
-            || matches!(
-                node,
-                Type::Rune
-                    | Type::Bool
-                    | Type::Unit
-                    | Type::String
-                    | Type::Tuple(_)
-                    | Type::Enum(_)
-                    | Type::FixedArray(_)
-            )
-            || matches!(node, Type::Record(record) if record.closure.is_none())
-    })
+    let mut pending = vec![ty];
+    let mut seen = HashSet::new();
+    while let Some(ty) = pending.pop() {
+        if !seen.insert(std::ptr::from_ref(ty)) {
+            continue;
+        }
+        match ty {
+            Type::Record(record)
+                if record.shared || record.list || record.map || record.set || record.indirect =>
+            {
+                return false
+            }
+            Type::Enum(enumeration) if enumeration.indirect => return false,
+            Type::Record(record) if record.array => {
+                pending.push(record.arguments[0].as_type().unwrap())
+            }
+            Type::Record(record) if record.closure.is_none() => {
+                pending.extend(record.fields.iter().map(|f| &f.ty))
+            }
+            Type::Tuple(tuple) => pending.extend(&tuple.elements),
+            Type::Enum(enumeration) => pending.extend(
+                enumeration
+                    .variants
+                    .iter()
+                    .filter_map(|v| v.payload.as_ref()),
+            ),
+            Type::FixedArray(array) => pending.push(&array.element),
+            Type::Rune | Type::Bool | Type::Unit | Type::String => {}
+            ty if ty.is_numeric() => {}
+            _ => return false,
+        }
+    }
+    true
 }
 
 pub(super) fn owner_name(ty: &Type) -> String {
@@ -248,7 +267,7 @@ impl Members {
                     return Err(type_error(
                         &declaration.span,
                         ErrorCode::TypeMismatch,
-                        "Associated constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record/enum/FixedArray type",
+                        "Associated constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record/enum/FixedArray/Array type",
                     ));
                 }
                 let key = members.scoped_key(
@@ -277,7 +296,7 @@ impl Members {
                 return Err(type_error(
                     &declaration.span,
                     ErrorCode::TypeMismatch,
-                    "Module constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record/enum/FixedArray type",
+                    "Module constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record/enum/FixedArray/Array type",
                 ));
             }
             // The entry module has no canonical path, and its constants are

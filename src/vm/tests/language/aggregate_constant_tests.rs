@@ -50,11 +50,11 @@ fn aggregate_constants_copy_project_and_survive_module_replacement() {
 #[test]
 fn aggregate_constants_reject_other_owners_symbolic_types_and_invalid_initializers() {
     for (source, code, message) in [
-        ("import joky/array.{type Array} const BAD: (Int32, Array<Int32>) = (1, Array.new::<Int32>())", ErrorCode::TypeMismatch, "constants require"),
-        ("import joky/array.{type Array} struct S { values: Array<Int32> } struct P { s: S } const BAD: P = P { s: S { values: Array.new::<Int32>() } }", ErrorCode::TypeMismatch, "constants require"),
+        ("import joky/set.{type Set} const BAD: (Int32, Set<Int32>) = (1, Set.new::<Int32>())", ErrorCode::TypeMismatch, "constants require"),
+        ("import joky/set.{type Set} struct S { values: Set<Int32> } struct P { s: S } const BAD: P = P { s: S { values: Set.new::<Int32>() } }", ErrorCode::TypeMismatch, "constants require"),
         ("const BAD: (Int32, &Int32) = (1, &1)", ErrorCode::TypeMismatch, "constants require"),
         ("struct P { p: Ptr } const BAD: P = P { p: Ptr.null() }", ErrorCode::TypeMismatch, "constants require"),
-        ("import joky/fixed_array.{type FixedArray} import joky/array.{type Array} const BAD: FixedArray<Array<Int32>, 0> = []", ErrorCode::TypeMismatch, "constants require"),
+        ("import joky/fixed_array.{type FixedArray} import joky/set.{type Set} const BAD: FixedArray<Set<Int32>, 0> = []", ErrorCode::TypeMismatch, "constants require"),
         ("import joky/fixed_array.{type FixedArray} struct Marker<T> {} struct P<const N: UInt64> {} impl<const N: UInt64> P<N> { const BAD: Marker<FixedArray<Int32, N>> = Marker {} }", ErrorCode::TypeMismatch, "constants require"),
         ("enum E { A, Ref(&Int32) } const BAD: (E, Int32) = (E.A, 1)", ErrorCode::TypeMismatch, "constants require"),
         ("struct P<T> { x: T } impl<T> P<T> { const BAD: P<T> = P { x: 1 } }", ErrorCode::TypeMismatch, "constants require"),

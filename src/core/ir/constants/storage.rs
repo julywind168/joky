@@ -3,62 +3,142 @@
 use super::*;
 use std::{cell::RefCell, collections::BTreeMap};
 
-struct Cell {
-    ty: Type,
-    value: Constant,
+#[derive(Clone)]
+pub(super) struct Cell {
+    pub(super) ty: Type,
+    pub(super) value: Lane,
 }
 
 #[derive(Default)]
 pub(super) struct Storage {
-    cells: BTreeMap<usize, Cell>,
+    pub(super) cells: BTreeMap<usize, Cell>,
     next: usize,
 }
 
 pub(super) enum Data {
-    // Includes enum tags and inactive lanes; inactive String lanes are NullPtr.
-    Scalars(Vec<Constant>),
+    // Includes enum tags and inactive lanes; inactive String/Array lanes are NullPtr.
+    Scalars(Vec<Lane>),
     Storage(Storage),
+}
+
+#[derive(Clone)]
+pub(super) enum Lane {
+    Scalar(Constant),
+    Array(Rc<RefCell<super::arrays::Array>>),
+}
+
+impl From<Constant> for Lane {
+    fn from(value: Constant) -> Self {
+        Self::Scalar(value)
+    }
+}
+
+impl Lane {
+    pub(super) fn scalar(&self) -> &Constant {
+        match self {
+            Self::Scalar(value) => value,
+            Self::Array(_) => unreachable!("checked scalar constant"),
+        }
+    }
+    fn string_bytes(&self) -> usize {
+        match self {
+            Self::Scalar(Constant::String(text)) => text.len(),
+            Self::Array(array) => array.borrow().bytes,
+            _ => 0,
+        }
+    }
+    fn dynamic_nodes(&self) -> usize {
+        match self {
+            Self::Array(array) => array.borrow().nodes,
+            _ => 0,
+        }
+    }
+    fn materialize(&self, plan: &mut FunctionPlan, dst: &Slot) -> Result<(), Error> {
+        match self {
+            Self::Scalar(Constant::String(text)) => {
+                plan.emit(Op::Text {
+                    dst: dst.clone(),
+                    source: TextSource::Literal(text.clone()),
+                });
+                plan.register_owner(dst.clone(), None);
+            }
+            Self::Scalar(value) => plan.emit(Op::Literal(dst.clone(), value.clone())),
+            Self::Array(array) => array.borrow().materialize(plan, dst)?,
+        }
+        Ok(())
+    }
 }
 
 impl Data {
     pub(super) fn string_bytes(&self) -> usize {
-        fn bytes(value: &Constant) -> usize {
-            match value {
-                Constant::String(text) => text.len(),
-                _ => 0,
-            }
-        }
         match self {
-            Self::Scalars(values) => values.iter().map(bytes).sum(),
-            Self::Storage(storage) => storage.cells.values().map(|cell| bytes(&cell.value)).sum(),
+            Self::Scalars(values) => values.iter().map(Lane::string_bytes).sum(),
+            Self::Storage(storage) => storage.string_bytes(),
         }
     }
+    pub(super) fn dynamic_nodes(&self) -> usize {
+        match self {
+            Self::Scalars(values) => values.iter().map(Lane::dynamic_nodes).sum(),
+            Self::Storage(storage) => storage.dynamic_nodes(),
+        }
+    }
+    pub(super) fn materialize(&self, plan: &mut FunctionPlan, dst: &Slot) -> Result<(), Error> {
+        match self {
+            Self::Storage(storage) => storage.materialize(plan, dst),
+            Self::Scalars(values) => materialize_lanes(plan, dst, values.iter()),
+        }
+    }
+}
 
-    pub(super) fn materialize_storage(
-        &self,
-        plan: &mut FunctionPlan,
-        dst: &Slot,
-    ) -> Result<(), Error> {
-        let Self::Storage(storage) = self else {
-            unreachable!()
-        };
-        // Allocation registers a zeroed, typed place before any fallible text
-        // construction. Tags precede their payloads in byte-offset order.
+fn materialize_lanes<'a>(
+    plan: &mut FunctionPlan,
+    dst: &Slot,
+    values: impl Iterator<Item = &'a Lane>,
+) -> Result<(), Error> {
+    for (field, value) in dst.scalars().zip(values) {
+        if field.ty.is_owner_lane() && dst.ty != field.ty {
+            // Register each owner before constructing the next fallible field.
+            let temporary = plan.slot(field.ty.clone())?;
+            value.materialize(plan, &temporary)?;
+            plan.emit(Op::Copy(field, temporary));
+        } else {
+            value.materialize(plan, &field)?;
+        }
+    }
+    if dst.ty.is_owner() && !dst.ty.is_owner_lane() {
+        plan.register_owner(dst.clone(), None);
+    }
+    Ok(())
+}
+
+impl Storage {
+    pub(super) fn copy_cells(&self) -> Self {
+        Self {
+            cells: self.cells.clone(),
+            next: self.next,
+        }
+    }
+    pub(super) fn string_bytes(&self) -> usize {
+        self.cells.values().map(|c| c.value.string_bytes()).sum()
+    }
+    pub(super) fn dynamic_nodes(&self) -> usize {
+        self.cells
+            .values()
+            .map(|cell| cell.value.dynamic_nodes())
+            .sum()
+    }
+    pub(super) fn materialize(&self, plan: &mut FunctionPlan, dst: &Slot) -> Result<(), Error> {
+        if !dst.ty.is_place() {
+            return materialize_lanes(plan, dst, self.cells.values().map(|cell| &cell.value));
+        }
+        // Typed zeroed storage is registered before any fallible owner allocation.
         plan.emit(Op::Place(PlaceOp::Allocate(dst.clone())));
-        for (&offset, cell) in &storage.cells {
-            if matches!(cell.value, Constant::NullPtr) {
+        for (&offset, cell) in &self.cells {
+            if matches!(cell.value, Lane::Scalar(Constant::NullPtr)) {
                 continue;
             }
             let value = plan.slot(cell.ty.clone())?;
-            if let Constant::String(text) = &cell.value {
-                plan.emit(Op::Text {
-                    dst: value.clone(),
-                    source: TextSource::Literal(text.clone()),
-                });
-                plan.register_owner(value.clone(), None);
-            } else {
-                plan.emit(Op::Literal(value.clone(), cell.value.clone()));
-            }
+            cell.value.materialize(plan, &value)?;
             plan.place_write(dst, offset, Some(value));
         }
         Ok(())
@@ -67,13 +147,14 @@ impl Data {
 
 #[derive(Default)]
 pub(super) struct StorageEvaluator {
-    places: HashMap<usize, Place>,
+    pub(super) places: HashMap<usize, Place>,
+    pub(super) arrays: HashMap<usize, Rc<RefCell<super::arrays::Array>>>,
 }
 
 #[derive(Clone)]
-struct Place {
-    storage: Rc<RefCell<Storage>>,
-    offset: usize,
+pub(super) struct Place {
+    pub(super) storage: Rc<RefCell<Storage>>,
+    pub(super) offset: usize,
 }
 
 impl From<Storage> for Place {
@@ -91,17 +172,20 @@ impl StorageEvaluator {
             .insert(dst.index, self.places[&src.index].clone());
     }
 
-    // Reads preserve Copy fields and transfer string owners, matching place
+    // Reads preserve Copy fields and transfer String/Array owners, matching place
     // reads/writes. Zeroed inactive enum fields have their typed zero value.
-    fn read(&self, base: &Slot, offset: usize, ty: &Type) -> Storage {
+    pub(super) fn read(&self, base: &Slot, offset: usize, ty: &Type) -> Storage {
         let size = ty.storage_layout().unwrap().size;
         let place = &self.places[&base.index];
         let offset = place.offset + offset;
         let mut source = place.storage.borrow_mut();
         let mut result = Storage::default();
         for (&position, cell) in source.cells.range_mut(offset..offset + size) {
-            let value = if matches!(cell.value, Constant::String(_)) {
-                std::mem::replace(&mut cell.value, Constant::NullPtr)
+            let value = if matches!(
+                cell.value,
+                Lane::Scalar(Constant::String(_)) | Lane::Array(_)
+            ) {
+                std::mem::replace(&mut cell.value, Constant::NullPtr.into())
             } else {
                 cell.value.clone()
             };
@@ -122,14 +206,17 @@ impl StorageEvaluator {
         self.places.insert(dst.index, place);
     }
 
-    fn load(
+    pub(super) fn load(
         &mut self,
         dst: &Slot,
         reference: &Slot,
         offset: usize,
-        slots: &mut [Option<Constant>],
+        slots: &mut [Option<Lane>],
     ) {
-        let mut data = self.read(reference, offset, &dst.ty);
+        self.assign(dst, self.read(reference, offset, &dst.ty), slots);
+    }
+
+    pub(super) fn assign(&mut self, dst: &Slot, mut data: Storage, slots: &mut [Option<Lane>]) {
         if dst.ty.is_place() {
             self.places.insert(dst.index, data.into());
         } else {
@@ -143,13 +230,13 @@ impl StorageEvaluator {
                 slots[slot.index] = Some(
                     data.cells
                         .remove(&offset)
-                        .map_or_else(|| zero(&ty), |cell| cell.value),
+                        .map_or_else(|| zero(&ty).into(), |cell| cell.value),
                 );
             }
         }
     }
 
-    fn value(&self, value: &Slot, slots: &mut [Option<Constant>]) -> Storage {
+    pub(super) fn value(&self, value: &Slot, slots: &mut [Option<Lane>]) -> Storage {
         if value.ty.is_place() {
             return self.read(value, 0, &value.ty);
         }
@@ -172,7 +259,7 @@ impl StorageEvaluator {
         Storage { cells, next: 0 }
     }
 
-    fn write(&self, base: &Slot, offset: usize, value: &Slot, slots: &mut [Option<Constant>]) {
+    fn write(&self, base: &Slot, offset: usize, value: &Slot, slots: &mut [Option<Lane>]) {
         let data = self.value(value, slots);
         let size = value.ty.storage_layout().unwrap().size;
         let place = &self.places[&base.index];
@@ -195,9 +282,12 @@ impl StorageEvaluator {
     pub(super) fn execute(
         &mut self,
         op: &Op,
-        slots: &mut [Option<Constant>],
+        slots: &mut [Option<Lane>],
         span: Span,
     ) -> Result<bool, Error> {
+        if self.execute_array(op, slots, span)? {
+            return Ok(true);
+        }
         match op {
             Op::Place(PlaceOp::Allocate(dst) | PlaceOp::Begin(dst)) => {
                 // Also validate and bound intermediate storage discarded by a
@@ -252,7 +342,7 @@ impl StorageEvaluator {
                 dst,
                 ..
             }) => {
-                let Some(Constant::UInt64(index)) = slots[start.index] else {
+                let Some(Lane::Scalar(Constant::UInt64(index))) = slots[start.index] else {
                     unreachable!("checked constant index")
                 };
                 let ty = &reference.ty.reference_type().unwrap().target;
@@ -346,7 +436,7 @@ fn zero(ty: &Type) -> Constant {
         Type::Bool => Constant::Bool(false),
         Type::Float32 => Constant::Float32(0.0),
         Type::Float64 => Constant::Float64(0.0),
-        Type::String => Constant::NullPtr,
+        Type::String | Type::Buffer(_) => Constant::NullPtr,
         _ => unreachable!("constant scalar storage"),
     }
 }

@@ -166,7 +166,7 @@ fn fixed_array_constants_reject_invalid_elements_lengths_and_initializers() {
         ("const VALUES: FixedArray<UInt64, 1> = [INDEX] struct Holder {} impl Holder { const INDEX: UInt64 = VALUES[0] } const INDEX: UInt64 = Holder.INDEX", ErrorCode::InvalidState, "Cyclic"),
         ("const VALUES: FixedArray<Int32, 1> = [..Holder.VALUES] struct Holder {} impl Holder { const VALUES: FixedArray<Int32, 1> = [..VALUES] }", ErrorCode::InvalidState, "Cyclic"),
         ("fn value() -> String { \"x\" } const BAD: FixedArray<String, 1> = [value()]", ErrorCode::InvalidState, "Constants allow"),
-        ("import joky/array.{type Array} enum E { Empty, Other(Array<Int32>) } struct Holder { unused: FixedArray<Unit, 0>, inner: E } const BAD: Int32 = (Holder { unused: [], inner: E.Empty }.inner, 42).1", ErrorCode::TypeMismatch, "Constant storage"),
+        ("import joky/set.{type Set} enum E { Empty, Other(Set<Int32>) } struct Holder { unused: FixedArray<Unit, 0>, inner: E } const BAD: Int32 = (Holder { unused: [], inner: E.Empty }.inner, 42).1", ErrorCode::TypeMismatch, "Constant storage"),
         ("const BAD: FixedArray<String, 1> = [\"{42}\"]", ErrorCode::InvalidState, "Constants allow"),
         ("const A: FixedArray<Int32, 1> = B struct Holder {} impl Holder { const VALUE: FixedArray<Int32, 1> = A } const B: FixedArray<Int32, 1> = Holder.VALUE", ErrorCode::InvalidState, "Cyclic"),
         ("const VALUE: FixedArray<String, 0> = [] fn bad() { let value = VALUE; let moved = value; let again = value; }", ErrorCode::InvalidAssignment, "moved"),

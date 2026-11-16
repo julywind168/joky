@@ -569,6 +569,13 @@ pub(crate) struct DynErasure {
     pub span: Span,
 }
 
+#[derive(Clone, Copy)]
+enum PlanningMode {
+    Ordinary,
+    InferReturn,
+    Constant,
+}
+
 pub(crate) struct FunctionPlan {
     pub dyn_erasures: Vec<DynErasure>,
     /// Private element addresses and their write reservations for whole indexed enum assignments.
@@ -588,6 +595,7 @@ pub(crate) struct FunctionPlan {
     current_span: Span,
     return_type: Type,
     infer_return: bool,
+    constant_evaluation: bool,
     scope: Arc<super::imports::ImportScope>,
     definition_scope: Option<Arc<super::imports::DefinitionScope>>,
     generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
@@ -1381,14 +1389,14 @@ impl FunctionPlan {
         generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
         instantiation_depth: usize,
     ) -> Result<Self, Error> {
-        Self::new_with_return_inference(
+        Self::new_with_mode(
             f,
             functions,
             types,
             nominals,
             generics,
             instantiation_depth,
-            false,
+            PlanningMode::Ordinary,
         )
     }
 
@@ -1401,6 +1409,31 @@ impl FunctionPlan {
         instantiation_depth: usize,
         infer_return: bool,
     ) -> Result<Self, Error> {
+        Self::new_with_mode(
+            f,
+            functions,
+            types,
+            nominals,
+            generics,
+            instantiation_depth,
+            if infer_return {
+                PlanningMode::InferReturn
+            } else {
+                PlanningMode::Ordinary
+            },
+        )
+    }
+
+    fn new_with_mode(
+        f: &FnDef,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+        nominals: &Arc<HashMap<String, Type>>,
+        generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
+        instantiation_depth: usize,
+        mode: PlanningMode,
+    ) -> Result<Self, Error> {
+        let infer_return = matches!(mode, PlanningMode::InferReturn);
         for ty in f
             .params
             .iter()
@@ -1474,6 +1507,7 @@ impl FunctionPlan {
             current_span: f.span,
             return_type: f.ret_ty.clone(),
             infer_return,
+            constant_evaluation: matches!(mode, PlanningMode::Constant),
             scope: f.scope.as_ref().map_or_else(
                 || generics.borrow().scope.clone(),
                 |scope| scope.imports.clone(),
