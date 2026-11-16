@@ -2837,7 +2837,7 @@ fn suspending_functions_reborrow_mutable_reference_fields() {
 
 #[test]
 #[cfg(unix)]
-fn suspending_callers_infer_capture_free_callbacks_as_pointers() {
+fn suspending_callers_accept_capture_free_callbacks() {
     let work = Workspace::new();
     work.write(
         "map.jk",
@@ -2867,6 +2867,25 @@ fn suspending_callers_infer_capture_free_callbacks_as_pointers() {
         &work.cli(&["check", "map.jk"]),
         "cannot remain live across suspension",
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn closure_capabilities_preserve_storage_in_standalone_aot() {
+    let work = Workspace::new();
+    let source = include_str!("../fixtures/closure_capabilities.jk");
+    for suspends in [false, true] {
+        let source = if suspends {
+            source.replace("fn probe() ->", "fn probe() @suspends ->")
+        } else {
+            source.to_owned()
+        };
+        work.write(
+            "closures.jk",
+            &format!("{source}\nfn main() @suspends {{ assert_eq(probe(), 42); assert_eq(pending(), 42) }}"),
+        );
+        work.assert_native("closures.jk", &[], b"", 0);
+    }
 }
 
 #[test]

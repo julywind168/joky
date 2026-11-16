@@ -582,7 +582,6 @@ pub(crate) struct FunctionPlan {
     indexed_store_slots: std::collections::HashSet<usize>,
     hint_work: inference::HintWork,
     source_function: String,
-    suspends: bool,
     lexical_function: String,
     branch_context: Option<(&'static str, usize)>,
     callable_modes: HashMap<usize, crate::core::types::CallableKind>,
@@ -1498,7 +1497,6 @@ impl FunctionPlan {
             branch_context,
             hint_work: Default::default(),
             source_function: f.name.clone(),
-            suspends: f.suspends,
             callable_modes: Default::default(),
             captured_owners: Default::default(),
             captured_fields: Default::default(),
@@ -2352,7 +2350,7 @@ impl FunctionPlan {
         match expr {
             Expr::When(block) => self.when_expr(block, vars, functions, suspends, types, expected),
             Expr::AnonymousFunction(function) => {
-                self.anonymous_function(function, vars, functions, suspends, types, expected)
+                self.anonymous_function(function, vars, functions, types, expected)
             }
             Expr::Spread { span, .. } => Err(type_error(
                 span,

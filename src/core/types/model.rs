@@ -245,6 +245,24 @@ impl Type {
     pub(crate) fn contains_closures(&self) -> bool {
         TypeWalk::new(self, TypeEdges::Storage).any(Type::is_closure_value)
     }
+    /// Capture-free Copy environments carry neither loans nor affine call state.
+    /// Their marker can use ordinary value storage and memory operations.
+    pub(crate) fn is_plain_closure_value(&self) -> bool {
+        self.closure_info()
+            .is_some_and(|c| c.storable && c.mode == CallableKind::Fn)
+            && !self.is_owner()
+    }
+    pub(crate) fn contains_non_plain_closures(&self) -> bool {
+        TypeWalk::new(self, TypeEdges::Fields).any(|ty| {
+            if let Self::Parameter(p) = ty {
+                // Copy describes the value; a weaker callable bound only limits
+                // how this generic body may invoke it. Recheck captures at specialization.
+                p.callable.is_some() && !p.copy
+            } else {
+                ty.is_closure_value() && !ty.is_plain_closure_value()
+            }
+        })
+    }
     /// Borrowed environments remain ineligible for persistent storage even when
     /// read-only copies can travel through local aggregates and synchronous calls.
     pub(crate) fn contains_unstorable_closures(&self) -> bool {
@@ -381,7 +399,7 @@ impl Type {
                     && target.is_suspend_safe_view()
                 || target.is_copy_storage_value()
                     && !target.contains_references()
-                    && !target.contains_closures()
+                    && !target.contains_non_plain_closures()
                     && !target.contains_dyn()
         })
     }
@@ -397,6 +415,11 @@ impl Type {
             return false;
         }
         fn safe_storage(ty: &Type) -> bool {
+            // A container's rigid Copy callback is checked again with its
+            // concrete capture/storage shape before any CPS transfer.
+            if matches!(ty, Type::Parameter(p) if p.copy && p.callable.is_some()) {
+                return true;
+            }
             if ty.contains_references() {
                 return false;
             }
@@ -589,7 +612,7 @@ impl Type {
     /// elements move as a whole and recursively require reference-free contents.
     /// Rigid parameters are checked again after specialization.
     pub(crate) fn is_buffer_element(&self) -> bool {
-        if self.contains_closures() {
+        if self.contains_non_plain_closures() {
             return false;
         }
         if self.contains_place_storage() {

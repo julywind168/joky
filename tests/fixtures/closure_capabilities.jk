@@ -1,0 +1,77 @@
+import joky/mem
+import joky/task
+
+struct Holder<F> { label: String, callback: F }
+enum Choice<F> { Missing, Present(F) }
+fn save<F: Copy + Fn() -> Int32>(callback: F) -> Option<F> { Some(callback) }
+fn save_once<F: Copy + FnOnce() -> Int32>(callback: F) -> Option<F> { Some(callback) }
+fn first<F: Copy + FnOnce() -> Int32>(callbacks: Array<F>) -> Int32 {
+    let callback = callbacks[0]
+    callback()
+}
+fn swap<F: Copy + Fn() -> Int32>(left: &mut F, right: &mut F) {
+    mem.swap(left, right)
+}
+fn choose<F: Copy + Fn() -> Int32>(callback: F) -> Choice<F> { Choice.Present(callback) }
+fn result<F: Copy + Fn() -> Int32>(callback: F) -> Result<F, Int32> { Ok(callback) }
+fn keep<F: FnOnce() @suspends -> Int32>(callback: F) -> F { callback }
+
+fn probe() -> Int32 {
+    var callback = || { 42 }
+    var copy = callback
+    swap(&mut callback, &mut copy)
+    let previous = mem.replace(&mut copy, callback)
+    assert_eq(previous(), 42)
+    assert_eq((*(&callback))(), 42)
+    let stored = alloc(callback)
+    assert_eq(stored(), 42)
+    assert_eq((save(callback)!)(), 42)
+    assert_eq((save_once(callback)!)(), 42)
+    assert_eq(first([callback]), 42)
+    match choose(callback) {
+        Present(value) => assert_eq(value(), 42)
+        Missing => panic("missing callback")
+    }
+    assert_eq((result(callback)!)(), 42)
+    var values = [callback, copy]
+    values.push(previous)
+    assert_eq((values[0])(), 42)
+    assert_eq((values.pop()!)(), 42)
+    for value in &values { assert_eq(value(), 42) }
+    let holder = Holder { label: "owned", callback }
+    var holders = [holder]
+    let extracted = holders.pop()!
+    assert_eq((&extracted.callback)(), 42)
+    assert_eq(extracted.label, "owned")
+    var left = Holder { label: "left", callback }
+    var right = Holder { label: "right", callback }
+    mem.swap(&mut left, &mut right)
+    assert_eq(left.label, "right")
+    let replaced = mem.replace(&mut left, right)
+    assert_eq(replaced.label, "right")
+    assert_eq((&left.callback)() + (&replaced.callback)(), 84)
+    let factory = || {
+        let text = "factory"
+        move || { text }
+    }
+    let factories = [factory]
+    let produced = (factories[0])()
+    assert_eq(produced(), "factory")
+    let pointer: fn() -> Int32 = callback
+    assert_eq(pointer() + callback(), 84)
+    42
+}
+
+fn pending() @suspends -> Int32 {
+    let callback = || { 42 }
+    let values = [callback]
+    let selected = values.borrow_ref(0)
+    task.yield_now()
+    assert_eq(selected(), 42)
+    let operation = keep(|| { task.yield_now(); 42 })
+    let value = operation()
+    let pointer: fn() @suspends -> Int32 = || { task.yield_now(); 42 }
+    assert_eq(pointer(), 42)
+    assert_eq(pointer(), 42)
+    value
+}

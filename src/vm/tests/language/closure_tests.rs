@@ -56,6 +56,68 @@ fn closure_noncapturing_storage_preserves_copy_and_owned_wrappers() {
 }
 
 #[test]
+fn closure_capabilities_preserve_storage_copy_and_suspension() {
+    let source = include_str!("../../../../tests/fixtures/closure_capabilities.jk");
+    for suspends in [false, true] {
+        let source = if suspends {
+            source.replace("fn probe() ->", "fn probe() @suspends ->")
+        } else {
+            source.to_owned()
+        };
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(&source)
+                .unwrap_or_else(|error| panic!("{error}"));
+            let result = if suspends {
+                crate::runtime::driver::block_on(vm.prepare_async("probe", &[]).unwrap()).unwrap()
+                    as i32
+            } else {
+                vm.call_int32_0("probe").unwrap()
+            };
+            assert_eq!(result, 42, "{mode:?}: suspends={suspends}");
+            for cancel in [false, true] {
+                let mut task = vm.call_async("pending", &[]).unwrap();
+                task.resume().unwrap();
+                assert!(!task.is_finished());
+                if !cancel {
+                    for _ in 0..32 {
+                        if task.is_finished() {
+                            break;
+                        }
+                        task.resume().unwrap();
+                    }
+                    assert_eq!(task.cps_result(), Some(42), "{mode:?}");
+                }
+                drop(task);
+                crate::runtime::arena::LIVE.with(|live| assert_eq!(live.get(), 0));
+            }
+        }
+    }
+}
+
+#[test]
+fn closure_capabilities_reject_capture_storage_and_effect_dependent_copy() {
+    for effect in ["", " @suspends"] {
+        for body in [
+            "let n = 42; let f = || { n }; let values = [f]",
+            "let n = 42; let f = || { n }; let value = Some(f)",
+            "let n = 42; var f = || { n }; var copy = f; mem.swap(&mut f, &mut copy)",
+            "let f = move || { 42 }; let values = [f]",
+            "let f = move || { 42 }; let value = Some(f)",
+            "let f = keep(|| { 42 }); let first = f; let second = f",
+            "let f = || @suspends { 42 }; let values = [f]",
+            "var f = || { 1 }; var g = || { 2 }; mem.swap(&mut f, &mut g)",
+        ] {
+            rejects(&format!(
+                "import joky/mem
+                 fn keep<F: FnOnce() @suspends -> Int32>(f: F) -> F {{ f }}
+                 fn probe(){effect} {{ {body} }}"
+            ));
+        }
+    }
+}
+
+#[test]
 fn closure_noncapturing_identity_and_move_rejections() {
     executes(
         "fn probe() -> Int32 { let n = 42; var f = || { n }; let g = f; f = g; f() }",
@@ -311,7 +373,7 @@ fn closure_limits_and_reserved_capability_names_are_checked() {
     rejects("fn bad<Fn>(x: Fn) {} fn probe() {}");
     rejects("fn bad<F: Fn() -> Int32 + Fn(Bool) -> Int32>(f: F) {} fn probe() {}");
     rejects("fn bad<F: Fn() @suspends -> Int32>(f: F) {} fn probe() {}");
-    rejects("fn probe() { let f = || { 1 }; let duplicate = (*(&f)) }");
+    rejects("fn probe() { let n = 1; let f = || { n }; let duplicate = (*(&f)) }");
     rejects("struct Box<T> { value: T } fn make<T>(x: T) -> Box<T> { Box { value: x } } fn probe() { let f = || { 1 }; make(f) }");
 }
 

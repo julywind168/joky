@@ -212,7 +212,7 @@ impl FunctionPlan {
                 "Dyn storage cannot be read, written or replaced directly",
             ));
         }
-        if target.contains_closures() {
+        if target.contains_non_plain_closures() {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,
@@ -996,7 +996,7 @@ pub(super) fn check_module(
     }
     for (name, body) in bodies {
         let info = &functions[name];
-        if info.signature.ret.contains_closures()
+        if info.signature.ret.contains_non_plain_closures()
             && !info.signature.ret.is_scoped_borrowed_value()
             && (info.signature.ret.contains_unstorable_closures()
                 || info.signature.ret.reference_type().is_some())

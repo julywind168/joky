@@ -268,7 +268,6 @@ impl FunctionPlan {
         function: &AnonymousFunction,
         vars: &HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
-        suspends: bool,
         types: &TypeRegistry,
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
@@ -296,8 +295,8 @@ impl FunctionPlan {
             })
             .collect();
         let closure = environment.closure.as_ref().unwrap();
-        // A capture-free literal needs no environment across a suspension.
-        // Keep contextual callable types and the ownership of explicit move closures.
+        // Function-pointer coercion follows the expected type, independently of
+        // the enclosing function's suspension effect.
         let pointer_type = match expected {
             Some(Type::Function(pointer)) => {
                 if pointer.suspends != closure.suspends {
@@ -308,13 +307,6 @@ impl FunctionPlan {
                     ));
                 }
                 Some(Type::Function(pointer.clone()))
-            }
-            None if suspends && !function.moving && closure.pointer_entry.is_some() => {
-                Some(Type::function_with_effect(
-                    closure.signature.params.clone(),
-                    closure.signature.ret.clone(),
-                    closure.suspends,
-                ))
             }
             _ => None,
         };
@@ -1377,7 +1369,14 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
                     Some(src)
                 }
             };
-            if used.is_some_and(|src| !live.contains(&src.index)) {
+            // Plain environments may be loaded from ordinary aggregate or
+            // container storage. Copy template parameters defer capture checks
+            // to specialization; neither has separate affine call state here.
+            if used.is_some_and(|src| {
+                !src.ty.is_plain_closure_value()
+                    && !matches!(&src.ty, Type::Parameter(p) if p.copy)
+                    && !live.contains(&src.index)
+            }) {
                 return Err(type_error(
                     &plan.ops.spans()[pc],
                     ErrorCode::InvalidAssignment,

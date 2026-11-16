@@ -239,7 +239,7 @@ impl TypeRegistry {
         }
         for arg in arguments.iter().filter_map(|a| a.as_type()) {
             self.validate(arg)?;
-            if arg.contains_closures() || !arg.is_generic_argument() {
+            if arg.contains_non_plain_closures() || !arg.is_generic_argument() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     format!("Unsupported generic enum argument {arg}"),

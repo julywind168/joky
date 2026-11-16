@@ -181,7 +181,7 @@ struct LayoutContext {
 
 impl LayoutContext {
     fn layout(&mut self, ty: &Type, depth: usize) -> Result<Arc<MemoryLayout>, MemoryLayoutError> {
-        if ty.closure_info().is_some() && !self.owners {
+        if ty.closure_info().is_some() && !ty.is_plain_closure_value() && !self.owners {
             return Err(MemoryLayoutError::UnsupportedType);
         }
         if let Type::FixedArray(array) | Type::FixedArrayInit(array) = ty {
