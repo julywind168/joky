@@ -1,0 +1,29 @@
+pub type Text = String
+pub struct Inner { pub text: Text, pub code: Int32 }
+pub struct Settings {
+    pub title: Text,
+    pub nested: (String, Unit, Inner),
+    secret: String,
+    pub count: Int32
+}
+const BASE: Settings = Settings {
+    title: "é中🙂\0",
+    nested: ("middle", {}, Inner { text: "tail", code: 7 }),
+    secret: "private",
+    count: 42
+}
+pub const DEFAULT: Settings = Settings.DEFAULT
+pub const UPDATED: Settings = Settings { title: "changed", .. DEFAULT }
+impl Settings {
+    pub const DEFAULT: Self = BASE
+    pub fn validate(&self) -> Int32 {
+        if self.nested.0 != "middle" || self.nested.2.text != "tail" {
+            return 1
+        }
+        if self.secret != "private" || self.nested.2.code != 7 {
+            return 2
+        }
+        self.count
+    }
+    pub fn release(self) {}
+}

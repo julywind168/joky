@@ -280,6 +280,8 @@ mod loops_tests;
 mod aggregate_constant_tests;
 #[path = "language/method_tests.rs"]
 mod method_tests;
+#[path = "language/owning_constant_tests.rs"]
+mod owning_constant_tests;
 #[path = "language/string_constant_tests.rs"]
 mod string_constant_tests;
 

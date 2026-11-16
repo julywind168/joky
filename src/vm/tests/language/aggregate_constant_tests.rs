@@ -48,10 +48,10 @@ fn aggregate_constants_copy_project_and_survive_module_replacement() {
 }
 
 #[test]
-fn aggregate_constants_reject_owners_symbolic_types_and_invalid_initializers() {
+fn aggregate_constants_reject_other_owners_symbolic_types_and_invalid_initializers() {
     for (source, code, message) in [
-        ("const BAD: (Int32, String) = (1, \"a\")", ErrorCode::TypeMismatch, "constants require"),
-        ("struct S { text: String } struct P { s: S } const BAD: P = P { s: S { text: \"a\" } }", ErrorCode::TypeMismatch, "constants require"),
+        ("import joky/array.{type Array} const BAD: (Int32, Array<Int32>) = (1, Array.new::<Int32>())", ErrorCode::TypeMismatch, "constants require"),
+        ("import joky/array.{type Array} struct S { values: Array<Int32> } struct P { s: S } const BAD: P = P { s: S { values: Array.new::<Int32>() } }", ErrorCode::TypeMismatch, "constants require"),
         ("const BAD: (Int32, &Int32) = (1, &1)", ErrorCode::TypeMismatch, "constants require"),
         ("struct P { p: Ptr } const BAD: P = P { p: Ptr.null() }", ErrorCode::TypeMismatch, "constants require"),
         ("import joky/fixed_array.{type FixedArray} const BAD: FixedArray<Int32, 2> = [1, 2]", ErrorCode::TypeMismatch, "constants require"),

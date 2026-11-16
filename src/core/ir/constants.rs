@@ -5,40 +5,60 @@ use std::rc::Rc;
 
 const MAX_STRING_BYTES: usize = 1024 * 1024;
 const MAX_TOTAL_STRING_BYTES: usize = 16 * MAX_STRING_BYTES;
+const MAX_EXPRESSION_STRING_BYTES: usize = MAX_TOTAL_STRING_BYTES;
 
 const MAX_VALUE_NODES: usize = 4096;
 const MAX_TOTAL_VALUE_NODES: usize = 65536;
 
 /// Evaluated data with its resolved nominal/layout identity, never a constructor
 /// expression to recheck in the consumer's namespace or field visibility scope.
-pub(super) enum Value {
-    Copy { ty: Type, lanes: Vec<Constant> },
-    String(String),
+pub(super) struct Value {
+    ty: Type,
+    lanes: Vec<Constant>,
 }
 
 impl Value {
+    fn string_bytes(&self) -> usize {
+        self.lanes
+            .iter()
+            .map(|value| match value {
+                Constant::String(text) => text.len(),
+                _ => 0,
+            })
+            .sum()
+    }
+
     pub(super) fn materialize(&self, plan: &mut FunctionPlan) -> Result<Flow, Error> {
-        let slot = match self {
-            Self::Copy { ty, lanes } => {
-                if *ty == Type::Unit {
-                    return Ok(Flow::Value(None));
-                }
-                let slot = plan.slot(ty.clone())?;
-                for (dst, value) in slot.scalars().zip(lanes) {
-                    plan.emit(Op::Literal(dst, value.clone()));
-                }
-                slot
-            }
-            Self::String(text) => {
-                let slot = plan.slot(Type::String)?;
+        if self.ty == Type::Unit {
+            return Ok(Flow::Value(None));
+        }
+        let slot = plan.slot(self.ty.clone())?;
+        for (dst, value) in slot.scalars().zip(&self.lanes) {
+            if let Constant::String(text) = value {
+                // Follow ordinary record construction: each text allocation
+                // has a registered temporary before it joins the aggregate.
+                // Failure partway through construction must release earlier
+                // fields even before the whole aggregate is registered.
+                let text_slot = if self.ty == Type::String {
+                    dst.clone()
+                } else {
+                    plan.slot(Type::String)?
+                };
                 plan.emit(Op::Text {
-                    dst: slot.clone(),
+                    dst: text_slot.clone(),
                     source: TextSource::Literal(text.clone()),
                 });
-                plan.register_owner(slot.clone(), None);
-                slot
+                plan.register_owner(text_slot.clone(), None);
+                if self.ty != Type::String {
+                    plan.emit(Op::Copy(dst, text_slot));
+                }
+            } else {
+                plan.emit(Op::Literal(dst, value.clone()));
             }
-        };
+        }
+        if self.ty != Type::String && self.ty.is_owner() {
+            plan.register_owner(slot.clone(), None);
+        }
         Ok(Flow::Value(Some(slot)))
     }
 }
@@ -88,11 +108,12 @@ pub(super) fn validate_all(
         .map(|(index, constant)| (constant.key.clone(), index))
         .collect();
     let mut edges = vec![Vec::new(); members.constants.len()];
+    let mut literal_bytes = Vec::with_capacity(members.constants.len());
     for (index, constant) in members.constants.iter().enumerate() {
-        validate_expression(
+        literal_bytes.push(validate_expression(
             &constant.declaration.value,
             constant.declaration.ty == Type::String,
-        )?;
+        )?);
         let context = constant.declaration.scope.as_ref();
         let imports = context.map_or_else(
             || generics.borrow().scope.clone(),
@@ -206,19 +227,46 @@ pub(super) fn validate_all(
                     }
                     aggregate_nodes += nodes;
                 }
-                let value = evaluate(constant, functions, types, nominals, generics.clone())?;
-                if let Value::String(text) = &value {
-                    // Count each evaluated declaration, including aliases, once
-                    // across the entire compilation (entry and imported modules).
-                    if text.len() > MAX_TOTAL_STRING_BYTES - string_bytes {
-                        return Err(type_error(
-                            &constant.declaration.span,
-                            ErrorCode::ResourceLimit,
-                            "Evaluated string constants exceed 16 MiB in total",
-                        ));
+                // Bound literal expansion before planning: a small expression
+                // can reference a large template many times, even if a later
+                // projection discards its text. Dependency edges keep repeats.
+                let mut input_bytes = literal_bytes[index];
+                for &dependency in &edges[index] {
+                    input_bytes += members.constants[dependency]
+                        .value
+                        .borrow()
+                        .as_ref()
+                        .expect("evaluated dependency")
+                        .string_bytes();
+                    if input_bytes > MAX_EXPRESSION_STRING_BYTES {
+                        break;
                     }
-                    string_bytes += text.len();
                 }
+                if input_bytes > MAX_EXPRESSION_STRING_BYTES {
+                    return Err(type_error(
+                        &constant.declaration.span,
+                        ErrorCode::ResourceLimit,
+                        "Constant expressions are limited to 16 MiB of expanded string data",
+                    ));
+                }
+                let value = evaluate(constant, functions, types, nominals, generics.clone())?;
+                // Every string leaf counts, including repeated fields and aliases.
+                let bytes = value.string_bytes();
+                if bytes > MAX_STRING_BYTES {
+                    return Err(type_error(
+                        &constant.declaration.span,
+                        ErrorCode::ResourceLimit,
+                        "Constant values are limited to 1 MiB of UTF-8 string data",
+                    ));
+                }
+                if bytes > MAX_TOTAL_STRING_BYTES - string_bytes {
+                    return Err(type_error(
+                        &constant.declaration.span,
+                        ErrorCode::ResourceLimit,
+                        "Evaluated string constants exceed 16 MiB in total",
+                    ));
+                }
+                string_bytes += bytes;
                 *constant.value.borrow_mut() = Some(value);
                 state[index] = 2;
             } else if state[index] != 2 {
@@ -276,30 +324,38 @@ fn evaluate(
     // derives their slots from the declaration without registering a synthetic entry.
     let local = types.with_parameters(&constant.parameters)?;
     let plan = FunctionPlan::new(&definition, functions, &local, nominals, generics, 0)?;
-    if declaration.ty == Type::String {
-        // Syntax validation restricts this body to a literal or a constant read.
-        // Planning checks the usual type, visibility and generic bounds, and
-        // expands reads to a single literal. Extract its bytes without executing
-        // the allocation, return transfer or cleanup operations in the plan.
-        let text = plan.ops.iter_spanned().find_map(|(op, _)| match op {
-            Op::Text {
-                source: TextSource::Literal(text),
-                ..
-            } => Some(text.clone()),
-            _ => None,
-        });
-        return text.map(Value::String).ok_or_else(|| {
-            type_error(
-                &declaration.span,
-                ErrorCode::InvalidState,
-                "String constants require a string literal or a string constant reference",
-            )
-        });
-    }
     let mut slots: Vec<Option<Constant>> = vec![None; plan.slot_count];
     for (op, span) in plan.ops.iter_spanned() {
+        match op {
+            Op::Cleanup(CleanupOp::Register { .. }) => continue,
+            Op::Buffer(
+                BufferOp::Move { dst, src }
+                | BufferOp::Extract { dst, src, .. }
+                | BufferOp::Detach { dst, src, .. },
+            ) => {
+                if dst.index != src.index {
+                    for (dst, src) in dst.scalars().zip(src.scalars()) {
+                        slots[dst.index] = slots[src.index].take();
+                    }
+                }
+                continue;
+            }
+            Op::Buffer(BufferOp::End(owner)) => {
+                // A scalar projection can still refer to the source slot after
+                // its owner ends. Only the owning lanes lose their payloads.
+                for slot in owner.scalars().filter(|slot| slot.ty.is_owner_lane()) {
+                    slots[slot.index] = None;
+                }
+                continue;
+            }
+            _ => {}
+        }
         let (dst, value) = match op {
             Op::Literal(dst, value) => (dst, value.clone()),
+            Op::Text {
+                dst,
+                source: TextSource::Literal(text),
+            } => (dst, Constant::String(text.clone())),
             Op::Copy(dst, src) => (dst, slots[src.index].clone().unwrap()),
             Op::Convert(dst, src) => (dst, convert(slots[src.index].as_ref().unwrap(), &dst.ty)),
             Op::Unary(dst, op, src) => (dst, unary(op, slots[src.index].as_ref().unwrap())),
@@ -328,16 +384,17 @@ fn evaluate(
         .flat_map(Slot::scalars)
         .map(|slot| slots[slot.index].take().expect("evaluated constant lane"))
         .collect();
-    Ok(Value::Copy {
+    Ok(Value {
         ty: declaration.ty.clone(),
         lanes,
     })
 }
 
-fn validate_expression(expr: &Expr, string: bool) -> Result<(), Error> {
-    let mut pending = vec![expr];
+fn validate_expression(expr: &Expr, string: bool) -> Result<usize, Error> {
+    let mut pending = vec![(expr, string)];
     let mut count = 0;
-    while let Some(expr) = pending.pop() {
+    let mut string_bytes = 0;
+    while let Some((expr, string)) = pending.pop() {
         count += 1;
         if count > 256 {
             return Err(type_error(
@@ -348,31 +405,30 @@ fn validate_expression(expr: &Expr, string: bool) -> Result<(), Error> {
         }
         match expr {
             Expr::Literal { literal: Literal::ConstParameter(_), .. } => return Err(type_error(&expr.span(),ErrorCode::TypeMismatch,"Associated constants cannot depend on const parameters; return the value from a method")),
-            Expr::Literal { literal: Literal::String(text), span } if string => {
+            Expr::Literal { literal: Literal::String(text), span } => {
                 if text.len() > MAX_STRING_BYTES {
                     return Err(type_error(span, ErrorCode::ResourceLimit, "String constants are limited to 1 MiB of UTF-8 bytes each"));
                 }
+                string_bytes += text.len();
             },
-            Expr::Literal { literal, .. } if !matches!(literal, Literal::String(_)) => {},
+            Expr::Literal { .. } => {},
             // A bare name is a module constant reference, and a dotted path is
             // either a module constant or an associated constant. Both are
             // checked for existence and visibility by the dependency scan.
             Expr::Ident { .. } | Expr::GenericName(_) => {},
-            Expr::Field { base, type_args, .. } if type_args.is_empty() && (!string || expression_path(base).is_some()) => {
-                if !string { pending.push(base); }
-            },
-            Expr::Tuple { elements, .. } if !string => pending.extend(elements),
-            Expr::Record { .. } if !string => pending.extend(expr.children()),
+            Expr::Field { base, type_args, .. } if type_args.is_empty() => pending.push((base, false)),
+            Expr::Tuple { elements, .. } if !string => pending.extend(elements.iter().map(|expr| (expr, false))),
+            Expr::Record { .. } if !string => pending.extend(expr.children().into_iter().map(|expr| (expr, false))),
             Expr::Block { exprs, .. } if !string && exprs.is_empty() => {},
-            Expr::Unary { operand, .. } if !string => pending.push(operand),
-            Expr::BinOp { lhs, rhs, .. } if !string => { pending.push(lhs); pending.push(rhs); },
-            Expr::BinaryChain { rest, .. } if !string => { count += rest.len().saturating_sub(1); pending.extend(expr.children()); },
-            Expr::Call { callee, args, .. } if !string && (IntegerType::conversion(callee).is_some() || matches!(callee.as_str(), "float32" | "float64")) => pending.extend(args),
-            _ if string => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "String constants require a string literal or a string constant reference")),
-            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, Copy tuple/record construction and field reads, module and associated constants, integer conversions and unary/binary operators")),
+            Expr::Unary { operand, .. } if !string => pending.push((operand, false)),
+            Expr::BinOp { lhs, rhs, .. } if !string => { pending.push((lhs, false)); pending.push((rhs, false)); },
+            Expr::BinaryChain { rest, .. } if !string => { count += rest.len().saturating_sub(1); pending.extend(expr.children().into_iter().map(|expr| (expr, false))); },
+            Expr::Call { callee, args, .. } if !string && (IntegerType::conversion(callee).is_some() || matches!(callee.as_str(), "float32" | "float64")) => pending.extend(args.iter().map(|expr| (expr, false))),
+            _ if string => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "String constants require a string literal, a string constant reference or an aggregate field read")),
+            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, string literals, tuple/record construction and field reads, module and associated constants, integer conversions and unary/binary operators")),
         }
     }
-    Ok(())
+    Ok(string_bytes)
 }
 
 fn convert(value: &Constant, ty: &Type) -> Constant {

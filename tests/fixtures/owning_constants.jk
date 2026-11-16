@@ -1,0 +1,102 @@
+import owning_constants_values as cfg.{DEFAULT as IMPORTED, type Text}
+import joky/task
+
+struct Settings { wrong: Bool }
+struct Box<T> { value: T }
+impl<T> Box<T> {
+    const FIXED: Box<String> = Box { value: "generic" }
+}
+const BOXED: Box<String> = Box::<Int32>.FIXED
+const COPIED: cfg.Settings = Local.DEFAULT
+const SELECTED: Text = cfg.DEFAULT.nested.2.text
+const CODE: Int32 = cfg.DEFAULT.nested.2.code
+const PROJECTED: String = ("wrong", ("also wrong", "right")).1.1
+const TUPLE: (String, (Unit, String), Int32) = ("alpha", ({}, SELECTED), CODE)
+const EMPTY: (String, String) = ("", "")
+struct Local {}
+impl Local {
+    const DEFAULT: cfg.Settings = IMPORTED
+    const TEXT: String = TUPLE.1.1
+}
+
+fn make() -> cfg.Settings {
+    COPIED
+}
+
+fn release_inner(value: cfg.Inner) {}
+
+fn check() -> Int32 {
+    let first = COPIED
+    let second = Local.DEFAULT
+    first.release()
+    if second.validate() != 42 || second.title != "é中🙂\0" {
+        return 1
+    }
+    second.release()
+    let third = make()
+    if third.validate() != 42 {
+        return 2
+    }
+    third.release()
+    let updated = cfg.UPDATED
+    if updated.title != "changed" || updated.validate() != 42 {
+        return 3
+    }
+    updated.release()
+    if SELECTED != "tail" || Local.TEXT != "tail" || PROJECTED != "right" || CODE != 7 {
+        return 4
+    }
+    let (head, (unit, text), number) = TUPLE
+    head.release()
+    unit
+    if text != "tail" || number != 7 {
+        return 5
+    }
+    text.release()
+    let (middle, _, inner) = cfg.DEFAULT.nested
+    middle.release()
+    if inner.text != "tail" || inner.code != 7 {
+        return 6
+    }
+    release_inner(inner)
+    let replaced = cfg.Inner { text: "replacement", .. cfg.DEFAULT.nested.2 }
+    if replaced.text != "replacement" || replaced.code != 7 {
+        return 7
+    }
+    release_inner(replaced)
+    let boxed = BOXED
+    if boxed.value != "generic" {
+        return 8
+    }
+    let (empty_a, empty_b) = EMPTY
+    empty_a.release()
+    if empty_b.byte_length() != 0 {
+        return 9
+    }
+    empty_b.release()
+    42
+}
+
+fn pending() @suspends -> Int32 {
+    let first = COPIED
+    let second = cfg.Settings.DEFAULT
+    task.yield_now()
+    first.release()
+    let result = second.validate()
+    second.release()
+    result
+}
+
+fn construction() @suspends -> Int32 {
+    let value = COPIED
+    let result = value.validate()
+    value.release()
+    result
+}
+
+fn main() @suspends -> Int32 {
+    if check() != 42 {
+        return 1
+    }
+    pending()
+}

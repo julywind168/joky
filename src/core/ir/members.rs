@@ -57,15 +57,12 @@ impl ConstantOwner {
     }
 }
 
-/// Constants hold fixed Copy data or string templates, never runtime references.
+/// Constants hold fixed scalar/string templates and aggregates, never runtime references.
 fn constant_type_supported(ty: &Type) -> bool {
     use crate::core::types::{
         walk::{TypeEdges, TypeWalk},
         ConstArgument, GenericArgument,
     };
-    if *ty == Type::String {
-        return true;
-    }
     // Inspect nominal arguments too: a phantom T or N must not make a cached
     // associated constant's type depend on the eventual impl specialization.
     if TypeWalk::new(ty, TypeEdges::Fields).any(|node| {
@@ -78,7 +75,10 @@ fn constant_type_supported(ty: &Type) -> bool {
     }
     TypeWalk::new(ty, TypeEdges::Inline).all(|node| {
         node.is_numeric()
-            || matches!(node, Type::Rune | Type::Bool | Type::Unit | Type::Tuple(_))
+            || matches!(
+                node,
+                Type::Rune | Type::Bool | Type::Unit | Type::String | Type::Tuple(_)
+            )
             || matches!(node, Type::Record(record) if record.closure.is_none())
     })
 }
@@ -242,7 +242,7 @@ impl Members {
                     return Err(type_error(
                         &declaration.span,
                         ErrorCode::TypeMismatch,
-                        "Associated constants require an integer, float, Rune, Bool, Unit, String or concrete Copy tuple/record type",
+                        "Associated constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record type",
                     ));
                 }
                 let key = members.scoped_key(
@@ -271,7 +271,7 @@ impl Members {
                 return Err(type_error(
                     &declaration.span,
                     ErrorCode::TypeMismatch,
-                    "Module constants require an integer, float, Rune, Bool, Unit, String or concrete Copy tuple/record type",
+                    "Module constants require an integer, float, Rune, Bool, Unit, String or concrete scalar/string tuple/record type",
                 ));
             }
             // The entry module has no canonical path, and its constants are

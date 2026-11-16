@@ -117,7 +117,7 @@ fn module_constant_expressions_reject_unsupported_forms() {
         "Constants allow scalar literals",
     );
     reject(
-        "struct P { text: String } const A: P = P { text: \"x\" }",
+        "struct P { pointer: Ptr } const A: P = P { pointer: Ptr.null() }",
         ErrorCode::TypeMismatch,
         "constants require",
     );

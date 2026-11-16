@@ -34,7 +34,7 @@ fn inherent_methods_and_constants_reject_invalid_definitions_even_unused() {
             ErrorCode::TypeMismatch,
         ),
         (
-            "struct P { text: String } impl P { const BAD: P = P { text: \"x\" } }",
+            "struct P { pointer: Ptr } impl P { const BAD: P = P { pointer: Ptr.null() } }",
             ErrorCode::TypeMismatch,
         ),
         (
